@@ -17,7 +17,7 @@ pub(crate) fn answered(payload: &Value, result_key: &str) -> Value {
         "isError": false,
         "content": [{
             "type": "text",
-            "text": serde_json::to_string(payload).unwrap_or_else(|_| "null".to_owned()),
+            "text": payload.to_string(),
         }],
         "structuredContent": { result_key: payload },
     })
@@ -60,11 +60,11 @@ pub fn parse_error() -> Response<Body> {
 
 /// A JSON-RPC message as the HTTP answer Streamable HTTP expects.
 pub fn json_response(status: StatusCode, body: &Value) -> Response<Body> {
-    Response::builder()
-        .status(status)
-        .header(axum::http::header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            serde_json::to_vec(body).unwrap_or_else(|_| b"{}".to_vec()),
-        ))
-        .unwrap_or_else(|_| Response::new(Body::empty()))
+    let mut response = Response::new(Body::from(body.to_string()));
+    *response.status_mut() = status;
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    response
 }

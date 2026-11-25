@@ -228,7 +228,9 @@ fn same_minted_id(asked: Vec<u8>, confirmed: bool, sent: &mut Vec<u8>, now: Inst
     let Ok(mut entity) = serde_json::from_slice::<Value>(sent) else {
         return;
     };
-    let mut minted = MINTED.lock().unwrap_or_else(|e| e.into_inner());
+    let mut minted = MINTED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     if confirmed {
         // Kept until it expires: a decision page answers a retry made before the person decided
         // with "still open", and the next retry needs the same id.

@@ -532,4 +532,58 @@ mod tests {
         assert_eq!(headers.len(), 1, "{headers:?}");
         assert_eq!(headers["cache-control"], "public, max-age=60");
     }
+
+    /// Every path segment names its document, `model` negotiates by `Accept`, and an unknown
+    /// segment names none.
+    #[test]
+    fn each_segment_and_accept_header_names_its_artifact() {
+        for (segment, want) in [
+            ("model.schema.json", Artifact::JsonSchema),
+            ("context", Artifact::Context),
+            ("shacl", Artifact::Shacl),
+            ("model.owl.ttl", Artifact::Owl),
+            ("rdf", Artifact::Rdf),
+            ("linkml", Artifact::LinkMl),
+            ("docs", Artifact::Markdown),
+            ("model.qb.ttl", Artifact::Qb),
+        ] {
+            assert_eq!(artifact_of(segment, ""), Some(want), "{segment}");
+        }
+        for (accept, want) in [
+            ("text/turtle;profile=owl", Artifact::Owl),
+            ("text/turtle;profile=rdf", Artifact::Rdf),
+            ("text/turtle", Artifact::Shacl),
+            ("application/yaml", Artifact::LinkMl),
+            ("text/markdown", Artifact::Markdown),
+            ("application/ld+json", Artifact::Context),
+            ("*/*", Artifact::JsonSchema),
+            ("", Artifact::JsonSchema),
+        ] {
+            assert_eq!(artifact_of("model", accept), Some(want), "{accept}");
+        }
+        assert_eq!(artifact_of("passwd", "text/turtle"), None);
+    }
+
+    /// A feeds link is the format of its last extension; the record and unknown paths name
+    /// no surface.
+    #[test]
+    fn a_path_names_the_surface_it_serves() {
+        use jc_core::kinds::Representation as R;
+        for (rest, want) in [
+            ("feeds/events/calendar.ics", Some(R::Ical)),
+            ("feeds/events/table.csv", Some(R::Csv)),
+            ("feeds/events/rss.xml", Some(R::Feed)),
+            ("entities.csv", Some(R::Csv)),
+            ("entities.atom", Some(R::Feed)),
+            ("ogc/features/collections", Some(R::OgcFeatures)),
+            ("sta/v1.1/Things", Some(R::Sta)),
+            ("odata/v4/$metadata", Some(R::Odata)),
+            ("mcp", Some(R::Mcp)),
+            ("ws", Some(R::WebSocket)),
+            ("schema/v1/model", None),
+            ("", None),
+        ] {
+            assert_eq!(surface_of(rest), want, "{rest}");
+        }
+    }
 }

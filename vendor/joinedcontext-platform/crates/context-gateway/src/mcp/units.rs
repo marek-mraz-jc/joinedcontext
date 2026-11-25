@@ -142,4 +142,24 @@ mod tests {
         readable(&mut error);
         assert_eq!(error, before);
     }
+
+    /// A unit Rec 20 gives no symbol reads by its name; a text item that is no string or no
+    /// JSON is left as it is.
+    #[test]
+    fn a_unit_without_a_symbol_reads_by_name_and_odd_items_stay() {
+        let mut piece =
+            answer(json!({"count": {"type": "Property", "value": 3, "unitCode": "H87"}}));
+        readable(&mut piece);
+        assert_eq!(
+            piece["result"]["structuredContent"]["count"]["unit"],
+            json!("piece")
+        );
+        let mut odd = json!({"result": {"content": [{"type": "image", "data": 1}, {"type": "text", "text": "not json"}]}});
+        let before = odd.clone();
+        readable(&mut odd);
+        assert_eq!(odd, before);
+        let mut error = json!({"error": {"code": -32600}});
+        readable(&mut error);
+        assert_eq!(error, json!({"error": {"code": -32600}}));
+    }
 }

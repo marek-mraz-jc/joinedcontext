@@ -288,4 +288,40 @@ mod tests {
         assert_eq!(value(&params, "scopeQ"), Some("/bb/#"));
         assert_eq!(value(&params, "q"), None);
     }
+
+    /// A caller's own type within the output's narrows it; a caller's `scopeQ` is intersected
+    /// with the output's, and one that cannot be joined is refused.
+    #[test]
+    fn a_callers_type_and_scope_only_narrow() {
+        let types = ["Event".to_owned(), "Place".to_owned()];
+        let base = OutputFilter {
+            scope_q: Some("/bb/#".to_owned()),
+            ..OutputFilter::default()
+        };
+        let params = narrowed(
+            asked(&[("type", "Place"), ("scopeQ", "/bb/centre")]),
+            &types,
+            &base,
+        )
+        .expect("narrowed");
+        assert_eq!(value(&params, "type"), Some("Place"));
+        let scope = value(&params, "scopeQ").unwrap_or_default();
+        assert!(
+            scope.contains("/bb/#") && scope.contains("/bb/centre"),
+            "{scope}"
+        );
+        let apart = narrowed(asked(&[("scopeQ", "")]), &types, &base);
+        assert!(apart.expect_err("refused").contains("scopeQ"));
+        let open = narrowed(
+            asked(&[("q", "a==1"), ("scopeQ", "/x")]),
+            &types,
+            &OutputFilter::default(),
+        )
+        .expect("an open output");
+        assert_eq!(
+            (value(&open, "q"), value(&open, "scopeQ")),
+            (Some("a==1"), Some("/x"))
+        );
+        assert_eq!(value(&open, "type"), Some("Event,Place"));
+    }
 }

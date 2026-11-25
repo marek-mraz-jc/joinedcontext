@@ -142,10 +142,9 @@ fn judge(
         .map(str::to_owned)
         .collect();
     // A fragment names its type only through the path's id: judge it as that type.
-    let mut typed = entity.clone();
-    if let Some(object) = typed.as_object_mut() {
-        object.insert("type".into(), json!(types));
-    }
+    let mut typed = object.clone();
+    typed.insert("type".into(), json!(types));
+    let typed = Value::Object(typed);
     let verdicts = on_write(&typed, rules, now);
     for verdict in &verdicts {
         metrics::counter!(
@@ -514,5 +513,125 @@ mod tests {
         enforce(&mut entity, WHOLE, &rules(), "bikes", TimestampTz::now()).expect("not a Vehicle");
         enforce(&mut entity, WHOLE, &[], "bikes", TimestampTz::now()).expect("no rules");
         assert_eq!(entity, before);
+    }
+
+    fn vehicle_schema() -> ModelSchema {
+        let model = json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": { "Vehicle": { "type": "object", "required": ["speed"], "properties": {
+                "id": { "type": "string" },
+                "speed": { "type": "number", "maximum": 40 },
+            } } }
+        });
+        ModelSchema::compile("fleet", "1.0.0", &model, &["Vehicle".to_owned()], true)
+    }
+
+    /// DM-86 on a batch: the first broken member refuses the batch, naming the slot's rule.
+    #[test]
+    fn a_batch_breaking_a_slot_constraint_is_refused_whole() {
+        let schema = vehicle_schema();
+        let ok = json!([{"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}}]);
+        check_model(&ok, WHOLE, true, &schema, "fleet").expect("in range");
+        let broken = json!([
+            {"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"type": "Property", "value": 10}},
+            {"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle", "speed": {"type": "Property", "value": 99}}
+        ]);
+        let refused =
+            check_model(&broken, WHOLE, true, &schema, "fleet").expect_err("out of range");
+        assert_eq!(refused.status, 400);
+        assert_eq!(refused.extensions["field"], json!("speed"));
+        assert!(
+            !refused.detail.as_deref().unwrap_or_default().contains("99"),
+            "never the value"
+        );
+    }
+
+    /// A member that is no object, a type the model does not declare and an empty batch pass:
+    /// DM-61 refuses an undeclared type, not this check.
+    #[test]
+    fn a_non_object_an_undeclared_type_and_an_empty_batch_pass_the_model_check() {
+        let schema = vehicle_schema();
+        for payload in [
+            json!([]),
+            json!("urn:ngsi-ld:Vehicle:1"),
+            json!([7, null]),
+            json!({"id": "urn:ngsi-ld:Stop:1", "type": "Stop", "speed": 99}),
+            json!({"id": "urn:ngsi-ld:Stop:1"}),
+        ] {
+            check_model(&payload, WHOLE, true, &schema, "fleet").expect("not judged");
+        }
+    }
+
+    /// Instances written with their value member and no `type`, and a typed literal as the
+    /// value, are read as the Property they are: the second instance is judged alone.
+    #[test]
+    fn untyped_instances_and_typed_literals_are_judged_as_properties() {
+        let schema = vehicle_schema();
+        let instances = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": [
+            {"value": 10, "datasetId": "urn:a"},
+            {"value": {"@type": "xsd:double", "@value": 77}, "datasetId": "urn:b"}
+        ]});
+        let refused =
+            check_model(&instances, WHOLE, true, &schema, "fleet").expect_err("second instance");
+        assert_eq!(refused.extensions["field"], json!("speed"));
+        let literal = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"@type": "xsd:double", "@value": 12}});
+        check_model(&literal, WHOLE, true, &schema, "fleet").expect("a bare literal is its value");
+        // A list value is one attribute, its elements no instances.
+        let list = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": {"value": 3}, "tags": [1, 2]});
+        check_model(&list, WHOLE, true, &schema, "fleet").expect("a list is a value");
+    }
+
+    /// A fragment write carries only what it writes: the missing required slot is no refusal,
+    /// while a one-attribute write is judged as the attribute it names.
+    #[test]
+    fn a_fragment_is_held_only_to_what_it_carries() {
+        let schema = vehicle_schema();
+        let fragment = Shape {
+            addressed: Some("urn:ngsi-ld:Vehicle:1"),
+            targeted: None,
+        };
+        check_model(
+            &json!({"name": {"value": "x"}}),
+            fragment,
+            false,
+            &schema,
+            "fleet",
+        )
+        .expect("partial");
+        let one = Shape {
+            addressed: Some("urn:ngsi-ld:Vehicle:1"),
+            targeted: Some("speed"),
+        };
+        check_model(
+            &json!({"type": "Property", "value": 5}),
+            one,
+            false,
+            &schema,
+            "fleet",
+        )
+        .expect("in range");
+        check_model(
+            &json!({"type": "Property", "value": 50}),
+            one,
+            false,
+            &schema,
+            "fleet",
+        )
+        .expect_err("over");
+        check_model(
+            &json!({"id": "urn:ngsi-ld:Vehicle:9", "type": "Vehicle"}),
+            WHOLE,
+            true,
+            &schema,
+            "fleet",
+        )
+        .expect_err("a whole write misses its required slot");
+    }
+
+    #[test]
+    fn a_payload_that_is_no_object_passes_the_quality_rules() {
+        let mut scalar = json!(42);
+        enforce(&mut scalar, WHOLE, &rules(), "bikes", TimestampTz::now()).expect("no entity");
+        assert_eq!(scalar, json!(42));
     }
 }
