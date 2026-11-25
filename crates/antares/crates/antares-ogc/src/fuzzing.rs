@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: EUPL-1.2
 //! The query readers a request reaches, for the fuzz targets (`feature = "fuzzing"`, T-7803):
 //! the `items` query and the `next` page token, read against one fixed collection.
 

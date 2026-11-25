@@ -301,6 +301,7 @@ pub(crate) fn basic(oa: &OAuth2Settings) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::future::IntoFuture;
 
     fn settings(key: &str, secret: &str) -> OAuth2Settings {
         OAuth2Settings {
@@ -485,9 +486,7 @@ mod tests {
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(axum::serve(listener, app).into_future());
         Endpoint {
             url: format!("http://{addr}/token"),
             seen,

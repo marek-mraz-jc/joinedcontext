@@ -1303,6 +1303,12 @@ fn structured_reads_refuse_empty_missing_and_multi_document_parts() {
         "message contains multiple valid documents"
     );
     assert!(Part::from_str("1 }").as_structured_ref().is_err());
+    // Both decoders stop at the same nesting depth, so a document one level too deep is an error
+    // and never a second document.
+    let nest = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+    assert!(Part::from_str(&nest(127)).as_structured_ref().is_ok());
+    let deep = Part::from_str(&nest(128)).as_structured_ref().unwrap_err();
+    assert!(deep.contains("recursion limit"), "{deep}");
     assert!(Part::from_str("{").as_structured_ref().is_err());
     assert_eq!(
         Part::from_str("[1]").as_structured_ref().unwrap(),

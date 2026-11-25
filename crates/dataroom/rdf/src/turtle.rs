@@ -237,15 +237,8 @@ pub fn serialize_turtle(graph: &RdfGraph) -> String {
             .push(&triple.object);
     }
 
-    let mut subjects: Vec<&SubjectNode> = by_subject.keys().copied().collect();
-    subjects.sort_by(|a, b| match (a, b) {
-        (SubjectNode::Named(x), SubjectNode::Named(y)) => x.cmp(y),
-        (SubjectNode::Named(_), SubjectNode::Blank(_)) => std::cmp::Ordering::Less,
-        (SubjectNode::Blank(_), SubjectNode::Named(_)) => std::cmp::Ordering::Greater,
-        (SubjectNode::Blank(x), SubjectNode::Blank(y)) => x.cmp(y),
-    });
-
-    for subj in subjects {
+    // The map's order is the subjects' derived order: named ones by IRI, then blank ones.
+    for subj in by_subject.keys().copied() {
         let preds = &by_subject[subj];
         out.push_str(&format_subject(subj));
         let mut pred_entries: Vec<(&str, &Vec<&Term>)> =
@@ -449,6 +442,10 @@ mod tests {
         };
         let doc = "<https://e.org/s> <https://e.org/p> <https://e.org/o> .\n";
         assert_eq!(kind(parse_turtle(doc, &tiny).unwrap_err()), "bytes");
+        assert_eq!(
+            kind(DataroomError::NotFound("x".into())),
+            "other: not found: x"
+        );
         assert_eq!(
             kind(parse_ntriples_bytes(doc.as_bytes(), &tiny).unwrap_err()),
             "bytes"
@@ -710,17 +707,11 @@ ex:s ex:a "[[[(((\"]]]" ; ex:b '[[[' ; ex:c """[[[
             ttl.find("<https://e.org/ds>").unwrap() < ttl.find("_:a2").unwrap(),
             "named subjects first"
         );
-        let back = match parse_turtle(&ttl, &RdfLimits::default()) {
-            Ok(v) => v,
-            Err(e) => panic!("{e}\n{ttl}"),
-        };
+        let back = parse_turtle(&ttl, &RdfLimits::default()).expect(&ttl);
         assert_eq!(unlabelled(&back), unlabelled(&g), "{ttl}");
 
         let nt = serialize_ntriples(&g);
-        let back = match parse_ntriples_bytes(nt.as_bytes(), &RdfLimits::default()) {
-            Ok(v) => v,
-            Err(e) => panic!("{e}\n{nt}"),
-        };
+        let back = parse_ntriples_bytes(nt.as_bytes(), &RdfLimits::default()).expect(&nt);
         assert_eq!(unlabelled(&back), unlabelled(&g), "{nt}");
     }
 }

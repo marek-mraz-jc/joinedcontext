@@ -1110,9 +1110,7 @@ mod tests {
 
     fn write(dir: &Path, name: &str, text: &str) -> String {
         let p = dir.join(name);
-        if let Some(parent) = p.parent() {
-            std::fs::create_dir_all(parent).expect("dir");
-        }
+        std::fs::create_dir_all(p.parent().unwrap_or(dir)).expect("dir");
         std::fs::write(&p, text).expect("write");
         p.to_string_lossy().into_owned()
     }
@@ -1369,6 +1367,9 @@ tests:
             let def = format!("tests:\n  - name: c\n    input_batch: [{{content: a}}]\n{extra}");
             parse_definition(&def).expect("def").remove(0)
         };
+        let bad_target = write(d, "bad_target.yaml", "input: 5\npipeline: {}\n");
+        let broken_yaml = write(d, "broken_yaml.yaml", "pipeline: [\n");
+        write(d, "imports.blobl", "import \"nope.blobl\"\nroot = this\n");
         for (extra, want) in [
             (
                 "    target_mapping: gone.blobl\n",
@@ -1392,16 +1393,17 @@ tests:
             ),
             (
                 "    target_processors: 'bad_target.yaml#/pipeline'\n",
-                "failed to parse config file",
+                &format!("failed to parse config file '{bad_target}': "),
             ),
             (
                 "    target_processors: 'broken_yaml.yaml#/pipeline'\n",
-                "failed to parse config file",
+                &format!("failed to parse config file '{broken_yaml}': "),
             ),
             (
                 "    target_processors: 'other.yaml#/pipeline'\n",
                 "failed to parse config file",
             ),
+            ("    target_mapping: imports.blobl\n", "nope.blobl: "),
             (
                 "    mocks: {nolabel: {noop: {}}}\n",
                 "mock for label 'nolabel' could not be applied",
@@ -1416,8 +1418,6 @@ tests:
                 .expect_err(extra);
             assert!(err.contains(want), "{extra}: {err}");
         }
-        write(d, "bad_target.yaml", "input: 5\npipeline: {}\n");
-        write(d, "broken_yaml.yaml", "pipeline: [\n");
         write(d, "broken.blobl", "root = (");
         let err = execute(
             &reg,

@@ -231,6 +231,7 @@ mod tests {
                 json!({"endpoints": ["helsinki/events"], "type": "Event"}),
                 "lists 2 to",
             ),
+            (json!({"type": "Event"}), "lists 2 to"),
             (
                 json!({"endpoints": ["helsinki/events", 3], "type": "Event"}),
                 "lists 2 to",
