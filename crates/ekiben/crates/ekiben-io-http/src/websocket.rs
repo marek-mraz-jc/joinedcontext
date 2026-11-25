@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use axum::http::header::AUTHORIZATION;
 use axum::http::{HeaderName, HeaderValue, Uri};
 use base64::Engine as _;
 use bytes::Bytes;
@@ -72,8 +73,8 @@ struct OAuth1 {
 
 /// The parsed config of one `websocket` input.
 pub struct WebsocketConf {
-    pub url: String,
-    headers: Vec<(String, FieldExpression)>,
+    pub url: Url,
+    headers: Vec<(String, HeaderName, FieldExpression)>,
     open_messages: Vec<Vec<u8>>,
     open_message_type: String,
     pub auto_replay_nacks: bool,
@@ -86,10 +87,10 @@ pub struct WebsocketConf {
 impl std::fmt::Debug for WebsocketConf {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("WebsocketConf")
-            .field("url", &redact_url_str(&self.url))
+            .field("url", &redact_url_str(self.url.as_str()))
             .field(
                 "headers",
-                &self.headers.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+                &self.headers.iter().map(|(k, _, _)| k).collect::<Vec<_>>(),
             )
             .field("open_messages", &self.open_messages.len())
             .field("open_message_type", &self.open_message_type)
@@ -186,11 +187,11 @@ impl WebsocketConf {
         let mut headers = Vec::new();
         if let Some(h) = obj(map, "headers") {
             for (k, v) in h {
-                if HeaderName::from_bytes(k.as_bytes()).is_err() {
-                    return Err(CoreError::config(format!(
+                let name = HeaderName::from_bytes(k.as_bytes()).map_err(|_| {
+                    CoreError::config(format!(
                         "websocket.headers: '{k}' is not a valid header name"
-                    )));
-                }
+                    ))
+                })?;
                 let src = v
                     .as_str()
                     .map(str::to_string)
@@ -198,7 +199,7 @@ impl WebsocketConf {
                 let expr = env
                     .compile_field(&src)
                     .map_err(|e| CoreError::config(format!("websocket.headers.{k}: {e}")))?;
-                headers.push((k.clone(), expr));
+                headers.push((k.clone(), name, expr));
             }
         }
         let list: Vec<Vec<u8>> = map
@@ -298,7 +299,7 @@ impl WebsocketConf {
             )));
         }
         Ok(Self {
-            url,
+            url: parsed,
             headers,
             open_messages,
             open_message_type,
@@ -368,13 +369,13 @@ pub fn oauth1_header(
         oauth_encode(consumer_secret),
         oauth_encode(token_secret)
     );
-    let signature = match <Hmac<Sha1>>::new_from_slice(key.as_bytes()) {
-        Ok(mut mac) => {
+    // HMAC takes a key of any length: the empty fallback is never used.
+    let signature = <Hmac<Sha1>>::new_from_slice(key.as_bytes())
+        .map(|mut mac| {
             mac.update(base.as_bytes());
             base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes())
-        }
-        Err(_) => String::new(),
-    };
+        })
+        .unwrap_or_default();
     format!(
         "OAuth oauth_consumer_key=\"{}\", oauth_nonce=\"{}\", oauth_signature=\"{}\", oauth_signature_method=\"HMAC-SHA1\", oauth_timestamp=\"{}\", oauth_token=\"{}\", oauth_version=\"1.0\"",
         oauth_encode(consumer_key),
@@ -404,7 +405,7 @@ pub(crate) async fn tls_connect(
         rustls::crypto::ring::default_provider(),
     ))
     .with_safe_default_protocol_versions()
-    .map_err(|e| CoreError::other(format!("tls: {e}")))?
+    .map_err(tls_failed)?
     .with_root_certificates(roots)
     .with_no_client_auth();
     let name = rustls_pki_types::ServerName::try_from(host.to_string())
@@ -412,8 +413,26 @@ pub(crate) async fn tls_connect(
     let stream = tokio_rustls::TlsConnector::from(Arc::new(config))
         .connect(name, tcp)
         .await
-        .map_err(|e| CoreError::other(format!("tls handshake failed: {e}")))?;
+        .map_err(tls_failed)?;
     Ok(Box::new(stream))
+}
+
+/// `builder` with one more upgrade-request header; `what` names the field in an error.
+fn with_header(
+    builder: ClientBuilder<'static>,
+    name: HeaderName,
+    value: &str,
+    what: &str,
+) -> Result<ClientBuilder<'static>, CoreError> {
+    let val = HeaderValue::from_str(value)
+        .map_err(|_| CoreError::config(format!("bad value for {what}")))?;
+    builder
+        .add_header(name, val)
+        .map_err(|e| CoreError::config(format!("{what}: {e}")))
+}
+
+fn tls_failed(e: impl std::fmt::Display) -> CoreError {
+    CoreError::other(format!("tls handshake failed: {e}"))
 }
 
 /// The `websocket` input.
@@ -449,8 +468,7 @@ impl WebsocketInput {
                 )))
             }
         };
-        let url =
-            Url::parse(&conf.url).map_err(|e| CoreError::config(format!("websocket.url: {e}")))?;
+        let url = conf.url.clone();
         let addrs = outbound::resolve_checked(&url, &ctx.org).await?;
         let tcp = outbound::connect_checked(&addrs, CONNECT_TIMEOUT).await?;
         let host = url
@@ -475,28 +493,19 @@ impl WebsocketInput {
         // Interpolated as Bento does, against one empty message.
         let empty = [Part::new(Bytes::new())];
         let view = PartsView(&empty);
-        for (k, expr) in &conf.headers {
+        for (k, name, expr) in &conf.headers {
             let value = expr.resolve_string(0, &view).map_err(|e| {
                 CoreError::config(format!(
                     "failed string interpolation on header \"{k}\": {e}"
                 ))
             })?;
-            let name = HeaderName::from_bytes(k.as_bytes())
-                .map_err(|_| CoreError::config(format!("bad header name '{k}'")))?;
-            let val = HeaderValue::from_str(&value)
-                .map_err(|_| CoreError::config(format!("bad value for header '{k}'")))?;
-            builder = builder
-                .add_header(name, val)
-                .map_err(|e| CoreError::config(format!("header '{k}': {e}")))?;
+            builder = with_header(builder, name.clone(), &value, &format!("header '{k}'"))?;
         }
         if let Some((user, pass)) = &conf.basic_auth {
             let token = base64::engine::general_purpose::STANDARD
                 .encode(format!("{user}:{}", pass.expose()));
-            let val = HeaderValue::from_str(&format!("Basic {token}"))
-                .map_err(|_| CoreError::config("basic_auth: invalid credentials"))?;
-            builder = builder
-                .add_header(axum::http::header::AUTHORIZATION, val)
-                .map_err(|e| CoreError::config(format!("basic_auth: {e}")))?;
+            let value = format!("Basic {token}");
+            builder = with_header(builder, AUTHORIZATION, &value, "basic_auth")?;
         }
         if let Some(o) = &conf.oauth {
             let nonce = uuid::Uuid::new_v4().simple().to_string();
@@ -513,11 +522,7 @@ impl WebsocketInput {
                 &nonce,
                 ts,
             );
-            let val = HeaderValue::from_str(&header)
-                .map_err(|_| CoreError::config("oauth: invalid header"))?;
-            builder = builder
-                .add_header(axum::http::header::AUTHORIZATION, val)
-                .map_err(|e| CoreError::config(format!("oauth: {e}")))?;
+            builder = with_header(builder, AUTHORIZATION, &header, "oauth")?;
         }
 
         let (mut ws, _resp) = tokio::time::timeout(CONNECT_TIMEOUT, builder.connect_on(io))
@@ -611,7 +616,7 @@ impl Input for WebsocketInput {
                     Err(e) => {
                         tracing::warn!(
                             "websocket: reconnect to {} failed: {e}",
-                            redact_url_str(&self.conf.url)
+                            redact_url_str(self.conf.url.as_str())
                         );
                         let wait = self.backoff;
                         self.backoff = (self.backoff * 2).min(BACKOFF_MAX);
@@ -703,8 +708,7 @@ mod tests {
             ),
         ] {
             let err = WebsocketConf::from_json(&val, &env)
-                .err()
-                .unwrap_or_else(|| panic!("{val} must be refused"))
+                .expect_err("refused")
                 .to_string();
             assert!(err.contains(want), "{val}: {err}");
         }
@@ -737,5 +741,79 @@ mod tests {
             let err = pem_certificates(pem).expect_err(pem).to_string();
             assert!(err.contains(want), "{pem}: {err}");
         }
+    }
+
+    fn stream_ctx() -> StreamContext {
+        let resources = ekiben_core::ResourceManager::new();
+        let org = resources.get_or_create_org(&ekiben_core::OrgId::new("org-ws-unit"));
+        StreamContext {
+            stream_id: "s".into(),
+            org,
+            resources,
+            registry: Arc::new(Registry::new()),
+            blobl_env: ekiben_bloblang::Environment::new(),
+            metrics: ekiben_core::StreamMetrics::new("s", "org-ws-unit"),
+            label: String::new(),
+            path: "input".into(),
+            file_root: None,
+            env_vars: Arc::new(std::collections::HashMap::new()),
+            shutdown_rx: tokio::sync::watch::channel(false).1,
+        }
+    }
+
+    #[test]
+    fn the_config_prints_without_secrets_and_tls_without_roots_is_kept() {
+        let env = ekiben_bloblang::Environment::new();
+        let c = WebsocketConf::from_json(
+            &json!({ "url": "wss://x", "tls": { "enabled": true },
+                     "oauth": { "enabled": true, "consumer_key": "ck", "consumer_secret": "cs-hidden",
+                                "access_token": "t", "access_token_secret": "ts-hidden" } }),
+            &env,
+        )
+        .unwrap();
+        assert!(c.root_cas.is_empty());
+        let shown = format!("{c:?}");
+        assert!(
+            shown.contains("\"ck\"") && !shown.contains("hidden"),
+            "{shown}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_server_name_tls_cannot_use_is_refused_before_the_handshake() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp = tokio::net::TcpStream::connect(l.local_addr().unwrap())
+            .await
+            .unwrap();
+        let err = tls_connect(tcp, "", &[])
+            .await
+            .err()
+            .expect("refused")
+            .to_string();
+        assert!(err.contains("tls: bad server name"), "{err}");
+    }
+
+    #[test]
+    fn a_full_replay_queue_drops_the_next_nacked_message() {
+        let conf = ComponentConfig {
+            component_type: "websocket".into(),
+            config: json!({ "url": "ws://x", "auto_replay_nacks": true }),
+            ..Default::default()
+        };
+        let input = WebsocketInput::from_config(&conf, &stream_ctx()).unwrap();
+        input
+            .replay
+            .lock()
+            .unwrap()
+            .extend((0..MAX_REPLAY_BATCHES).map(|_| Vec::new()));
+        let batch = vec![Part::new(b"late".to_vec())];
+        input
+            .ack_for(&batch)
+            .nack(ekiben_core::BatchError::new(batch.clone(), "refused"));
+        assert_eq!(input.replay.lock().unwrap().len(), MAX_REPLAY_BATCHES);
+        assert!(
+            input.pop_replay().is_some_and(|b| b.is_empty()),
+            "the oldest stays first"
+        );
     }
 }

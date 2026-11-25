@@ -298,9 +298,7 @@ mod tests {
         });
         let mut i =
             input(json!({"network": "tcp", "address": addr.to_string(), "max_buffer": 4})).unwrap();
-        let Err(e) = i.read_batch(&ctx(true)).await else {
-            panic!("refused")
-        };
+        let e = i.read_batch(&ctx(true)).await.err().expect("refused");
         assert!(e.to_string().contains("max_buffer"), "{e}");
     }
 
@@ -312,10 +310,7 @@ mod tests {
             input(json!({"network": "udp", "address": server.local_addr().unwrap().to_string()}))
                 .unwrap();
         i.connect(&ctx).await.unwrap();
-        let Some(Conn::Udp(sock)) = &i.conn else {
-            panic!("udp")
-        };
-        let me = sock.local_addr().unwrap();
+        let me = udp_of(&i).expect("udp").local_addr().unwrap();
         server.send_to(b"x=1\ny=2", me).await.unwrap();
         assert_eq!(texts(&i.read_batch(&ctx).await.unwrap().0), ["x=1", "y=2"]);
     }
@@ -324,9 +319,7 @@ mod tests {
     async fn a_private_peer_is_refused_before_connecting() {
         for network in ["tcp", "udp"] {
             let mut i = input(json!({"network": network, "address": "127.0.0.1:9"})).unwrap();
-            let Err(e) = i.read_batch(&ctx(false)).await else {
-                panic!("refused")
-            };
+            let e = i.read_batch(&ctx(false)).await.err().expect("refused");
             assert!(
                 matches!(e, CoreError::AccessDenied { .. }),
                 "{network}: {e}"
@@ -349,5 +342,118 @@ mod tests {
         assert!(input(json!({"network": "tcp", "address": "h:0"})).is_err());
         let i = input(json!({"network": "tcp", "address": "[::1]:5000"})).unwrap();
         assert_eq!((i.host.as_str(), i.port), ("::1", 5000));
+    }
+
+    /// The input's UDP socket, `None` for a TCP connection.
+    fn udp_of(i: &SocketInput) -> Option<&UdpSocket> {
+        match i.conn.as_ref()? {
+            Conn::Udp(sock) => Some(sock),
+            Conn::Tcp(_) => None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_whole_stream_is_one_read_and_an_empty_one_reads_nothing() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            s.write_all(b"a;b").await.unwrap();
+            drop(s);
+            let (s, _) = l.accept().await.unwrap();
+            drop(s);
+        });
+        let ctx = ctx(true);
+        let reg = Registry::new();
+        register(&reg);
+        let conf = ComponentConfig {
+            label: "counter".into(),
+            component_type: "socket".into(),
+            config: json!({"network": "tcp", "address": addr.to_string(), "scanner": {"to_the_end": {}}}),
+            ..Default::default()
+        };
+        let mut built = reg.build_input(&conf, &ctx).expect("registered");
+        assert_eq!((built.input_type(), built.label()), ("socket", "counter"));
+        assert!(!built.is_connected());
+        built.connect(&ctx).await.unwrap();
+        assert!(built.is_connected());
+        let mut i = input(
+            json!({"network": "tcp", "address": addr.to_string(), "scanner": {"to_the_end": {}}}),
+        )
+        .unwrap();
+        // The registry's input took the first connection; this one gets the empty second.
+        i.connect(&ctx).await.unwrap();
+        assert!(udp_of(&i).is_none());
+        assert!(
+            i.read().await.unwrap().is_none(),
+            "an empty stream reads nothing"
+        );
+        assert!(
+            i.read().await.unwrap().is_none(),
+            "no connection reads nothing"
+        );
+        assert_eq!(texts(&built.read_batch(&ctx).await.unwrap().0), ["a;b"]);
+        built.close().await.unwrap();
+        assert!(!built.is_connected());
+    }
+
+    #[tokio::test]
+    async fn a_stream_over_the_cap_is_refused() {
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        let writer = tokio::spawn(async move {
+            let (mut s, _) = l.accept().await.unwrap();
+            let chunk = vec![b'x'; 1 << 20];
+            for _ in 0..=(MAX_STREAM_BYTES >> 20) {
+                // The input hangs up at the cap: the rest of the writes fail.
+                let _ = s.write_all(&chunk).await;
+            }
+        });
+        let mut i = input(
+            json!({"network": "tcp", "address": addr.to_string(), "scanner": {"to_the_end": {}}}),
+        )
+        .unwrap();
+        let e = i.read_batch(&ctx(true)).await.err().expect("refused");
+        assert!(e.to_string().contains("bytes before closing"), "{e}");
+        drop(i);
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_refused_datagram_fails_the_read() {
+        // A port nothing listens on: the ICMP answer to our datagram fails the next receive.
+        let gone = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let addr = gone.local_addr().unwrap();
+        drop(gone);
+        let mut i = input(json!({"network": "udp", "address": addr.to_string()})).unwrap();
+        let ctx = ctx(true);
+        i.connect(&ctx).await.unwrap();
+        udp_of(&i).expect("udp").send(b"hello").await.unwrap();
+        let e = i.read_batch(&ctx).await.err().expect("refused");
+        assert!(e.to_string().starts_with("socket input: "), "{e}");
+    }
+
+    #[tokio::test]
+    async fn an_ipv6_peer_gets_an_ipv6_socket() {
+        let mut i = input(json!({"network": "udp", "address": "[::1]:9"})).unwrap();
+        // Where the host has no IPv6 the bind is named; elsewhere the socket is IPv6.
+        match i.connect(&ctx(true)).await {
+            Ok(()) => assert!(udp_of(&i).expect("udp").local_addr().unwrap().is_ipv6()),
+            Err(e) => assert!(e.to_string().contains("socket input: udp"), "{e}"),
+        }
+    }
+
+    #[test]
+    fn a_config_that_is_not_a_socket_is_refused_by_name() {
+        for (v, want) in [
+            (json!("tcp://h:1"), "socket input config must be an object"),
+            (
+                json!({"network": "smtp", "address": "h:1"}),
+                "network must be tcp or udp, not 'smtp'",
+            ),
+        ] {
+            let e = input(v.clone()).err().expect("refused").to_string();
+            assert!(e.contains(want), "{v}: {e}");
+        }
     }
 }

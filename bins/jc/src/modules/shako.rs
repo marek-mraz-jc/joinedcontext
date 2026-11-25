@@ -316,10 +316,11 @@ mod tests {
     }
 
     async fn open_err(cfg: &ShakoSection, setup: &crate::setup::Setup, root: &Path) -> String {
-        match open_store(cfg, ORG, root, setup).await {
-            Ok(_) => panic!("the store must not open"),
-            Err(e) => e.to_string(),
-        }
+        open_store(cfg, ORG, root, setup)
+            .await
+            .err()
+            .expect("the store must not open")
+            .to_string()
     }
 
     #[tokio::test]
@@ -358,6 +359,214 @@ mod tests {
         };
         let e = open_err(&migrating, &setup, tmp.path()).await;
         assert!(e.contains("cannot connect to Postgres"), "{e}");
+    }
+
+    /// shako on real Postgres (`SHAKO_TEST_DATABASE_URL`, a superuser that only prepares, as
+    /// dataroom's split test): the NOSUPERUSER owner migrates, a login that owns nothing serves;
+    /// the restart projects what a release before T-7523 left in the store log and copies its
+    /// manifest to a blob under the repo root. An owner without CREATE on the database and a
+    /// request login with BYPASSRLS each refuse the start.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test reads its database URL, as dataroom's split test does.
+    async fn a_postgres_forge_migrates_as_the_owner_and_serves_as_a_login_that_owns_nothing() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+        let Ok(admin_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
+            println!(
+                "SKIP a_postgres_forge_migrates_as_the_owner: SHAKO_TEST_DATABASE_URL is unset"
+            );
+            return;
+        };
+        let base = PgConnectOptions::from_str(&admin_url).unwrap();
+        let server = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone())
+            .await
+            .unwrap();
+        let db = format!("jc_shako_{}", std::process::id());
+        let tmp = tempfile::tempdir().unwrap();
+        for statement in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+            // The cluster-wide roles shako's first migration makes when they are missing, made
+            // by the superuser as a deployment does: the NOCREATEROLE owner cannot.
+            "DO $$ BEGIN CREATE ROLE shako_migrate NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$; \
+             DO $$ BEGIN CREATE ROLE shako_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;"
+                .to_owned(),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
+        let login = |role: &str, grants: &str| {
+            let pw = format!("pw-{role}-{}", std::process::id());
+            let file = tmp.path().join(role);
+            std::fs::write(&file, &pw).unwrap();
+            let statement = format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEROLE PASSWORD '{pw}';
+                 {grants}"
+            );
+            let url = format!(
+                "postgres://{role}@{}:{}/{db}",
+                base.get_host(),
+                base.get_port()
+            );
+            (statement, url, file)
+        };
+        let owner = login(
+            "jc_shako_owner",
+            &format!("GRANT CREATE, CONNECT ON DATABASE {db} TO jc_shako_owner;"),
+        );
+        let app = login(
+            "jc_shako_app",
+            &format!(
+                "GRANT CONNECT ON DATABASE {db} TO jc_shako_app; GRANT shako_app TO jc_shako_app;"
+            ),
+        );
+        let guest = login(
+            "jc_shako_guest",
+            &format!("GRANT CONNECT ON DATABASE {db} TO jc_shako_guest;"),
+        );
+        for (statement, _, _) in [&owner, &app, &guest] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement.clone()))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
+        let section = |migrate: &(String, String, PathBuf)| crate::pg::DatabaseSection {
+            url: app.1.clone(),
+            password_file: app.2.clone(),
+            max_connections: Some(2),
+            migrate_url: Some(migrate.1.clone()),
+            migrate_password_file: Some(migrate.2.clone()),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        };
+        let setup = with_kek(tmp.path(), Some(&"k".repeat(32)));
+        let repos = tmp.path().join("repos");
+        let cfg = |migrate: &(String, String, PathBuf)| ShakoSection {
+            database: Some(section(migrate)),
+            repo_root: Some(repos.clone()),
+            ..ShakoSection::default()
+        };
+
+        // An owner that may not create the schema refuses the start, the database left empty.
+        let e = build_state(&cfg(&guest), &setup)
+            .await
+            .err()
+            .expect("no CREATE, no migration")
+            .to_string();
+        assert!(e.contains("shako"), "{e}");
+
+        let (log, _guard) = super::super::capture_log();
+        let first = build_state(&cfg(&owner), &setup)
+            .await
+            .expect("migrated and served");
+        let token = setup
+            .value(crate::setup::Secret::ShakoToken)
+            .unwrap()
+            .to_owned();
+        let (_, v2) = build(
+            first,
+            jc_router::Mount::new("shako", "http", "localhost", "/shako").unwrap(),
+            "https://portal.city.test/",
+        );
+        use tower::ServiceExt as _;
+        let request = axum::http::Request::get("/v2/")
+            .header("authorization", format!("Bearer {token}"))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(v2.oneshot(request).await.unwrap().status().is_success());
+
+        // What a release before T-7523 left: a manifest in the store log, no blob of it.
+        let bytes =
+            br#"{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}"#;
+        let digest = format!("sha256:{}", shako_core::sha256_hex(bytes));
+        let record = serde_json::json!({
+            "id": "0190a000-0000-7000-8000-0000000077a1", "instanceId": INSTANCE, "orgId": ORG,
+            "packageId": "0190a000-0000-7000-8000-0000000077a2", "owner": "city",
+            "packageType": "container", "packageName": "image", "version": "old",
+            "digest": digest, "mediaType": "application/vnd.oci.image.manifest.v1+json",
+            "subjectDigest": null, "artifactType": null, "sizeBytes": bytes.len(),
+            "signed": false, "createdAt": "2026-11-01T00:00:00Z", "manifestBytes": bytes.to_vec(),
+        });
+        let in_db = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone().database(&db))
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO shako.store_log (instance_id, org_id, op) VALUES ($1, $2, $3)")
+            .bind(INSTANCE.as_uuid())
+            .bind(ORG.as_uuid())
+            .bind(serde_json::json!({"op": "upsert_package_version", "args": record}))
+            .execute(&in_db)
+            .await
+            .unwrap();
+        build_state(&cfg(&owner), &setup)
+            .await
+            .expect("a restart serves");
+        let blobs: Vec<_> = walk(&repos)
+            .into_iter()
+            .filter(|f| std::fs::read(f).is_ok_and(|b| b == bytes))
+            .collect();
+        assert_eq!(blobs.len(), 1, "the manifest is a blob: {blobs:?}");
+        /// Whether the trim was logged, asked after a tick that lets the spawned trim run.
+        async fn trimmed(log: &Path) -> bool {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            std::fs::read_to_string(log)
+                .unwrap()
+                .contains("store log trimmed")
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !trimmed(log.path()).await {}
+        })
+        .await
+        .expect("the log is trimmed beside the start");
+        let log = std::fs::read_to_string(log.path()).unwrap();
+        assert!(
+            log.contains("the manifests are blobs") && log.contains("copied=1"),
+            "{log}"
+        );
+        assert!(!log.contains("pw-jc_shako"), "no password is logged");
+
+        // A request login that passes row level security by refuses the start.
+        sqlx::raw_sql("ALTER ROLE jc_shako_app BYPASSRLS")
+            .execute(&server)
+            .await
+            .unwrap();
+        let e = build_state(&cfg(&owner), &setup)
+            .await
+            .err()
+            .expect("BYPASSRLS refused")
+            .to_string();
+        assert!(e.contains("shako"), "{e}");
+        for statement in [
+            "ALTER ROLE jc_shako_app NOBYPASSRLS".to_owned(),
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
+    }
+
+    /// Every file under `dir`.
+    fn walk(dir: &Path) -> Vec<PathBuf> {
+        let mut files = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                files.extend(walk(&path));
+            } else {
+                files.push(path);
+            }
+        }
+        files
     }
 
     #[tokio::test]
@@ -407,6 +616,48 @@ mod tests {
             .expect("no signing key")
             .to_string();
         assert!(e.contains("no signing key"), "{e}");
+    }
+
+    /// A forge without the admin token (its container holds the signing key alone, as a role
+    /// split hands it) starts and answers no bearer at all.
+    #[tokio::test]
+    async fn without_the_admin_token_no_bearer_reaches_the_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut given = BTreeMap::new();
+        given.insert(
+            crate::setup::Secret::ShakoSigningKey,
+            crate::setup::Given {
+                secret: jc_secret::Secret::new("1".repeat(64)),
+                source: jc_secret::Source::Env,
+                path: None,
+            },
+        );
+        let setup = crate::setup::Setup::prepare_with(
+            tmp.path(),
+            &[Module::Antares],
+            &given,
+            &[crate::setup::Secret::ShakoSigningKey],
+        )
+        .unwrap();
+        assert!(setup.value(crate::setup::Secret::ShakoToken).is_none());
+        let state = build_state(&ShakoSection::default(), &setup).await.unwrap();
+        let (_, v2) = build(
+            state,
+            jc_router::Mount::new("shako", "http", "localhost", "/shako").unwrap(),
+            "https://portal.city.test/",
+        );
+        use tower::ServiceExt as _;
+        for bearer in ["", "1111111111111111", "not-a-token"] {
+            let request = axum::http::Request::get("/v2/")
+                .header("authorization", format!("Bearer {bearer}"))
+                .body(axum::body::Body::empty())
+                .unwrap();
+            assert_eq!(
+                v2.clone().oneshot(request).await.unwrap().status(),
+                axum::http::StatusCode::UNAUTHORIZED,
+                "{bearer:?}"
+            );
+        }
     }
 
     #[test]

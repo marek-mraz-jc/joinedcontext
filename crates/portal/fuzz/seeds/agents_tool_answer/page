@@ -1,0 +1,1 @@
+{"result":{"structuredContent":{"entities":[{"location":{"type":"MultiLineString","coordinates":[[[24.9,60.1],[25.0,60.2]]]}}],"total":3,"nextCursor":"abc"}},"arguments":{"attrs":"a, b"}}

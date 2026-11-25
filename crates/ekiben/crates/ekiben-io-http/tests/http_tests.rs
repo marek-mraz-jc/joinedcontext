@@ -1293,3 +1293,513 @@ async fn the_client_sends_basic_auth_multipart_and_payload_bodies_as_configured(
     let body = String::from_utf8_lossy(&seen[3].2);
     assert!(body.contains("m1") && body.contains("m2"), "{body}");
 }
+
+/// A server answering its n-th connection with `answers[n]` (the last one repeated); an empty
+/// answer closes the connection unanswered. Counts the connections.
+async fn scripted_server(answers: Vec<&'static [u8]>) -> (String, Arc<AtomicUsize>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    tokio::spawn(async move {
+        while let Ok((mut s, _)) = listener.accept().await {
+            let n = seen.fetch_add(1, Ordering::SeqCst);
+            let answer = answers[n.min(answers.len() - 1)];
+            tokio::spawn(async move {
+                let mut buf = [0u8; 8192];
+                let _ = s.read(&mut buf).await;
+                if !answer.is_empty() {
+                    let _ = s.write_all(answer).await;
+                }
+            });
+        }
+    });
+    (format!("http://{addr}"), count)
+}
+
+/// A bound, never-listening socket: its port refuses connections while the socket lives.
+fn closed_port() -> (tokio::net::TcpSocket, String) {
+    let s = tokio::net::TcpSocket::new_v4().unwrap();
+    s.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = s.local_addr().unwrap();
+    (s, format!("http://{addr}"))
+}
+
+fn client_conf(url: &str, extra: serde_json::Value) -> Arc<ekiben_io_http::client::HttpClient> {
+    let mut c =
+        serde_json::json!({ "url": url, "verb": "POST", "retries": 0, "retry_period": "1ms" });
+    c.as_object_mut()
+        .unwrap()
+        .extend(extra.as_object().unwrap().clone());
+    ekiben_io_http::client::HttpClient::from_json_config(&c, "POST", &Environment::new())
+        .expect("config")
+}
+
+fn oauth_conf(token_url: &str) -> serde_json::Value {
+    serde_json::json!({ "oauth2": {
+        "enabled": true, "client_key": "k", "client_secret": "s", "token_url": token_url
+    } })
+}
+
+async fn send_err(
+    client: &ekiben_io_http::client::HttpClient,
+    sctx: &StreamContext,
+    parts: Vec<Part>,
+) -> String {
+    client
+        .send(parts, false, &sctx.org, &sctx.resources)
+        .await
+        .expect_err("the call fails")
+        .to_string()
+}
+
+/// Each way a token endpoint fails names what went wrong and sends no call.
+#[tokio::test]
+async fn a_failing_token_endpoint_is_named_and_no_call_is_sent() {
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let (api, calls) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+    ])
+    .await;
+    let (_closed, refused) = closed_port();
+    let unauthorized: &[u8] =
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}";
+    let (header_then_drop, _) = scripted_server(vec![unauthorized, b""]).await;
+    let (busy, _) = scripted_server(vec![
+        b"HTTP/1.1 429 Too Many Requests\r\nRetry-After: 30\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}",
+    ])
+    .await;
+    let (not_json, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nnope!",
+    ])
+    .await;
+    let (no_token, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 18\r\nConnection: close\r\n\r\n{\"token_type\":\"x\"}",
+    ])
+    .await;
+    for (token_url, want) in [
+        (refused.clone(), "OAuth2 token request failed"),
+        (header_then_drop, "OAuth2 token request failed"),
+        (busy.clone(), "429"),
+        (not_json, "invalid OAuth2 token response"),
+        (no_token, "OAuth2 response missing access_token"),
+    ] {
+        let client = client_conf(
+            &format!("{api}/x"),
+            oauth_conf(&format!("{token_url}/token")),
+        );
+        let err = send_err(&client, &sctx, vec![Part::new(b"b".to_vec())]).await;
+        assert!(err.contains(want), "{token_url}: {err}");
+        assert!(!err.contains("\"s\""), "no secret in {err}");
+    }
+    // After the 429 the token endpoint is held back for its Retry-After.
+    let client = client_conf(&format!("{api}/x"), oauth_conf(&format!("{busy}/token")));
+    let err = send_err(&client, &sctx, vec![Part::new(b"b".to_vec())]).await;
+    assert!(err.contains("held back"), "{err}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "no call without a token");
+
+    // A token URL on a private address is refused like any other call, before a request.
+    let (_reg, _pctx, guarded) = setup_contexts(false);
+    let client = client_conf(
+        "https://api.example.org/x",
+        oauth_conf(&format!("{refused}/guarded-token")),
+    );
+    let err = send_err(&client, &guarded, vec![Part::new(b"b".to_vec())]).await;
+    assert!(err.contains("SSRF protection"), "{err}");
+}
+
+/// A token past its life is fetched again before the next call.
+#[tokio::test]
+async fn an_expired_token_is_fetched_again() {
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let (api, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok",
+    ])
+    .await;
+    let (tokens, fetched) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 35\r\nConnection: close\r\n\r\n{\"access_token\":\"t\",\"expires_in\":5}",
+    ])
+    .await;
+    let client = client_conf(&format!("{api}/x"), oauth_conf(&format!("{tokens}/token")));
+    for _ in 0..2 {
+        client
+            .send(
+                vec![Part::new(b"b".to_vec())],
+                false,
+                &sctx.org,
+                &sctx.resources,
+            )
+            .await
+            .expect("call");
+    }
+    assert_eq!(fetched.load(Ordering::SeqCst), 1, "a live token is reused");
+    // expires_in 5 keeps the token for 1 s (10 s early, at least 1 s).
+    tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+    client
+        .send(
+            vec![Part::new(b"b".to_vec())],
+            false,
+            &sctx.org,
+            &sctx.resources,
+        )
+        .await
+        .expect("call");
+    assert_eq!(
+        fetched.load(Ordering::SeqCst),
+        2,
+        "the expired token is fetched again"
+    );
+}
+
+/// Retries, a 401 without OAuth2, `successful_on` and the response size caps.
+#[tokio::test]
+async fn the_client_retries_caps_and_accepts_statuses_as_configured() {
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let one = || vec![Part::new(b"b".to_vec())];
+
+    let (unauth, n) = scripted_server(vec![
+        b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 4\r\nConnection: close\r\n\r\nnope",
+    ])
+    .await;
+    let err = send_err(&client_conf(&unauth, serde_json::json!({})), &sctx, one()).await;
+    assert!(err.contains("unexpected response code (401)"), "{err}");
+    assert_eq!(n.load(Ordering::SeqCst), 1, "no token to refresh: one call");
+
+    let (down, n) = scripted_server(vec![
+        b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndown",
+    ])
+    .await;
+    let err = send_err(
+        &client_conf(&down, serde_json::json!({ "retries": 2 })),
+        &sctx,
+        one(),
+    )
+    .await;
+    assert!(err.contains("(500)"), "{err}");
+    assert_eq!(
+        n.load(Ordering::SeqCst),
+        3,
+        "a 5xx is retried after the linear period"
+    );
+
+    let (_closed, refused) = closed_port();
+    let err = send_err(
+        &client_conf(&refused, serde_json::json!({ "retries": 1 })),
+        &sctx,
+        one(),
+    )
+    .await;
+    assert!(err.contains("error sending request"), "{err}");
+
+    let (missing, _) = scripted_server(vec![
+        b"HTTP/1.1 404 Not Found\r\nX-Raw: \xff\xfe\r\nX-Kept: yes\r\nContent-Length: 4\r\nConnection: close\r\n\r\ngone",
+    ])
+    .await;
+    let out = client_conf(
+        &missing,
+        serde_json::json!({ "successful_on": [404], "extract_headers": { "include_prefixes": ["x-"] } }),
+    )
+    .send(one(), false, &sctx.org, &sctx.resources)
+    .await
+    .expect("404 is listed as success");
+    assert_eq!(out[0].as_bytes_ref().as_ref(), b"gone");
+    assert_eq!(out[0].meta_get_str("x-kept"), "yes");
+    assert_eq!(
+        out[0].meta_get_str("x-raw"),
+        "",
+        "a header that is not UTF-8 is skipped"
+    );
+
+    let (big, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\n0123456789",
+    ])
+    .await;
+    let err = send_err(
+        &client_conf(&big, serde_json::json!({ "max_response_bytes": 4 })),
+        &sctx,
+        one(),
+    )
+    .await;
+    assert!(
+        err.contains("Content-Length (10 bytes) exceeds maximum allowed (4 bytes)"),
+        "{err}"
+    );
+
+    let (cut, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\nConnection: close\r\n\r\nabc",
+    ])
+    .await;
+    let err = send_err(&client_conf(&cut, serde_json::json!({})), &sctx, one()).await;
+    assert!(!err.is_empty(), "a body cut short fails the call");
+
+    let chunked: &[u8] = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n3\r\nabc\r\n3\r\ndef\r\n0\r\n\r\n";
+    let (stream, _) = scripted_server(vec![chunked]).await;
+    let err = send_err(
+        &client_conf(&stream, serde_json::json!({ "max_response_bytes": 4 })),
+        &sctx,
+        one(),
+    )
+    .await;
+    assert!(
+        err.contains("body exceeds maximum allowed size (4 bytes)"),
+        "{err}"
+    );
+    let out = client_conf(&stream, serde_json::json!({ "max_response_bytes": 6 }))
+        .send(one(), false, &sctx.org, &sctx.resources)
+        .await
+        .expect("a chunked body inside the cap");
+    assert_eq!(out[0].as_bytes_ref().as_ref(), b"abcdef");
+}
+
+struct SlowOnce(AtomicUsize);
+
+#[async_trait::async_trait]
+impl ekiben_core::RateLimit for SlowOnce {
+    async fn access(&self, _parts: &[Part]) -> Result<std::time::Duration, ekiben_core::CoreError> {
+        Ok(match self.0.fetch_add(1, Ordering::SeqCst) {
+            0 => std::time::Duration::from_millis(5),
+            _ => std::time::Duration::ZERO,
+        })
+    }
+}
+
+/// A rate limit waits before the call, metadata becomes headers, a payload without a type is
+/// octet-stream, and the config's odd shapes are skipped or refused by name.
+#[tokio::test]
+async fn the_client_paces_and_builds_requests_from_the_config() {
+    let (base, seen) = echo_server().await;
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let limit = Arc::new(SlowOnce(AtomicUsize::new(0)));
+    sctx.resources
+        .insert_rate_limit(&sctx.org.org_id, "slow", limit.clone());
+    let mut part = Part::new(b"body".to_vec());
+    part.meta_set_str("trace_id", "t-1");
+    part.meta_set_str("other", "no");
+    client_conf(
+        &base,
+        serde_json::json!({
+            "rate_limit": "slow",
+            "metadata": { "include_prefixes": ["trace_"] },
+            "payload": "raw",
+            "headers": { "X-Number": 5, "X-Text": "t" },
+            "multipart": [5],
+            "timeout": "0s",
+        }),
+    )
+    .send(vec![part], false, &sctx.org, &sctx.resources)
+    .await
+    .expect("paced call");
+    assert_eq!(
+        limit.0.load(Ordering::SeqCst),
+        2,
+        "waited once, then admitted"
+    );
+    {
+        let seen = seen.lock().unwrap();
+        let (_, headers, body) = &seen[0];
+        assert_eq!(headers["trace_id"], "t-1");
+        assert!(headers.get("other").is_none());
+        assert!(
+            headers.get("x-number").is_none(),
+            "a non-string header is skipped"
+        );
+        assert_eq!(headers["x-text"], "t");
+        assert_eq!(headers["content-type"], "application/octet-stream");
+        assert_eq!(body, b"raw");
+    }
+
+    let err = send_err(
+        &client_conf(&base, serde_json::json!({ "rate_limit": "missing" })),
+        &sctx,
+        vec![Part::new(b"b".to_vec())],
+    )
+    .await;
+    assert!(
+        err.contains("rate limit resource 'missing' was not found"),
+        "{err}"
+    );
+
+    let bad_url = client_conf("${! content().number() }", serde_json::json!({}));
+    let err = send_err(&bad_url, &sctx, vec![Part::new(b"x".to_vec())]).await;
+    assert!(err.contains("url interpolation error"), "{err}");
+    for (target, want) in [
+        ("ftp://a.example.org/x", "refused URL scheme 'ftp'"),
+        ("not a url", "invalid URL"),
+    ] {
+        let err = send_err(
+            &client_conf("${! content() }", serde_json::json!({})),
+            &sctx,
+            vec![Part::new(target.as_bytes().to_vec())],
+        )
+        .await;
+        assert!(err.contains(want), "{target}: {err}");
+    }
+}
+
+/// A redirect is followed up to the cap (5 hops) and never to another scheme.
+#[tokio::test]
+async fn redirects_are_capped_and_kept_on_http() {
+    let (_reg, _pctx, sctx) = setup_contexts(true);
+    let (final_url, _) = scripted_server(vec![
+        b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndone",
+    ])
+    .await;
+    let hop: &'static str = Box::leak(
+        format!("HTTP/1.1 302 Found\r\nLocation: {final_url}/end\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .into_boxed_str(),
+    );
+    let (once, _) = scripted_server(vec![hop.as_bytes()]).await;
+    let out = client_conf(&once, serde_json::json!({}))
+        .send(
+            vec![Part::new(b"b".to_vec())],
+            false,
+            &sctx.org,
+            &sctx.resources,
+        )
+        .await
+        .expect("followed");
+    assert_eq!(out[0].as_bytes_ref().as_ref(), b"done");
+
+    let (to_ftp, _) = scripted_server(vec![
+        b"HTTP/1.1 302 Found\r\nLocation: ftp://a.example.org/x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    ])
+    .await;
+    let err = send_err(
+        &client_conf(&to_ftp, serde_json::json!({})),
+        &sctx,
+        vec![Part::new(b"b".to_vec())],
+    )
+    .await;
+    assert!(
+        err.contains("redirect to unsupported scheme 'ftp'"),
+        "{err}"
+    );
+
+    let (looping, _) = scripted_server(vec![
+        b"HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    ])
+    .await;
+    let err = send_err(
+        &client_conf(&looping, serde_json::json!({})),
+        &sctx,
+        vec![Part::new(b"b".to_vec())],
+    )
+    .await;
+    assert!(err.contains("exceeded maximum redirects (5)"), "{err}");
+}
+
+fn component(kind: &str, config: serde_json::Value) -> ComponentConfig {
+    ComponentConfig {
+        label: String::new(),
+        component_type: kind.to_string(),
+        config,
+        processors: Vec::new(),
+    }
+}
+
+/// The input, output and processor name themselves and refuse a paginate they cannot honour.
+#[tokio::test]
+async fn components_name_themselves_and_refuse_paginate_they_cannot_walk() {
+    use ekiben_core::{Input as _, Output as _, Processor as _};
+    use ekiben_io_http::{
+        input::HttpClientInput, output::HttpClientOutput, processor::HttpProcessor,
+    };
+    let (_reg, pctx, sctx) = setup_contexts(true);
+    let url = "https://api.example.org/x";
+    let bad_paginate = serde_json::json!({ "mode": "scroll" });
+    let link = serde_json::json!({ "mode": "link" });
+    for conf in [
+        serde_json::json!({ "url": url, "paginate": bad_paginate }),
+        serde_json::json!({ "url": url, "paginate": link, "stream": { "enabled": true } }),
+    ] {
+        let err = HttpClientInput::from_config(&component("http_client", conf.clone()), &sctx)
+            .err()
+            .expect("refused")
+            .to_string();
+        assert!(
+            err.contains("mode 'scroll'") || err.contains("cannot be combined with stream.enabled"),
+            "{conf}: {err}"
+        );
+    }
+    for conf in [
+        serde_json::json!({ "url": url, "paginate": bad_paginate }),
+        serde_json::json!({ "url": url, "paginate": link, "parallel": true }),
+    ] {
+        let err = HttpProcessor::from_config(&component("http", conf.clone()), &pctx)
+            .err()
+            .expect("refused")
+            .to_string();
+        assert!(
+            err.contains("mode 'scroll'")
+                || err.contains("cannot be combined with batch_as_multipart or parallel"),
+            "{conf}: {err}"
+        );
+    }
+    let mut input = HttpClientInput::from_config(
+        &component("http_client", serde_json::json!({ "url": url })),
+        &sctx,
+    )
+    .unwrap();
+    assert_eq!(input.input_type(), "http_client");
+    assert!(!input.is_connected());
+    input.connect(&sctx).await.unwrap();
+    assert!(input.is_connected());
+    input.close().await.unwrap();
+    assert!(!input.is_connected());
+    let output = HttpClientOutput::from_config(
+        &component("http_client", serde_json::json!({ "url": url })),
+        &sctx,
+    )
+    .unwrap();
+    assert_eq!(output.output_type(), "http_client");
+    let proc =
+        HttpProcessor::from_config(&component("http", serde_json::json!({ "url": url })), &pctx)
+            .unwrap();
+    assert_eq!(proc.processor_type(), "http");
+}
+
+/// A parallel processor sends each message alone; an output with propagate_response hands the
+/// answer to the input's sync response.
+#[tokio::test]
+async fn parallel_calls_and_propagated_responses_reach_their_targets() {
+    use ekiben_core::{Output as _, Processor as _, SyncResponseStore};
+    use ekiben_io_http::{output::HttpClientOutput, processor::HttpProcessor};
+    let (base, seen) = echo_server().await;
+    let (_reg, pctx, sctx) = setup_contexts(true);
+    let proc = HttpProcessor::from_config(
+        &component(
+            "http",
+            serde_json::json!({ "url": base, "verb": "POST", "parallel": true }),
+        ),
+        &pctx,
+    )
+    .unwrap();
+    let out = proc
+        .process_batch(&pctx, vec![Part::from_str("a"), Part::from_str("b")])
+        .await
+        .unwrap();
+    assert_eq!(out.iter().map(Vec::len).sum::<usize>(), 2);
+    assert_eq!(seen.lock().unwrap().len(), 2, "one call per message");
+
+    let output = HttpClientOutput::from_config(
+        &component(
+            "http_client",
+            serde_json::json!({ "url": base, "propagate_response": true }),
+        ),
+        &sctx,
+    )
+    .unwrap();
+    let store = SyncResponseStore::new();
+    let mut part = Part::from_str("c");
+    part.with_sync_response_store(store.clone());
+    output.write_batch(&sctx, vec![part]).await.unwrap();
+    let answered = store.read();
+    assert_eq!(answered[0][0].as_bytes_ref().as_ref(), b"ok");
+    // A message without a sync response store is sent all the same.
+    output
+        .write_batch(&sctx, vec![Part::from_str("d")])
+        .await
+        .unwrap();
+    assert_eq!(seen.lock().unwrap().len(), 4);
+}

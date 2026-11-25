@@ -1,0 +1,8 @@
+Done.
+
+```json
+{"tool":"query_endpoint","endpoint":"bikes","name":"query_entities","arguments":{"type":["T"]}}
+```
+```json
+{"tool":"search_catalog","q":" bikes "}
+```
