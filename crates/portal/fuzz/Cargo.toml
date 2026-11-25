@@ -22,6 +22,9 @@
 # that each add a line both keep theirs. Add a line, never a [[bin]] block (it would mix with
 # this array and cargo refuses the file).
 bin = [
+  { name = "build_digest", path = "fuzz_targets/build_digest.rs", test = false, doc = false, bench = false },
+  { name = "git_import_archive", path = "fuzz_targets/git_import_archive.rs", test = false, doc = false, bench = false },
+  { name = "catalogue_query", path = "fuzz_targets/catalogue_query.rs", test = false, doc = false, bench = false },
   { name = "selector", path = "fuzz_targets/selector.rs", test = false, doc = false, bench = false },
   { name = "filter", path = "fuzz_targets/filter.rs", test = false, doc = false, bench = false },
   { name = "prometheus", path = "fuzz_targets/prometheus.rs", test = false, doc = false, bench = false },

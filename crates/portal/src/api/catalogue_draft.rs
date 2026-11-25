@@ -511,6 +511,67 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// EP-80 (T-7815): what the draft knows comes from the mirror: the space's language and
+    /// model classes, the Organization's open-data contact (a contact without an e-mail is
+    /// none), and the project's own CKAN instance before another.
+    #[tokio::test]
+    async fn the_draft_knows_the_spaces_model_the_open_data_contact_and_the_projects_instance() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        put(
+            "Organization",
+            "bb",
+            ORG_NAMESPACE,
+            json!({ "contacts": [
+                { "role": "open-data", "name": "No mail" },
+                { "role": "press", "name": "Press", "email": "press@bb.sk" },
+                { "role": "open-data", "name": "Data desk", "email": "data@bb.sk" }
+            ] }),
+        );
+        put(
+            "ContextSpace",
+            "air",
+            "city",
+            json!({ "defaultLocale": "sk", "dataModelRef": "air-model" }),
+        );
+        put(
+            "DataModel",
+            "air-model",
+            "city",
+            json!({ "classes": ["AirQualityObserved", 7] }),
+        );
+        put(
+            "CkanInstance",
+            "another",
+            "city",
+            json!({ "organizationDefault": "town" }),
+        );
+        put(
+            "CkanInstance",
+            "zz-own",
+            "city",
+            json!({ "organizationDefault": "city" }),
+        );
+        let known = super::known(&state, "city", &json!({ "contextSpaceRef": "air" })).await;
+        assert_eq!(known.language, "sk");
+        assert_eq!(known.classes, ["AirQualityObserved"]);
+        assert_eq!(known.linkml, None, "no forge gives no source");
+        assert_eq!(
+            known.contact,
+            Some(("Data desk".to_owned(), "data@bb.sk".to_owned()))
+        );
+        assert_eq!(known.instance.as_deref(), Some("zz-own"));
+        assert_eq!(known.publisher.get("sk").map(String::as_str), Some("city"));
+    }
+
     const LINKML: &str = r#"
 id: https://example.org/bbsk
 prefixes:

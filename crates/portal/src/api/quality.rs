@@ -316,13 +316,13 @@ mod tests {
                 "{email} {project}/{name}"
             );
         }
-        let Ok(Json(public)) = ask("reader@hel.fi", "oulu", "stations").await else {
-            panic!("an Endpoint reader reads its score");
-        };
+        let Json(public) = ask("reader@hel.fi", "oulu", "stations")
+            .await
+            .expect("an Endpoint reader reads its score");
         assert!(public.parts.iter().all(|part| part.fix.is_none()));
-        let Ok(Json(owned)) = ask("owner@hel.fi", "oulu", "stations").await else {
-            panic!("a space reader reads its score");
-        };
+        let Json(owned) = ask("owner@hel.fi", "oulu", "stations")
+            .await
+            .expect("a space reader reads its score");
         assert!(owned.parts.iter().any(|part| part.fix.is_some()));
         assert_eq!(owned.score, public.score);
     }

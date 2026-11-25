@@ -124,14 +124,18 @@ where
     F: std::future::Future<Output = Result<CatalogueMap, ApiError>>,
 {
     let key = (slug.to_owned(), lang.to_owned());
-    if let Some(map) = MAPS.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+    if let Some(map) = MAPS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+    {
         return Ok(map);
     }
     let map = build.await?;
     let bytes = serde_json::to_vec(&map).map_or(usize::MAX, |b| b.len());
     let map = Arc::new(map);
     MAPS.lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(key, map.clone(), bytes);
     Ok(map)
 }
@@ -993,7 +997,11 @@ async fn action_with(
 
 async fn search(state: &AppState, base: &str, q: &str) -> Result<Arc<Vec<Value>>, String> {
     let key = (base.to_owned(), q.to_owned());
-    if let Some(datasets) = SEARCHES.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+    if let Some(datasets) = SEARCHES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&key)
+    {
         return Ok(datasets);
     }
     let rows = ROWS.to_string();
@@ -1021,13 +1029,15 @@ async fn search(state: &AppState, base: &str, q: &str) -> Result<Arc<Vec<Value>>
     let datasets = Arc::new(datasets);
     SEARCHES
         .lock()
-        .unwrap_or_else(|e| e.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .insert(key, datasets.clone(), bytes);
     Ok(datasets)
 }
 
-/// The extras a page reads.
-const PAGE_EXTRAS: [&str; 5] = [
+/// The extras a page reads, and `endpoint`, which names the dataset's Endpoint here for an
+/// Organization's own host and a connector's search (T-7389, T-6272).
+const PAGE_EXTRAS: [&str; 6] = [
+    "endpoint",
     "theme",
     "spatial_uri",
     "spatial",
@@ -1081,9 +1091,15 @@ fn slim(dataset: &Value) -> Value {
     if let Some(resources) = dataset.get("resources").and_then(Value::as_array) {
         let formats = resources
             .iter()
-            .map(|r| match r.get("format") {
-                Some(format) => serde_json::json!({ "format": format }),
-                None => serde_json::json!({}),
+            .map(|r| {
+                // The address is the download a connector's search hit names (T-6269).
+                let mut kept = serde_json::Map::new();
+                for key in ["format", "url"] {
+                    if let Some(value) = r.get(key) {
+                        kept.insert(key.to_owned(), value.clone());
+                    }
+                }
+                Value::Object(kept)
             })
             .collect();
         kept.insert("resources".to_owned(), Value::Array(formats));
@@ -1113,12 +1129,15 @@ fn cached<T: Serialize>(headers: &HeaderMap, body: T) -> Response {
         format!("public, max-age={MAX_AGE_SECONDS}"),
     );
     let vary = (header::VARY, "accept-encoding".to_owned());
-    if takes_gzip(headers) {
-        if let Some(gz) = gzipped(&body) {
-            let json = (header::CONTENT_TYPE, "application/json".to_owned());
-            let encoding = (header::CONTENT_ENCODING, "gzip".to_owned());
-            return ([cache, vary, json, encoding], gz).into_response();
-        }
+    let gz = if takes_gzip(headers) {
+        gzipped(&body)
+    } else {
+        None
+    };
+    if let Some(gz) = gz {
+        let json = (header::CONTENT_TYPE, "application/json".to_owned());
+        let encoding = (header::CONTENT_ENCODING, "gzip".to_owned());
+        return ([cache, vary, json, encoding], gz).into_response();
     }
     ([cache, vary], Json(body)).into_response()
 }
@@ -1850,10 +1869,8 @@ pub async fn get_sample(
             "dataset '{name}' has no endpoint here that serves NGSI-LD"
         ))
     };
+    // Every Endpoint serves NGSI-LD (EP-10, [`served_representations`]).
     let endpoint = detail.endpoint.ok_or_else(no_sample)?;
-    if !endpoint.representations.iter().any(|r| r == "ngsi-ld") {
-        return Err(no_sample());
-    }
     let entity_type = detail
         .model
         .and_then(|m| m.classes.into_iter().next())
@@ -3271,6 +3288,624 @@ classes:
             .await
             .expect("a failure is not kept");
         assert_eq!(builds.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    use axum::http::StatusCode;
+
+    /// The public Endpoint of [`installation`].
+    const SLUG: &str = "airhelsinkizzzzzzzzzzzzzzzzz";
+
+    /// One installation over a CKAN mock and a gateway mock (T-7815): the catalogue `host` is
+    /// the deployment's own, read at `ckan`; project `helsinki` holds the Endpoint [`SLUG`] with
+    /// `endpoint` as its spec, serving the space `air` of the model `air-model`.
+    fn installation(host: &str, ckan: &str, gateway: Option<&str>, endpoint: Value) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.ckan_api_route = Some((host.parse().expect("url"), ckan.parse().expect("url")));
+        config.gateway_url = gateway.map(str::to_owned);
+        let state = AppState::new(config, None);
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        put("Project", "helsinki", "org", json!({}));
+        put(
+            "CkanInstance",
+            "opendata",
+            "helsinki",
+            json!({ "url": host, "apiTokenRef": { "name": "ckan-token", "key": "token" } }),
+        );
+        put(
+            "ContextSpace",
+            "air",
+            "helsinki",
+            json!({ "dataModelRef": "air-model" }),
+        );
+        put(
+            "DataModel",
+            "air-model",
+            "helsinki",
+            json!({ "classes": ["AirQualityObserved", "Tree"] }),
+        );
+        put("Endpoint", SLUG, "helsinki", endpoint);
+        state
+    }
+
+    /// A public Endpoint spec of the space `air` with one calendar and one feed.
+    fn public_spec() -> Value {
+        json!({
+            "contextSpaceRef": "air",
+            "slug": SLUG,
+            "audience": "public",
+            "enabledRepresentations": ["ngsi-ld", "ical"],
+            "representations": {
+                "ical": [{ "name": "events", "title": { "en": "Events" }, "sources": [{ "type": "Event" }] }],
+                "feed": [{ "name": "news", "title": { "sk": "Správy" }, "sources": [{ "type": "Event" }] }]
+            }
+        })
+    }
+
+    /// The `package_show` answer of a dataset published from [`SLUG`].
+    fn published(state: &AppState, name: &str) -> Value {
+        let ours = endpoint_url(&state.config.api_base_url(), SLUG);
+        json!({
+            "name": name,
+            "title": "Air quality",
+            "private": false,
+            "organization": { "name": "hel", "title": "Helsinki" },
+            "license_id": "cc-by-4.0",
+            "resources": [
+                { "url": format!("{ours}README.md"), "format": "Markdown" },
+                { "url": "https://files.example.org/air.csv", "name": "CSV", "description": "All rows" },
+                { "name": "no address" }
+            ],
+            "extras": [
+                { "key": "endpoint", "value": ours },
+                { "key": "temporal_start", "value": "2024-01-01" },
+                { "key": "contact_email", "value": "data@example.org" },
+                { "key": "theme", "value": "http://publications.europa.eu/resource/authority/data-theme/ENVI" }
+            ]
+        })
+    }
+
+    /// A CKAN mock answering `package_show` of `name` with `dataset`, and refusing any other.
+    async fn ckan_showing(name: &str, dataset: Value) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path, query_param};
+        let ckan = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/api/3/action/package_show"))
+            .and(query_param("id", name))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({ "success": true, "result": dataset })),
+            )
+            .mount(&ckan)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(404).set_body_json(json!({ "success": false })),
+            )
+            .mount(&ckan)
+            .await;
+        ckan
+    }
+
+    /// The status and JSON body of a handler's answer.
+    async fn answer(response: Result<Response, ApiError>) -> (StatusCode, Value) {
+        let response = response.unwrap_or_else(|e| e.into_response());
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// EP-82: the dataset page of a dataset published here names its Endpoint with its feeds and
+    /// calendars, the space's model, the README as its docs, its period and its contact.
+    #[tokio::test]
+    async fn a_dataset_page_names_the_endpoint_its_feeds_calendars_model_and_contact() {
+        let host = "https://cat-detail.example.invalid";
+        let state = installation(host, "http://127.0.0.1:9", None, public_spec());
+        let ckan = ckan_showing("air", published(&state, "air")).await;
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        let (status, page) =
+            answer(get_dataset(State(state.clone()), HeaderMap::new(), Path("air".into())).await)
+                .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        let url = endpoint_url(&state.config.api_base_url(), SLUG);
+        assert_eq!(page["endpoint"]["url"], json!(url));
+        assert_eq!(
+            page["endpoint"]["calendars"][0]["url"],
+            json!(format!("{url}feeds/events.ics"))
+        );
+        assert_eq!(page["endpoint"]["calendars"][0]["title"]["en"], "Events");
+        assert_eq!(page["endpoint"]["feeds"][0]["name"], "news");
+        assert_eq!(
+            page["endpoint"]["feeds"][0]["links"]
+                .as_array()
+                .map(Vec::len),
+            Some(3)
+        );
+        let served = page["endpoint"]["representations"]
+            .as_array()
+            .expect("a list");
+        assert!(
+            served.contains(&json!("feed")) && served.contains(&json!("ical")),
+            "{served:?}"
+        );
+        assert_eq!(page["model"]["name"], "air-model");
+        assert_eq!(page["model"]["docsUrl"], json!(format!("{url}README.md")));
+        assert_eq!(page["temporal"]["start"], "2024-01-01");
+        assert_eq!(page["contact"]["email"], "data@example.org");
+        assert_eq!(page["catalogueUrl"], json!(format!("{host}/dataset/air")));
+        let resources = page["resources"].as_array().expect("resources");
+        assert_eq!(
+            resources.len(),
+            2,
+            "a resource without an address is no resource"
+        );
+        assert_eq!(
+            resources[0]["name"],
+            json!(format!("{url}README.md")),
+            "no name: its address"
+        );
+        assert_eq!(resources[1]["description"], "All rows");
+        assert!(page["quality"].is_object(), "{page}");
+        assert_eq!(page["themes"][0]["code"], "ENVI", "{page}");
+    }
+
+    /// A dataset name past 100 characters, an empty one, a private dataset, one CKAN refuses and
+    /// one whose answer names another dataset are all "not in the catalogue".
+    #[tokio::test]
+    async fn a_dataset_the_catalogue_does_not_show_publicly_is_not_found() {
+        let host = "https://cat-missing.example.invalid";
+        let mut private = json!({ "name": "secret", "private": true });
+        let ckan = ckan_showing("secret", private.take()).await;
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        for name in [
+            String::new(),
+            "x".repeat(101),
+            "secret".to_owned(),
+            "unknown".to_owned(),
+        ] {
+            let (status, problem) = answer(
+                get_dataset(State(state.clone()), HeaderMap::new(), Path(name.clone())).await,
+            )
+            .await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{name}: {problem}");
+        }
+        let other = ckan_showing("alias", json!({ "name": "renamed" })).await;
+        let state = installation(host, &other.uri(), None, public_spec());
+        let (status, _) =
+            answer(get_dataset(State(state), HeaderMap::new(), Path("alias".into())).await).await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "an answer for another name is no answer"
+        );
+    }
+
+    /// No catalogue answering is a 503 a person can retry; no catalogue at all is a 404.
+    #[tokio::test]
+    async fn a_dataset_read_with_every_catalogue_down_is_unavailable_and_none_at_all_not_found() {
+        let state = installation(
+            "https://cat-down.example.invalid",
+            "http://127.0.0.1:9",
+            None,
+            public_spec(),
+        );
+        let (status, problem) =
+            answer(get_dataset(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+        assert!(problem.to_string().contains("try again"), "{problem}");
+        let bare = AppState::new(crate::config::Config::for_tests(), None);
+        let (status, _) =
+            answer(get_dataset(State(bare), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// The sample reads the first class of the space's model through the gateway, anonymously;
+    /// a gateway that refuses is a 503, a dataset of no Endpoint here a 404.
+    #[tokio::test]
+    async fn a_sample_reads_the_first_model_class_through_the_gateway() {
+        use wiremock::matchers::{method, path, query_param};
+        let gateway = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities")))
+            .and(query_param("type", "AirQualityObserved"))
+            .and(query_param("options", "keyValues"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "urn:ngsi-ld:AirQualityObserved:1", "type": "AirQualityObserved", "pm10": 12 }
+            ])))
+            .mount(&gateway)
+            .await;
+        let host = "https://cat-sample.example.invalid";
+        let probe = installation(host, "http://127.0.0.1:9", None, public_spec());
+        let ckan = ckan_showing("air", published(&probe, "air")).await;
+        let state = installation(host, &ckan.uri(), Some(&gateway.uri()), public_spec());
+        let (status, sample) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(status, StatusCode::OK, "{sample}");
+        assert!(sample.to_string().contains("pm10"), "{sample}");
+
+        let refusing = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&refusing)
+            .await;
+        let state = installation(host, &ckan.uri(), Some(&refusing.uri()), public_spec());
+        let (status, problem) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+        let state = installation(host, &ckan.uri(), Some("http://127.0.0.1:9"), public_spec());
+        let (status, _) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "a closed gateway port"
+        );
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        let (status, _) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no gateway: the public host"
+        );
+
+        let mut harvest = published(&probe, "harvest");
+        harvest["extras"] = json!([]);
+        let ckan = ckan_showing("harvest", harvest).await;
+        let state = installation(host, &ckan.uri(), Some(&gateway.uri()), public_spec());
+        let (status, problem) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("harvest".into())).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{problem}");
+        assert!(
+            problem.to_string().contains("no endpoint here"),
+            "{problem}"
+        );
+    }
+
+    /// A space with no model gives the sample no class to read: 404, not a guess.
+    #[tokio::test]
+    async fn a_sample_of_a_space_without_a_model_is_not_found() {
+        let host = "https://cat-nomodel.example.invalid";
+        let mut spec = public_spec();
+        spec["contextSpaceRef"] = json!("unknown-space");
+        let probe = installation(host, "http://127.0.0.1:9", None, spec.clone());
+        let ckan = ckan_showing("air", published(&probe, "air")).await;
+        let state = installation(host, &ckan.uri(), None, spec);
+        let (status, _) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// T-5628: the map reads the located rows of the first class the Endpoint serves through
+    /// the gateway; a full page asks the count, a gateway that refuses the rows is a 503 and a
+    /// dataset whose Endpoint is not public here a 404.
+    #[tokio::test]
+    async fn a_map_reads_the_located_rows_of_the_served_class_through_the_gateway() {
+        use wiremock::matchers::{method, path, query_param};
+        let gateway = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/types")))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Tree"] })),
+            )
+            .mount(&gateway)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities")))
+            .and(query_param("count", "true"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .insert_header("NGSILD-Results-Count", "4321")
+                    .set_body_json(json!([])),
+            )
+            .mount(&gateway)
+            .await;
+        let rows: Vec<Value> = (0..MAP_ROWS)
+            .map(|i| {
+                air(
+                    &format!("urn:ngsi-ld:Tree:{i}"),
+                    Some(json!({"type": "Point", "coordinates": [24.9, 60.1]})),
+                )
+            })
+            .collect();
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities")))
+            .and(query_param("type", "Tree"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(rows))
+            .mount(&gateway)
+            .await;
+        let host = "https://cat-map.example.invalid";
+        let probe = installation(host, "http://127.0.0.1:9", None, public_spec());
+        let ckan = ckan_showing("trees-t7815", published(&probe, "trees-t7815")).await;
+        let state = installation(host, &ckan.uri(), Some(&gateway.uri()), public_spec());
+        let map = get_map(
+            State(state),
+            HeaderMap::new(),
+            Path("trees-t7815".into()),
+            axum::extract::Query(MapQuery { lang: None }),
+        )
+        .await;
+        let (status, map) = answer(map).await;
+        assert_eq!(status, StatusCode::OK, "{map}");
+        assert_eq!(map["total"], 4321, "a full page asks the count");
+        assert_eq!(map["features"].as_array().map(Vec::len), Some(MAP_ROWS));
+
+        let refusing = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .respond_with(wiremock::ResponseTemplate::new(502))
+            .mount(&refusing)
+            .await;
+        let ckan = ckan_showing("down-t7815", published(&probe, "down-t7815")).await;
+        let state = installation(host, &ckan.uri(), Some(&refusing.uri()), public_spec());
+        let (status, problem) = answer(
+            get_map(
+                State(state),
+                HeaderMap::new(),
+                Path("down-t7815".into()),
+                axum::extract::Query(MapQuery {
+                    lang: Some("sk".into()),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+
+        let mut internal = public_spec();
+        internal["audience"] = json!("organization");
+        let ckan = ckan_showing("inside-t7815", published(&probe, "inside-t7815")).await;
+        let state = installation(host, &ckan.uri(), Some(&gateway.uri()), internal);
+        let (status, _) = answer(
+            get_map(
+                State(state),
+                HeaderMap::new(),
+                Path("inside-t7815".into()),
+                axum::extract::Query(MapQuery { lang: None }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "an internal Endpoint draws no public map"
+        );
+
+        let mut no_model = public_spec();
+        no_model["contextSpaceRef"] = json!("unknown-space");
+        let ckan = ckan_showing("nomodel-t7815", published(&probe, "nomodel-t7815")).await;
+        let state = installation(host, &ckan.uri(), Some(&gateway.uri()), no_model);
+        let (status, _) = answer(
+            get_map(
+                State(state),
+                HeaderMap::new(),
+                Path("nomodel-t7815".into()),
+                axum::extract::Query(MapQuery {
+                    lang: Some("cs".into()),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_FOUND,
+            "a space without a model draws no map"
+        );
+    }
+
+    /// A count header that is no number leaves the total unknown.
+    #[tokio::test]
+    async fn a_count_that_is_no_number_leaves_the_total_unknown() {
+        use wiremock::matchers::{method, query_param};
+        let gateway = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(query_param("count", "true"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).insert_header("NGSILD-Results-Count", "many"),
+            )
+            .mount(&gateway)
+            .await;
+        assert_eq!(counted(&format!("{}/e", gateway.uri()), "Tree").await, None);
+        assert_eq!(
+            counted("http://localhost:9/e", "Tree").await,
+            None,
+            "no answer, no count"
+        );
+    }
+
+    /// A catalogue answering something that is no CKAN document is unreachable, with the status.
+    #[tokio::test]
+    async fn a_catalogue_answer_that_is_no_json_is_unreachable() {
+        let base = answering(
+            "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 4\r\nConnection: close\r\n\r\noops",
+            0,
+        )
+        .await;
+        let read = action_with(&reqwest::Client::new(), &base, "package_show", &[]).await;
+        assert!(
+            matches!(read, Err(Failure::Unreachable(reason)) if reason.contains("502") && reason.contains("no CKAN document"))
+        );
+    }
+
+    #[test]
+    fn a_period_with_only_an_end_is_that_one_year() {
+        let d = json!({ "extras": [{ "key": "temporal_end", "value": "2021-12-31" }] });
+        assert_eq!(years(&d, 2026), vec![2021]);
+    }
+
+    /// EP-81: every catalogue down is a 503 naming them; a search text CKAN refuses (Solr cannot
+    /// parse `a:`) matches nothing; `?project=` that is no project name is refused before any read.
+    #[tokio::test]
+    async fn a_catalogue_search_with_every_catalogue_down_is_unavailable() {
+        let state = installation(
+            "https://cat-search-down.example.invalid",
+            "http://127.0.0.1:9",
+            None,
+            public_spec(),
+        );
+        let (status, problem) = answer(
+            get_catalogue(
+                State(state.clone()),
+                Err(ApiError::Unauthorized),
+                HeaderMap::new(),
+                RawQuery(Some("q=air".into())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+        assert!(problem.to_string().contains("cat-search-down"), "{problem}");
+        let (status, problem) = answer(
+            get_catalogue(
+                State(state),
+                Err(ApiError::Unauthorized),
+                HeaderMap::new(),
+                RawQuery(Some("project=Not_A_Project".into())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+        assert!(problem.to_string().contains("project"), "{problem}");
+    }
+
+    #[tokio::test]
+    async fn a_search_text_ckan_refuses_matches_nothing() {
+        let host = "https://cat-refused.example.invalid";
+        let ckan = ckan_showing("none", json!({})).await;
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        let (status, page) = answer(
+            get_catalogue(
+                State(state.clone()),
+                Err(ApiError::Unauthorized),
+                HeaderMap::new(),
+                RawQuery(Some("q=a%3A".into())),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{page}");
+        assert_eq!(page["total"], 0);
+    }
+
+    /// T-6027, T-6272: a connector's search names the slug of a public Endpoint here and lists the
+    /// catalogues that did not answer.
+    #[tokio::test]
+    async fn datasets_matching_names_a_public_slug_and_the_catalogues_down() {
+        use wiremock::matchers::{method, path};
+        let host = "https://cat-matching.example.invalid";
+        let probe = installation(host, "http://127.0.0.1:9", None, public_spec());
+        let ckan = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/api/3/action/package_search"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "success": true,
+                "result": { "results": [published(&probe, "air"), { "name": "hidden", "private": true }] }
+            })))
+            .mount(&ckan)
+            .await;
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        let (hits, unavailable) = datasets_matching(&state, "air-t7815", 5).await;
+        assert!(unavailable.is_empty(), "{unavailable:?}");
+        assert_eq!(hits.len(), 1, "a private dataset is no hit: {hits:?}");
+        assert_eq!(
+            hits[0]["endpoint"], SLUG,
+            "the search keeps the endpoint extra: {hits:?}"
+        );
+        assert_eq!(
+            hits[0]["resources"][1]["url"],
+            json!("https://files.example.org/air.csv"),
+            "the search keeps each resource's address: {hits:?}"
+        );
+        let down = installation(
+            "https://cat-matching-down.example.invalid",
+            "http://127.0.0.1:9",
+            None,
+            public_spec(),
+        );
+        let (hits, unavailable) = datasets_matching(&down, "air-t7815", 5).await;
+        assert!(hits.is_empty());
+        assert_eq!(
+            unavailable,
+            vec!["https://cat-matching-down.example.invalid".to_owned()]
+        );
+    }
+
+    #[test]
+    fn every_filter_of_the_query_is_read_and_a_blank_value_skipped() {
+        let filters = Filters::parse(Some(
+            "publisher=hel&format=CSV&licence=cc&spatial=SK&year=2024&theme=ENVI&project=pilot&q=&page=0&other=1",
+        ));
+        assert_eq!(filters.publisher, vec!["hel"]);
+        assert_eq!(filters.format, vec!["CSV"]);
+        assert_eq!(filters.licence, vec!["cc"]);
+        assert_eq!(filters.spatial, vec!["SK"]);
+        assert_eq!(filters.year, vec!["2024"]);
+        assert_eq!(filters.theme, vec!["ENVI"]);
+        assert_eq!(filters.project.as_deref(), Some("pilot"));
+        assert_eq!((filters.q.as_str(), filters.page), ("", 1));
+        assert_eq!(
+            Filters::parse(Some(&format!("q={}", "a".repeat(300))))
+                .q
+                .len(),
+            200
+        );
+    }
+
+    #[test]
+    fn a_spec_the_platform_refuses_lists_no_calendar_and_no_feed() {
+        assert!(calendars_of(&json!({ "slug": "short" }), "https://x/").is_empty());
+        assert!(feeds_of(&json!({ "representations": { "feed": 7 } }), "https://x/").is_empty());
+    }
+
+    #[test]
+    fn a_slim_dataset_keeps_the_organizations_name_and_title_and_each_resource_format() {
+        let slimmed = slim(&json!({
+            "name": "d",
+            "organization": { "name": "hel", "title": "Helsinki", "image_url": "x" },
+            "resources": [{ "format": "CSV", "url": "u" }, { "url": "v" }],
+            "extras": "no list"
+        }));
+        assert_eq!(
+            slimmed["organization"],
+            json!({ "name": "hel", "title": "Helsinki" })
+        );
+        assert_eq!(
+            slimmed["resources"],
+            json!([{ "format": "CSV", "url": "u" }, { "url": "v" }])
+        );
+        assert_eq!(extra(&json!({ "extras": "no list" }), "endpoint"), None);
+        assert_eq!(extra(&json!({}), "endpoint"), None);
+    }
+
+    /// A model the display order cannot parse orders by the heuristic, as a type without one.
+    #[test]
+    fn a_map_of_a_model_that_does_not_parse_still_draws_its_points() {
+        let entities = vec![air(
+            "urn:ngsi-ld:Tree:1",
+            Some(json!({"type": "Point", "coordinates": [1.0, 2.0]})),
+        )];
+        let map = map_of(
+            "Tree",
+            &entities,
+            Some("classes: [unterminated"),
+            None,
+            "en",
+        );
+        assert_eq!(map.features.len(), 1);
     }
 
     #[test]

@@ -548,6 +548,30 @@ mod tests {
         assert!(nameless.is_err(), "a record names its own project");
     }
 
+    /// An OTLP value of each scalar type is an event field; a list or kvlist is none.
+    #[test]
+    fn each_scalar_otlp_value_is_a_field_and_a_list_is_none() {
+        assert_eq!(
+            attribute_value(&json!({ "intValue": "42" })),
+            Some(json!(42))
+        );
+        assert_eq!(attribute_value(&json!({ "intValue": "4x" })), None);
+        assert_eq!(attribute_value(&json!({ "intValue": 7 })), Some(json!(7)));
+        assert_eq!(
+            attribute_value(&json!({ "doubleValue": 0.5 })),
+            Some(json!(0.5))
+        );
+        assert_eq!(
+            attribute_value(&json!({ "boolValue": true })),
+            Some(json!(true))
+        );
+        assert_eq!(
+            attribute_value(&json!({ "arrayValue": { "values": [] } })),
+            None
+        );
+        assert_eq!(attribute_value(&json!("bare")), None);
+    }
+
     #[test]
     fn the_gateways_rate_limited_row_is_an_event_of_its_kind() {
         let mut row = record(vec![
