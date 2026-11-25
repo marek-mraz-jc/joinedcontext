@@ -708,6 +708,11 @@ async fn every_advertised_schema_uri_reads_back() {
 
 /// One JSON-RPC method of the façade, as its `result` object.
 async fn rpc(slug: &str, method: &str, params: Value) -> Value {
+    rpc_answer(slug, method, params).await["result"].clone()
+}
+
+/// One JSON-RPC method of the façade, as the whole response (`result` or `error`).
+async fn rpc_answer(slug: &str, method: &str, params: Value) -> Value {
     let payload = json!({ "jsonrpc": "2.0", "id": 1, "method": method, "params": params });
     let raw = body_of(
         Request::builder()
@@ -721,7 +726,29 @@ async fn rpc(slug: &str, method: &str, params: Value) -> Value {
     .await;
     let answer: Value = serde_json::from_str(raw.trim_start_matches("data: ").trim())
         .unwrap_or_else(|error| panic!("the façade answered {raw}: {error}"));
-    answer["result"].clone()
+    answer
+}
+
+/// A describe call whose `arguments` is no object, or that names no describe tool, is a
+/// JSON-RPC invalid-params error; an omitted or null `arguments` is the empty object, so the
+/// summary answers.
+#[tokio::test]
+async fn a_describe_call_with_no_object_or_an_unknown_name_is_invalid_params() {
+    for params in [
+        json!({ "name": "describe_schema", "arguments": [] }),
+        json!({ "name": "describe_everything" }),
+    ] {
+        let answer = rpc_answer(SLUG, "tools/call", params.clone()).await;
+        assert_eq!(answer["error"]["code"], -32602, "{params}: {answer}");
+    }
+    let answer = rpc_answer(
+        SLUG,
+        "tools/call",
+        json!({ "name": "describe_schema", "arguments": null }),
+    )
+    .await;
+    assert!(answer["error"].is_null(), "{answer}");
+    assert_ne!(answer["result"]["isError"], true, "{answer}");
 }
 
 /// T-3646: a narrowed call reads the broker's class descriptions and nothing it renders itself;
