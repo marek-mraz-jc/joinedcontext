@@ -2849,6 +2849,7 @@ dependencies = [
  "joinedcontext-portal",
  "libfuzzer-sys",
  "serde_json",
+ "tokio",
  "url",
  "zeroize",
 ]
