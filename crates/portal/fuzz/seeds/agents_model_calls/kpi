@@ -1,0 +1,3 @@
+```json
+{"tool":"draft_kpi_pipeline","name":"bikes-avg","type":"BikeHireDockingStation","attribute":"availableBikeNumber","agg":"avg","every":"15m","targetSpace":"transport-kpis"}
+```

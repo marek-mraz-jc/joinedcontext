@@ -20,7 +20,10 @@ fuzz_target!(|data: &[u8]| {
         Err(ApiError::Unprocessable { detail, errors }) => {
             assert!(detail.starts_with("identity: "), "{detail}");
             assert_eq!(errors, vec![detail.clone()]);
-            assert_eq!(detail.contains("public key"), text.trim().starts_with("age1"));
+            assert_eq!(
+                detail.contains("public key"),
+                text.trim().starts_with("age1")
+            );
         }
         Err(other) => panic!("not a 422: {other}"),
     }

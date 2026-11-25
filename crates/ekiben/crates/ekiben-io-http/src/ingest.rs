@@ -22,13 +22,14 @@ pub fn router() -> Router {
 
 /// Serves the ingest listener on `listener` until the process ends; `http_server` inputs
 /// connected from now on register here.
-pub async fn serve(listener: tokio::net::TcpListener) -> std::io::Result<()> {
+pub fn serve(
+    listener: tokio::net::TcpListener,
+) -> impl std::future::Future<Output = std::io::Result<()>> {
     mark_ingest_active();
-    axum::serve(
+    std::future::IntoFuture::into_future(axum::serve(
         listener,
         router().into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .await
+    ))
 }
 
 /// Marks the ingest listener as present without serving it (for a caller driving [`router`]
