@@ -75,3 +75,14 @@ path = "fuzz_targets/project_mount.rs"
 test = false
 doc = false
 bench = false
+
+# The platform workspace's patches (its Cargo.toml), from here: without them jc-core links the
+# released ngsild-ql of the git tag, which lacks what jc-core calls (T-7831).
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
+[patch.crates-io]
+rstar = { path = "../../../../../crates/antares/vendor/rstar" }
+geo-types = { path = "../../../../../crates/antares/vendor/geo-types" }
