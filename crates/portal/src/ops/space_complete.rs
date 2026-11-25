@@ -348,11 +348,11 @@ fn words_capitalized(raw: &str) -> String {
     parts
         .iter()
         .map(|p| {
+            // `p` is never empty: the filter above drops empty parts.
             let mut c = p.chars();
-            match c.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-            }
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -379,18 +379,17 @@ pub async fn run(
     // A name is local to its project and its ids render `{project}-{name}` (PF-84); only a
     // segment another space pins is taken, and that is said here while it is still a draft.
     let proposal = crate::spaces::propose_name(state, &caller.identity, project, &space_name);
-    let space_name = if proposal.available {
-        proposal.name
-    } else {
-        return Err(OpError::InvalidInput {
-            path: "/space".into(),
-            message: format!(
-                "the ids of '{space_name}' would carry {}; choose another name",
-                proposal
-                    .reason
-                    .unwrap_or_else(|| "a taken segment".to_owned()),
-            ),
-        });
+    // `available` is `reason.is_none()`, so the reason is the one test.
+    let space_name = match proposal.reason {
+        None => proposal.name,
+        Some(reason) => {
+            return Err(OpError::InvalidInput {
+                path: "/space".into(),
+                message: format!(
+                    "the ids of '{space_name}' would carry {reason}; choose another name"
+                ),
+            });
+        }
     };
 
     let mut found_kinds = Vec::new();
