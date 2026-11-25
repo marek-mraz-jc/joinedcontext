@@ -545,7 +545,10 @@ fn a_number_input_to_reduce_warns_that_reduce_is_not_needed() {
 /// classic condition over a query that answered no frames reads it as no data.
 #[test]
 fn a_node_with_two_expression_inputs_and_a_classic_over_no_frames() {
-    let ds = [series_set("D", "a", &[Some(1.0), Some(2.0)]), FrameSet::new("E", Vec::new())];
+    let ds = [
+        series_set("D", "a", &[Some(1.0), Some(2.0)]),
+        FrameSet::new("E", Vec::new()),
+    ];
     let nodes = [
         node(json!({ "refId": "C", "type": "math", "expression": "$A + $B" })),
         node(json!({ "refId": "A", "type": "math", "expression": "$D * 2" })),

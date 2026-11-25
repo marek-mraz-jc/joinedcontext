@@ -967,7 +967,8 @@ fn eval_node(
                     severity: NoticeSeverity::Warning,
                     text: format!("{dropped} items dropped from union(s)"),
                 };
-                if let ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } = first {
+                if let ExprValue::Number { notices, .. } | ExprValue::Series { notices, .. } = first
+                {
                     notices.push(notice);
                 }
             }
@@ -1179,21 +1180,44 @@ mod tests {
         let vars = HashMap::new();
         let scalar = |v| Box::new(AstNode::Scalar(v));
         let eval = |root: AstNode| {
-            let expr = MathExpr { raw: String::new(), root, var_names: Vec::new() };
+            let expr = MathExpr {
+                raw: String::new(),
+                root,
+                var_names: Vec::new(),
+            };
             expr.eval("C", &vars).expect_err("refused").to_string()
         };
-        let unary = eval(AstNode::Unary { op: "~".into(), arg: scalar(1.0) });
+        let unary = eval(AstNode::Unary {
+            op: "~".into(),
+            arg: scalar(1.0),
+        });
         assert!(unary.contains("unknown unary operator ~"), "{unary}");
-        let binary = eval(AstNode::Binary { op: "<>".into(), left: scalar(1.0), right: scalar(2.0) });
+        let binary = eval(AstNode::Binary {
+            op: "<>".into(),
+            left: scalar(1.0),
+            right: scalar(2.0),
+        });
         assert!(binary.contains("unknown binary operator <>"), "{binary}");
-        let func = eval(AstNode::Func { name: "sqrt".into(), args: vec![AstNode::Scalar(4.0)] });
+        let func = eval(AstNode::Func {
+            name: "sqrt".into(),
+            args: vec![AstNode::Scalar(4.0)],
+        });
         assert!(func.contains("unknown function sqrt"), "{func}");
     }
 
     /// Edge cases of the parser: empty, blank, unbalanced, trailing tokens and a depth over the cap.
     #[test]
     fn malformed_expressions_are_refused() {
-        for bad in ["", "   ", "(1 + 2", "1 2", "$A +", "abs()", "abs(1, 2)", "1 +* 2"] {
+        for bad in [
+            "",
+            "   ",
+            "(1 + 2",
+            "1 2",
+            "$A +",
+            "abs()",
+            "abs(1, 2)",
+            "1 +* 2",
+        ] {
             assert!(MathExpr::parse(bad).is_err(), "{bad:?} parsed");
         }
         let deep = format!("{}1{}", "(".repeat(20), ")".repeat(20));

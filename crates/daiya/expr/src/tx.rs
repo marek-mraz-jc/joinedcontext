@@ -1355,7 +1355,12 @@ mod tests {
     use serde_json::json;
 
     fn frame(fields: Vec<FieldColumn>) -> Frame {
-        Frame { name: "t".into(), ref_id: Some("A".into()), fields, meta: FrameMeta::default() }
+        Frame {
+            name: "t".into(),
+            ref_id: Some("A".into()),
+            fields,
+            meta: FrameMeta::default(),
+        }
     }
 
     fn nums(name: &str, vals: &[Option<f64>]) -> FieldColumn {
@@ -1365,7 +1370,10 @@ mod tests {
     /// A reducer the options name twice answers one column whose rows line up with `Field`.
     #[test]
     fn reduce_names_a_repeated_reducer_once() {
-        let frames = vec![frame(vec![nums("a", &[Some(1.0), Some(3.0)]), nums("b", &[Some(5.0)])])];
+        let frames = vec![frame(vec![
+            nums("a", &[Some(1.0), Some(3.0)]),
+            nums("b", &[Some(5.0)]),
+        ])];
         let out = tx_reduce(frames, &json!({"reducers": ["max", "min", "max", "nope"]}));
         let names: Vec<&str> = out[0].fields.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names.len(), 3, "{names:?}");
@@ -1376,7 +1384,10 @@ mod tests {
         assert_eq!(out[0].fields[2].values, vec![json!(1.0), json!(5.0)]);
         // Only unknown reducers: the frames pass through untouched.
         let frames = vec![frame(vec![nums("a", &[Some(1.0)])])];
-        assert_eq!(tx_reduce(frames.clone(), &json!({"reducers": ["nope"]})), frames);
+        assert_eq!(
+            tx_reduce(frames.clone(), &json!({"reducers": ["nope"]})),
+            frames
+        );
     }
 
     /// Merge edge cases: a field named twice in one frame counts once, and a short column gives
@@ -1388,13 +1399,23 @@ mod tests {
             nums("v", &[Some(1.0), Some(2.0)]),
             nums("v", &[Some(9.0)]),
         ]);
-        let two = frame(vec![FieldColumn::time("Time", vec![1]), nums("w", &[Some(7.0)])]);
+        let two = frame(vec![
+            FieldColumn::time("Time", vec![1]),
+            nums("w", &[Some(7.0)]),
+        ]);
         let out = tx_merge(vec![one, two]);
         assert_eq!(out.len(), 1, "{out:?}");
-        let time = out[0].fields.iter().find(|f| f.name == "Time").expect("Time kept");
+        let time = out[0]
+            .fields
+            .iter()
+            .find(|f| f.name == "Time")
+            .expect("Time kept");
         assert_eq!(time.values, vec![json!(1), json!(2)]);
         // One frame, or none with fields: nothing to merge.
-        assert_eq!(tx_merge(vec![frame(vec![]), frame(vec![nums("v", &[None])])]).len(), 2);
+        assert_eq!(
+            tx_merge(vec![frame(vec![]), frame(vec![nums("v", &[None])])]).len(),
+            2
+        );
         assert!(tx_merge(Vec::new()).is_empty());
     }
 
@@ -1403,9 +1424,15 @@ mod tests {
     fn sort_orders_nulls_before_numbers_both_ways() {
         let mut f = frame(vec![nums("v", &[Some(2.0), None, Some(1.0), None])]);
         sort_frame_by_col(&mut f, 0, false);
-        assert_eq!(f.fields[0].values, vec![Value::Null, Value::Null, json!(1.0), json!(2.0)]);
+        assert_eq!(
+            f.fields[0].values,
+            vec![Value::Null, Value::Null, json!(1.0), json!(2.0)]
+        );
         sort_frame_by_col(&mut f, 0, true);
-        assert_eq!(f.fields[0].values, vec![json!(2.0), json!(1.0), Value::Null, Value::Null]);
+        assert_eq!(
+            f.fields[0].values,
+            vec![json!(2.0), json!(1.0), Value::Null, Value::Null]
+        );
     }
 
     /// An outer join on a number key puts keys without a number (text, null) first, each in the
@@ -1415,19 +1442,33 @@ mod tests {
         let mut key = nums("k", &[Some(2.0), None]);
         key.values.push(json!("x"));
         let one = frame(vec![key, nums("a", &[Some(1.0), Some(2.0), Some(3.0)])]);
-        let two = frame(vec![nums("k", &[Some(1.0), Some(2.0)]), nums("b", &[Some(4.0), Some(5.0)])]);
+        let two = frame(vec![
+            nums("k", &[Some(1.0), Some(2.0)]),
+            nums("b", &[Some(4.0), Some(5.0)]),
+        ]);
         let out = tx_join_by_field(vec![one, two], &json!({"byField": "k"}));
-        let k = out[0].fields.iter().find(|f| f.name == "k").expect("key column");
+        let k = out[0]
+            .fields
+            .iter()
+            .find(|f| f.name == "k")
+            .expect("key column");
         assert_eq!(k.values.len(), 4, "{:?}", k.values);
         assert_eq!(&k.values[2..], &[json!(1.0), json!(2.0)]);
         let inner = tx_join_by_field(
             vec![
-                frame(vec![nums("k", &[Some(1.0), Some(2.0)]), nums("a", &[Some(1.0), Some(2.0)])]),
+                frame(vec![
+                    nums("k", &[Some(1.0), Some(2.0)]),
+                    nums("a", &[Some(1.0), Some(2.0)]),
+                ]),
                 frame(vec![nums("k", &[Some(2.0)]), nums("b", &[Some(5.0)])]),
             ],
             &json!({"byField": "k", "mode": "inner"}),
         );
-        let k = inner[0].fields.iter().find(|f| f.name == "k").expect("key column");
+        let k = inner[0]
+            .fields
+            .iter()
+            .find(|f| f.name == "k")
+            .expect("key column");
         assert_eq!(k.values, vec![json!(2.0)]);
     }
 
