@@ -370,6 +370,53 @@ async fn a_revert_proposes_the_manifest_without_the_text() {
     assert!(written.contains("Ostáva."), "{written}");
 }
 
+/// Reverting the only text drops `pages` and an appearance left empty; an Organization whose
+/// manifest is not loaded is a 404, and one whose appearance is no object is refused rather than
+/// overwritten (T-7813).
+#[tokio::test]
+async fn a_revert_of_the_last_text_drops_the_empty_appearance() {
+    let (state, shako) = world().await;
+    state.mirror.upsert(envelope(
+        "Organization",
+        "bbsk",
+        ORG_NAMESPACE,
+        json!({ "domain": "bbsk.sk", "locales": ["sk"], "defaultLocale": "sk",
+                "appearance": { "pages": [{ "page": "terms", "lang": "en", "markdown": "Plain words." }] } }),
+    ));
+    let (status, body) = on(&state, "bbsk", Some("bbadmin"), "GET", "", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, body) = on(&state, "bbsk", Some("bbadmin"), "DELETE", "/terms/en", None).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let written = written(&shako).await;
+    assert!(!written.contains("appearance"), "{written}");
+
+    let (status, body) = on(&state, "praha", Some("bbadmin"), "GET", "", None).await;
+    assert!(
+        matches!(status, StatusCode::NOT_FOUND | StatusCode::FORBIDDEN),
+        "{status}: {body}"
+    );
+
+    state.mirror.upsert(envelope(
+        "Organization",
+        "bbsk",
+        ORG_NAMESPACE,
+        json!({ "domain": "bbsk.sk", "locales": ["sk"], "defaultLocale": "sk", "appearance": "plain" }),
+    ));
+    let (status, body) = on(
+        &state,
+        "bbsk",
+        Some("bbadmin"),
+        "PUT",
+        "/support/sk",
+        Some(json!({ "markdown": "# Podpora" })),
+    )
+    .await;
+    assert!(
+        status.is_client_error() || status.is_server_error(),
+        "{status}: {body}"
+    );
+}
+
 /// Every file content the Portal wrote to the forge, decoded.
 async fn written(shako: &wiremock::MockServer) -> String {
     use base64::Engine;
