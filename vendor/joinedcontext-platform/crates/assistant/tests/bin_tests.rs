@@ -74,6 +74,7 @@ fn configured(dir: &Path, url: &str) -> Vec<(&'static str, String)> {
         ("JC_ASSISTANT_PROXY_URL", "http://127.0.0.1:9".into()),
         ("JC_ASSISTANT_TOKEN_URL", "http://127.0.0.1:9/token".into()),
         ("JC_ASSISTANT_LLM", "test-model".into()),
+        ("JC_ASSISTANT_PORTAL_URL", "https://portal.bin.example".into()),
         (
             "JC_ASSISTANT_CLIENT_SECRET_FILE",
             secret.display().to_string(),
@@ -253,6 +254,11 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
         "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: web\n  namespace: binproj\nspec:\n  source: website\n  startUrls: [https://jc-bin-test.invalid/]\n  schedule: \"* * * * *\"\n",
     )
     .expect("source manifest");
+    std::fs::write(
+        sources.join("guide.yaml"),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: guide\n  namespace: binproj\nspec:\n  source: guide\n",
+    )
+    .expect("guide manifest");
     let port = free_port();
     let mut child = command(&with(&base, "JC_ASSISTANT_BIND", &format!("127.0.0.1:{port}")))
         .stdout(Stdio::piped())
@@ -279,6 +285,21 @@ async fn ready_then(name: &str, test: &str, signal: &str) -> (bool, String) {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    // Ready comes before the queueing: wait until both sources have a job, then a moment for
+    // the minute to work them.
+    let database = admin_of(name).await;
+    while ready && Instant::now() < deadline {
+        let jobs: i64 = sqlx::query_scalar("SELECT count(DISTINCT source) FROM crawl_jobs")
+            .fetch_one(&database)
+            .await
+            .expect("the jobs are counted");
+        if jobs >= 2 {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    database.close().await;
     let pid = child.id().to_string();
     let killed = Command::new("kill")
         .args([signal, &pid])
@@ -309,4 +330,60 @@ async fn a_configured_service_stops_on_ctrl_c() {
     let (stopped, log) = ready_then(&name, "sigint", "-INT").await;
     assert!(stopped, "Ctrl-C stops it cleanly\n{log}");
     db::drop_database(admin, pool, &name).await;
+}
+
+/// A minute over a database that never answers logs each step it could not do, turns ready and
+/// queues nothing, so the next minute tries the same minutes again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_minute_without_its_database_turns_ready_and_queues_nothing() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+
+    let dir = scratch("deadpool");
+    let vars = configured(&dir, "unused");
+    let sources = dir.join("repo/projects/deadproj/assistant/sources");
+    std::fs::create_dir_all(&sources).expect("sources directory");
+    for (name, spec) in [
+        ("web", "source: website\n  startUrls: [https://jc-bin-test.invalid/]\n  schedule: \"* * * * *\""),
+        ("guide", "source: guide"),
+    ] {
+        std::fs::write(
+            sources.join(format!("{name}.yaml")),
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: KnowledgeSource\nmetadata:\n  name: {name}\n  namespace: deadproj\nspec:\n  {spec}\n"),
+        )
+        .expect("source manifest");
+    }
+    let lookup = |key: &str| vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+    // Nothing listens on port 9 of the loopback: every acquire fails after its short timeout.
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_millis(200))
+        .connect_lazy("postgres://postgres@127.0.0.1:9/none")
+        .expect("a lazy pool");
+    let embedder = assistant::embed::Embedder::from_lookup(&lookup, 1).expect("the remote embedder");
+    let credential = assistant::host::credential(&lookup).expect("the credential");
+    let config = assistant::host::chat_config(&lookup, credential).expect("the chat config");
+    let (chat_state, reader) =
+        assistant::service::chat_state(config, &pool, &embedder, "bin.example").expect("the chat");
+    let ready = Arc::new(AtomicBool::new(false));
+    let mut minute = assistant::host::Minute::new(
+        pool,
+        embedder,
+        assistant::crawl::Crawler::public().expect("the crawler"),
+        reader,
+        "bin.example".into(),
+        "dead".into(),
+        assistant::host::checkout(lookup).expect("the checkout"),
+        chat_state,
+        Arc::clone(&ready),
+    );
+    minute.work().await;
+    assert!(ready.load(Ordering::Relaxed), "a dead database still turns the pod ready");
+    assert_eq!(minute.queued_until, None, "no minute counts as queued");
+    assert!(minute.catalogue_digests.is_empty(), "no guide counts as queued");
+    // A checkout that cannot be read leaves the minute before anything else.
+    std::fs::remove_dir_all(dir.join("repo")).expect("the checkout goes");
+    std::fs::write(dir.join("repo"), "a file, not a checkout").expect("the file");
+    minute.work().await;
+    assert_eq!(minute.queued_until, None);
+    let _ = std::fs::remove_dir_all(&dir);
 }
