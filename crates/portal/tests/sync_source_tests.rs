@@ -365,6 +365,37 @@ async fn a_source_that_moved_reaches_a_reviewable_merge_request() {
     );
 }
 
+/// MF-29: a source that merges its green proposals itself is at the new revision as soon as the
+/// merge request opens: nothing waits for a reviewer and nothing is left recorded as open.
+#[tokio::test]
+async fn a_green_proposal_of_an_auto_merging_source_is_observed_at_once() {
+    let auto = source(json!({"interval": "30m"})).replace(
+        "  conflictPolicy: replace\n",
+        "  conflictPolicy: replace\n  autoMerge: true\n",
+    );
+    let (server, _) = forge(&[("projects/bb/sync/regional.yaml", auto)]).await;
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path_regex(
+            r"/PullRequests\(\d+\)/Shako\.Merge$",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let origin = Origin::at(MOVED);
+    let states = Arc::new(States::new(None));
+
+    let run = driver(&server, &origin, &states)
+        .tick(NOW)
+        .await
+        .expect("the pass runs");
+    assert_eq!(run.proposed.len(), 1, "flags: {:?}", run.flags);
+    let status = states.get("bb", "regional").await;
+    assert!(status.state.observed_revision.is_some(), "{status:?}");
+    assert_eq!(status.state.open_proposal, None);
+    assert_eq!(status.open_revision, None);
+}
+
 /// CC-03: the loop runs on its own timer and only on the replica that reconciles: a follower's
 /// ticks open nothing, the leader's first tick runs a pass that reaches the forge.
 #[tokio::test]
