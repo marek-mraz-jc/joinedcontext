@@ -14,7 +14,7 @@ use antares_model::TenantId;
 use antares_sql::store::any::{AnyStore, PgBackend};
 use antares_sql::store::pg;
 use antares_sql::store::pg::doc::{DocKind, PgDocStore};
-use antares_sql::store::pg::maintenance::{self, TemporalBackend};
+use antares_sql::store::pg::maintenance;
 use antares_store::confirmations::{Caps, Confirmation, Taken};
 use antares_store::filter::EntityFilter;
 use antares_store::{CurrentStateDriver as Driver, Kind};
@@ -239,10 +239,22 @@ async fn the_boot_probes_answer_a_database_they_cannot_read() {
     let url = require_db!();
     let own = own_database(&url, "probe").await;
     let raw = PgPool::connect(&own).await.expect("connect");
+    // the timescale CI image puts its extensions in template1 (T-7594)
     let info = pg::version_info(&raw).await;
     assert!(info.get("server").is_some(), "{info}");
-    assert!(info.get("postgis").is_none(), "{info}");
-    assert!(info.get("timescaledb").is_none(), "{info}");
+    for ext in ["postgis", "timescaledb"] {
+        let held: Option<String> =
+            sqlx::query_scalar("SELECT extversion FROM pg_extension WHERE extname = $1")
+                .bind(ext)
+                .fetch_optional(&raw)
+                .await
+                .expect("extensions");
+        assert_eq!(
+            info.get(ext).and_then(|v| v.as_str()),
+            held.as_deref(),
+            "{info}"
+        );
+    }
     raw.execute("CREATE TABLE _sqlx_migrations (version bigint)")
         .await
         .expect("a history without its columns");
@@ -266,10 +278,10 @@ async fn a_quiet_pass_deletes_nothing_and_a_dead_lease_is_closed() {
     let url = require_db!();
     let own = own_database(&url, "pass").await;
     let pool = pg::connect(&own, 6).await.expect("connect+migrate");
+    // a hypertable database where the CI image's template1 holds timescaledb
     let backend = maintenance::detect_temporal_backend(&pool)
         .await
         .expect("backend");
-    assert_eq!(backend, TemporalBackend::Partitioned);
     let first = maintenance::temporal_maintenance(&pool, backend, Some(30), Duration::ZERO)
         .await
         .expect("first pass");

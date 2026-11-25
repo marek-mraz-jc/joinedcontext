@@ -1833,15 +1833,13 @@ mod tests {
     /// of a list, nothing for any other shape, and no member without a scope.
     #[test]
     fn index_rows_code_the_mode_and_list_the_scopes() {
-        let reg = |extra: Value| {
+        let row = |extra: Value| {
             let mut r = json!({"id": "urn:csr:m", "endpoint": "http://cs",
                                "information": [{"entities": [{"type": "T"}]}]});
-            if let (Some(o), Value::Object(e)) = (r.as_object_mut(), extra) {
-                o.extend(e);
-            }
-            r
+            let extra = extra.as_object().cloned().expect("an object");
+            r.as_object_mut().expect("an object").extend(extra);
+            index_rows(&r).remove(0)
         };
-        let row = |extra: Value| index_rows(&reg(extra)).remove(0);
         for (mode, code) in [
             ("auxiliary", 0),
             ("inclusive", 1),

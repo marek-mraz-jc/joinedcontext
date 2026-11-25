@@ -173,11 +173,8 @@ pub(super) mod tests {
             let bytes = self.bytes.read().expect("bytes");
             let at = usize::try_from(offset).expect("offset");
             let end = at.checked_add(out.len()).expect("end");
-            out.copy_from_slice(
-                bytes
-                    .get(at..end)
-                    .ok_or_else(|| std::io::Error::other("past the end"))?,
-            );
+            let past_the_end = std::io::Error::from(std::io::ErrorKind::UnexpectedEof);
+            out.copy_from_slice(bytes.get(at..end).ok_or(past_the_end)?);
             Ok(())
         }
 
@@ -197,9 +194,8 @@ pub(super) mod tests {
             let mut bytes = self.bytes.write().expect("bytes");
             let at = usize::try_from(offset).expect("offset");
             let end = at.checked_add(data.len()).expect("end");
-            if bytes.len() < end {
-                bytes.resize(end, 0);
-            }
+            let len = bytes.len().max(end);
+            bytes.resize(len, 0);
             bytes
                 .get_mut(at..end)
                 .expect("resized")

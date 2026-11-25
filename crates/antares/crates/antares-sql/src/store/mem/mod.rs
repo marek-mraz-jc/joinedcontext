@@ -2879,4 +2879,39 @@ mod tests {
         assert!(booted, "the file boots once the disk answers");
         assert!(refused > 0, "no fault reached the boot");
     }
+
+    /// A conditional delete of an Entity that expired takes nothing, as a
+    /// read of it finds nothing.
+    #[tokio::test]
+    async fn a_conditional_delete_of_an_expired_entity_takes_nothing() {
+        let s = Store::default();
+        let t = TenantId::new("delexpired").expect("tenant");
+        s.write_inner()
+            .entities
+            .entry("delexpired".into())
+            .or_default()
+            .insert(
+                "urn:e:old".into(),
+                json!({"id": "urn:e:old", "type": "T", "expiresAt": "2000-01-01T00:00:00Z"}),
+            );
+        assert_eq!(s.delete_if(&t, "urn:e:old", &|_| true).await, None);
+        assert!(s.write_inner().entities["delexpired"].contains_key("urn:e:old"));
+    }
+
+    /// A data directory that cannot be made, or a data file that is a
+    /// directory, refuses the start and names the path.
+    #[test]
+    fn a_data_path_that_cannot_hold_the_file_refuses_the_start() {
+        let dir = tempdir("unopenable");
+        let file = dir.join("plain-file");
+        std::fs::write(&file, b"x").expect("a file");
+        let err = Store::open_file(&file.join("sub"))
+            .map(drop)
+            .expect_err("refused");
+        assert!(err.starts_with("create "), "{err}");
+        std::fs::create_dir_all(dir.join("antares.redb")).expect("a directory");
+        let err = Store::open_file(&dir).map(drop).expect_err("refused");
+        assert!(err.starts_with("open "), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
