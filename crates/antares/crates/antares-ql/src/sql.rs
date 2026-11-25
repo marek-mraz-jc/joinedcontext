@@ -344,12 +344,9 @@ fn literal(v: &QValue) -> Option<String> {
             if n.abs() >= 9_007_199_254_740_992.0 {
                 return None;
             }
-            // shortest round-trip form; jsonpath numbers are JSON numbers
-            let s = n.to_string();
-            if s.contains(['e', 'E']) {
-                return None; // exponent forms differ across parsers
-            }
-            s
+            // shortest round-trip form, never with an exponent (Rust's f64
+            // Display writes none); jsonpath numbers are JSON numbers
+            n.to_string()
         }
         // composite values never render as one literal — cmp_filter unfolds
         // them (Eq) or declines (everything else) before reaching here

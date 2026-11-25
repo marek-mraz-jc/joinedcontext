@@ -122,9 +122,11 @@ fn evict_lru_half<V>(map: &mut HashMap<Box<str>, Entry<V>>) {
     stamps.sort_unstable();
     // `keep` newest survive; a tie on the boundary stamp keeps both, which
     // costs at most a few entries over the half and never a bound.
-    let Some(&cut) = stamps.len().checked_sub(keep).and_then(|i| stamps.get(i)) else {
-        return;
-    };
+    // 0 < keep <= len / 2, so the cut is an entry's stamp
+    let cut = stamps
+        .get(stamps.len().saturating_sub(keep))
+        .copied()
+        .unwrap_or(0);
     map.retain(|_, e| e.1.load(Ordering::Relaxed) >= cut);
 }
 
@@ -283,7 +285,9 @@ pub fn geo_query(
 #[cfg(test)]
 pub(crate) fn serial_lock() -> std::sync::MutexGuard<'static, ()> {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    SERIAL.lock().unwrap_or_else(|poison| poison.into_inner())
+    SERIAL
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 // regex compiles run for hours under Miri; the fuzz job covers them
@@ -634,6 +638,14 @@ mod tests {
             geo_query("geo-probe-bad", build).is_some(),
             "…and is not retained as a failure: the next build runs"
         );
+        // boundedness under distinct geoQ keys
+        for i in 0..MAX_REGEX_CACHE + 64 {
+            geo_query(&format!("geo-bound-{i}"), build).expect("valid geoQ");
+            assert!(
+                GEO_CACHE.read().map(|c| c.len()).unwrap_or(usize::MAX) <= MAX_REGEX_CACHE,
+                "geo cache must stay bounded"
+            );
+        }
     }
 
     /// Concurrent use: the same and different patterns compiled from many
