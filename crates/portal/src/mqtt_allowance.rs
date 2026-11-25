@@ -710,12 +710,23 @@ pub(crate) mod tests {
         let taken: MqttAllowance =
             serde_json::from_value(hostnames(&["mqtt.helsinki.example", "mqtt.espoo.example"]))
                 .expect("reads");
-        let Err(ApiError::Conflict(reason)) = hostnames_free(&mirror, "helsinki", &taken) else {
-            panic!("a hostname another project holds is refused");
-        };
+        let refused = hostnames_free(&mirror, "helsinki", &taken);
         assert!(
-            reason.starts_with("spec.quotas.mqtt.customHostnames[1].name: `mqtt.espoo.example` is assigned to project `espoo`"),
-            "{reason}"
+            matches!(&refused, Err(ApiError::Conflict(reason))
+                if reason.starts_with("spec.quotas.mqtt.customHostnames[1].name: `mqtt.espoo.example` is assigned to project `espoo`")),
+            "a hostname another project holds is refused: {refused:?}"
+        );
+        // A Project whose own allowance does not read holds no hostname.
+        mirror.upsert(envelope(
+            "Project",
+            "vantaa",
+            ORG_NAMESPACE,
+            json!({"organizationRef": {"name": "hel"}, "quotas": {"mqtt": "not an allowance"}}),
+        ));
+        let holders = hostname_holders(&mirror);
+        assert!(
+            holders.values().flatten().all(|h| h.project != "vantaa"),
+            "{holders:?}"
         );
     }
 
@@ -746,16 +757,13 @@ pub(crate) mod tests {
             "roles": [{"name": "camera", "serviceAccounts": [7, "absent", "cam"], "publish": ["cams/#"]}],
             "limits": {"maxConnections": 1, "messagesPerSecond": 1} });
         let stranger = person(vec![]);
-        match check_accounts(&state, &stranger, "helsinki", &spec) {
-            Err(ApiError::Invalid { detail, errors }) => {
-                assert_eq!(errors, ["spec.roles[0].serviceAccounts[2]"]);
-                assert!(
-                    detail.contains("does not exist"),
-                    "the same words as an absent one: {detail}"
-                );
-            }
-            other => panic!("an account the caller cannot read: {other:?}"),
-        }
+        let unreadable = check_accounts(&state, &stranger, "helsinki", &spec);
+        assert!(
+            matches!(&unreadable, Err(ApiError::Invalid { detail, errors })
+                if errors == &["spec.roles[0].serviceAccounts[2]"]
+                    && detail.contains("does not exist")),
+            "an account the caller cannot read reads as an absent one: {unreadable:?}"
+        );
         let admin = person(vec![state.config.bootstrap_admins.clone()]);
         assert!(
             check_accounts(&state, &admin, "helsinki", &spec).is_ok(),
@@ -802,18 +810,17 @@ pub(crate) mod tests {
             .is_ok(),
             "the schema check refuses the shape"
         );
-        match check_project(
+        let past = check_project(
             &state,
             &admin,
             "helsinki",
             &quotas(json!({"enabled": true, "brokers": 4_000_000_000_u32})),
-        ) {
-            Err(ApiError::BadRequest(reason)) => assert!(
-                reason.contains("PF-97") && reason.contains("spec.quotas.mqtt"),
-                "{reason}"
-            ),
-            other => panic!("past the operator's bound: {other:?}"),
-        }
+        );
+        assert!(
+            matches!(&past, Err(ApiError::BadRequest(reason))
+                if reason.contains("PF-97") && reason.contains("spec.quotas.mqtt")),
+            "past the operator's bound: {past:?}"
+        );
     }
 
     #[test]
@@ -838,26 +845,89 @@ pub(crate) mod tests {
             )
         };
         assert!(judge("Endpoint", "air", json!({})).is_ok());
-        match judge("MqttBroker", "cams", broker(10)) {
-            Err(ApiError::Denied(reason)) => assert!(reason.contains("MQTT is off"), "{reason}"),
-            other => panic!("a broker past the allowance: {other:?}"),
-        }
+        let off = judge("MqttBroker", "cams", broker(10));
+        assert!(
+            matches!(&off, Err(ApiError::Denied(reason)) if reason.contains("MQTT is off")),
+            "a broker past the allowance: {off:?}"
+        );
         let quotas = json!({"quotas": {"mqtt": {"enabled": true, "brokers": 9}}});
-        match judge("Project", "helsinki", quotas) {
-            Err(ApiError::Denied(reason)) => {
-                assert!(reason.contains("spec.quotas.mqtt"), "{reason}")
-            }
-            other => panic!("a quota change by a non-admin: {other:?}"),
-        }
+        let changed = judge("Project", "helsinki", quotas);
+        assert!(
+            matches!(&changed, Err(ApiError::Denied(reason)) if reason.contains("spec.quotas.mqtt")),
+            "a quota change by a non-admin: {changed:?}"
+        );
         let account = json!({
             "owner": {"user": "aino"}, "purpose": "air", "credentials": [{"kind": "oauth-client", "name": "main"}],
             "roles": [{"role": "mqtt/air/sensor", "scope": {"project": "helsinki"}}]
         });
-        match judge("ServiceAccount", "fleet", account) {
-            Err(ApiError::Denied(reason)) => {
-                assert!(reason.starts_with("spec.roles[0].role:"), "{reason}");
-            }
-            other => panic!("a grant by a caller who may not read brokers: {other:?}"),
-        }
+        let grant = judge("ServiceAccount", "fleet", account);
+        assert!(
+            matches!(&grant, Err(ApiError::Denied(reason)) if reason.starts_with("spec.roles[0].role:")),
+            "a grant by a caller who may not read brokers: {grant:?}"
+        );
+    }
+
+    /// With the Organization's MQTT on, a broker passes both checks on the door, and a Project
+    /// write that keeps the stored allowance needs no admin; changing it does.
+    #[test]
+    fn check_manifest_admits_a_broker_inside_the_organizations_allowance() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-aino".into(),
+            username: "aino".into(),
+            email: Some("aino@hel.fi".into()),
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        };
+        state.mirror.upsert(envelope(
+            "Organization",
+            "hel",
+            ORG_NAMESPACE,
+            json!({"domain": "hel.fi", "limits": {"mqtt": {"enabled": true, "brokers": 2}}}),
+        ));
+        let stored = json!({"organizationRef": {"name": "hel"}, "quotas": {"mqtt": {"enabled": true, "brokers": 2}}});
+        state.mirror.upsert(envelope(
+            "Project",
+            "helsinki",
+            ORG_NAMESPACE,
+            stored.clone(),
+        ));
+        let judge = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            check_manifest(
+                &state,
+                &caller,
+                "helsinki",
+                &envelope(kind, name, namespace, spec),
+            )
+        };
+        let admitted = judge("MqttBroker", "cams", "helsinki", broker(10));
+        assert!(admitted.is_ok(), "{admitted:?}");
+        let kept = judge("Project", "helsinki", ORG_NAMESPACE, stored);
+        assert!(kept.is_ok(), "the stored allowance written again: {kept:?}");
+        let raised = judge(
+            "Project",
+            "helsinki",
+            ORG_NAMESPACE,
+            json!({"organizationRef": {"name": "hel"}, "quotas": {"mqtt": {"enabled": true, "brokers": 3}}}),
+        );
+        assert!(
+            matches!(&raised, Err(ApiError::Denied(reason)) if reason.contains("spec.quotas.mqtt")),
+            "{raised:?}"
+        );
+    }
+
+    /// Nothing to judge: no allowance switched on leaves the Organization's total silent, and a
+    /// broker spec that does not read is the schema check's to refuse.
+    #[test]
+    fn no_allowance_and_an_unreadable_broker_spec_pass_to_the_schema_check() {
+        let mirror = holding(None, None, &[]);
+        assert!(organization_total(&mirror, "helsinki", "cams", None).is_ok());
+        let off = MqttAllowance::default();
+        assert!(organization_total(&mirror, "helsinki", "cams", Some(&off)).is_ok());
+        assert!(check(&mirror, "helsinki", "cams", &json!("not a broker"), None).is_ok());
+        assert!(check(&mirror, "helsinki", "cams", &json!({"limits": "x"}), None).is_ok());
     }
 }

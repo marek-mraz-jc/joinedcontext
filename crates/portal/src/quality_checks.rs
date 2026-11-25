@@ -442,6 +442,81 @@ mod tests {
         assert_eq!(unset.report("air", &[]).at, None);
     }
 
+    /// A gateway that cuts its page short (fewer bytes than its Content-Length) is an error
+    /// with the reason, never a reading of half a page.
+    #[tokio::test]
+    async fn a_page_cut_short_is_no_reading() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut head = vec![0; 4096];
+            let _ = socket.read(&mut head).await;
+            let _ = socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 4096\r\n\r\njc_quality_checks_total",
+                )
+                .await;
+        });
+        let readings = Readings::new(Some(format!("http://{addr}")));
+        let read = readings.read().await;
+        assert!(read.as_ref().is_err_and(|e| !e.is_empty()), "{read:?}");
+        assert_eq!(readings.report("air", &[]).at, None);
+    }
+
+    /// A refresh over readings a panicked thread poisoned still reads the gateway.
+    #[tokio::test]
+    async fn a_refresh_over_poisoned_readings_still_reads() {
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(wiremock::matchers::path("/metrics"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(PAGE))
+            .expect(1)
+            .mount(&gateway)
+            .await;
+        let readings = Readings::new(Some(gateway.uri()));
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _latest = readings.latest.lock().unwrap();
+                    panic!("poison the latest reading");
+                })
+                .join();
+        });
+        readings.refresh().await;
+        assert!(readings.report("air", &[]).at.is_some());
+    }
+
+    /// The hourly reader goes on when the gateway refuses: no reading, and it asked.
+    #[tokio::test]
+    async fn the_hourly_reader_survives_a_refusing_gateway() {
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(wiremock::matchers::path("/metrics"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&gateway)
+            .await;
+        let readings = Arc::new(Readings::new(Some(gateway.uri())));
+        readings.start_hourly();
+        let mut asked = false;
+        for _ in 0..200 {
+            if !gateway
+                .received_requests()
+                .await
+                .unwrap_or_default()
+                .is_empty()
+            {
+                asked = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(asked, "the hourly reader asked the gateway at once");
+        assert_eq!(readings.report("air", &[]).at, None);
+    }
+
     /// The hourly reader takes its first reading at once, so the windows have a base before
     /// anyone opens the page.
     #[tokio::test]
