@@ -1126,14 +1126,12 @@ mod tests {
         let out = report(&p, &one, "report-status", &pack);
         assert!(out.contains("unpack error index-pack failed"), "{out}");
         assert!(out.contains("ng refs/heads/main unpacker error"), "{out}");
-        assert!(list_pack(&p.dest).is_empty(), "no pack stays behind");
+        assert_eq!(pack_files(&p.dest), 0, "no pack stays behind");
     }
 
-    /// The pack files of `repo`'s `objects/pack`.
-    fn list_pack(repo: &Path) -> Vec<PathBuf> {
-        std::fs::read_dir(repo.join("objects/pack"))
-            .map(|rd| rd.flatten().map(|e| e.path()).collect())
-            .unwrap_or_default()
+    /// How many files `repo`'s `objects/pack` holds.
+    fn pack_files(repo: &Path) -> usize {
+        std::fs::read_dir(repo.join("objects/pack")).map_or(0, Iterator::count)
     }
 
     /// Runs one push of `c1` to `main` while `objects/pack` has `mode`, then restores it.
@@ -1179,10 +1177,7 @@ mod tests {
         );
         let plain = report(&p, &one, "report-status", &pack);
         assert!(plain.contains("ng refs/heads/main fetch first"), "{plain}");
-        assert!(
-            list_pack(&p.dest).is_empty(),
-            "a refused push leaves no pack"
-        );
+        assert_eq!(pack_files(&p.dest), 0, "a refused push leaves no pack");
     }
 
     /// Pushes the crafted `objects` of `p.source` with `tip` as the new `refs/heads/main`.
@@ -1218,10 +1213,7 @@ mod tests {
         let wrong = tree(&p.source, &[(EntryKind::Blob, "file", empty)]);
         let c = commit(&p.source, wrong, &[]);
         assert!(push_crafted(&p, c, &[c, wrong, empty]).contains(refused));
-        assert!(
-            list_pack(&p.dest).is_empty(),
-            "every refused push left nothing"
-        );
+        assert_eq!(pack_files(&p.dest), 0, "every refused push left nothing");
 
         // A gitlink names a commit of another repository: no object of it travels.
         let blob = raw(&p.source, Kind::Blob, b"kept\n");

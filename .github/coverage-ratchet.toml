@@ -112,7 +112,7 @@
 "ogc-cql2" = { lines = 100.00, functions = 100.00 }
 "shako-api" = { lines = 99.58, functions = 99.72 }
 "shako-core" = { lines = 99.53, functions = 96.45 }
-"shako-git" = { lines = 97.12, functions = 77.31 }
+"shako-git" = { lines = 99.90, functions = 99.80 }
 "shako-mcp" = { lines = 100.00, functions = 100.00 }
 "shako-registry" = { lines = 100.00, functions = 100.00 }
 "shako-server" = { lines = 99.54, functions = 100.00 }
