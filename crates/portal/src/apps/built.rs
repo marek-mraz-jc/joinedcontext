@@ -553,4 +553,195 @@ mod tests {
         assert!(image_of(b"not a tar at all", &digest).is_err());
         assert_eq!(digest.len(), "sha256:".len() + 64);
     }
+
+    /// A tar of `files` (path, bytes), each a regular file.
+    fn tar_of(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+        let mut tar = tar::Builder::new(Vec::new());
+        for (path, bytes) in files {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, path, bytes.as_slice())
+                .expect("append");
+        }
+        tar.into_inner().expect("tar")
+    }
+
+    /// A layout whose manifest is `manifest`, under its own digest in the index.
+    fn layout_with_manifest(manifest: &[u8]) -> (Vec<u8>, String) {
+        let digest = sha256(manifest);
+        let index = serde_json::json!({ "manifests": [{ "digest": digest }] }).to_string();
+        let files = vec![
+            ("index.json".to_owned(), index.into_bytes()),
+            (
+                format!("blobs/sha256/{}", digest.trim_start_matches("sha256:")),
+                manifest.to_vec(),
+            ),
+        ];
+        (tar_of(&files), digest)
+    }
+
+    /// A manifest that is no JSON, no OCI manifest, names no layer or names a descriptor that
+    /// is no digest is refused with that reason, even when it hashes to the digest.
+    #[test]
+    fn a_manifest_that_is_no_oci_image_is_refused_with_the_reason() {
+        for (manifest, reason) in [
+            (b"{not json".to_vec(), "the manifest is not JSON"),
+            (
+                serde_json::to_vec(&serde_json::json!({ "mediaType": "application/vnd.docker.distribution.manifest.v2+json" }))
+                    .expect("json"),
+                "the manifest is not an",
+            ),
+            (
+                serde_json::to_vec(&serde_json::json!({ "mediaType": OCI_MANIFEST, "config": {} }))
+                    .expect("json"),
+                "the manifest names no layer",
+            ),
+            (
+                serde_json::to_vec(&serde_json::json!({
+                    "mediaType": OCI_MANIFEST,
+                    "config": { "digest": "md5:abc" },
+                    "layers": [{ "digest": "sha256:../../etc" }],
+                }))
+                .expect("json"),
+                "which is not a sha256 digest",
+            ),
+        ] {
+            let (tar, digest) = layout_with_manifest(&manifest);
+            let err = image_of(&tar, &digest).expect_err(reason);
+            assert!(err.contains(reason), "{err}");
+        }
+    }
+
+    /// A layout of more than 64 entries is refused before it is read; a directory entry is
+    /// skipped; a layout cut short is no tar; no index.json is named.
+    #[test]
+    fn a_layout_too_big_cut_short_or_without_an_index_is_refused() {
+        let many: Vec<(String, Vec<u8>)> =
+            (0..65).map(|i| (format!("f{i}"), b"x".to_vec())).collect();
+        assert!(image_of(&tar_of(&many), "sha256:x")
+            .unwrap_err()
+            .contains("more than 64 entries"));
+
+        let (tar, digest) = layout(|_| {});
+        let mut with_dir = tar::Builder::new(Vec::new());
+        let mut header = tar::Header::new_gnu();
+        header.set_entry_type(tar::EntryType::Directory);
+        header.set_size(0);
+        header.set_mode(0o755);
+        header.set_cksum();
+        with_dir
+            .append_data(&mut header, "blobs/", std::io::empty())
+            .expect("a directory");
+        let mut bytes = with_dir.into_inner().expect("tar");
+        bytes.truncate(512);
+        bytes.extend_from_slice(&tar);
+        assert!(
+            image_of(&bytes, &digest).is_ok(),
+            "a directory entry is skipped"
+        );
+
+        let mut cut = tar_of(&[("index.json".to_owned(), vec![b' '; 1000])]);
+        cut.truncate(512 + 10);
+        let err = image_of(&cut, &digest).expect_err("cut short");
+        // The tar reader hands over what the entry holds; the cut shows at the next header.
+        assert!(err.contains("the layout is not a tar"), "{err}");
+
+        let no_index = tar_of(&[("oci-layout".to_owned(), b"{}".to_vec())]);
+        assert_eq!(
+            image_of(&no_index, &digest).unwrap_err(),
+            "the layout has no index.json"
+        );
+    }
+
+    fn held(artifact: &[u8]) -> Held {
+        Held {
+            project: "roads".into(),
+            app: "shop".into(),
+            commit: "c0ffee".into(),
+            digest: "sha256:aa".into(),
+            artifact: std::sync::Arc::new(artifact.to_vec()),
+            sbom: std::sync::Arc::new(b"{}".to_vec()),
+        }
+    }
+
+    /// The lane's build is the held one only for exactly its App, commit and digest, and only
+    /// inside its scope; an artifact over the limit is refused with its size.
+    #[tokio::test]
+    async fn a_held_build_counts_only_for_its_own_app_commit_and_digest() {
+        assert!(held_for("roads", "shop", "c0ffee", "sha256:aa").is_none());
+        with_held(held(b"bundle!"), async {
+            let found = held_for("roads", "shop", "c0ffee", "sha256:aa").expect("held");
+            for (project, app, commit, digest) in [
+                ("other", "shop", "c0ffee", "sha256:aa"),
+                ("roads", "other", "c0ffee", "sha256:aa"),
+                ("roads", "shop", "beef", "sha256:aa"),
+                ("roads", "shop", "c0ffee", "sha256:bb"),
+            ] {
+                assert!(held_for(project, app, commit, digest).is_none());
+            }
+            let (artifact, sbom) = found.bytes("jc/shop", "bundle", 7).expect("within");
+            assert_eq!((artifact, sbom), (b"bundle!".to_vec(), b"{}".to_vec()));
+            let err = found.bytes("jc/shop", "bundle", 6).expect_err("over");
+            assert!(
+                err.to_string()
+                    .contains("is 7 bytes, more than the 6 a bundle may be"),
+                "{err}"
+            );
+        })
+        .await;
+    }
+
+    /// The registry never replaces a file: the same bytes already there are the same build,
+    /// other bytes are a conflict, and a registry that cannot be read passes its error on.
+    #[tokio::test]
+    async fn a_file_already_published_is_kept_only_when_its_bytes_match() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        for (held, outcome) in [
+            (
+                ResponseTemplate::new(200).set_body_bytes(b"same".to_vec()),
+                "ok",
+            ),
+            (
+                ResponseTemplate::new(200).set_body_bytes(b"diff".to_vec()),
+                "conflict",
+            ),
+            (ResponseTemplate::new(500), "error"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path_regex("PublishPackage$"))
+                .respond_with(ResponseTemplate::new(409).set_body_string("exists"))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path_regex("PackageFiles"))
+                .respond_with(held)
+                .mount(&server)
+                .await;
+            let shako = ShakoClient::new(server.uri().parse().expect("url"), "jc", "config", "t")
+                .expect("client");
+            let result = publish_once(
+                &shako,
+                "app-shop",
+                "c0ffee-aa",
+                "bundle.tar.gz",
+                b"same".to_vec(),
+            )
+            .await;
+            match outcome {
+                "ok" => assert!(result.is_ok(), "{result:?}"),
+                "conflict" => assert!(
+                    matches!(&result, Err(GitError::Conflict(m)) if m.contains("never replaces a file")),
+                    "{result:?}"
+                ),
+                _ => assert!(
+                    result.is_err() && !matches!(result, Err(GitError::Conflict(_))),
+                    "{result:?}"
+                ),
+            }
+        }
+    }
 }

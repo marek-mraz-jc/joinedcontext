@@ -93,17 +93,7 @@ fn line(endpoint: &Endpoint, subject: &Subject, message: &Value, entities: &[Str
     let tool = message["params"]["name"]
         .as_str()
         .unwrap_or("resources/read");
-    tracing::info!(
-        target: "personal_read",
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        principal = %principal_of(subject),
-        attributes = %personal.join(","),
-        entities = %entities.join(","),
-        door = "mcp",
-        tool = %tool,
-        "personal attributes read"
-    );
+    tracing::info!(target: "personal_read", slug = %endpoint.slug, space = %endpoint.space, principal = %principal_of(subject), attributes = %personal.join(","), entities = %entities.join(","), door = "mcp", tool = %tool, "personal attributes read");
 }
 
 /// Whether the request reads Entity data: a read tool not in [`WITHOUT_ENTITIES`], or a

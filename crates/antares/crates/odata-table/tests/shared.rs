@@ -657,7 +657,10 @@ async fn a_pg_table_reads_more_than_forty_columns() -> Result<(), String> {
             .join(", ")
     );
     for stmt in [
-        "CREATE SCHEMA IF NOT EXISTS odata_table".to_owned(),
+        // IF NOT EXISTS still races a parallel test's CREATE SCHEMA (23505 on pg_namespace).
+        "DO $$ BEGIN CREATE SCHEMA IF NOT EXISTS odata_table; \
+         EXCEPTION WHEN duplicate_schema OR unique_violation THEN NULL; END $$"
+            .to_owned(),
         format!("DROP TABLE IF EXISTS {name}"),
         ddl,
         format!("INSERT INTO {name} (id, c0, c44) VALUES ('w1', 0, 44)"),

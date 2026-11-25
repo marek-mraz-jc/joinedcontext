@@ -303,3 +303,33 @@ mod overflow_tests {
         let _ = clamp(None, &["timerel=after;timeAt=P100000000D"], now);
     }
 }
+
+#[cfg(test)]
+mod bound_tests {
+    use super::*;
+
+    /// Two grants ending at different instants clamp the caller to the later end, and the
+    /// caller's own end narrows further when it is earlier.
+    #[test]
+    fn two_bounded_grants_reach_the_later_end_and_a_caller_end_narrows() {
+        let now = TimestampTz::now();
+        let jan = "timerel=between;timeAt=2026-01-01T00:00:00Z;endTimeAt=2026-02-01T00:00:00Z";
+        let mar = "timerel=between;timeAt=2026-03-01T00:00:00Z;endTimeAt=2026-04-01T00:00:00Z";
+        let clamped = clamp(None, &[jan, mar], now);
+        assert_eq!(
+            clamped.temporal_q.as_deref(),
+            Some("timerel=between;timeAt=2026-01-01T00:00:00Z;endTimeAt=2026-04-01T00:00:00Z")
+        );
+        assert_eq!(clamped.windows.len(), 2);
+        let caller = "timerel=before;timeAt=2026-01-15T00:00:00Z";
+        let narrowed = clamp(Some(caller), &[jan, mar], now);
+        assert_eq!(
+            narrowed.temporal_q.as_deref(),
+            Some("timerel=between;timeAt=2026-01-01T00:00:00Z;endTimeAt=2026-01-15T00:00:00Z")
+        );
+        assert!(narrowed.restricted && !narrowed.empty);
+        let window = |q: &str| parse(q, now).expect("a window");
+        assert_eq!(window(jan).intersect(window(caller)).to, window(caller).to);
+        assert_eq!(window(caller).intersect(window(jan)).to, window(caller).to);
+    }
+}

@@ -684,4 +684,88 @@ mod tests {
             "{pm10}"
         );
     }
+
+    /// A prohibition naming `*` takes its members back from every attribute no block names.
+    #[test]
+    fn a_prohibition_on_every_attribute_takes_back_its_members_everywhere() {
+        let take = policy(
+            "assignee: { kind: role, id: public }\neffect: prohibition\n\
+             operations: [queryTemporal]\n\
+             information:\n- entities: [{ type: AirQualityObserved }]\n  attributes:\n    \
+             \"*\": { metadata: [createdAt] }\n",
+        );
+        let grant = policy("assignee: { kind: role, id: public }\noperations: [queryTemporal]\n");
+        let p = passed(&[grant, take], &Subject::anonymous(), false).expect("narrows");
+        assert!(!p.members("name").contains(&CreatedAt));
+        assert!(p.members("name").contains(&UnitCode));
+    }
+
+    /// Each stripped member a `q` names is refused by its own word, and a `timeproperty` the
+    /// specification does not define is the broker's to refuse.
+    #[test]
+    fn every_member_word_and_time_property_is_judged() {
+        let p = passed(
+            &[public_with("    pm10: { metadata: [observedAt] }\n")],
+            &Subject::anonymous(),
+            true,
+        )
+        .expect("narrows");
+        let detail = |name: &str, value: &str| {
+            p.refusal(&[(name.to_owned(), value.to_owned())])
+                .and_then(|problem| problem.detail)
+        };
+        for (value, word) in [
+            ("pm10.createdAt>2026-01-01T00:00:00Z", "pm10.createdAt"),
+            (
+                "pm10.modifiedBy.organization==\"city\"",
+                "pm10.modifiedBy.organization",
+            ),
+            (
+                "pm10.modifiedBy.actorKind==\"person\"",
+                "pm10.modifiedBy.actorKind",
+            ),
+            ("pm10.modifiedBy==\"x\"", "pm10.modifiedBy.actor"),
+        ] {
+            let refused = detail("q", value).expect(value);
+            assert!(refused.contains(word), "{value}: {refused}");
+        }
+        assert!(detail("timeproperty", "modifiedAt").is_some());
+        assert_eq!(detail("timeproperty", "deletedAt"), None);
+        assert_eq!(detail("limit", "5"), None);
+    }
+
+    /// A feature whose properties are no object, and an answer that is neither an entity nor a
+    /// list, pass the strip untouched; a passed `provenance` keeps every provenance member.
+    #[test]
+    fn odd_shapes_pass_the_strip_and_a_passed_provenance_stays_whole() {
+        let p = passed(
+            &[public_with("    pm10: { metadata: [observedAt] }\n")],
+            &Subject::anonymous(),
+            true,
+        )
+        .expect("narrows");
+        let mut odd = json!({"type": "FeatureCollection", "features": [{"properties": "none"}, 7]});
+        let before = odd.clone();
+        p.strip(&mut odd);
+        assert_eq!(odd, before);
+        for scalar in [json!("text"), json!(3), json!(null)] {
+            let mut body = scalar.clone();
+            p.strip(&mut body);
+            assert_eq!(body, scalar);
+        }
+        let kept = passed(
+            &[public_with(
+                "    pm10: { metadata: [observedAt, provenance, reason] }\n",
+            )],
+            &Subject::anonymous(),
+            true,
+        )
+        .expect("narrows");
+        let mut answer = entity();
+        kept.strip(&mut answer);
+        assert_eq!(
+            answer["pm10"][0]["provenance"]["reason"],
+            json!("Sensor stuck, checked by Jana")
+        );
+    }
 }

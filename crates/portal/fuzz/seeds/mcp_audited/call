@@ -1,0 +1,1 @@
+{"method":"tools/call","params":{"name":"jc_resource_get","arguments":{"project":"doprava","kind":"Endpoint","name":"air"}}}

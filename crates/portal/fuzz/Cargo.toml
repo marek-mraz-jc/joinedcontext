@@ -8,6 +8,8 @@
 # jc's host registry, and (T-7652) a forge's receive-pack answer, an App's host name under the apps
 # apex and an App repository's build workflow, (T-7711) the assistant's reading of a model
 # answer's tool calls, a JSON merge patch of a manifest, a data tool's answer and an App's written
+# paths and texts, and (T-7784) a bucket's version list, the recipients and identity an
+# administrator pastes into a backup and a sealed bundle under its cap. Its own
 # paths and texts, (T-7724) a robots.txt body, a link found in an entity and the manifests a
 # checkout proposes to the judge, and (T-7729) a pipeline test's manifest and records and a public
 # documentation page's path. Its own
@@ -23,6 +25,7 @@ bin = [
   { name = "selector", path = "fuzz_targets/selector.rs", test = false, doc = false, bench = false },
   { name = "filter", path = "fuzz_targets/filter.rs", test = false, doc = false, bench = false },
   { name = "prometheus", path = "fuzz_targets/prometheus.rs", test = false, doc = false, bench = false },
+  { name = "stream_failing", path = "fuzz_targets/stream_failing.rs", test = false, doc = false, bench = false },
   { name = "schedule", path = "fuzz_targets/schedule.rs", test = false, doc = false, bench = false },
   { name = "mask", path = "fuzz_targets/mask.rs", test = false, doc = false, bench = false },
   { name = "list_query", path = "fuzz_targets/list_query.rs", test = false, doc = false, bench = false },
@@ -33,9 +36,15 @@ bin = [
   { name = "bundle_head", path = "fuzz_targets/bundle_head.rs", test = false, doc = false, bench = false },
   { name = "trash_entity", path = "fuzz_targets/trash_entity.rs", test = false, doc = false, bench = false },
   { name = "preview_query", path = "fuzz_targets/preview_query.rs", test = false, doc = false, bench = false },
+  { name = "view_geoq", path = "fuzz_targets/view_geoq.rs", test = false, doc = false, bench = false },
+  { name = "view_desired", path = "fuzz_targets/view_desired.rs", test = false, doc = false, bench = false },
   { name = "receive_pack", path = "fuzz_targets/receive_pack.rs", test = false, doc = false, bench = false },
   { name = "auth_issuer_of", path = "fuzz_targets/auth_issuer_of.rs", test = false, doc = false, bench = false },
   { name = "app_origin", path = "fuzz_targets/app_origin.rs", test = false, doc = false, bench = false },
+  { name = "app_file_key", path = "fuzz_targets/app_file_key.rs", test = false, doc = false, bench = false },
+  { name = "app_built_image", path = "fuzz_targets/app_built_image.rs", test = false, doc = false, bench = false },
+  { name = "app_wasm_component", path = "fuzz_targets/app_wasm_component.rs", test = false, doc = false, bench = false },
+  { name = "app_fetch_unpack", path = "fuzz_targets/app_fetch_unpack.rs", test = false, doc = false, bench = false },
   { name = "auth_csrf_double_submit", path = "fuzz_targets/auth_csrf_double_submit.rs", test = false, doc = false, bench = false },
   { name = "build_workflow", path = "fuzz_targets/build_workflow.rs", test = false, doc = false, bench = false },
   { name = "auth_login_redirect", path = "fuzz_targets/auth_login_redirect.rs", test = false, doc = false, bench = false },
@@ -46,6 +55,10 @@ bin = [
   { name = "agents_merge_patch", path = "fuzz_targets/agents_merge_patch.rs", test = false, doc = false, bench = false },
   { name = "agents_tool_answer", path = "fuzz_targets/agents_tool_answer.rs", test = false, doc = false, bench = false },
   { name = "agents_code_paths", path = "fuzz_targets/agents_code_paths.rs", test = false, doc = false, bench = false },
+  { name = "org_backup_versions", path = "fuzz_targets/org_backup_versions.rs", test = false, doc = false, bench = false },
+  { name = "org_backup_recipients", path = "fuzz_targets/org_backup_recipients.rs", test = false, doc = false, bench = false },
+  { name = "org_backup_identity", path = "fuzz_targets/org_backup_identity.rs", test = false, doc = false, bench = false },
+  { name = "org_backup_decrypt", path = "fuzz_targets/org_backup_decrypt.rs", test = false, doc = false, bench = false },
   { name = "link_check", path = "fuzz_targets/link_check.rs", test = false, doc = false, bench = false },
   { name = "judge_replay", path = "fuzz_targets/judge_replay.rs", test = false, doc = false, bench = false },
   { name = "record_check", path = "fuzz_targets/record_check.rs", test = false, doc = false, bench = false },
@@ -58,6 +71,13 @@ bin = [
   { name = "auth_bearer_token", path = "fuzz_targets/auth_bearer_token.rs", test = false, doc = false, bench = false },
   { name = "auth_second_factor", path = "fuzz_targets/auth_second_factor.rs", test = false, doc = false, bench = false },
   { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
+  { name = "stream_answers", path = "fuzz_targets/stream_answers.rs", test = false, doc = false, bench = false },
+  { name = "mcp_held_to", path = "fuzz_targets/mcp_held_to.rs", test = false, doc = false, bench = false },
+  { name = "mcp_audited", path = "fuzz_targets/mcp_audited.rs", test = false, doc = false, bench = false },
+  { name = "mcp_elicitation_answer", path = "fuzz_targets/mcp_elicitation_answer.rs", test = false, doc = false, bench = false },
+  { name = "mcp_resource_path", path = "fuzz_targets/mcp_resource_path.rs", test = false, doc = false, bench = false },
+  { name = "mcp_call_result", path = "fuzz_targets/mcp_call_result.rs", test = false, doc = false, bench = false },
+  { name = "mcp_connector_defaults", path = "fuzz_targets/mcp_connector_defaults.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
@@ -78,6 +98,8 @@ tokio = { version = "1", features = ["rt"] }
 axum = "0.8"
 cookie = { version = "0.18", features = ["percent-encode"] }
 url = "2"
+age = { version = "0.12", default-features = false }
+zeroize = "1"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
 jc-time = { path = "../../shared/jc-time" }

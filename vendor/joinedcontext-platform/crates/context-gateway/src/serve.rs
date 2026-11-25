@@ -135,13 +135,7 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
         ),
         Some(dir) => match store::load_from(dir, checkouts.as_ref()) {
             Ok(loaded) => {
-                tracing::info!(
-                    endpoints = loaded.0.len(),
-                    spaces = loaded.1.len(),
-                    accounts = loaded.2.len(),
-                    dir = %dir.display(),
-                    "repository loaded"
-                );
+                tracing::info!(endpoints = loaded.0.len(), spaces = loaded.1.len(), accounts = loaded.2.len(), dir = %dir.display(), "repository loaded");
                 loaded
             }
             Err(error) => {

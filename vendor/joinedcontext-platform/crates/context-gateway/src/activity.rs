@@ -135,7 +135,9 @@ fn spaces() -> &'static RwLock<BTreeMap<String, String>> {
 
 /// The spaces' names by tenant segment, replaced on every reload of the repository.
 pub fn name_spaces(names: &BTreeMap<String, String>) {
-    *spaces().write().unwrap_or_else(|e| e.into_inner()) = names.clone();
+    *spaces()
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = names.clone();
 }
 
 /// A tool name as the caller sent it, when it is one a tool could have; anything else (a
@@ -191,7 +193,9 @@ fn note(
     tool: Option<&str>,
     outcome: Outcome,
 ) {
-    let names = spaces().read().unwrap_or_else(|e| e.into_inner());
+    let names = spaces()
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(space) = names.get(segment).cloned() else {
         return;
     };
@@ -205,7 +209,9 @@ fn note(
         tool: tool.map(tool_name).unwrap_or_default().to_owned(),
         outcome,
     };
-    let mut tally = tally().lock().unwrap_or_else(|e| e.into_inner());
+    let mut tally = tally()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     add(&mut tally, call, SystemTime::now());
 }
 
@@ -226,7 +232,9 @@ fn add(tally: &mut Tally, call: Call, now: SystemTime) {
 /// The rows to post now, sorted, taken out of the tally: the signed-in callers' always, the
 /// anonymous ones only when `anonymous_too`.
 pub fn take(anonymous_too: bool) -> Vec<(Call, Held)> {
-    let mut tally = tally().lock().unwrap_or_else(|e| e.into_inner());
+    let mut tally = tally()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut taken: Vec<(Call, Held)> = Vec::new();
     tally.retain(|call, held| {
         let due = anonymous_too || call.caller != ANONYMOUS;
@@ -492,7 +500,9 @@ mod tests {
             axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
                 let (kept, statuses) = (kept.clone(), statuses.clone());
                 async move {
-                    let mut kept = kept.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut kept = kept
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let status = statuses[kept.len().min(statuses.len() - 1)];
                     kept.push(body);
                     axum::http::StatusCode::from_u16(status)
@@ -511,7 +521,9 @@ mod tests {
     }
 
     fn held_call(endpoint: &str) {
-        let mut tally = tally().lock().unwrap_or_else(|e| e.into_inner());
+        let mut tally = tally()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut row = call("user:ana", "query_entities");
         row.endpoint = endpoint.to_owned();
         add(&mut tally, row, SystemTime::now());

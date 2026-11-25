@@ -74,11 +74,12 @@ fn hex(bytes: &[u8]) -> String {
 
 fn hmac(key: &[u8], data: &str) -> Vec<u8> {
     // HMAC takes a key of any length, so this never answers the empty signature.
-    let Ok(mut mac) = Hmac::<Sha256>::new_from_slice(key) else {
-        return Vec::new();
-    };
-    mac.update(data.as_bytes());
-    mac.finalize().into_bytes().to_vec()
+    Hmac::<Sha256>::new_from_slice(key)
+        .map(|mut mac| {
+            mac.update(data.as_bytes());
+            mac.finalize().into_bytes().to_vec()
+        })
+        .unwrap_or_default()
 }
 
 /// What SigV4 signs of one request. `query` is the already sorted, encoded query string;
@@ -653,7 +654,7 @@ impl Bucket {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A file past one part goes up as a multipart upload whose parts, in order, rebuild it, and
@@ -784,5 +785,370 @@ mod tests {
     fn encodes_keys_as_sigv4_wants() {
         assert_eq!(encode("org/a b+c.zip", true), "org/a%20b%2Bc.zip");
         assert_eq!(encode("a/b", false), "a%2Fb");
+    }
+
+    fn bucket_at(endpoint: &str) -> Bucket {
+        Bucket {
+            endpoint: endpoint.parse().expect("url"),
+            region: "eu-central-1".into(),
+            bucket: "b".into(),
+            access_key_id: "AKID".into(),
+            secret_access_key: Zeroizing::new("secret".into()),
+        }
+    }
+
+    /// An HTTP server that answers its one connection with `raw` and closes it: a body cut
+    /// short, a length past a cap, a chunked body without a length.
+    pub(crate) async fn raw_server(raw: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let _ = socket.write_all(raw).await;
+            let _ = socket.shutdown().await;
+        });
+        format!("http://{address}")
+    }
+
+    async fn get(endpoint: &str) -> reqwest::Response {
+        reqwest::get(endpoint).await.expect("an answer")
+    }
+
+    fn scratch(name: &str) -> (std::path::PathBuf, std::fs::File) {
+        let path = std::env::temp_dir().join(format!("s3-{name}-{}", std::process::id()));
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("scratch");
+        (path, file)
+    }
+
+    /// Each refusal reads as words an administrator acts on, the S3 code only when there is one.
+    #[test]
+    fn every_error_says_what_went_wrong() {
+        let said = |err: S3Error| err.to_string();
+        assert_eq!(
+            said(S3Error::Unreachable("refused".into())),
+            "the bucket's endpoint could not be reached: refused"
+        );
+        assert_eq!(
+            said(S3Error::Status {
+                call: "PutObject",
+                status: 403,
+                code: "AccessDenied".into()
+            }),
+            "PutObject answered 403 (AccessDenied)"
+        );
+        assert_eq!(
+            said(S3Error::Status {
+                call: "PutObject",
+                status: 500,
+                code: String::new()
+            }),
+            "PutObject answered 500"
+        );
+        assert_eq!(
+            said(S3Error::Unreadable("ListObjectVersions")),
+            "ListObjectVersions answered something that is not S3 XML"
+        );
+        assert!(said(S3Error::TooLarge {
+            call: "GetObject",
+            cap: 2 << 20
+        })
+        .contains("2 MiB"));
+        assert_eq!(
+            said(S3Error::Scratch),
+            "the Portal's temporary directory could not be written"
+        );
+    }
+
+    /// An object whose length passes the cap is refused before a byte is read; one cut short
+    /// is unreadable, not a short object.
+    #[tokio::test]
+    async fn an_object_past_the_cap_or_cut_short_is_refused() {
+        let over = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 300000000\r\n\r\nx").await;
+        let refused = read_object(get(&over).await).await.expect_err("too large");
+        assert!(
+            matches!(refused, S3Error::TooLarge { call: "GetObject", cap } if cap == MAX_OBJECT_BYTES as u64),
+            "{refused}"
+        );
+        let short = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort").await;
+        let refused = read_object(get(&short).await).await.expect_err("cut short");
+        assert!(
+            matches!(refused, S3Error::Unreadable("GetObject")),
+            "{refused}"
+        );
+        let whole = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nwhole").await;
+        assert_eq!(
+            read_object(get(&whole).await).await.expect("read"),
+            b"whole"
+        );
+    }
+
+    /// A streamed object refuses a chunked body once it passes the cap and a body cut short as
+    /// unreachable; one within the cap lands whole with its SHA-256, the file rewound.
+    #[tokio::test]
+    async fn a_streamed_object_is_capped_and_hashed() {
+        let chunked = raw_server(
+            b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n4\r\nabcd\r\n4\r\nefgh\r\n0\r\n\r\n",
+        )
+        .await;
+        let (path, file) = scratch("chunked");
+        let refused = stream_into(get(&chunked).await, file, 6)
+            .await
+            .expect_err("past the cap");
+        assert!(
+            matches!(
+                refused,
+                S3Error::TooLarge {
+                    call: "GetObject",
+                    cap: 6
+                }
+            ),
+            "{refused}"
+        );
+        let short = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort").await;
+        let (_, file) = scratch("chunked");
+        let refused = stream_into(get(&short).await, file, 1000)
+            .await
+            .expect_err("cut short");
+        assert!(matches!(refused, S3Error::Unreachable(_)), "{refused}");
+        let fits = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc").await;
+        let (_, file) = scratch("chunked");
+        let (mut file, size, sha256) = stream_into(get(&fits).await, file, 3).await.expect("fits");
+        assert_eq!(size, 3);
+        assert_eq!(
+            sha256,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut back = String::new();
+        std::io::Read::read_to_string(&mut file, &mut back).expect("rewound");
+        assert_eq!(back, "abc");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// An endpoint on its scheme's default port signs the bare host, and one that does not
+    /// answer is unreachable, not an S3 refusal.
+    #[tokio::test]
+    async fn an_endpoint_that_does_not_answer_is_unreachable() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let closed = listener.local_addr().expect("address").port();
+        drop(listener);
+        let refused = bucket_at(&format!("http://127.0.0.1:{closed}"))
+            .versioning(&reqwest::Client::new())
+            .await
+            .expect_err("nothing listens");
+        assert!(matches!(refused, S3Error::Unreachable(_)), "{refused}");
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .expect("client");
+        let refused = bucket_at("http://127.0.0.1")
+            .versioning(&http)
+            .await
+            .expect_err("port 80 is not an S3");
+        assert!(
+            matches!(refused, S3Error::Unreachable(_) | S3Error::Status { .. }),
+            "{refused}"
+        );
+    }
+
+    /// Answers that are not the XML a call expects are unreadable: a versioning answer without
+    /// its configuration, a body cut short, a version list that is no list.
+    #[tokio::test]
+    async fn an_answer_that_is_not_the_calls_xml_is_unreadable() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(query_param("versioning", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<Other/>"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(query_param("versions", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<Other/>"))
+            .mount(&server)
+            .await;
+        let bucket = bucket_at(&server.uri());
+        let http = reqwest::Client::new();
+        let refused = bucket
+            .versioning(&http)
+            .await
+            .expect_err("no configuration");
+        assert!(
+            matches!(refused, S3Error::Unreadable("GetBucketVersioning")),
+            "{refused}"
+        );
+        let refused = bucket.versions(&http, "jc/").await.expect_err("no list");
+        assert!(
+            matches!(refused, S3Error::Unreadable("ListObjectVersions")),
+            "{refused}"
+        );
+        let short = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n<Versioning").await;
+        let refused = bucket_at(&short)
+            .versioning(&http)
+            .await
+            .expect_err("cut short");
+        assert!(
+            matches!(refused, S3Error::Unreadable("GetBucketVersioning")),
+            "{refused}"
+        );
+        let binary = raw_server(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n\xff\xfe").await;
+        let refused = bucket_at(&binary)
+            .versioning(&http)
+            .await
+            .expect_err("not text");
+        assert!(
+            matches!(refused, S3Error::Unreadable("GetBucketVersioning")),
+            "{refused}"
+        );
+    }
+
+    /// Object Lock reads as on only when the bucket says Enabled; a refusal or another word
+    /// reads as off.
+    #[tokio::test]
+    async fn object_lock_is_on_only_when_the_bucket_says_enabled() {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let http = reqwest::Client::new();
+        for (status, body, on) in [
+            (
+                200,
+                "<ObjectLockConfiguration><ObjectLockEnabled>Enabled</ObjectLockEnabled></ObjectLockConfiguration>",
+                true,
+            ),
+            (200, "<ObjectLockConfiguration></ObjectLockConfiguration>", false),
+            (404, "<Error><Code>ObjectLockConfigurationNotFoundError</Code></Error>", false),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(query_param("object-lock", ""))
+                .respond_with(ResponseTemplate::new(status).set_body_string(body))
+                .mount(&server)
+                .await;
+            assert_eq!(bucket_at(&server.uri()).object_lock(&http).await, on, "{body}");
+        }
+    }
+
+    async fn multipart(
+        part: ResponseTemplate,
+        abort: u16,
+        complete: ResponseTemplate,
+    ) -> (wiremock::MockServer, Result<String, S3Error>) {
+        use wiremock::matchers::{method, query_param};
+        use wiremock::{Mock, MockServer};
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(query_param("uploads", ""))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                "<InitiateMultipartUploadResult><UploadId>up-9</UploadId></InitiateMultipartUploadResult>",
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT"))
+            .and(query_param("uploadId", "up-9"))
+            .respond_with(part)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(query_param("uploadId", "up-9"))
+            .respond_with(complete)
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(query_param("uploadId", "up-9"))
+            .respond_with(ResponseTemplate::new(abort))
+            .mount(&server)
+            .await;
+        let (path, file) = scratch("multipart");
+        std::io::Write::write_all(&mut &file, &[7u8; 25]).expect("file");
+        let result = bucket_at(&server.uri())
+            .put_file(
+                &reqwest::Client::new(),
+                "jc/a/archive.zip.age",
+                &path,
+                25,
+                10,
+            )
+            .await;
+        std::fs::remove_file(path).ok();
+        (server, result)
+    }
+
+    async fn aborted(server: &wiremock::MockServer) -> bool {
+        server
+            .received_requests()
+            .await
+            .expect("requests")
+            .iter()
+            .any(|r| r.method.as_str() == "DELETE")
+    }
+
+    use wiremock::ResponseTemplate;
+
+    /// A part S3 refuses ends the upload with that refusal and aborts it, so the bucket keeps no
+    /// stray parts; an abort that fails too still answers the part's refusal.
+    #[tokio::test]
+    async fn a_refused_part_aborts_the_upload() {
+        let ok = || ResponseTemplate::new(200).set_body_string("<CompleteMultipartUploadResult/>");
+        for abort in [204, 500] {
+            let (server, result) = multipart(
+                ResponseTemplate::new(500).set_body_string("<Error><Code>SlowDown</Code></Error>"),
+                abort,
+                ok(),
+            )
+            .await;
+            let refused = result.expect_err("the part was refused");
+            assert!(
+                matches!(&refused, S3Error::Status { call: "UploadPart", status: 500, code } if code == "SlowDown"),
+                "{refused}"
+            );
+            assert!(aborted(&server).await, "aborted after {abort}");
+        }
+        let (server, result) = multipart(ResponseTemplate::new(200), 204, ok()).await;
+        let refused = result.expect_err("a part without an ETag");
+        assert!(
+            matches!(refused, S3Error::Unreadable("UploadPart")),
+            "{refused}"
+        );
+        assert!(aborted(&server).await);
+    }
+
+    /// CompleteMultipartUpload may answer 200 with an error in its body: that is a refusal.
+    #[tokio::test]
+    async fn a_completion_that_answers_an_error_in_its_body_is_refused() {
+        let (server, result) = multipart(
+            ResponseTemplate::new(200).insert_header("ETag", "\"e\""),
+            204,
+            ResponseTemplate::new(200).set_body_string(
+                "<Error><Code>InternalError</Code><Message>retry</Message></Error>",
+            ),
+        )
+        .await;
+        let refused = result.expect_err("an error in a 200");
+        assert!(
+            matches!(&refused, S3Error::Status { call: "CompleteMultipartUpload", status: 200, code } if code == "InternalError"),
+            "{refused}"
+        );
+        assert!(
+            !aborted(&server).await,
+            "a completion error leaves the upload to S3's lifecycle"
+        );
+    }
+
+    /// HMAC takes a key of any length, the empty one included: a signature is never empty.
+    #[test]
+    fn hmac_of_an_empty_key_still_signs() {
+        assert_eq!(hmac(b"", "data").len(), 32);
+        assert_ne!(hmac(b"", "data"), hmac(b"k", "data"));
     }
 }
