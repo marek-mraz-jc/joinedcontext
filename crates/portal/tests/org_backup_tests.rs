@@ -813,7 +813,14 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
     assert!(refused.text.contains("unencrypted"), "{}", refused.text);
     assert!(refused.text.contains(&taken), "{}", refused.text);
     // It still downloads as the plain zip it was uploaded as.
-    let download = send(&world.state, person("ada"), "GET", &format!("{DOOR}/versions/plain"), None).await;
+    let download = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DOOR}/versions/plain"),
+        None,
+    )
+    .await;
     assert_eq!(download.status, StatusCode::OK, "{}", download.text);
     assert!(download.text.starts_with("PK"), "a zip");
 
@@ -1146,12 +1153,18 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
         &world.state,
         person("ada"),
         "GET",
-        &format!("{DATA_DOOR}/versions/{}", run["versionId"].as_str().expect("version")),
+        &format!(
+            "{DATA_DOOR}/versions/{}",
+            run["versionId"].as_str().expect("version")
+        ),
         None,
     )
     .await;
     assert_eq!(download.status, StatusCode::OK, "{}", download.text);
-    assert!(download.text.starts_with("age-encryption.org/v1"), "encrypted");
+    assert!(
+        download.text.starts_with("age-encryption.org/v1"),
+        "encrypted"
+    );
     assert!(
         zip::ZipArchive::new(std::io::Cursor::new(&sealed)).is_err(),
         "the stored archive is encrypted"

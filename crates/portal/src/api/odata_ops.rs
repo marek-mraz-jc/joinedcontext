@@ -528,7 +528,7 @@ mod tests {
             ("f(a=@x)", "@x=%ZZ", "@x is not valid"),
             ("f(a=@x)", "x=1", "in the call"),
             ("f(a)", "", "name=value"),
-            ("f(a='it's')", "", "written ''"),
+            ("f(a='a'b'c')", "", "written ''"),
             ("f(a='open)", "", "closed with '"),
             ("f(1a=1)", "", "no parameter name"),
             ("f(a=@y)", "", "has no value"),

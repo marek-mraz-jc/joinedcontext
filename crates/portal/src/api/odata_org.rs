@@ -3492,7 +3492,9 @@ mod tests {
             Some("projects/$count")
         );
         assert_eq!(
-            key_as_segment("projects/air/endpoints/counters").ok().as_deref(),
+            key_as_segment("projects/air/endpoints/counters")
+                .ok()
+                .as_deref(),
             Some("projects('air')/endpoints('counters')")
         );
         assert_eq!(
@@ -3506,7 +3508,10 @@ mod tests {
     #[test]
     fn a_compound_key_member_is_a_text_or_a_number() {
         let pairs = vec![
-            ("project".to_owned(), KeyValue::Literal(Literal::String("air".into()))),
+            (
+                "project".to_owned(),
+                KeyValue::Literal(Literal::String("air".into())),
+            ),
             ("n".to_owned(), KeyValue::Literal(Literal::Int(7))),
             ("b".to_owned(), KeyValue::Literal(Literal::Bool(true))),
         ];

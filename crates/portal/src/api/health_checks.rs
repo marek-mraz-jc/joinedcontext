@@ -197,6 +197,14 @@ mod tests {
     #[tokio::test]
     async fn an_unreadable_health_log_is_503() {
         let mut state = world();
+        // A project of an Organization: its key is read from the database.
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "Project".into(),
+            metadata: ObjectMeta::new("air", ORG_NAMESPACE),
+            spec: serde_json::json!({ "organizationRef": "bbsk" }),
+            status: None,
+        });
         let pool = sqlx::postgres::PgPoolOptions::new()
             .acquire_timeout(std::time::Duration::from_secs(2))
             .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")

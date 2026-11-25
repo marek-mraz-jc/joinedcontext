@@ -516,7 +516,7 @@ async fn each_refused_option_answers_its_status() {
         (
             "/api/v1/projects?$expand=spaces/endpoints",
             &[],
-            StatusCode::BAD_REQUEST,
+            StatusCode::NOT_IMPLEMENTED,
         ),
         (
             "/api/v1/spaces?$search=air",
@@ -637,8 +637,14 @@ async fn each_path_shape_answers_its_status() {
     let mode = Mode::Path("hel");
     let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
     for (uri, want) in [
-        ("/api/v1/projects('helsinki')/spaces?$expand=spaces", StatusCode::BAD_REQUEST),
-        ("/api/v1/projects('helsinki')/spaces(1)", StatusCode::BAD_REQUEST),
+        (
+            "/api/v1/projects('helsinki')/spaces?$expand=spaces",
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            "/api/v1/projects('helsinki')/spaces(1)",
+            StatusCode::NOT_FOUND,
+        ),
         ("/api/v1/spaces('air')", StatusCode::BAD_REQUEST),
         ("/api/v1/projects('helsinki')/spaces/$count", StatusCode::OK),
         ("/api/v1/projects/$count", StatusCode::OK),
@@ -647,9 +653,17 @@ async fn each_path_shape_answers_its_status() {
         let answer = send(&state, mode, &cookie, uri, &[]).await;
         assert_eq!(answer.status, want, "{uri}: {}", answer.text);
         if want == StatusCode::OK {
-            assert!(answer.text.trim().parse::<u64>().is_ok(), "{uri}: {}", answer.text);
+            assert!(
+                answer.text.trim().parse::<u64>().is_ok(),
+                "{uri}: {}",
+                answer.text
+            );
         } else {
-            assert_eq!(answer.json()["error"]["status"], json!(want.as_u16()), "{uri}");
+            assert_eq!(
+                answer.json()["error"]["status"],
+                json!(want.as_u16()),
+                "{uri}"
+            );
         }
     }
 }

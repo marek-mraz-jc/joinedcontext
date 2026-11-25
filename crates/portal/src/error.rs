@@ -216,24 +216,6 @@ impl IntoResponse for ApiError {
 }
 
 impl ApiError {
-    /// The field errors of a `422`, none for any other answer: what a test names.
-    #[cfg(test)]
-    pub(crate) fn field_errors(&self) -> &[String] {
-        match self {
-            Self::Unprocessable { errors, .. } => errors,
-            _ => &[],
-        }
-    }
-
-    /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
-    #[cfg(test)]
-    pub(crate) fn first_field(&self) -> &str {
-        self.field_errors()
-            .first()
-            .and_then(|e| e.split(':').next())
-            .unwrap_or_default()
-    }
-
     /// An error of ours as a 500, worded by the error, for `.map_err(ApiError::internal)`: the
     /// answer keeps the wording out (`internal_error_hides_message`), the log keeps it.
     pub fn internal(err: impl std::fmt::Display) -> Self {
@@ -733,5 +715,25 @@ mod tests {
         let line: serde_json::Value = serde_json::from_str(written.trim()).expect(&written);
         assert_eq!(line["level"], "WARN");
         assert_eq!(line["detail"], "the realm could not be reached: timed out");
+    }
+}
+
+// Kept after every `#[cfg(test)]`-free line: the slug scan reads each file up to its first one.
+#[cfg(test)]
+impl ApiError {
+    /// The field errors of a `422`, none for any other answer: what a test names.
+    pub(crate) fn field_errors(&self) -> &[String] {
+        match self {
+            Self::Unprocessable { errors, .. } => errors,
+            _ => &[],
+        }
+    }
+
+    /// The field a `422` names first (`smtp.host: …` names `smtp.host`), empty for any other.
+    pub(crate) fn first_field(&self) -> &str {
+        self.field_errors()
+            .first()
+            .and_then(|e| e.split(':').next())
+            .unwrap_or_default()
     }
 }

@@ -79,10 +79,14 @@ async fn start_upstream() -> (String, Arc<AtomicUsize>) {
                     }
                     if tile.starts_with("95.") {
                         // Sends one chunk, then breaks the body off.
-                        let broken = futures_util::stream::iter([
-                            Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![0u8; 16])),
-                            Err(std::io::Error::other("cut")),
-                        ]);
+                        let first = futures_util::stream::once(async {
+                            Ok::<_, std::io::Error>(axum::body::Bytes::from(vec![0u8; 16]))
+                        });
+                        let cut = futures_util::stream::once(async {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            Err(std::io::Error::other("cut"))
+                        });
+                        let broken = first.chain(cut);
                         return (
                             [(header::CONTENT_TYPE, "image/png")],
                             Body::from_stream(broken),
@@ -333,7 +337,8 @@ async fn styles_types_upstream_failures_and_the_rate_limit() {
 
     let ip = "198.51.100.78";
     let mut refused = None;
-    for _ in 0..=600 {
+    // The bucket refills ten a second, so a few more than 600 run before the refusal.
+    for _ in 0..3000 {
         let req = Request::builder()
             .method(Method::GET)
             .uri(tile("7/0/96.jpg"))

@@ -461,7 +461,9 @@ mod tests {
     #[test]
     fn a_failed_run_is_404_for_a_missing_source_and_503_else() {
         let missing = failed(RunError::NoSuchSource("feed".into(), "air".into()));
-        assert!(matches!(missing, ApiError::NotFound(m) if m.contains("'feed'") && m.contains("'air'")));
+        assert!(
+            matches!(missing, ApiError::NotFound(m) if m.contains("'feed'") && m.contains("'air'"))
+        );
         let other = failed(RunError::Task("cancelled".into()));
         assert!(matches!(other, ApiError::Unavailable(m) if m.contains("cancelled")));
     }

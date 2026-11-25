@@ -2742,15 +2742,30 @@ mod tests {
     #[tokio::test]
     async fn only_turning_a_mode_off_applies_at_once_without_the_realm() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
-        let off = ChangePayload { single_person: Some(false), ..ChangePayload::default() };
-        let on = ChangePayload { single_person: Some(true), ..ChangePayload::default() };
+        let off = ChangePayload {
+            single_person: Some(false),
+            ..ChangePayload::default()
+        };
+        let on = ChangePayload {
+            single_person: Some(true),
+            ..ChangePayload::default()
+        };
         assert_eq!(
             applies_at_once(&state, OperatorKind::SinglePersonSet, &off, "ops-a").await,
             Some("turning off needs no second operator")
         );
-        assert_eq!(applies_at_once(&state, OperatorKind::HostAdd, &on, "ops-a").await, None);
-        assert_eq!(applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "ops-a").await, None);
-        assert_eq!(applies_at_once(&state, OperatorKind::AutomationLoginSet, &on, "ops-a").await, None);
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::HostAdd, &on, "ops-a").await,
+            None
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "ops-a").await,
+            None
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::AutomationLoginSet, &on, "ops-a").await,
+            None
+        );
     }
 
     /// A Change id is a UUID, any other is not found; a realm without the e-mail door is told

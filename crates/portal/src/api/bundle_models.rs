@@ -475,11 +475,26 @@ mod tests {
         }))
         .expect("a Bundle");
         let mut files = std::collections::BTreeMap::new();
-        let missing = super::plan(&state, &index, &files).await.err().expect("refused");
-        assert!(matches!(&missing, crate::error::ApiError::BadRequest(m) if m.contains("has no models/stations.linkml.yaml")), "{missing:?}");
-        files.insert("models/stations.linkml.yaml".to_owned(), b"id: other".to_vec());
-        let altered = super::plan(&state, &index, &files).await.err().expect("refused");
-        assert!(matches!(&altered, crate::error::ApiError::BadRequest(m) if m.contains("SHA-256 differs")), "{altered:?}");
+        let missing = super::plan(&state, &index, &files)
+            .await
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(&missing, crate::error::ApiError::BadRequest(m) if m.contains("has no models/stations.linkml.yaml")),
+            "{missing:?}"
+        );
+        files.insert(
+            "models/stations.linkml.yaml".to_owned(),
+            b"id: other".to_vec(),
+        );
+        let altered = super::plan(&state, &index, &files)
+            .await
+            .err()
+            .expect("refused");
+        assert!(
+            matches!(&altered, crate::error::ApiError::BadRequest(m) if m.contains("SHA-256 differs")),
+            "{altered:?}"
+        );
     }
 
     // MF-50: only the whole import name of a landed model is rewritten.
