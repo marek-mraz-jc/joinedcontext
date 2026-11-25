@@ -78,11 +78,11 @@ fn map_live(doc: &Value) -> bool {
 pub(crate) async fn sweep_expired_maps(st: &AppState, tenant: &TenantId) -> usize {
     let mut dead: Vec<String> = Vec::new();
     if crate::csource::walk_docs(st, tenant, Kind::EntityMap, |doc| {
-        if !map_live(&doc) {
-            if let Some(id) = doc.get("id").and_then(Value::as_str) {
-                dead.push(id.to_owned());
-            }
-        }
+        let dead_id = doc
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|_| !map_live(&doc));
+        dead.extend(dead_id.map(str::to_owned));
         Ok(())
     })
     .await
@@ -159,9 +159,14 @@ pub(crate) async fn map_put(
     tenant: &TenantId,
     mut doc: Value,
 ) -> Result<(), NgsiError> {
-    let Some(id) = doc.get("id").and_then(Value::as_str).map(str::to_owned) else {
-        return Ok(());
-    };
+    // both builders mint the id, so a map without one is the broker's own bug
+    let id = doc
+        .get("id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or(NgsiError::InternalError(
+            "an EntityMap without an id".into(),
+        ))?;
     clamp_expiry(&mut doc);
     // The ceiling counts NEW maps; rewriting a map that is already stored
     // replaces a row that is already counted, so the paging path neither
@@ -221,15 +226,14 @@ fn clamp_expiry(doc: &mut Value) {
     let ceiling = now
         .checked_add(jiff::SignedDuration::from_secs(MAX_LIFETIME_SECS))
         .unwrap_or(now);
-    if doc
+    let over = doc
         .get("expiresAt")
         .and_then(Value::as_str)
         .and_then(dt)
-        .is_some_and(|e| e > ceiling)
-    {
-        if let Some(o) = doc.as_object_mut() {
-            o.insert("expiresAt".into(), json!(crate::state::stamp(ceiling)));
-        }
+        .is_some_and(|e| e > ceiling);
+    // an expiresAt was read off it, so the document is an object
+    if let Some(o) = doc.as_object_mut().filter(|_| over) {
+        o.insert("expiresAt".into(), json!(crate::state::stamp(ceiling)));
     }
 }
 
@@ -243,15 +247,12 @@ pub(crate) async fn map_set_expiry(
 ) -> Result<bool, NgsiError> {
     let mut want = json!({"expiresAt": expires});
     clamp_expiry(&mut want);
+    let e = want["expiresAt"].take();
     Ok(st
         .store
         .mutate(tenant, Kind::EntityMap, id, |d| {
-            if let Some(o) = d.as_object_mut() {
-                if let Some(e) = want.get("expiresAt") {
-                    o.insert("expiresAt".into(), e.clone());
-                }
-            }
-            Ok::<_, std::convert::Infallible>(())
+            antares_store::stored_object(d)?.insert("expiresAt".into(), e.clone());
+            Ok::<_, NgsiError>(())
         })
         .await?
         .is_some())
@@ -273,11 +274,11 @@ pub(crate) async fn map_prune(
     }
     st.store
         .mutate(tenant, Kind::EntityMap, id, |d| {
-            if let Some(emap) = d.get_mut("entityMap").and_then(Value::as_object_mut) {
-                for k in stale {
-                    emap.remove(k);
-                }
-            }
+            // both builders write entityMap, so every stored map has one
+            d.get_mut("entityMap")
+                .and_then(Value::as_object_mut)
+                .into_iter()
+                .for_each(|m| stale.iter().for_each(|k| drop(m.remove(k))));
             Ok::<_, std::convert::Infallible>(())
         })
         .await?;
@@ -423,13 +424,12 @@ pub(crate) async fn merge_and_store_map(
                 .await?
         {
             for eid in peer_entity_ids(&remote, st.max_limit) {
-                if let Some(a) = emap
-                    .entry(eid.clone())
-                    .or_insert_with(|| json!([]))
+                // every entry is an array: the local walk and this one write only arrays
+                let entry = emap.entry(eid.clone()).or_insert_with(|| json!([]));
+                entry
                     .as_array_mut()
-                {
-                    a.push(json!(reg_id.clone()));
-                }
+                    .into_iter()
+                    .for_each(|a| a.push(json!(reg_id.clone())));
             }
             // Table 5.2.39-1 restricts an EntityMap id to a valid URI, and
             // 5.14.1.4 refuses one that is not from a client. The peer's id
@@ -512,9 +512,16 @@ pub(crate) async fn build_retrieve_map(
 /// The NGSILD-EntityMap response header: the resource URI of the map that
 /// determined the sources of this response (6.3.17).
 pub(crate) fn set_map_header(resp: &mut Response, mid: &str) {
-    if let Ok(v) = format!("/ngsi-ld/v1/entityMaps/{mid}").parse() {
-        resp.headers_mut().insert("NGSILD-EntityMap", v);
-    }
+    stamp_map_location(resp, &format!("/ngsi-ld/v1/entityMaps/{mid}"));
+}
+
+/// The `NGSILD-EntityMap` header. A map id is a URI and a client's header
+/// value is one already, so the location always parses; were that untrue,
+/// omitting the header beats failing the response.
+fn stamp_map_location(resp: &mut Response, uri: &str) {
+    let v = uri.parse().ok();
+    let name = axum::http::HeaderName::from_static("ngsild-entitymap");
+    resp.headers_mut().extend(v.map(|v| (name, v)));
 }
 
 /// 5.7.1.4 / 5.7.3.4 EntityMap usage on a single-Entity retrieve: a supplied
@@ -568,9 +575,8 @@ where
         };
         let map = build_retrieve_map(st, &tenant, &ctx, headers, id, params, temporal, local_held)
             .await?;
-        if let Some(mid) = map.get("id").and_then(Value::as_str) {
-            set_map_header(&mut resp, mid);
-        }
+        // build_retrieve_map minted the id
+        set_map_header(&mut resp, map["id"].as_str().unwrap_or_default());
     }
     Ok(resp)
 }
@@ -590,9 +596,7 @@ pub(crate) fn created_response(
     let mut doc = doc;
     crate::policy::strip_internal(&mut doc);
     let mut resp = respond(StatusCode::CREATED, doc, ctx, accept, tenant);
-    if let Ok(v) = uri.parse() {
-        resp.headers_mut().insert("NGSILD-EntityMap", v);
-    }
+    stamp_map_location(&mut resp, &uri);
     resp
 }
 
@@ -751,10 +755,20 @@ mod tests {
             "a zero lifetime would return 201 for a map that is already \
              unusable (5.5.14): {zero}"
         );
-        match expires_at(&params(&[("entityMapLifetime", "yesterday")])) {
-            Err(NgsiError::BadRequestData(_)) => {}
-            other => panic!("an invalid duration must be BadRequestData: {other:?}"),
-        }
+        let bad = expires_at(&params(&[("entityMapLifetime", "yesterday")]));
+        assert!(
+            matches!(bad, Err(NgsiError::BadRequestData(_))),
+            "an invalid duration must be BadRequestData: {bad:?}"
+        );
+    }
+
+    /// 4.22: a store that cannot be walked reaps nothing, and says so by
+    /// counting zero rather than failing the sweep tick.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_refusing_store_sweeps_no_map() {
+        let st = crate::state::refusing_state();
+        assert_eq!(sweep_expired_maps(&st, &TenantId::default()).await, 0);
     }
 
     /// 5.14: EntityMaps are per-tenant resources — an EntityMap created
