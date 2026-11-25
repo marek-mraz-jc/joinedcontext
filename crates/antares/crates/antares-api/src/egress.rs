@@ -307,6 +307,15 @@ mod tests {
             .is_err());
         assert!(allow.check_destination("file:///etc/passwd").await.is_err());
         assert!(allow.check_destination("memory://").await.is_err());
+        let bad = allow
+            .check_destination("http://user:pw@exa mple/x")
+            .await
+            .expect_err("a URL that does not parse is refused");
+        assert!(bad.starts_with("bad URL "), "{bad}");
+        assert!(
+            !bad.contains("pw@"),
+            "the reason repeats no userinfo: {bad}"
+        );
     }
 
     /// The metadata denial does not depend on `ANTARES_EGRESS_ALLOW_PRIVATE`

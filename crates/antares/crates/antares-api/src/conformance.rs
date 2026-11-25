@@ -126,11 +126,11 @@ fn amend_attr(v: &mut Value, ver: (u32, u32)) -> bool {
     if ver < (1, 8) && obj.remove("objectType").is_some() {
         changed = true;
     }
-    if ver < (1, 9) {
-        for k in ["valueType", "expiresAt"] {
-            if obj.remove(k).is_some() {
-                changed = true;
-            }
+    // amend_attr runs only under amend_entity, below NATIVE (1.9), so the
+    // members 1.9 introduced always go
+    for k in ["valueType", "expiresAt"] {
+        if obj.remove(k).is_some() {
+            changed = true;
         }
     }
     // Sub-attributes (properties-of-properties) get the same treatment.

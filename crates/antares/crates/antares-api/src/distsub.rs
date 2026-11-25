@@ -16,7 +16,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 fn ds_index_tenant() -> Option<TenantId> {
     TenantId::new_internal("distsub-index").ok()
@@ -160,21 +160,6 @@ fn proof_digest(token: &str) -> String {
         .collect()
 }
 
-/// The copy's notification endpoint carries `token` as a receiverInfo pair
-/// (5.2.22): the Context Source sends it with every notification, masks it on
-/// a read and seals it at rest.
-fn with_proof(copy: &mut Value, token: &str) {
-    if let Some(ep) = copy
-        .pointer_mut("/notification/endpoint")
-        .and_then(Value::as_object_mut)
-    {
-        ep.insert(
-            "receiverInfo".into(),
-            json!([{"key": NOTIFY_PROOF_HEADER, "value": token}]),
-        );
-    }
-}
-
 /// A new proof for the mapping of `remote_id`, the current one kept as
 /// `prev` so notifications sent before the update lands still pass;
 /// `None` puts the previous proof back after a failed update.
@@ -183,28 +168,29 @@ async fn inbound_rotate(st: &AppState, remote_id: &str, digest: Option<&str>) {
     let _ = st
         .store
         .mutate(&idx, Kind::DistSub, remote_id, |d| {
-            if let Some(o) = d.as_object_mut() {
-                match digest {
-                    Some(new) => {
-                        if let Some(cur) = o.remove("proof") {
-                            o.insert("prev".into(), cur);
-                        }
-                        o.insert("proof".into(), Value::String(new.to_owned()));
-                    }
-                    None => {
-                        if let Some(prev) = o.remove("prev") {
-                            o.insert("proof".into(), prev);
-                        }
+            // an index entry is an object: `inbound_put` is its only writer,
+            // and it always writes a proof
+            let o = d.as_object_mut().ok_or(())?;
+            match digest {
+                Some(new) => {
+                    let cur = o.insert("proof".into(), Value::String(new.to_owned()));
+                    o.extend(cur.map(|c| ("prev".to_owned(), c)));
+                }
+                None => {
+                    // a second failed update finds the previous proof back
+                    // in place already
+                    if let Some(prev) = o.remove("prev") {
+                        o.insert("proof".into(), prev);
                     }
                 }
             }
-            Ok::<_, std::convert::Infallible>(())
+            Ok::<_, ()>(())
         })
         .await;
 }
 
-/// A PATCH of the remote copy `remote_id` with a rotated proof; a refused
-/// update puts the previous proof back.
+/// A PATCH of the remote copy `remote_id`, built by [`reduced_copy`] around
+/// the new proof `token`; a refused update puts the previous proof back.
 #[allow(clippy::too_many_arguments)] // forward_sub's parts plus the copy id
 async fn patch_copy(
     st: &AppState,
@@ -215,12 +201,11 @@ async fn patch_copy(
     reg: &Value,
     ctx_url: &str,
     via: &HeaderMap,
+    token: &str,
     mut copy: Value,
 ) {
     copy.as_object_mut().map(|o| o.remove("id"));
-    let token = notify_token();
-    with_proof(&mut copy, &token);
-    inbound_rotate(st, remote_id, Some(&proof_digest(&token))).await;
+    inbound_rotate(st, remote_id, Some(&proof_digest(token))).await;
     let (status, _) = forward_sub(
         st,
         tenant,
@@ -284,10 +269,22 @@ fn notification_fresh(v: &Value, sid: &str) -> bool {
         .get_or_init(Mutex::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    if seen.len() >= NOTIFY_SEEN_CAP {
+    admit(&mut seen, key, now, NOTIFY_SEEN_CAP)
+}
+
+/// Remember `key` as taken at `now` in `seen`, holding at most `cap` keys:
+/// a full memory first forgets what left the window, and refuses while it
+/// stays full. `false` for a key already taken.
+fn admit(
+    seen: &mut std::collections::HashMap<[u8; 16], i64>,
+    key: [u8; 16],
+    now: i64,
+    cap: usize,
+) -> bool {
+    if seen.len() >= cap {
         seen.retain(|_, t| now.saturating_sub(*t) <= NOTIFY_WINDOW_SECS);
     }
-    if seen.len() >= NOTIFY_SEEN_CAP || seen.contains_key(&key) {
+    if seen.len() >= cap || seen.contains_key(&key) {
         return false;
     }
     seen.insert(key, now);
@@ -310,30 +307,30 @@ fn notify_refused() -> Response {
 }
 
 async fn inbound_put(st: &AppState, remote_id: &str, tenant: &TenantId, own_id: &str, proof: &str) {
-    if let Some(idx) = ds_index_tenant() {
-        // Without this index every notification the source sends is answered
-        // 404 and the subscription silently never notifies — a store failure
-        // here has to be visible to an operator.
-        if let Err(e) = st
-            .store
-            .create(
-                &idx,
-                Kind::DistSub,
-                remote_id,
-                json!({"tenant": tenant.as_str(), "own": own_id, "proof": proof}),
-            )
-            .await
-        {
-            // Not the remote id: it is the key /ex/v1/remote-notify accepts
-            // a notification by, and a log line is no place for it (T-3915).
-            tracing::warn!("subscription {own_id}: inbound mapping not stored: {e}");
-        }
+    let Some(idx) = ds_index_tenant() else { return };
+    // Without this index every notification the source sends is answered
+    // 404 and the subscription silently never notifies — a store failure
+    // here has to be visible to an operator.
+    if let Err(e) = st
+        .store
+        .create(
+            &idx,
+            Kind::DistSub,
+            remote_id,
+            json!({"tenant": tenant.as_str(), "own": own_id, "proof": proof}),
+        )
+        .await
+    {
+        // Not the remote id: it is the key /ex/v1/remote-notify accepts
+        // a notification by, and a log line is no place for it (T-3915).
+        tracing::warn!("subscription {own_id}: inbound mapping not stored: {e}");
     }
 }
 
 /// Tenant, own Subscription id and the proof digests (current, previous) of
-/// the mapping of `remote_id`.
-async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(String, String, Vec<String>)> {
+/// the mapping of `remote_id`. An entry whose Tenant does not read is no
+/// mapping: `inbound_put` only ever writes a valid one.
+async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(TenantId, String, Vec<String>)> {
     let idx = ds_index_tenant()?;
     let doc = st
         .store
@@ -346,7 +343,7 @@ async fn inbound_get(st: &AppState, remote_id: &str) -> Option<(String, String, 
         .filter_map(|k| doc.get(*k).and_then(Value::as_str).map(str::to_owned))
         .collect();
     Some((
-        doc.get("tenant")?.as_str()?.to_owned(),
+        TenantId::new_internal(doc.get("tenant")?.as_str()?).ok()?,
         doc.get("own")?.as_str()?.to_owned(),
         proofs,
     ))
@@ -359,14 +356,13 @@ impl AppState {
     pub async fn notification_receiver(&self, subscription_id: &str) -> Option<String> {
         inbound_get(self, subscription_id)
             .await
-            .map(|(tenant, _, _)| tenant)
+            .map(|(tenant, _, _)| tenant.into())
     }
 }
 
 async fn inbound_delete(st: &AppState, remote_id: &str) {
-    if let Some(idx) = ds_index_tenant() {
-        let _ = st.store.delete(&idx, Kind::DistSub, remote_id).await;
-    }
+    let Some(idx) = ds_index_tenant() else { return };
+    let _ = st.store.delete(&idx, Kind::DistSub, remote_id).await;
 }
 
 fn distributed(sub: &Value) -> bool {
@@ -429,16 +425,6 @@ pub(crate) async fn on_subscription_created(st: &AppState, tenant: &TenantId, su
         uuid::Uuid::new_v4()
     );
     let ts = now_iso();
-    let mut doc = json!({
-        "id": csr_id,
-        "type": "Subscription",
-        "isActive": true,
-        "status": "active",
-        "createdAt": ts,
-        "modifiedAt": ts,
-        "notification": {"endpoint": {"uri":
-            format!("urn:antares:distsub:{}\n{own_id}", tenant.as_str())}},
-    });
     // 5.11.2.4 matches a registration on all of these, so the Registration
     // Subscription carries every member that decides the match — a copy
     // built from the entity selectors alone offers the Subscription to
@@ -446,13 +432,24 @@ pub(crate) async fn on_subscription_created(st: &AppState, tenant: &TenantId, su
     // `q` is deliberately absent: on a Context Source Registration
     // Subscription it would filter registration properties, not Entity
     // Attributes.
-    if let Some(o) = doc.as_object_mut() {
-        for k in CSR_MATCH_MEMBERS.iter().chain(["__context"].iter()) {
-            if let Some(v) = sub.get(k) {
-                o.insert((*k).to_owned(), v.clone());
-            }
-        }
-    }
+    let mut doc: Map<String, Value> = CSR_MATCH_MEMBERS
+        .iter()
+        .chain(["__context"].iter())
+        .filter_map(|k| Some(((*k).to_owned(), sub.get(*k)?.clone())))
+        .collect();
+    doc.extend([
+        ("id".to_owned(), json!(csr_id)),
+        ("type".to_owned(), json!("Subscription")),
+        ("isActive".to_owned(), json!(true)),
+        ("status".to_owned(), json!("active")),
+        ("createdAt".to_owned(), json!(ts)),
+        ("modifiedAt".to_owned(), json!(ts)),
+        (
+            "notification".to_owned(),
+            json!({"endpoint": {"uri":
+                format!("urn:antares:distsub:{}\n{own_id}", tenant.as_str())}}),
+        ),
+    ]);
     if let (Some(a), Some(n)) = (
         sub.get("notification").and_then(|n| n.get("attributes")),
         doc.get_mut("notification").and_then(Value::as_object_mut),
@@ -461,7 +458,7 @@ pub(crate) async fn on_subscription_created(st: &AppState, tenant: &TenantId, su
     }
     let created = st
         .store
-        .create(tenant, Kind::DistSub, &csr_id, doc)
+        .create(tenant, Kind::DistSub, &csr_id, Value::Object(doc))
         .await
         .unwrap_or_else(|e| {
             tracing::warn!("subscription {own_id}: Registration Subscription not created: {e}");
@@ -580,7 +577,8 @@ pub(crate) async fn on_subscription_updated(st: &AppState, tenant: &TenantId, ow
         let ctx_url = sub_ctx_url(st, &sub);
         crate::spawn(async move {
             let ctx = crate::notify::sub_context(&st2, &t2, &sub2).await;
-            let Some(copy) = reduced_copy(&st2, &sub2, &reg, &remote_id, &ctx) else {
+            let token = notify_token();
+            let Some(copy) = reduced_copy(&st2, &sub2, &reg, &remote_id, &ctx, &token) else {
                 return;
             };
             patch_copy(
@@ -592,6 +590,7 @@ pub(crate) async fn on_subscription_updated(st: &AppState, tenant: &TenantId, ow
                 &reg,
                 &ctx_url,
                 &sub_via_headers(&sub2),
+                &token,
                 copy,
             )
             .await;
@@ -746,13 +745,12 @@ pub(crate) async fn on_csource_notification(
             {
                 let remote_id =
                     format!("urn:ngsi-ld:Subscription:distsub:{}", uuid::Uuid::new_v4());
-                let Some(mut copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
+                let token = notify_token();
+                let Some(copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx, &token) else {
                     // nothing this registration covers is watched — there is
                     // no reduced copy to forward to it
                     continue;
                 };
-                let token = notify_token();
-                with_proof(&mut copy, &token);
                 // 5.8.1.4/5.8.5.4: the mapping is stored BEFORE the forward —
                 // the remote id is broker-generated, and a delete Subscription
                 // arriving while the create-forward's response is still in
@@ -794,11 +792,12 @@ pub(crate) async fn on_csource_notification(
             ("updated", Some((_, remote_id)))
                 if crate::federation::doc_supports(reg, "updateSubscription") =>
             {
-                let Some(copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx) else {
+                let token = notify_token();
+                let Some(copy) = reduced_copy(st, &sub, reg, &remote_id, &ctx, &token) else {
                     continue;
                 };
                 patch_copy(
-                    st, tenant, &endpoint, &remote_id, reg_id, reg, &ctx_url, &via, copy,
+                    st, tenant, &endpoint, &remote_id, reg_id, reg, &ctx_url, &via, &token, copy,
                 )
                 .await;
             }
@@ -828,7 +827,11 @@ pub(crate) async fn on_csource_notification(
 /// 5.8.1.4: "a copy of the original Subscription shall be reduced to what
 /// is matched by the registration information"; with splitEntities the
 /// q/geoQ/scopeQ members are removed; the notification attributes/pick/omit
-/// members are removed; the endpoint is set to the local broker.
+/// members are removed; the endpoint is set to the local broker, carrying
+/// `token` as a receiverInfo pair (5.2.22): the Context Source sends it with
+/// every notification, masks it on a read and seals it at rest. A stored
+/// Subscription is an object with a notification object (5.2.12); anything
+/// else has no copy.
 ///
 /// 5.5.7 Term to URI expansion: the Subscription comes out of the store with
 /// its names and types EXPANDED, while a registration delivered by a Context
@@ -842,11 +845,9 @@ fn reduced_copy(
     reg: &Value,
     remote_id: &str,
     ctx: &antares_jsonld::Context,
+    token: &str,
 ) -> Option<Value> {
-    let mut copy = sub.clone();
-    let Some(o) = copy.as_object_mut() else {
-        return Some(copy);
-    };
+    let mut o = sub.as_object()?.clone();
     // __via travels as the Via HTTP header the forward extends (6.3.17),
     // never as a body member
     for k in [
@@ -874,25 +875,16 @@ fn reduced_copy(
         .flatten()
         .filter_map(|i| i.get("entities").and_then(Value::as_array))
         .flatten()
-        .map(|e| {
-            let mut e = e.clone();
-            // notification presentation arrayifies type — EntitySelector
-            // wants the plain form back
-            if let Some(o) = e.as_object_mut() {
-                if let Some(t) = o
-                    .get("type")
-                    .and_then(Value::as_array)
-                    .and_then(|a| a.first())
-                    .cloned()
-                {
-                    o.insert("type".into(), t);
-                }
-                if let Some(t) = o.get("type").and_then(Value::as_str) {
-                    let t = Value::String(ctx.expand_key(t));
-                    o.insert("type".into(), t);
-                }
-            }
-            e
+        .filter_map(|e| {
+            // a registered EntityInfo is an object with a type (5.2.8);
+            // notification presentation arrayifies the type, and an
+            // EntitySelector wants the plain form back
+            let mut o = e.as_object()?.clone();
+            let t = o.get("type")?;
+            let t = t.as_array().and_then(|a| a.first()).unwrap_or(t).as_str()?;
+            let t = Value::String(ctx.expand_key(t));
+            o.insert("type".into(), t);
+            Some(Value::Object(o))
         })
         .collect();
     if !reg_entities.is_empty() {
@@ -943,31 +935,31 @@ fn reduced_copy(
             o.remove(k);
         }
     }
-    if let Some(n) = o.get_mut("notification").and_then(Value::as_object_mut) {
-        for k in ["attributes", "pick", "omit"] {
-            n.remove(k);
-        }
-        // Table 5.2.14.2-1: the delivery bookkeeping is this broker's own
-        // record of notifying ITS subscriber. It lives inside `notification`,
-        // it is output-only on a create ("implementations shall ignore
-        // them"), and it says nothing the Context Source may act on — so it
-        // stays here, like the top-level members stripped above.
-        for k in [
-            "status",
-            "timesSent",
-            "timesFailed",
-            "lastNotification",
-            "lastSuccess",
-            "lastFailure",
-        ] {
-            n.remove(k);
-        }
-        n.insert(
-            "endpoint".into(),
-            json!({"uri": format!("{}/ex/v1/remote-notify", st.public_url)}),
-        );
+    let n = o.get_mut("notification").and_then(Value::as_object_mut)?;
+    for k in ["attributes", "pick", "omit"] {
+        n.remove(k);
     }
-    Some(copy)
+    // Table clause 5.2.14, item 2-1: the delivery bookkeeping is this broker's own
+    // record of notifying ITS subscriber. It lives inside `notification`,
+    // it is output-only on a create ("implementations shall ignore
+    // them"), and it says nothing the Context Source may act on — so it
+    // stays here, like the top-level members stripped above.
+    for k in [
+        "status",
+        "timesSent",
+        "timesFailed",
+        "lastNotification",
+        "lastSuccess",
+        "lastFailure",
+    ] {
+        n.remove(k);
+    }
+    n.insert(
+        "endpoint".into(),
+        json!({"uri": format!("{}/ex/v1/remote-notify", st.public_url),
+               "receiverInfo": [{"key": NOTIFY_PROOF_HEADER, "value": token}]}),
+    );
+    Some(Value::Object(o))
 }
 
 /// One forwarded subscription operation, through the shared federation
@@ -1020,7 +1012,8 @@ async fn split_merge(
         // timestamps a sysAttrs subscriber asked for; this is a translation
         // of a document the Context Source already produced, not an
         // admission check on client input.
-        let Ok(mut merged) = antares_jsonld::expand_entity(
+        // an expanded Entity always carries the id it was read with
+        let e = antares_jsonld::expand_entity(
             obj,
             &ctx,
             antares_jsonld::ExpandOpts {
@@ -1028,12 +1021,10 @@ async fn split_merge(
                 sys: true,
                 ..Default::default()
             },
-        ) else {
-            continue;
-        };
-        let Some(id) = merged.get("id").and_then(Value::as_str).map(str::to_owned) else {
-            continue;
-        };
+        )
+        .ok()
+        .and_then(|m| Some((m.get("id")?.as_str()?.to_owned(), m)));
+        let Some((id, mut merged)) = e else { continue };
         if let Ok(Some(local)) = st.store.get(tenant, Kind::Entity, &id).await {
             crate::federation::merge_docs(&mut merged, &local, false);
         }
@@ -1123,8 +1114,6 @@ async fn remote_notify_inner(
         return Ok(notify_refused());
     }
     // read back from the broker's own inbound index, not from the request
-    let tenant = TenantId::new_internal(&tenant)
-        .map_err(|_| NgsiError::InternalError("stored tenant invalid".into()))?;
     // EP-188: the Tenant is the stored one; a refused one answers as a
     // mapping this broker does not hold, so the peer learns nothing more.
     if crate::admin_auth::tenant_door(st, Some(tenant.as_str()), headers, true)
@@ -1158,30 +1147,29 @@ async fn remote_notify_inner(
     // 5.8.6: "if a Context Source filter is defined, then only the
     // subscribed Entities whose origin Context Source matches the referred
     // filter shall be included".
-    if let Some(csf) = sub.get("csf").and_then(Value::as_str) {
-        if let Ok(ast) = antares_ql::parse_q(csf) {
-            let origin_reg = match origin_reg_id.as_ref() {
-                Some(reg_id) => st
-                    .store
-                    .get(&tenant, Kind::Registration, reg_id)
-                    .await
-                    .ok()
-                    .flatten(),
-                None => None,
-            };
-            // 5.8.1.4: the csf is written in the Subscription's own @context,
-            // and 5.11.2.4 already read it in that @context when it chose the
-            // sources this Subscription was forwarded to. Reading it in the
-            // core context here would let the two disagree, and a source the
-            // broker deliberately subscribed to would have every notification
-            // dropped.
-            let ctx = crate::notify::sub_context(st, &tenant, &sub).await;
-            let matches =
-                origin_reg.is_some_and(|reg| crate::registry::csf_matches(&ast, &reg, &ctx));
-            if !matches {
-                // origin gated out — acknowledged, nothing forwarded
-                return Ok(StatusCode::OK.into_response());
-            }
+    // a stored csf passed the same parse when the Subscription was written
+    let csf = sub.get("csf").and_then(Value::as_str);
+    if let Some(ast) = csf.and_then(|c| antares_ql::parse_q(c).ok()) {
+        let origin_reg = match origin_reg_id.as_ref() {
+            Some(reg_id) => st
+                .store
+                .get(&tenant, Kind::Registration, reg_id)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        };
+        // clause 5.8.1, item 4: the csf is written in the Subscription's own @context,
+        // and clause 5.11.2, item 4 already read it in that @context when it chose the
+        // sources this Subscription was forwarded to. Reading it in the
+        // core context here would let the two disagree, and a source the
+        // broker deliberately subscribed to would have every notification
+        // dropped.
+        let ctx = crate::notify::sub_context(st, &tenant, &sub).await;
+        let matches = origin_reg.is_some_and(|reg| crate::registry::csf_matches(&ast, &reg, &ctx));
+        if !matches {
+            // origin gated out — acknowledged, nothing forwarded
+            return Ok(StatusCode::OK.into_response());
         }
     }
     let mut data: Vec<Value> = v
@@ -1543,6 +1531,212 @@ mod mapping_edges {
         assert!(!notification_fresh(&n, sid), "a replay inside the window");
     }
 
+    /// The default @context prefix every Term expands to (5.5.7).
+    const DC: &str = "https://uri.etsi.org/ngsi-ld/default-context/";
+
+    /// A registration `id` at an endpoint nothing listens on, offering
+    /// `ops` over the Attribute `attr`.
+    fn unreachable_reg(id: &str, ops: &[&str], attr: &str) -> Value {
+        json!({"id": id, "endpoint": "http://127.0.0.1:1", "operations": ops,
+               "information": [{"propertyNames": [attr]}]})
+    }
+
+    async fn index_ids(st: &AppState) -> Vec<String> {
+        let idx = ds_index_tenant().expect("index tenant");
+        st.store
+            .list(&idx, Kind::DistSub)
+            .await
+            .expect("index")
+            .iter()
+            .filter_map(|d| d.get("own").and_then(Value::as_str).map(str::to_owned))
+            .collect()
+    }
+
+    /// clause 5.8.1, item 4 on a Context Source Notification: registrations without an
+    /// id, auxiliary ones, ones without an endpoint, ones not offering the
+    /// operation and ones covering nothing the Subscription watches take no
+    /// copy; a copy whose forward fails is rolled back; a Subscription with
+    /// no mapping document takes none; an update whose forward fails puts
+    /// the previous proof back, and one covering nothing is not sent.
+    #[tokio::test]
+    async fn a_csource_notification_forwards_only_what_it_can() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        let watched = sub(json!({"watchedAttributes": [format!("{DC}height")]}));
+        st.store
+            .create(&t, Kind::Subscription, OWN, watched.clone())
+            .await
+            .expect("seed subscription");
+        st.store
+            .create(&t, Kind::DistSub, OWN, json!({"id": OWN}))
+            .await
+            .expect("seed mapping");
+        on_csource_notification(&st, &t, "urn:ngsi-ld:Subscription:none", None, &[json!({})]).await;
+        let create = ["createSubscription"];
+        let regs = [
+            json!({"endpoint": "http://127.0.0.1:1"}),
+            json!({"id": "r-aux", "mode": "auxiliary", "endpoint": "http://127.0.0.1:1",
+                   "operations": create}),
+            json!({"id": "r-noep", "operations": create}),
+            unreachable_reg("r-read", &["retrieveEntity"], "height"),
+            unreachable_reg("r-other", &create, "other"),
+            unreachable_reg("r-down", &create, "height"),
+        ];
+        on_csource_notification(&st, &t, OWN, Some("newlyMatching"), &regs).await;
+        let mapping = ds_get(&st, &t, OWN).await.expect("mapping");
+        assert!(ds_remotes(&mapping).is_empty(), "{mapping}");
+        assert!(
+            index_ids(&st).await.is_empty(),
+            "the failed forward rolled back"
+        );
+
+        // a Subscription whose mapping document is gone takes no copy
+        let lone = "urn:ngsi-ld:Subscription:lone";
+        let mut lone_sub = watched.clone();
+        lone_sub["id"] = json!(lone);
+        st.store
+            .create(&t, Kind::Subscription, lone, lone_sub)
+            .await
+            .expect("seed subscription");
+        on_csource_notification(&st, &t, lone, None, &[regs[5].clone()]).await;
+        assert!(st
+            .store
+            .get(&t, Kind::DistSub, lone)
+            .await
+            .expect("read")
+            .is_none());
+        assert!(index_ids(&st).await.is_empty());
+
+        // an update: the forward fails and the previous proof is back; a
+        // registration covering nothing watched is sent nothing
+        let update = ["updateSubscription"];
+        assert!(
+            ds_set_remote(
+                &st,
+                &t,
+                OWN,
+                "r-up",
+                Some(json!(["http://127.0.0.1:1", "urn:remote:up"]))
+            )
+            .await
+        );
+        assert!(
+            ds_set_remote(
+                &st,
+                &t,
+                OWN,
+                "r-up2",
+                Some(json!(["http://127.0.0.1:1", "urn:remote:up2"]))
+            )
+            .await
+        );
+        inbound_put(&st, "urn:remote:up", &t, OWN, &proof_digest("p0")).await;
+        inbound_put(&st, "urn:remote:up2", &t, OWN, &proof_digest("q0")).await;
+        let ups = [
+            unreachable_reg("r-up", &update, "height"),
+            unreachable_reg("r-up2", &update, "other"),
+        ];
+        on_csource_notification(&st, &t, OWN, Some("updated"), &ups).await;
+        let (_, _, proofs) = inbound_get(&st, "urn:remote:up").await.expect("index");
+        assert_eq!(proofs, vec![proof_digest("p0")], "the refused update");
+        let (_, _, proofs) = inbound_get(&st, "urn:remote:up2").await.expect("index");
+        assert_eq!(proofs, vec![proof_digest("q0")], "never rotated");
+    }
+
+    /// Two updates that both fail put the previous proof back once: the
+    /// second finds nothing more to restore.
+    #[tokio::test]
+    async fn a_second_failed_update_keeps_the_restored_proof() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        inbound_put(&st, "urn:remote:r", &t, OWN, &proof_digest("p0")).await;
+        inbound_rotate(&st, "urn:remote:r", Some(&proof_digest("p1"))).await;
+        inbound_rotate(&st, "urn:remote:r", Some(&proof_digest("p2"))).await;
+        inbound_rotate(&st, "urn:remote:r", None).await;
+        inbound_rotate(&st, "urn:remote:r", None).await;
+        let (_, _, proofs) = inbound_get(&st, "urn:remote:r").await.expect("index");
+        assert_eq!(proofs, vec![proof_digest("p1")]);
+        assert_eq!(
+            st.notification_receiver("urn:remote:r").await.as_deref(),
+            Some("default")
+        );
+    }
+
+    /// The replay memory at its cap forgets what left the window first, and
+    /// refuses while it stays full of keys inside it.
+    #[test]
+    fn a_full_replay_memory_forgets_only_what_left_the_window() {
+        let mut seen = std::collections::HashMap::new();
+        let now = 1_000_000;
+        assert!(admit(&mut seen, [1; 16], now - NOTIFY_WINDOW_SECS - 1, 1));
+        assert!(
+            admit(&mut seen, [2; 16], now, 1),
+            "the stale key is forgotten"
+        );
+        assert!(!admit(&mut seen, [3; 16], now, 1), "full inside the window");
+        assert!(!admit(&mut seen, [2; 16], now, 2), "a replay");
+        assert!(admit(&mut seen, [3; 16], now, 2));
+    }
+
+    /// 5.8.6 merge seams: what is no object or no Entity is dropped, and a
+    /// notified fragment is merged with the Entity this broker holds before
+    /// the Subscription's conditions are read.
+    #[tokio::test]
+    async fn the_split_merge_drops_what_is_no_entity_and_merges_the_local_one() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        let b1 = "urn:ngsi-ld:Building:b1";
+        st.store
+            .create(
+                &t,
+                Kind::Entity,
+                b1,
+                json!({"id": b1, "type": [format!("{DC}Building")],
+                       format!("{DC}height"): [{"type": "Property", "value": 120}]}),
+            )
+            .await
+            .expect("seed entity");
+        let watcher = sub(json!({"q": "height>100"}));
+        let data = vec![
+            json!(5),
+            json!({"type": "Building"}),
+            json!({"id": b1, "type": "Building", "name": {"type": "Property", "value": "x"}}),
+        ];
+        let out = split_merge(&st, &t, &watcher, None, data)
+            .await
+            .expect("merged");
+        assert_eq!(out.len(), 1, "{out:?}");
+        assert_eq!(out[0]["id"], b1);
+        let low = sub(json!({"q": "height>500"}));
+        let none = split_merge(
+            &st,
+            &t,
+            &low,
+            None,
+            vec![json!({"id": b1, "type": "Building"})],
+        )
+        .await
+        .expect("merged");
+        assert!(none.is_empty(), "{none:?}");
+    }
+
+    /// clause 5.8.1, item 4: a mapping document of the wrong shape is neither stamped
+    /// with the Registration Subscription nor replaced by the create.
+    #[tokio::test]
+    async fn a_create_leaves_a_mapping_of_the_wrong_shape_as_it_was() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        st.store
+            .create(&t, Kind::DistSub, OWN, json!(["not", "a", "mapping"]))
+            .await
+            .expect("seed");
+        on_subscription_created(&st, &t, &sub(json!({}))).await;
+        assert_eq!(
+            ds_get(&st, &t, OWN).await,
+            Some(json!(["not", "a", "mapping"]))
+        );
+    }
+
     /// An unread mapping is not an empty one: with the store refusing, no
     /// mapping is read, written, created or torn down, and nothing panics.
     #[cfg(feature = "postgres")]
@@ -1552,6 +1746,8 @@ mod mapping_edges {
         let t = TenantId::new("refused").expect("tenant");
         assert_eq!(ds_get(&st, &t, OWN).await, None);
         ds_put(&st, &t, OWN, json!({"csr_sub": "x"})).await;
+        inbound_put(&st, "urn:remote:refused", &t, OWN, "digest").await;
+        on_csource_notification(&st, &t, OWN, None, &[json!({"id": "r"})]).await;
         on_subscription_created(&st, &t, &sub(json!({}))).await;
         on_subscription_updated(&st, &t, OWN).await;
         on_subscription_deleted(&st, &t, OWN).await;
@@ -1651,6 +1847,183 @@ mod tests {
         })
     }
 
+    /// A local endpoint recording each request body it is sent.
+    async fn capture() -> (String, tokio::sync::mpsc::Receiver<Value>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<Value>(8);
+        let app = axum::Router::new().fallback(move |b: Bytes| {
+            let tx = tx.clone();
+            async move {
+                let _ = tx
+                    .send(serde_json::from_slice(&b).unwrap_or(Value::Null))
+                    .await;
+                StatusCode::NO_CONTENT
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, app,
+        )));
+        (format!("http://{addr}"), rx)
+    }
+
+    /// A Subscription `own` of the default Tenant, mapped from the remote
+    /// copy `remote` under the proof "t", notifying `endpoint`.
+    async fn mapped(st: &AppState, remote: &str, own: &str, endpoint: &str, extra: Value) {
+        let t = TenantId::default();
+        let mut sub = json!({"id": own, "type": "Subscription",
+            "entities": [{"type": format!("{DC}Building")}],
+            "notification": {"endpoint": {"uri": format!("{endpoint}/notify")}}});
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            sub[k] = v.clone();
+        }
+        st.store
+            .create(&t, Kind::Subscription, own, sub)
+            .await
+            .expect("seed subscription");
+        inbound_put(st, remote, &t, own, &proof_digest("t")).await;
+    }
+
+    /// 5.8.6 on the inbound side: a notification without a subscriptionId is
+    /// BadRequestData; a csf that no known origin matches acknowledges and
+    /// forwards nothing; the original selector keeps what it selects, read
+    /// from a type array as well, and drops an Entity without a type; a
+    /// split merge that leaves nothing forwards nothing.
+    #[tokio::test]
+    async fn clause_5_8_6_inbound_notifications_forward_what_the_subscriber_selected() {
+        let st = AppState::new("antares-ds-inbound".into());
+        let no_sid = remote_notify(
+            State(st.clone()),
+            proven("t"),
+            Bytes::from(json!({"type": "Notification", "data": []}).to_string()),
+        )
+        .await;
+        assert_eq!(no_sid.status(), StatusCode::BAD_REQUEST);
+
+        let (sink, mut got) = capture().await;
+        mapped(
+            &st,
+            "urn:remote:csf",
+            "urn:ngsi-ld:Subscription:csf",
+            &sink,
+            json!({"csf": "mode==\"inclusive\""}),
+        )
+        .await;
+        let b = json!({"id": "urn:ngsi-ld:Building:1", "type": "Building"});
+        let gated = remote_notify(
+            State(st.clone()),
+            proven("t"),
+            Bytes::from(fresh("urn:remote:csf", json!([b]))),
+        )
+        .await;
+        assert_eq!(gated.status(), StatusCode::OK);
+
+        mapped(
+            &st,
+            "urn:remote:sel",
+            "urn:ngsi-ld:Subscription:sel",
+            &sink,
+            json!({}),
+        )
+        .await;
+        let data = json!([
+            {"id": "urn:ngsi-ld:Building:2", "type": ["Building"]},
+            {"id": "urn:ngsi-ld:Building:3"},
+        ]);
+        let kept = remote_notify(
+            State(st.clone()),
+            proven("t"),
+            Bytes::from(fresh("urn:remote:sel", data)),
+        )
+        .await;
+        assert_eq!(kept.status(), StatusCode::OK);
+        let sent = tokio::time::timeout(std::time::Duration::from_secs(5), got.recv())
+            .await
+            .expect("delivered in time")
+            .expect("one notification");
+        assert_eq!(
+            sent["subscriptionId"], "urn:ngsi-ld:Subscription:sel",
+            "{sent}"
+        );
+        let ids: Vec<&str> = sent["data"]
+            .as_array()
+            .expect("data")
+            .iter()
+            .filter_map(|e| e["id"].as_str())
+            .collect();
+        assert_eq!(ids, vec!["urn:ngsi-ld:Building:2"], "{sent}");
+
+        mapped(
+            &st,
+            "urn:remote:split",
+            "urn:ngsi-ld:Subscription:split",
+            &sink,
+            json!({"splitEntities": true, "q": "height>100"}),
+        )
+        .await;
+        let low = json!([{"id": "urn:ngsi-ld:Building:4", "type": "Building",
+            "height": {"type": "Property", "value": 3}}]);
+        let none = remote_notify(
+            State(st.clone()),
+            proven("t"),
+            Bytes::from(fresh("urn:remote:split", low)),
+        )
+        .await;
+        assert_eq!(none.status(), StatusCode::OK);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), got.recv())
+                .await
+                .is_err(),
+            "the csf-gated and the emptied notifications reach nobody"
+        );
+    }
+
+    /// 5.8.2: an update whose reduced copy covers nothing the registration
+    /// registers sends no PATCH to the Context Source.
+    #[tokio::test]
+    async fn clause_5_8_2_an_update_covering_nothing_is_not_sent() {
+        let st = AppState::new("antares-ds-upd".into());
+        let t = TenantId::default();
+        let (source, mut got) = capture().await;
+        let own = "urn:ngsi-ld:Subscription:upd";
+        let sub = json!({"id": own, "type": "Subscription",
+            "entities": [{"type": format!("{DC}Building")}],
+            "watchedAttributes": [format!("{DC}height")],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:1/notify"}}});
+        st.store
+            .create(&t, Kind::Subscription, own, sub)
+            .await
+            .expect("seed subscription");
+        st.store
+            .create(
+                &t,
+                Kind::DistSub,
+                own,
+                json!({"csr_sub": "urn:csr:none", "remotes": {"r-x": [source, "urn:remote:x"]}}),
+            )
+            .await
+            .expect("seed mapping");
+        st.store
+            .create(
+                &t,
+                Kind::Registration,
+                "r-x",
+                json!({"id": "r-x", "endpoint": source, "operations": ["updateSubscription"],
+                       "information": [{"propertyNames": [format!("{DC}other")]}]}),
+            )
+            .await
+            .expect("seed registration");
+        on_subscription_updated(&st, &t, own).await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(300), got.recv())
+                .await
+                .is_err(),
+            "nothing to update at the source"
+        );
+    }
+
     /// F-ANT3-014: a periodic Subscription that watches everything gets no
     /// watchedAttributes in its copy: 5.2.12 forbids the pair with
     /// timeInterval, so the source refused every such copy.
@@ -1658,16 +2031,16 @@ mod tests {
     fn a_periodic_copy_watches_nothing() {
         let st = AppState::new("antares-ds-periodic".into());
         let mut sub = sub_doc();
-        if let Some(o) = sub.as_object_mut() {
-            o.remove("watchedAttributes");
-            o.insert("timeInterval".into(), json!(10));
-        }
+        let o = sub.as_object_mut().expect("a Subscription is an object");
+        o.remove("watchedAttributes");
+        o.insert("timeInterval".into(), json!(10));
         let copy = reduced_copy(
             &st,
             &sub,
             &reg_doc(),
             "urn:ngsi-ld:Subscription:remote1",
             &st.loader.core(),
+            "t",
         )
         .expect("a copy the registration covers");
         assert_eq!(copy.get("watchedAttributes"), None, "{copy}");
@@ -1690,6 +2063,7 @@ mod tests {
             &reg_doc(),
             "urn:ngsi-ld:Subscription:remote1",
             &st.loader.core(),
+            "t",
         )
         .expect("a copy the registration covers");
         assert_eq!(copy["id"], json!("urn:ngsi-ld:Subscription:remote1"));
@@ -1776,6 +2150,7 @@ mod tests {
             &reg_doc(),
             "urn:ngsi-ld:Subscription:remote2",
             &st.loader.core(),
+            "t",
         )
         .expect("copy");
         for k in ["q", "geoQ", "scopeQ"] {
@@ -1795,6 +2170,7 @@ mod tests {
             &reg_doc(),
             "urn:ngsi-ld:Subscription:remote3",
             &st.loader.core(),
+            "t",
         )
         .expect("copy");
         assert_eq!(
@@ -1820,6 +2196,7 @@ mod tests {
             &reg_doc(),
             "urn:ngsi-ld:Subscription:remote4",
             &st.loader.core(),
+            "t",
         )
         .expect("a copy the registration covers");
         assert_eq!(
@@ -2139,7 +2516,7 @@ mod tests {
         inbound_put(&st, "urn:remote:1", &a, own, &proof_digest("t")).await;
         assert_eq!(
             inbound_get(&st, "urn:remote:1").await,
-            Some(("alpha".to_owned(), own.to_owned(), vec![proof_digest("t")]))
+            Some((a.clone(), own.to_owned(), vec![proof_digest("t")]))
         );
         assert!(
             st.store
@@ -2188,7 +2565,7 @@ mod tests {
         assert_eq!(
             inbound_get(&st, shared).await,
             Some((
-                "alpha".to_owned(),
+                a.clone(),
                 "urn:ngsi-ld:Subscription:a".to_owned(),
                 vec![proof_digest("t")]
             )),
@@ -2681,12 +3058,19 @@ mod tests {
             .expect("read")
             .expect("row");
         assert!(!row.to_string().contains(&token), "{row}");
-        let mut copy =
-            json!({"notification": {"endpoint": {"uri": "http://x/ex/v1/remote-notify"}}});
-        with_proof(&mut copy, &token);
+        let sub = json!({"id": "urn:own", "type": "Subscription",
+            "notification": {"endpoint": {"uri": "http://subscriber.example.org/cb"}}});
+        let reg = json!({"id": "urn:reg", "information": [{"propertyNames": ["speed"]}]});
+        let copy = reduced_copy(&st, &sub, &reg, "urn:r", &st.loader.core(), &token)
+            .expect("a copy the registration covers");
         assert_eq!(
-            copy["notification"]["endpoint"]["receiverInfo"][0]["key"],
-            NOTIFY_PROOF_HEADER
+            copy["notification"]["endpoint"]["receiverInfo"],
+            json!([{"key": NOTIFY_PROOF_HEADER, "value": token}])
+        );
+        assert_eq!(
+            copy["entities"],
+            json!(null),
+            "a registration without entities leaves the selectors as they were"
         );
     }
 }

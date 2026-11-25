@@ -697,6 +697,9 @@ mod doc_mirror {
         assert!(m.matching("t", None, Some(&car)).is_empty());
         assert_eq!(Mirror::held(&m), [("u".to_owned(), "r:2".to_owned())]);
         assert_eq!(m.tenants(), ["u"], "an emptied tenant leaves the map");
+        // a delete in a tenant the mirror never held changes nothing
+        Mirror::apply(&m, "absent", "r:9", None);
+        assert_eq!(m.tenants(), ["u"]);
     }
 
     /// The subscription index: an empty `entities` list and a
@@ -745,6 +748,26 @@ mod doc_mirror {
         assert_eq!(
             ids(&m.candidates("t", &[], &["temp"])),
             ["s:empty", "s:odd", "s:watch"]
+        );
+        // an attribute key two subscriptions share outlives one of them
+        m.apply(
+            "t",
+            "s:temp",
+            Some(json!({"id": "s:temp", "watchedAttributes": ["temp"]})),
+        );
+        m.apply("t", "s:watch", None);
+        assert_eq!(
+            ids(&m.candidates("t", &[], &["temp"])),
+            ["s:empty", "s:odd", "s:temp"]
+        );
+        // a CSR subscription written anywhere wakes the sweep at once
+        m.next_csub_sweep_ms
+            .store(99, std::sync::atomic::Ordering::Relaxed);
+        Mirror::csub_written(&m);
+        assert_eq!(
+            m.next_csub_sweep_ms
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0
         );
     }
 }

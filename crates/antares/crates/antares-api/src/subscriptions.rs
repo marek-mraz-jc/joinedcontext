@@ -1766,6 +1766,34 @@ mod tests {
         }
     }
 
+    /// 5.2.12: a Subscription without its type is refused on create; a
+    /// fragment needs none.
+    #[test]
+    fn clause_5_2_12_a_subscription_names_its_type() {
+        let ctx = Loader::new().core();
+        let doc = json!({"entities": [{"type": "Building"}],
+            "notification": {"endpoint": {"uri": "http://localhost:1111/notify"}}});
+        let e = normalize_subscription(doc.as_object().expect("object"), &ctx, false)
+            .expect_err("a type is required");
+        assert!(e.to_string().contains("type must be"), "{e}");
+        assert!(normalize_subscription(doc.as_object().expect("object"), &ctx, true).is_ok());
+    }
+
+    /// The members the engine decides on name each type and Attribute once,
+    /// however often the Subscription repeats it, and skip a selector
+    /// without a type.
+    #[test]
+    fn the_decided_members_name_each_type_once() {
+        let norm = json!({
+            "entities": [{"type": "A"}, {"type": "B"}, {"type": "A"}, {"idPattern": ".*"}],
+            "watchedAttributes": ["x", "x", 7]
+        });
+        let m = sub_members(norm.as_object().expect("object"));
+        assert_eq!(m.types, ["A", "B"]);
+        assert_eq!(m.attrs, ["x"]);
+        assert!(m.q.is_none() && m.geo.is_none());
+    }
+
     /// 5.5.4: "urn:ngsi-ld:null" as a first-level member value is
     /// BadRequestData on create; in a patch fragment it is the removal form.
     #[test]
@@ -2723,6 +2751,13 @@ mod tests {
             json!([{"key": "Authorization", "value": MASKED}, {"key": "X-Bare"}])
         );
         assert_eq!(out["notification"]["endpoint"]["uri"], "http://h/n");
+        // a geoQ without a geoproperty is presented as stored
+        let doc = json!({"geoQ": {"geometry": "Point", "coordinates": [1, 2]}});
+        let out = present_subscription(&doc, &ctx, false, false);
+        assert_eq!(
+            out["geoQ"],
+            json!({"geometry": "Point", "coordinates": [1, 2]})
+        );
     }
 
     /// 5.8.1.4: the endpoint is checked by the sink of its scheme. A
@@ -2802,11 +2837,8 @@ mod tests {
         h
     }
 
-    fn ngsi(r: ApiResult<Response>) -> NgsiError {
-        match r.expect_err("refused") {
-            ApiError::Ngsi(e) => e,
-            other => panic!("an NGSI-LD error, got {other:?}"),
-        }
+    fn ngsi(r: ApiResult<Response>) -> ApiError {
+        r.expect_err("refused")
     }
 
     const BODY: &str = r#"{"type":"Subscription","entities":[{"type":"Vehicle"}],
@@ -2830,7 +2862,7 @@ mod tests {
         let reserved = format!("{}x", crate::registry::INTERNAL_CSR_PREFIX);
         let e = ngsi(create(&st, Kind::Subscription, &p, &h, &with_id(&reserved)).await);
         assert!(
-            matches!(&e, NgsiError::BadRequestData(m) if m.contains("reserved by the broker")),
+            matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m.contains("reserved by the broker")),
             "{e:?}"
         );
         let body = with_id("urn:ngsi-ld:Subscription:dup");
@@ -2840,7 +2872,7 @@ mod tests {
         assert_eq!(r.status(), StatusCode::CREATED);
         assert!(matches!(
             ngsi(create(&st, Kind::Subscription, &p, &h, &body).await),
-            NgsiError::AlreadyExists(_)
+            ApiError::Ngsi(NgsiError::AlreadyExists(_))
         ));
         let mut ld = HeaderMap::new();
         ld.insert(
@@ -2881,7 +2913,7 @@ mod tests {
         ] {
             let e = ngsi(r);
             assert!(
-                matches!(&e, NgsiError::BadRequestData(m) if m.starts_with("invalid subscription id")),
+                matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m.starts_with("invalid subscription id")),
                 "{e:?}"
             );
         }
@@ -2892,7 +2924,7 @@ mod tests {
         let other_id = br#"{"id":"urn:ngsi-ld:Subscription:u2"}"#;
         let e = ngsi(update(&st, Kind::Subscription, id, &p, &h, other_id).await);
         assert!(
-            matches!(&e, NgsiError::BadRequestData(m) if m == "fragment id mismatch"),
+            matches!(&e, ApiError::Ngsi(NgsiError::BadRequestData(m)) if m == "fragment id mismatch"),
             "{e:?}"
         );
         assert!(matches!(
@@ -2906,7 +2938,7 @@ mod tests {
                 )
                 .await
             ),
-            NgsiError::ResourceNotFound(_)
+            ApiError::Ngsi(NgsiError::ResourceNotFound(_))
         ));
         let cs = "urn:ngsi-ld:CSourceSubscription:c1";
         create(&st, Kind::CSourceSubscription, &p, &h, &with_id(cs))
@@ -2923,6 +2955,232 @@ mod tests {
             .expect("read")
             .expect("stored");
         assert_eq!(doc["isActive"], false);
+        // a Context Source Registration Subscription deletes on its own
+        // clause (5.11.6), with no distributed copies to follow it
+        let r = delete(&st, Kind::CSourceSubscription, cs, &p, &h)
+            .await
+            .expect("deleted");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+    }
+
+    /// clause 5.11.3, item 4: an update of an active Context Source Registration
+    /// Subscription notifies the Registrations matching it at that moment,
+    /// from a task of its own that outlives the request.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_11_3_an_update_notifies_what_matches_now() {
+        crate::allow_private();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let app = axum::Router::new().route(
+            "/n",
+            axum::routing::post(move |body: String| {
+                let tx = tx.clone();
+                async move {
+                    let _ = tx.send(serde_json::from_str(&body).unwrap_or(Value::Null));
+                    StatusCode::OK
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let st = AppState::new("csub-update-initial".into());
+        let p = HashMap::new();
+        let h = json_headers();
+        let reg = json!({"id": "urn:ngsi-ld:ContextSourceRegistration:live",
+            "type": "ContextSourceRegistration",
+            "information": [{"entities": [{"type": "Vehicle"}]}],
+            "endpoint": "http://cs.example.org:1026"});
+        let req = axum::http::Request::post("/ngsi-ld/v1/csourceRegistrations")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", reg.to_string().len())
+            .body(axum::body::Body::from(reg.to_string()))
+            .expect("request");
+        let made = tower::ServiceExt::oneshot(crate::router(st.clone()), req)
+            .await
+            .expect("response");
+        assert_eq!(made.status(), StatusCode::CREATED);
+        let cs = "urn:ngsi-ld:CSourceSubscription:live";
+        let body = json!({"id": cs, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+            "notification": {"endpoint": {"uri": format!("http://{addr}/n")}}});
+        create(
+            &st,
+            Kind::CSourceSubscription,
+            &p,
+            &h,
+            body.to_string().as_bytes(),
+        )
+        .await
+        .expect("created");
+        // whatever the create itself notified has arrived and is set aside
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        while rx.try_recv().is_ok() {}
+        let r = update(
+            &st,
+            Kind::CSourceSubscription,
+            cs,
+            &p,
+            &h,
+            br#"{"description":"moved"}"#,
+        )
+        .await
+        .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), rx.recv())
+            .await
+            .expect("the update notifies")
+            .expect("a notification");
+        assert_eq!(got["subscriptionId"], cs, "{got}");
+        assert_eq!(got["triggerReason"], "newlyMatching", "{got}");
+        assert_eq!(
+            got["data"][0]["id"], "urn:ngsi-ld:ContextSourceRegistration:live",
+            "{got}"
+        );
+    }
+
+    /// A binding of `urn:antares:ws:` endpoints that takes `mine` as the
+    /// calling connection's for its first `left` asks, as the WebSocket
+    /// binding does while that connection's call runs, and refuses every
+    /// other endpoint.
+    struct Socket(std::sync::atomic::AtomicUsize);
+
+    impl antares_notifier::NotificationSink for Socket {
+        fn schemes(&self) -> &'static [&'static str] {
+            &["urn"]
+        }
+        fn parse_endpoint(&self, uri: &str, _: &[(&str, &str)]) -> Result<(), NgsiError> {
+            let left = self.0.load(std::sync::atomic::Ordering::SeqCst);
+            if uri == "urn:antares:ws:mine" && left > 0 {
+                self.0.store(left - 1, std::sync::atomic::Ordering::SeqCst);
+                return Ok(());
+            }
+            Err(NgsiError::BadRequestData("not this connection".into()))
+        }
+        fn deliver<'a>(
+            &'a self,
+            _uri: &'a str,
+            _out: &'a antares_notifier::Outbound,
+            _timeout: std::time::Duration,
+        ) -> antares_notifier::DeliveryFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// ADR-0026 rule 4 (T-4755): a fragment that moves a watch off the
+    /// calling socket is decided as a plain 5.8.2 update and written; a
+    /// watch whose socket is no longer the caller's when the write runs is
+    /// 404 and the stored Subscription is left as it was.
+    #[tokio::test]
+    async fn adr_0026_a_watch_holds_only_while_it_is_the_calling_socket() {
+        let p = HashMap::new();
+        let h = json_headers();
+        let t = TenantId::default();
+        let watch = |id: &str| {
+            json!({"id": id, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+                "notification": {"endpoint": {"uri": "urn:antares:ws:mine"}}})
+        };
+        let st = AppState::new("sub-watch-moved".into()).with_sink(Box::new(Socket(
+            std::sync::atomic::AtomicUsize::new(usize::MAX),
+        )));
+        let id = "urn:ngsi-ld:Subscription:moved";
+        st.store
+            .create(&t, Kind::Subscription, id, watch(id))
+            .await
+            .expect("seed");
+        let moved = br#"{"notification":{"endpoint":{"uri":"http://127.0.0.1:9/n"}}}"#;
+        let r = update(&st, Kind::Subscription, id, &p, &h, moved)
+            .await
+            .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+        let doc = st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert_eq!(
+            doc["notification"]["endpoint"]["uri"],
+            "http://127.0.0.1:9/n"
+        );
+
+        // the socket answers for the decision and is gone by the write
+        let st = AppState::new("sub-watch-gone".into())
+            .with_sink(Box::new(Socket(std::sync::atomic::AtomicUsize::new(1))));
+        let id = "urn:ngsi-ld:Subscription:gone";
+        st.store
+            .create(&t, Kind::Subscription, id, watch(id))
+            .await
+            .expect("seed");
+        let e = ngsi(
+            update(
+                &st,
+                Kind::Subscription,
+                id,
+                &p,
+                &h,
+                br#"{"isActive":false}"#,
+            )
+            .await,
+        );
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::ResourceNotFound(m)) if m.contains(id)),
+            "{e:?}"
+        );
+        let doc = st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .expect("stored");
+        assert!(doc.get("isActive").is_none(), "{doc}");
+    }
+
+    /// ADR-0023 rule 9: through a view, a Subscription made at the root is
+    /// not there to delete: 404, and it stays.
+    #[tokio::test]
+    async fn rule_9_a_view_deletes_only_its_own_subscriptions() {
+        let st = AppState::new("sub-view-delete".into());
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:Subscription:root";
+        st.store
+            .create(
+                &t,
+                Kind::Subscription,
+                id,
+                serde_json::from_slice(&with_id(id)).expect("json"),
+            )
+            .await
+            .expect("seed");
+        let rule = crate::policy::Rule {
+            types: vec!["Vehicle".into()],
+            every_attribute: true,
+            ..Default::default()
+        };
+        let view =
+            crate::views::CompiledView::new(&["Vehicle".into()], None, None, None, vec![rule])
+                .expect("view");
+        let through = st.with_view(std::sync::Arc::new(view));
+        let e = ngsi(
+            delete(
+                &through,
+                Kind::Subscription,
+                id,
+                &HashMap::new(),
+                &json_headers(),
+            )
+            .await,
+        );
+        assert!(
+            matches!(&e, ApiError::Ngsi(NgsiError::ResourceNotFound(_))),
+            "{e:?}"
+        );
+        assert!(st
+            .store
+            .get(&t, Kind::Subscription, id)
+            .await
+            .expect("read")
+            .is_some());
     }
 
     /// ADR-0026 rule 7a: the sweep deletes a WebSocket Subscription whose

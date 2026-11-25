@@ -73,20 +73,14 @@ impl<'t> Grants<'t> {
         let ctx = context();
         let mut out = Vec::new();
         for s in selectors(p) {
-            let types: Vec<&String> = if s.entity_type == "*" {
-                shown.keys().collect()
+            // each type the view shows, with the Attributes it shows of it
+            let types: Vec<(&String, &BTreeSet<String>)> = if s.entity_type == "*" {
+                shown.iter().collect()
             } else {
                 let iri = ctx.expand_key(&s.entity_type);
-                shown
-                    .get_key_value(&iri)
-                    .map(|(k, _)| k)
-                    .into_iter()
-                    .collect()
+                shown.get_key_value(&iri).into_iter().collect()
             };
-            for t in types {
-                let Some(visible) = shown.get(t) else {
-                    continue;
-                };
+            for (t, visible) in types {
                 let mut attributes: Vec<String> = visible
                     .iter()
                     .filter(|a| {
@@ -955,13 +949,12 @@ mod tests {
             types: &types,
             ..Operation::new("5.7.2")
         };
-        let Decision::Filter(f) = crate::decide::decide(Some(&t), &public, &op, Timestamp::now())
-        else {
-            return Err("a read narrowed by an Attribute".into());
-        };
-        assert_eq!(
-            f.omit_by_type.get(&ctx.expand_key("Car")),
-            Some(&vec![ctx.expand_key("speed")])
+        let decided = crate::decide::decide(Some(&t), &public, &op, Timestamp::now());
+        let speed = vec![ctx.expand_key("speed")];
+        assert!(
+            matches!(&decided, Decision::Filter(f)
+                if f.omit_by_type.get(&ctx.expand_key("Car")) == Some(&speed)),
+            "a read narrowed by an Attribute: {decided:?}"
         );
         Ok(())
     }
@@ -1139,9 +1132,11 @@ mod tests {
     /// What the engine decides on a real request: `action` on `attribute` of
     /// one `Car`, shown (a read) or allowed (a write).
     fn real(t: &Table, who: &Caller, action: &str, attribute: &str) -> bool {
-        let Some(clause) = names::clause(action) else {
-            return false;
-        };
+        names::clause(action).is_some_and(|clause| decides(t, who, clause, attribute))
+    }
+
+    /// [`real`] for the clause its action names.
+    fn decides(t: &Table, who: &Caller, clause: &'static str, attribute: &str) -> bool {
         let ctx = context();
         let (ty, attr) = (ctx.expand_key("Car"), ctx.expand_key(attribute));
         let types = vec![ty.clone()];

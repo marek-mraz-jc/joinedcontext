@@ -328,6 +328,27 @@ mod known_tenants_tests {
         known.forget(&tenant("t0"));
         assert!(!known.holds(&tenant("t0")));
     }
+
+    /// A full shard makes room by dropping what aged past the TTL, and the
+    /// new name is held.
+    #[test]
+    fn a_full_shard_takes_a_name_once_its_old_entries_aged_out() {
+        let known = KnownTenants::default();
+        let fresh = tenant("t-fresh");
+        let cap = KnownTenants::CAP.div_ceil(KnownTenants::SHARDS);
+        let old = std::time::Instant::now()
+            .checked_sub(KnownTenants::TTL.saturating_mul(2))
+            .expect("the clock reaches a minute back");
+        {
+            let mut shard = known.map(fresh.as_str());
+            for i in 0..cap {
+                shard.insert(format!("stale-{i}"), old);
+            }
+        }
+        known.remember(&fresh);
+        assert!(known.holds(&fresh));
+        assert_eq!(known.map(fresh.as_str()).len(), 1, "the aged names went");
+    }
 }
 
 /// The handler `wire` installs for a notification that arrives on the
@@ -784,10 +805,8 @@ impl AppState {
                     });
                     if let Err(e) = store.context_put(tenant, &id, doc).await {
                         // a client-named @context URL may carry userinfo
-                        tracing::warn!(
-                            "@context write-through failed for {}: {e}",
-                            antares_notifier::redact_userinfo(url)
-                        );
+                        let url = antares_notifier::redact_userinfo(url);
+                        tracing::warn!("@context write-through failed for {url}: {e}");
                     }
                 })
             }));
@@ -1788,10 +1807,8 @@ async fn bump_row(
         Ok(None) => false,
         // a store hiccup must never evict a healthy cache entry
         Err(e) => {
-            tracing::warn!(
-                "@context hit bump failed for {}: {e}",
-                antares_notifier::redact_userinfo(url)
-            );
+            let url = antares_notifier::redact_userinfo(url);
+            tracing::warn!("@context hit bump failed for {url}: {e}");
             true
         }
     }
@@ -1900,19 +1917,25 @@ pub fn stamp(t: jiff::Timestamp) -> String {
     jc_time::format_rfc3339(t, jc_time::SecondsFormat::Millis, true)
 }
 
+/// One of the broker's own Tenants by name, the grammar's refusal as text.
+#[cfg(feature = "views")]
+fn internal_tenant(name: &str) -> Result<antares_model::TenantId, String> {
+    antares_model::TenantId::new_internal(name).map_err(|e| e.to_string())
+}
+
 #[cfg(feature = "views")]
 fn view_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::VIEW_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::VIEW_TENANT)
 }
 
 #[cfg(feature = "views")]
 fn grant_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::GRANT_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::GRANT_TENANT)
 }
 
 #[cfg(feature = "views")]
 fn policy_tenant() -> Result<antares_model::TenantId, String> {
-    antares_model::TenantId::new_internal(crate::views::POLICY_TENANT).map_err(|e| e.to_string())
+    internal_tenant(crate::views::POLICY_TENANT)
 }
 
 /// A store that refuses every call (a Postgres pool on a port nobody
@@ -2006,6 +2029,33 @@ mod state_seams {
         }
     }
 
+    /// The broker's own Tenants are named by the Tenant grammar; a name
+    /// outside it is refused with the grammar's reason.
+    #[cfg(feature = "views")]
+    #[test]
+    fn an_internal_tenant_takes_the_tenant_grammar() {
+        assert_eq!(
+            view_tenant().map(|t| t.as_str().to_owned()),
+            Ok(crate::views::VIEW_TENANT.to_owned())
+        );
+        let err = internal_tenant("no spaces").expect_err("outside the grammar");
+        assert!(err.contains("invalid NGSILD-Tenant value"), "{err}");
+    }
+
+    /// The profile is read from its three keys; unset, each takes the
+    /// standard's answer.
+    #[test]
+    fn the_profile_reads_its_keys_from_the_environment() {
+        let get = |k: &str| std::env::var(k).ok();
+        let expected = Profile::from_vars(
+            get("ANTARES_NON_OBJECT_BODY"),
+            get("ANTARES_FED_WRITE_SOURCE_404"),
+            get("ANTARES_IMPLICIT_TENANTS"),
+        );
+        assert_eq!(Profile::from_env(), expected);
+        assert_eq!(Profile::from_vars(None, None, None), Ok(Profile::default()));
+    }
+
     #[test]
     fn every_temporal_record_mode_parses_and_no_other() {
         use std::str::FromStr as _;
@@ -2032,7 +2082,26 @@ mod state_seams {
             "a shared registry is not changed"
         );
         let fresh = AppState::new("antares-seams-2".into()).with_sink(Box::new(Nowhere));
-        assert!(fresh.sinks.sink_for_uri("x-nowhere://a").is_some());
+        let sink = fresh
+            .sinks
+            .sink_for_uri("x-nowhere://a")
+            .expect("a fresh registry takes the sink");
+        assert!(sink.parse_endpoint("x-nowhere://a", &[]).is_ok());
+        let out = antares_notifier::Outbound {
+            body: serde_json::json!({"type": "Notification"}),
+            accept: "application/json".into(),
+            link: String::new(),
+            receiver_info: Vec::new(),
+            notifier_info: Vec::new(),
+        };
+        let delivered = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime")
+            .block_on(sink.deliver("x-nowhere://a", &out, std::time::Duration::from_secs(1)));
+        assert!(
+            delivered.is_ok(),
+            "the registered sink is the one delivering"
+        );
         drop(held);
 
         let st = AppState::new("antares-seams-3".into())
@@ -2055,9 +2124,7 @@ mod state_seams {
         let mut st = AppState::new("antares-cooldown-hook".into());
         let sink = seen.clone();
         st.reg_fail_sync = Some(Arc::new(move |k: &str, ok: bool| {
-            if let Ok(mut v) = sink.lock() {
-                v.push((k.to_owned(), ok));
-            }
+            sink.lock().expect("lock").push((k.to_owned(), ok));
         }));
         let tenant = antares_model::TenantId::default();
         st.reg_cooldown_stamp(&tenant, "urn:reg:1", false);

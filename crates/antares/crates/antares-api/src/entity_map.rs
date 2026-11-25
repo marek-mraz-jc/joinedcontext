@@ -681,6 +681,50 @@ mod tests {
         assert!(map_read(&st, &t, live).await.is_some(), "still served");
     }
 
+    /// clause 5.7.3, item 4: a temporal retrieve's EntityMap lists the Registrations
+    /// that support retrieveTemporal and leaves out the others; an Entity
+    /// held nowhere, with federation off, maps to nothing.
+    #[tokio::test]
+    async fn a_retrieve_map_lists_only_the_sources_of_that_operation() {
+        let st = AppState::new("antares-map-retrieve".into());
+        let id = "urn:ngsi-ld:Room:1";
+        for (reg, ops) in [("temporal", "retrieveTemporal"), ("writer", "createEntity")] {
+            let body = json!({
+                "id": format!("urn:ngsi-ld:ContextSourceRegistration:{reg}"),
+                "type": "ContextSourceRegistration",
+                "information": [{"entities": [{"id": id, "type": "Room"}]}],
+                "operations": [ops],
+                "endpoint": "http://cs.example.org:1026"
+            })
+            .to_string();
+            let req = axum::http::Request::post("/ngsi-ld/v1/csourceRegistrations")
+                .header("Content-Type", "application/json")
+                .header("Content-Length", body.len())
+                .body(axum::body::Body::from(body))
+                .expect("request");
+            let res = tower::ServiceExt::oneshot(crate::router(st.clone()), req)
+                .await
+                .expect("response");
+            assert_eq!(res.status(), axum::http::StatusCode::CREATED, "{reg}");
+        }
+        let t = TenantId::default();
+        let ctx = antares_jsonld::Loader::new().core();
+        let h = HeaderMap::new();
+        let map = build_retrieve_map(&st, &t, &ctx, &h, id, &HashMap::new(), true, false)
+            .await
+            .expect("a map");
+        assert_eq!(
+            map["entityMap"][id],
+            json!(["urn:ngsi-ld:ContextSourceRegistration:temporal"]),
+            "{map}"
+        );
+        let local: HashMap<String, String> = [("local".to_owned(), "true".to_owned())].into();
+        let map = build_retrieve_map(&st, &t, &ctx, &h, id, &local, false, false)
+            .await
+            .expect("a map");
+        assert_eq!(map["entityMap"], json!({}), "{map}");
+    }
+
     /// Table 6.4.3.2-1: entityMapLifetime is an ISO 8601 duration.
     #[test]
     fn clause_5_14_4_lifetime_parse() {

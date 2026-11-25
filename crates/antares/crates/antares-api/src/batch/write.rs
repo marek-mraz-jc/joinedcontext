@@ -943,30 +943,19 @@ async fn upsert_in_view(
         .batch_mutate(tenant, &ids, |id, doc| {
             crate::history::restage(id);
             conds.pre(id, doc)?;
+            // under a view every member view_guards kept carries its guard
             let guard = guards.get(id);
-            if let Some(g) = guard {
-                if update_mode {
-                    g.pre(id, doc)?;
-                } else {
-                    g.pre_whole(id, doc)?;
-                }
-            }
+            guard.map_or(Ok(()), |g| match update_mode {
+                true => g.pre(id, doc),
+                false => g.pre_whole(id, doc),
+            })?;
             let src = member(&docs, id)?;
             if update_mode {
                 crate::entities::update_into(doc, src, ts);
             } else {
-                let mut new = src.clone();
-                stamp_new(&mut new, ts);
-                // 4.8: a replaced Entity keeps the instant it was created.
-                if let (Some(o), Some(created)) = (new.as_object_mut(), doc.get("createdAt")) {
-                    o.insert("createdAt".into(), created.clone());
-                }
-                *doc = new;
+                *doc = replacement(src, doc, ts);
             }
-            if let Some(g) = guard {
-                g.post(doc)?;
-            }
-            Ok::<(), NgsiError>(())
+            guard.map_or(Ok(()), |g| g.post(doc))
         })
         .await?;
     crate::history::settle_all(&ids, &res);
@@ -1009,13 +998,15 @@ async fn upsert_in_view(
     }
     let ids: Vec<String> = kept.iter().map(|(id, _)| id.clone()).collect();
     let flags = st.store.batch_create(tenant, kept).await?;
+    // an id created here was absent in this round's read, so no earlier
+    // round counted it a success (a round names each id once)
     for (id, ok) in ids.into_iter().zip(flags) {
-        if !ok {
-            let e = NgsiError::AlreadyExists(format!("entity {id} already exists"));
-            out.errors.push(err_entry(Some(&id), &e));
-        } else if !out.success.contains(&Value::String(id.clone())) {
+        if ok {
             out.success.push(Value::String(id.clone()));
             created.push(id);
+        } else {
+            let e = NgsiError::AlreadyExists(format!("entity {id} already exists"));
+            out.errors.push(err_entry(Some(&id), &e));
         }
     }
     Ok(created)

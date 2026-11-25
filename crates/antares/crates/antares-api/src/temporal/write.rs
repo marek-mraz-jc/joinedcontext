@@ -212,19 +212,19 @@ pub(super) async fn upsert_temporal_local(
                 .mutate(tenant, id, |doc| {
                     let target = antares_store::stored_object(doc)?;
                     // 5.6.11.4: new Entity Type names are added to the target
-                    if let Some(new_types) = expanded.get("type").and_then(Value::as_array) {
-                        let mut cur: Vec<Value> = target
-                            .get("type")
-                            .and_then(Value::as_array)
-                            .cloned()
-                            .unwrap_or_default();
-                        for t in new_types {
-                            if !cur.contains(t) {
-                                cur.push(t.clone());
-                            }
+                    // (an expanded Entity always carries its `type` array)
+                    let new_types = expanded.get("type").and_then(Value::as_array);
+                    let mut cur: Vec<Value> = target
+                        .get("type")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+                    for t in new_types.into_iter().flatten() {
+                        if !cur.contains(t) {
+                            cur.push(t.clone());
                         }
-                        target.insert("type".into(), Value::Array(cur));
                     }
+                    target.insert("type".into(), Value::Array(cur));
                     // 5.6.11.4: the instances "shall be added" as 5.6.12
                     // mandates; identity is the instanceId, never observedAt
                     antares_jsonld::expanded_object(&expanded)?;
@@ -238,8 +238,9 @@ pub(super) async fn upsert_temporal_local(
                 None => continue, // deleted between get and mutate - retry as create
             }
         } else {
+            // an expanded Entity is an object
             let mut doc = expanded.clone();
-            if let Some(o) = doc.as_object_mut() {
+            for o in doc.as_object_mut().into_iter() {
                 o.insert("createdAt".into(), Value::String(ts.clone()));
                 o.insert("modifiedAt".into(), Value::String(ts.clone()));
             }
@@ -1428,6 +1429,24 @@ mod edges {
             .await;
             assert_eq!(s, StatusCode::INTERNAL_SERVER_ERROR, "ghost={ghost}: {b}");
             assert!(b.to_string().contains("upsert retry storm"), "{b}");
+            // the rest of the driver holds nothing and writes nothing
+            let t = TenantId::default();
+            let all = filter::TemporalFilter::default();
+            let doc = json!({"id": ID});
+            assert!(st
+                .temporal
+                .temporal_append(&t, ID, &doc, &doc)
+                .await
+                .is_ok());
+            let rows = st.temporal.query_temporal(&t, &all).await.expect("query");
+            assert!(rows.rows.is_empty());
+            assert_eq!(
+                st.temporal.get_temporal(&t, ID, &all).await.expect("read"),
+                None
+            );
+            assert!(!st.temporal.upsert(&t, ID, doc).await.expect("upsert"));
+            assert!(!st.temporal.delete(&t, ID).await.expect("delete"));
+            assert!(st.temporal.list(&t).await.expect("list").is_empty());
         }
     }
 

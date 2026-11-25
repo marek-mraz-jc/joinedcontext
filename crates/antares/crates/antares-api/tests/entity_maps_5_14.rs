@@ -255,6 +255,23 @@ async fn clause_5_14_2_update() {
     );
     assert_eq!(body["linkedMaps"], json!({}), "{body}");
 
+    // a fragment naming only output members changes nothing and is 204
+    let only_output = json!({"entityMap": {"urn:ngsi-ld:Vehicle:x": ["@none"]}}).to_string();
+    let (status, _, body) = send(
+        &st,
+        Request::builder()
+            .method("PATCH")
+            .uri(&loc)
+            .header("Content-Type", "application/json")
+            .header("Content-Length", only_output.len())
+            .body(Body::from(only_output))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (_, _, after) = get(&st, &loc).await;
+    assert_eq!(after["expiresAt"].as_str(), Some(stored), "{after}");
+
     // a non-DateTime expiresAt is 400 (4.6.3)
     let bad = json!({"expiresAt": "tomorrow"}).to_string();
     let (status, _, _) = send(

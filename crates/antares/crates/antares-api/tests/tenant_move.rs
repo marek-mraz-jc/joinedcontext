@@ -332,6 +332,98 @@ async fn reserved_names_and_a_refusing_store_move_nothing() {
     }
 }
 
+/// Each later store or history call failing on its own: the digest's walk
+/// and its history count, the import's emptiness check and the export's
+/// page each answer the error, and the export cuts its stream without a
+/// trailer, so a reader sees a cut export, never a short complete one.
+#[tokio::test]
+async fn a_store_failing_past_its_first_call_moves_nothing() {
+    use crate::common::faults::{store_down, Faults, StoreFaults, TemporalFaults};
+    let st = state().await;
+    seeded(&st, "half").await;
+    let failing = |method: &'static str| {
+        let mut st = st.clone();
+        st.store = std::sync::Arc::new(StoreFaults {
+            inner: st.store.clone(),
+            faults: Faults::new(move |m, _| (m == method).then(store_down)),
+        });
+        st
+    };
+    let walk = failing("list_page");
+    let (status, _) = call(&walk, "GET", "/q/tenants/half/digest", "", None, false).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let mut history = st.clone();
+    history.temporal = std::sync::Arc::new(TemporalFaults {
+        inner: st.temporal.clone(),
+        faults: Faults::new(|m, _| (m == "attr_instance_count").then(store_down)),
+    });
+    let (status, _) = call(&history, "GET", "/q/tenants/half/digest", "", None, false).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    let (status, body) = import(&history, "fresh", String::new()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    let res = antares_api::router(walk)
+        .oneshot(
+            Request::get("/q/tenants/half/export")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(res.status(), StatusCode::OK, "the header is already sent");
+    assert!(
+        axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .is_err(),
+        "the stream is cut"
+    );
+}
+
+/// A stored row without an id is exported as it is and does not move the
+/// cursor; a body that breaks off mid-stream, or a line that is no JSON, is
+/// refused naming why, and nothing is imported.
+#[tokio::test]
+async fn rows_of_any_shape_export_and_a_broken_body_imports_nothing() {
+    let st = state().await;
+    seeded(&st, "odd").await;
+    let tenant = antares_model::TenantId::new("odd").expect("tenant");
+    st.store
+        .create(
+            &tenant,
+            antares_store::Kind::Temporal,
+            "h-1",
+            json!({"bare": true}),
+        )
+        .await
+        .expect("seed a row without an id");
+    let out = export(&st, "odd").await;
+    let bare = json!({"kind": "temporal", "doc": {"bare": true}}).to_string();
+    assert!(out.lines().any(|l| l == bare), "{out}");
+    let header = json!({"antaresExport": 1, "tenant": "cut"}).to_string() + "\n";
+    let chunks: Vec<Result<axum::body::Bytes, std::io::Error>> = vec![
+        Ok(axum::body::Bytes::from(header.clone())),
+        Err(std::io::Error::other("connection reset")),
+    ];
+    let res = antares_api::router(st.clone())
+        .oneshot(
+            Request::post("/q/tenants/cut/import")
+                .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+    let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body = String::from_utf8_lossy(&body);
+    assert!(body.contains("the body was cut"), "{body}");
+    let (status, body) = import(&st, "cut", header + "{not json\n").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("line 2: not JSON"), "{body}");
+    let (status, _) = call(&st, "GET", "/q/tenants/cut/digest", "", None, false).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "nothing stays");
+}
+
 /// The export streams one page per poll: a Tenant larger than a page (500)
 /// exports every Entity once, and the trailer counts them all.
 #[tokio::test]

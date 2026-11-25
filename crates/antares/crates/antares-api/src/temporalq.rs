@@ -141,11 +141,13 @@ mod tests {
             .into_iter()
             .map(|(k, v)| (k.to_owned(), v.to_owned()))
             .collect();
-            match TemporalQ::from_params(&p, true) {
-                Err(NgsiError::BadRequestData(m)) => assert!(m.contains("endTimeAt"), "{m}"),
-                Err(e) => panic!("{timerel}: {e:?}"),
-                Ok(q) => panic!("{timerel}: accepted, some={}", q.is_some()),
-            }
+            let e = TemporalQ::from_params(&p, true)
+                .err()
+                .expect("a malformed endTimeAt is refused");
+            assert!(
+                matches!(&e, NgsiError::BadRequestData(m) if m.contains("endTimeAt")),
+                "{timerel}: {e:?}"
+            );
         }
     }
 

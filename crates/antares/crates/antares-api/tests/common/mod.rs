@@ -8,6 +8,7 @@
 //! was meant to exercise a refusal quietly delegates instead.
 #![allow(dead_code)] // every test binary compiles this module, none uses all of it
 
+pub mod faults;
 pub mod net;
 
 use antares_model::{NgsiError, TenantId};
@@ -46,7 +47,51 @@ pub struct Double {
     slow_type: Option<(String, std::time::Duration)>,
     /// Each `entity_types_beside` answers after this long.
     slow_beside: Option<std::time::Duration>,
+    /// The calls refused by name ([`Double::faulting`]).
+    fault: Option<Fault>,
+    /// `entity_types_beside` cannot tell, as a driver without it.
+    blind_beside: bool,
+    /// `query_entities` answers every match unpaged, as a driver that
+    /// cannot page.
+    unpaging: bool,
+    /// How `query_entities` reads less than it is asked ([`Lesser`]).
+    lesser: Lesser,
+    /// Asked before each read and each read-modify-write of a document
+    /// ([`Double::faulting_docs`]).
+    doc_hook: Option<DocHook>,
 }
+
+/// The parts of a query a lesser driver cannot apply.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Lesser {
+    /// Applies everything.
+    #[default]
+    None,
+    /// Ignores `after_id`: every page is read from the offset alone.
+    NoKeyset,
+    /// Applies no type or Attribute selection and no page: answers every
+    /// Entity of the Tenant, `decided: false`, for the caller to judge.
+    Undecided,
+    /// Keeps no type list: `entity_type_names` answers `None`.
+    NoTypeNames,
+}
+
+/// Which calls a [`Double::faulting`] refuses: the method's name and the
+/// Tenant it was asked for.
+pub type Fault = Arc<dyn Fn(&str, Option<&TenantId>) -> bool + Send + Sync>;
+
+/// One call on a document, as [`Double::faulting_docs`] reports it to its
+/// hook.
+pub enum DocCall<'a> {
+    /// A read of this document: `true` makes it fail.
+    Get(Kind, &'a str),
+    /// A read-modify-write of this document: `true` hands a Snapshot's fill
+    /// lease to another fill (`thief`) first, and fails any other kind's.
+    Mutate(Kind, &'a str),
+}
+
+/// The hook of [`Double::faulting_docs`].
+pub type DocHook = Arc<dyn Fn(DocCall<'_>) -> bool + Send + Sync>;
 
 impl Double {
     /// The next `n` read-modify-writes of a Snapshot document fail, a store
@@ -80,6 +125,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -109,6 +159,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -138,6 +193,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -169,6 +229,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -212,6 +277,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -241,6 +311,11 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
     }
 
@@ -270,7 +345,28 @@ impl Double {
             size_scan_fails: AtomicBool::new(false),
             slow_type: None,
             slow_beside: None,
+            fault: None,
+            blind_beside: false,
+            unpaging: false,
+            lesser: Lesser::None,
+            doc_hook: None,
         }
+    }
+
+    /// Delegates everything, except that `hook` decides per document call
+    /// whether a read fails, or a write fails or first loses a Snapshot's
+    /// fill lease to another fill: a store hiccup or a resumed fill landing
+    /// at one exact step.
+    pub fn faulting_docs(inner: Arc<dyn CurrentStateDriver>, hook: DocHook) -> Self {
+        Self {
+            doc_hook: Some(hook),
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Whether the hook asks `call` to misbehave.
+    fn doc_fault(&self, call: DocCall<'_>) -> bool {
+        self.doc_hook.as_ref().is_some_and(|h| h(call))
     }
 
     /// Delegates everything. It still counts the reads below, which is what
@@ -299,6 +395,54 @@ impl Double {
         Self {
             slow_beside: Some(delay),
             ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; a call `fault(method, tenant)` admits fails
+    /// with the store's error instead, a hiccup aimed at one read of many.
+    /// Only the calls that consult [`Double::faulted`] can be refused.
+    pub fn faulting(
+        inner: Arc<dyn CurrentStateDriver>,
+        fault: impl Fn(&str, Option<&TenantId>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            fault: Some(Arc::new(fault)),
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; `entity_types_beside` answers that it cannot
+    /// tell (`None`), as a driver that does not implement it.
+    pub fn blind_beside(inner: Arc<dyn CurrentStateDriver>) -> Self {
+        Self {
+            blind_beside: true,
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; `query_entities` ignores the page and answers
+    /// every match with `paged: false`, as a driver that cannot page.
+    pub fn unpaging(inner: Arc<dyn CurrentStateDriver>) -> Self {
+        Self {
+            unpaging: true,
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything but what `lesser` names, which it cannot do.
+    pub fn lesser(inner: Arc<dyn CurrentStateDriver>, lesser: Lesser) -> Self {
+        Self {
+            lesser,
+            ..Self::passthrough(inner)
+        }
+    }
+
+    fn faulted(&self, method: &str, tenant: Option<&TenantId>) -> Result<(), NgsiError> {
+        match &self.fault {
+            Some(f) if f(method, tenant) => Err(NgsiError::InternalError(format!(
+                "{method} refused for {tenant:?}"
+            ))),
+            _ => Ok(()),
         }
     }
 
@@ -420,6 +564,7 @@ impl CurrentStateDriver for Double {
         limit: usize,
     ) -> Result<Vec<Value>, NgsiError> {
         self.pool_wall()?;
+        self.faulted("list_page", Some(tenant))?;
         self.inner.list_page(tenant, kind, after, limit).await
     }
 
@@ -499,6 +644,9 @@ impl CurrentStateDriver for Double {
     ) -> Result<Option<Value>, NgsiError> {
         self.pool_wall()?;
         self.refused(kind, id)?;
+        if self.doc_fault(DocCall::Get(kind, id)) {
+            return Err(NgsiError::InternalError(format!("{id} unreadable")));
+        }
         let doc = self.inner.get(tenant, kind, id).await?;
         if self.delete_on_get && doc.is_some() {
             self.inner.delete(tenant, kind, id).await?;
@@ -546,7 +694,41 @@ impl CurrentStateDriver for Double {
                 tokio::time::sleep(*delay).await;
             }
         }
-        let out = self.inner.query_entities(tenant, f).await?;
+        self.faulted("query_entities", Some(tenant))?;
+        let out = if self.unpaging {
+            let whole = antares_store::filter::EntityFilter { page: None, ..*f };
+            let mut out = self.inner.query_entities(tenant, &whole).await?;
+            out.paged = false;
+            out.total = i64::try_from(out.rows.len()).ok();
+            out
+        } else if self.lesser == Lesser::NoKeyset {
+            let page = f.page.as_ref().map(|p| antares_store::filter::Page {
+                offset: p.offset,
+                limit: p.limit,
+                count: p.count,
+            });
+            let offset_only = antares_store::filter::EntityFilter {
+                after_id: None,
+                page,
+                ..*f
+            };
+            self.inner.query_entities(tenant, &offset_only).await?
+        } else if self.lesser == Lesser::Undecided {
+            let every = antares_store::filter::EntityFilter {
+                types: None,
+                attrs: None,
+                page: None,
+                after_id: None,
+                ..*f
+            };
+            let mut out = self.inner.query_entities(tenant, &every).await?;
+            out.decided = false;
+            out.paged = false;
+            out.total = None;
+            out
+        } else {
+            self.inner.query_entities(tenant, f).await?
+        };
         self.rows_read.fetch_add(out.rows.len(), Ordering::SeqCst);
         Ok(out)
     }
@@ -562,6 +744,9 @@ impl CurrentStateDriver for Double {
     }
     async fn entity_type_names(&self, tenant: &TenantId) -> Result<Option<Vec<String>>, NgsiError> {
         self.pool_wall()?;
+        if self.lesser == Lesser::NoTypeNames {
+            return Ok(None);
+        }
         self.inner.entity_type_names(tenant).await
     }
     async fn entity_types_beside(
@@ -572,6 +757,9 @@ impl CurrentStateDriver for Double {
         self.pool_wall()?;
         if let Some(delay) = self.slow_beside {
             tokio::time::sleep(delay).await;
+        }
+        if self.blind_beside {
+            return Ok(None);
         }
         self.inner.entity_types_beside(tenant, any_of).await
     }
@@ -589,6 +777,19 @@ impl CurrentStateDriver for Double {
                 .is_ok()
         {
             return Err(NgsiError::InternalError("snapshot row unreachable".into()));
+        }
+        if self.doc_fault(DocCall::Mutate(kind, id)) {
+            if kind != Kind::Snapshot {
+                return Err(NgsiError::InternalError(format!("{id} not writable")));
+            }
+            use antares_store::CurrentStateDriverExt;
+            self.inner
+                .mutate(tenant, kind, id, |d| {
+                    d["__fillLease"] =
+                        serde_json::json!({"owner": "thief", "until": "2999-01-01T00:00:00Z"});
+                    Ok::<_, std::convert::Infallible>(())
+                })
+                .await?;
         }
         self.inner.mutate_boxed(tenant, kind, id, f).await
     }
@@ -653,6 +854,7 @@ impl CurrentStateDriver for Double {
         tenant: Option<&TenantId>,
         id: &str,
     ) -> Result<Option<Value>, NgsiError> {
+        self.faulted("context_get", tenant)?;
         self.inner.context_get(tenant, id).await
     }
     async fn context_mutate<'a>(

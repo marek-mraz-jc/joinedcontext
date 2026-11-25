@@ -810,9 +810,9 @@ pub(crate) fn query_doc_params(
                     }
                 }
             }
-            if !types.is_empty() {
-                vp.insert("type".into(), capped("entities type", types.join(","))?);
-            }
+            // the guard admits a non-empty list and every selector pushed its
+            // mandatory type above, so the list of types is never empty
+            vp.insert("type".into(), capped("entities type", types.join(","))?);
             // 5.2.33: the selectors are a union, and "id takes precedence over
             // idPattern" holds PER selector. These flat params carry a single
             // id/idPattern pair applied to the whole result, so a member is
@@ -1620,10 +1620,10 @@ mod tests {
     fn query_doc_members_of_the_wrong_type_are_refused_by_name() {
         let refused = |q: Value, temporal: bool| -> String {
             let mut vp = HashMap::new();
-            match query_doc_params(q.as_object().expect("object"), temporal, &mut vp) {
-                Err(NgsiError::BadRequestData(m)) => m,
-                other => panic!("{q} must be refused, got {other:?}"),
-            }
+            let e = query_doc_params(q.as_object().expect("object"), temporal, &mut vp)
+                .expect_err("a wrongly typed member is refused");
+            assert!(matches!(e, NgsiError::BadRequestData(_)), "{q}: {e:?}");
+            e.to_string()
         };
         for (q, temporal, want) in [
             (
@@ -1677,6 +1677,11 @@ mod tests {
                 "aggrMethods entries must be strings",
             ),
             (
+                json!({"aggrParams": {"aggrPeriodDuration": 86400}}),
+                true,
+                "aggrPeriodDuration must be a string",
+            ),
+            (
                 json!({"ordering": {"orderBy": "id"}}),
                 false,
                 "orderBy must be an array",
@@ -1720,6 +1725,10 @@ mod tests {
         assert!(!vp.contains_key("coordinates"), "{vp:?}");
         let vp = lift(json!({"aggrParams": {"aggrPeriodDuration": "P1D"}}), true);
         assert!(!vp.contains_key("aggrMethods"), "{vp:?}");
+        // an ordering without orderBy lifts its distance reference only
+        let vp = lift(json!({"ordering": {"coordinates": [1, 2]}}), false);
+        assert!(!vp.contains_key("orderBy"), "{vp:?}");
+        assert_eq!(vp.get("orderFrom").map(String::as_str), Some("[1,2]"));
     }
 
     /// 4.23.3: every malformed orderBy spelling and collation is a 400, a
@@ -1749,10 +1758,11 @@ mod tests {
                 "invalid orderFrom",
             ),
         ] {
-            match order_entities(&mut docs, spec, &p, &ctx) {
-                Err(NgsiError::BadRequestData(m)) => assert!(m.contains(want), "{spec}: {m}"),
-                other => panic!("{spec} must be refused, got {other:?}"),
-            }
+            let e = order_entities(&mut docs, spec, &p, &ctx).expect_err("refused");
+            assert!(
+                matches!(&e, NgsiError::BadRequestData(m) if m.contains(want)),
+                "{spec}: {e:?}"
+            );
         }
         for ks in ["level1", "level2", "level3", "level4", "identic"] {
             let p = params(&[("collation", &format!("de-u-ks-{ks}"))]);
@@ -1763,6 +1773,13 @@ mod tests {
         let mut docs = vec![typed("urn:1", "Zebra"), typed("urn:2", "Ant")];
         order_entities(&mut docs, "type", &none, &ctx).expect("order");
         assert_eq!(ids(&docs), vec!["urn:2", "urn:1"]);
+        // a system member an Entity lacks orders it after one that has it
+        let mut docs = vec![
+            json!({"id": "urn:old", "type": ["T"]}),
+            json!({"id": "urn:new", "type": ["T"], "modifiedAt": "2026-01-01T00:00:00Z"}),
+        ];
+        order_entities(&mut docs, "modifiedAt", &none, &ctx).expect("order");
+        assert_eq!(ids(&docs), vec!["urn:new", "urn:old"]);
         // a sub-Attribute and an instance member on the path (4.23.3)
         let sub = |id: &str, v: i64, at: &str| {
             json!({"id": id, "type": ["T"], format!("{D}speed"): [{"type": "Property",

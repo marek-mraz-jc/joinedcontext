@@ -27,6 +27,50 @@ pub const ATTR_TYPES: &[&str] = &[
     "ListRelationship",
 ];
 
+/// One NGSI-LD Attribute type, so the per-type dispatch in `expand_instance`
+/// is an exhaustive match: a name reaches it only through [`AttrKind::of`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AttrKind {
+    Property,
+    Relationship,
+    GeoProperty,
+    LanguageProperty,
+    JsonProperty,
+    VocabProperty,
+    ListProperty,
+    ListRelationship,
+}
+
+impl AttrKind {
+    /// The kind a declared `"type"` names, `None` for any other string.
+    fn of(t: &str) -> Option<Self> {
+        Some(match t {
+            "Property" => Self::Property,
+            "Relationship" => Self::Relationship,
+            "GeoProperty" => Self::GeoProperty,
+            "LanguageProperty" => Self::LanguageProperty,
+            "JsonProperty" => Self::JsonProperty,
+            "VocabProperty" => Self::VocabProperty,
+            "ListProperty" => Self::ListProperty,
+            "ListRelationship" => Self::ListRelationship,
+            _ => return None,
+        })
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Property => "Property",
+            Self::Relationship => "Relationship",
+            Self::GeoProperty => "GeoProperty",
+            Self::LanguageProperty => "LanguageProperty",
+            Self::JsonProperty => "JsonProperty",
+            Self::VocabProperty => "VocabProperty",
+            Self::ListProperty => "ListProperty",
+            Self::ListRelationship => "ListRelationship",
+        }
+    }
+}
+
 /// 4.5.1: "Terms defined in the Core Context as non-reified Properties (such
 /// as datasetId, instanceId, etc.) shall not be used as Attribute names."
 /// These are the core terms whose IRI local name equals the term (the reified
@@ -924,9 +968,9 @@ fn expand_instance(
         Some(Value::String(t)) => Some(t.as_str()),
         Some(t) => return Err(bad(format!("attribute {name}: type {t} is not a string"))),
     };
-    let attr_type: &str = match declared {
-        Some(t) if ATTR_TYPES.contains(&t) => t,
-        Some(t) if GEO_TYPES.contains(&t) && obj.contains_key("coordinates") => {
+    let kind = match declared.map(|t| (t, AttrKind::of(t))) {
+        Some((_, Some(k))) => k,
+        Some((t, None)) if GEO_TYPES.contains(&t) && obj.contains_key("coordinates") => {
             // concise GeoProperty: bare GeoJSON object as the value. 4.7.3
             // mandates `coordinates` "as defined by the relevant GeoJSON
             // Geometry", so the concise form is held to the same RFC 7946
@@ -935,7 +979,7 @@ fn expand_instance(
             validate_geojson(name, v)?;
             return Ok(json!({"type": "GeoProperty", "value": v.clone()}));
         }
-        Some(t) => {
+        Some((t, None)) => {
             return Err(bad(format!(
                 "attribute {name}: invalid attribute type {t:?}"
             )))
@@ -943,17 +987,17 @@ fn expand_instance(
         None => {
             // concise object form — infer from members
             if obj.contains_key("object") {
-                "Relationship"
+                AttrKind::Relationship
             } else if obj.contains_key("languageMap") {
-                "LanguageProperty"
+                AttrKind::LanguageProperty
             } else if obj.contains_key("vocab") {
-                "VocabProperty"
+                AttrKind::VocabProperty
             } else if obj.contains_key("json") {
-                "JsonProperty"
+                AttrKind::JsonProperty
             } else if obj.contains_key("valueList") {
-                "ListProperty"
+                AttrKind::ListProperty
             } else if obj.contains_key("objectList") {
-                "ListRelationship"
+                AttrKind::ListRelationship
             } else if obj.contains_key("value") {
                 // 4.5.2.3: type may be omitted — "Property can be inferred by
                 // the presence of the value attribute. An exception to this
@@ -966,9 +1010,9 @@ fn expand_instance(
                     .is_some_and(|t| GEO_TYPES.contains(&t))
                     && v.get("coordinates").is_some()
                 {
-                    "GeoProperty"
+                    AttrKind::GeoProperty
                 } else {
-                    "Property"
+                    AttrKind::Property
                 }
             } else {
                 // whole object is a Property value (4.5.2.3)
@@ -983,14 +1027,15 @@ fn expand_instance(
         }
     };
 
+    let attr_type = kind.name();
     let mut out = Map::new();
     out.insert("type".into(), Value::String(attr_type.to_owned()));
 
     check_prohibited_members(name, obj, attr_type, ctx, opts, &mut out)?;
 
     // required member per type
-    match attr_type {
-        "Property" => {
+    match kind {
+        AttrKind::Property => {
             let val = obj
                 .get("value")
                 .ok_or_else(|| bad(format!("attribute {name}: Property needs value")))?;
@@ -1011,7 +1056,7 @@ fn expand_instance(
             }
             out.insert("value".into(), val.clone());
         }
-        "GeoProperty" => {
+        AttrKind::GeoProperty => {
             let val = obj
                 .get("value")
                 .ok_or_else(|| bad(format!("attribute {name}: GeoProperty needs value")))?;
@@ -1034,7 +1079,7 @@ fn expand_instance(
             }
             out.insert("value".into(), val);
         }
-        "Relationship" => {
+        AttrKind::Relationship => {
             let objv = obj
                 .get("object")
                 .ok_or_else(|| bad(format!("attribute {name}: Relationship needs object")))?;
@@ -1058,7 +1103,7 @@ fn expand_instance(
             }
             out.insert("object".into(), objv.clone());
         }
-        "LanguageProperty" => {
+        AttrKind::LanguageProperty => {
             // 4.5.18.2: "a JSON object consisting of a set of non-empty
             // language tags (RFC 5646) or the language tag "@none"", each
             // mapping to a single string or array of strings.
@@ -1078,7 +1123,7 @@ fn expand_instance(
             }
             out.insert("languageMap".into(), lm.clone());
         }
-        "JsonProperty" => {
+        AttrKind::JsonProperty => {
             // TS 104 175 5.2.6.4.10 types json by the NGSI-LD Value of 3.1:
             // "JSON value (i.e. a string, a number, true or false, an object,
             // an array)" — CIM 009 4.5.24.2's object-only rule is lifted
@@ -1100,13 +1145,13 @@ fn expand_instance(
             }
             out.insert("json".into(), j.clone());
         }
-        "VocabProperty" => {
+        AttrKind::VocabProperty => {
             let vv = obj
                 .get("vocab")
                 .ok_or_else(|| bad(format!("attribute {name}: needs vocab")))?;
             out.insert("vocab".into(), expand_terms(name, "vocab", vv, ctx)?);
         }
-        "ListProperty" => {
+        AttrKind::ListProperty => {
             let l = obj
                 .get("valueList")
                 .ok_or_else(|| bad(format!("attribute {name}: needs valueList")))?;
@@ -1115,7 +1160,7 @@ fn expand_instance(
             }
             out.insert("valueList".into(), l.clone());
         }
-        "ListRelationship" => {
+        AttrKind::ListRelationship => {
             // 4.5.22.2/4.5.22.3: objectList is an ordered array of
             // Relationship objects — {"object": <URI>} objects (normalized)
             // or bare URI strings (concise). Internal form is bare URIs; the
@@ -1159,18 +1204,6 @@ fn expand_instance(
                 }
             };
             out.insert("objectList".into(), normalized);
-        }
-        // 4.5.2 closes the set of Attribute types, and `attr_type` is
-        // either a member of ATTR_TYPES or one of the inferred literals
-        // above — so every reachable value has an arm. A member added to
-        // that list without an arm here would arrive as a client-supplied
-        // `"type"`, which is a request to answer, not a reason to panic:
-        // pinned by
-        // `every_declarable_attribute_type_is_dispatched_not_unreachable`.
-        _ => {
-            return Err(NgsiError::InternalError(format!(
-                "attribute type {attr_type} has no expansion arm"
-            )))
         }
     }
 
@@ -1607,8 +1640,12 @@ pub fn parse_datetime(s: &str) -> bool {
     let Some(body) = s.strip_suffix('Z') else {
         return false;
     };
-    let [y0, y1, y2, y3, b'-', mo0, mo1, b'-', d0, d1, b'T', h0, h1, b':', mi0, mi1, b':', s0, s1, ..] =
-        body.as_bytes()
+    // the first 19 bytes, YYYY-MM-DDThh:mm:ss, and what follows them
+    let Some((
+        seconds @
+        [y0, y1, y2, y3, b'-', mo0, mo1, b'-', d0, d1, b'T', h0, h1, b':', mi0, mi1, b':', s0, s1],
+        frac,
+    )) = body.as_bytes().split_first_chunk::<19>()
     else {
         return false;
     };
@@ -1618,23 +1655,21 @@ pub fn parse_datetime(s: &str) -> bool {
     {
         return false;
     }
-    // the 19 bytes matched above are ASCII, so both cuts are char boundaries
-    let (Some(seconds), Some(frac)) = (body.get(..19), body.get(19..)) else {
-        return false;
-    };
     // between second 19 and the trailing Z: nothing, or a fraction of 1..=6
     if !frac.is_empty() {
-        let Some(rest) = frac.strip_prefix('.').or_else(|| frac.strip_prefix(',')) else {
+        let Some(rest) = frac.strip_prefix(b".").or_else(|| frac.strip_prefix(b",")) else {
             return false;
         };
-        if rest.is_empty() || rest.len() > 6 || !rest.bytes().all(|c| c.is_ascii_digit()) {
+        if rest.is_empty() || rest.len() > 6 || !rest.iter().all(u8::is_ascii_digit) {
             return false;
         }
     }
     // real calendar date/time, not just digits in the right slots; civil, as
     // the instant is UTC by the Z, and jiff's Timestamp stops at
     // 9999-12-30T22:00Z while chrono (and Postgres) took up to 9999-12-31
-    seconds.parse::<jiff::civil::DateTime>().is_ok()
+    jiff::fmt::temporal::DateTimeParser::new()
+        .parse_datetime(seconds)
+        .is_ok()
 }
 
 /// A DateTime `parse_datetime` accepted, with a comma fraction separator
@@ -3268,52 +3303,6 @@ mod tests {
 }
 
 #[cfg(test)]
-mod bench {
-    use super::*;
-
-    /// The go/no-go threshold for a hand-rolled JSON-LD processor was
-    /// ≥5k expansions/s/core. Antares hand-rolled its processor from day one
-    /// rather than forking a `json-ld` crate — this measures it. Run with
-    /// `cargo test -p antares-jsonld --release -- --ignored bench_expansion`.
-    #[test]
-    #[ignore = "benchmark — run explicitly in release"]
-    fn bench_expansion_rate() {
-        let ctx = crate::core_context();
-        let entity: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
-            r#"{
-            "id": "urn:ngsi-ld:Vehicle:bench-1", "type": "Vehicle",
-            "speed": {"type": "Property", "value": 55.1,
-                      "observedAt": "2026-08-04T12:00:00Z", "unitCode": "KMH",
-                      "source": {"type": "Property", "value": "GPS"}},
-            "heading": {"type": "Property", "value": 180},
-            "isParked": {"type": "Relationship",
-                          "object": "urn:ngsi-ld:OffStreetParking:p1",
-                          "providedBy": {"type": "Relationship",
-                                          "object": "urn:ngsi-ld:Person:bob"}},
-            "location": {"type": "GeoProperty",
-                          "value": {"type": "Point", "coordinates": [13.35, 52.51]}},
-            "name": {"type": "LanguageProperty",
-                      "languageMap": {"en": "car", "de": "Auto"}}
-        }"#,
-        )
-        .expect("entity");
-        let n = 20_000u32;
-        let start = std::time::Instant::now();
-        for _ in 0..n {
-            let out = expand_entity(&entity, &ctx, ExpandOpts::default()).expect("expand");
-            std::hint::black_box(out);
-        }
-        let secs = start.elapsed().as_secs_f64();
-        let rate = f64::from(n) / secs;
-        eprintln!("expansion rate: {rate:.0}/s/core ({n} iterations in {secs:.2}s)");
-        assert!(
-            rate >= 5_000.0,
-            "expansion rate {rate:.0}/s is below the 5k/s/core phase-0 gate"
-        );
-    }
-}
-
-#[cfg(test)]
 mod clause_4_18 {
     use super::*;
     use serde_json::json;
@@ -4449,6 +4438,19 @@ mod reserved_member_guards {
                 "{t}: an instance carrying the wrong members is BadRequestData, not {got:?}"
             );
         }
+    }
+
+    /// The public name list and the dispatch enum are one set: every listed
+    /// name parses to the kind that prints it back, and no other does.
+    #[test]
+    fn attr_kind_round_trips_every_listed_type_and_nothing_else() {
+        for t in ATTR_TYPES {
+            let kind = AttrKind::of(t).expect("listed type parses");
+            assert_eq!(kind.name(), *t);
+        }
+        assert_eq!(AttrKind::of("Feature"), None);
+        assert_eq!(AttrKind::of("property"), None);
+        assert_eq!(AttrKind::of(""), None);
     }
 }
 

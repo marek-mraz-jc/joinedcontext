@@ -87,6 +87,15 @@ mod tests {
         assert_eq!(doc["flat"], "not instances");
     }
 
+    /// A document that is not an object has no member to stamp and is left
+    /// as it came.
+    #[test]
+    fn a_document_that_is_no_object_is_not_stamped() {
+        let mut doc = json!(["urn:a"]);
+        stamp_new(&mut doc, "2026-01-01T00:00:00Z");
+        assert_eq!(doc, json!(["urn:a"]));
+    }
+
     /// DM-138: the request's provenance names who changed the instance, and
     /// whatever `modifiedBy` the client sent goes either way.
     #[test]

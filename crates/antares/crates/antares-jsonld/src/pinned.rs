@@ -64,12 +64,9 @@ pub const MAX_CONTEXT_URLS: usize = 32;
 /// The pinned core `@context`, parsed and frozen, with no loader, client or
 /// cache behind it: the value every `Loader` pins, and what a test of
 /// expansion or matching needs on its own.
-#[allow(clippy::expect_used)]
 pub fn core_context() -> Context {
     let mut core = Context::default();
-    // PINNED holds CORE_CONTEXT and every entry parses: pinned by
-    // `every_pinned_context_parses_and_carries_an_at_context`
-    merge_context_value(&mut core, &pinned(CORE_CONTEXT).expect("pinned core"));
+    merge_core(&mut core);
     core.freeze();
     core.source = Value::String(CORE_CONTEXT.to_owned());
     core
@@ -110,6 +107,16 @@ pub(crate) fn pinned(url: &str) -> Option<Value> {
 #[cfg(any(test, feature = "fetch"))]
 pub(crate) fn is_pinned(url: &str) -> bool {
     PINNED.iter().any(|(u, _)| *u == url)
+}
+
+/// Merge the pinned Core `@context` into `ctx` (4.4: merged last, so its
+/// terms win). PINNED holds CORE_CONTEXT and every entry parses, a build
+/// property `every_pinned_context_parses_and_carries_an_at_context` holds
+/// every build to, so the lookup always finds it; were the pin ever broken,
+/// the merge adds nothing and every expansion test fails on the missing core
+/// terms, rather than a request panicking (T-3915).
+pub(crate) fn merge_core(ctx: &mut Context) {
+    merge_context_value(ctx, &pinned(CORE_CONTEXT).unwrap_or_default());
 }
 
 /// Merge a pre-parsed Core @context value (4.4: merged last, so it wins).
@@ -156,9 +163,7 @@ pub fn resolve_with(loader: &dyn ContextLoader, user: &Value) -> Result<Context,
     let mut ctx = Context::default();
     let mut urls = 0usize;
     merge_entry(loader, &mut ctx, user, 0, &mut urls, None)?;
-    let core = pinned(CORE_CONTEXT)
-        .ok_or_else(|| NgsiError::InternalError("the core @context is not pinned".into()))?;
-    merge_context_value(&mut ctx, &core);
+    merge_core(&mut ctx);
     ctx.freeze();
     ctx.source = user.clone();
     Ok(ctx)

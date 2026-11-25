@@ -24,6 +24,12 @@ url = { version = "2", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 antares-ops = { workspace = true, features = ["test-kit"] }
+# tests/icsr_store_fault.rs: the shared fault driver over the memory store
+antares-api = { workspace = true, features = ["views"] }
+antares-model = { workspace = true }
+antares-sql = { workspace = true }
+antares-store = { workspace = true }
+async-trait = { workspace = true }
 axum = { version = "0.8", default-features = false, features = ["tokio", "http1"] }
 http-body-util = { version = "0.1", default-features = false }
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }

@@ -981,10 +981,12 @@ pub(crate) fn inject_context(payload: Value, ctx: &Context) -> Value {
 
 /// 6.3.14: echo NGSILD-Tenant on responses when non-default.
 pub(crate) fn echo_tenant(tenant: &TenantId, resp: &mut Response) {
-    if tenant.as_str() != TenantId::DEFAULT {
-        if let Ok(v) = tenant.as_str().parse() {
-            resp.headers_mut().insert("NGSILD-Tenant", v);
-        }
+    // a TenantId is `[A-Za-z0-9_-]+`, always a header value
+    if let (true, Ok(v)) = (
+        tenant.as_str() != TenantId::DEFAULT,
+        tenant.as_str().parse::<axum::http::HeaderValue>(),
+    ) {
+        resp.headers_mut().insert("NGSILD-Tenant", v);
     }
 }
 

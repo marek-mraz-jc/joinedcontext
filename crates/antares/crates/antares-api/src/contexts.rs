@@ -251,10 +251,8 @@ pub(crate) async fn host_implicit(
                     .await;
                 Some(url)
             } else {
-                tracing::warn!(
-                    tenant = tenant.as_str(),
-                    "ImplicitlyCreated @context cap reached"
-                );
+                let tenant = tenant.as_str();
+                tracing::warn!(tenant, "ImplicitlyCreated @context cap reached");
                 None
             }
         }

@@ -347,6 +347,57 @@ async fn clause_5_13_5_delete_and_reload_errors() {
         body["type"], "https://uri.etsi.org/ngsi-ld/errors/ResourceNotFound",
         "{body}"
     );
+
+    // the core @context reloads from the copy the broker carries: no
+    // network, 204, and it is still listed after
+    let core = antares_jsonld::CORE_CONTEXT
+        .replace(':', "%3A")
+        .replace('/', "%2F");
+    let (status, _, body) = delete(
+        &st,
+        &format!("/ngsi-ld/v1/jsonldContexts/{core}?reload=true"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let (status, _, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/jsonldContexts/{core}?details=true"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["URL"], antares_jsonld::CORE_CONTEXT, "{body}");
+    assert_eq!(body["kind"], "Cached", "{body}");
+}
+
+/// clause 5.13.2, item 4: a body that is no JSON is InvalidRequest, and nothing is
+/// stored.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_13_2_add_context_body_that_is_no_json() {
+    let st = state();
+    let (status, _, body) = send(
+        &st,
+        Request::builder()
+            .method("POST")
+            .uri("/ngsi-ld/v1/jsonldContexts")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", 9)
+            .body(Body::from("{not json"))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(
+        body["type"], "https://uri.etsi.org/ngsi-ld/errors/InvalidRequest",
+        "{body}"
+    );
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.starts_with("body is not valid JSON")),
+        "{body}"
+    );
+    let (_, _, list) = get(&st, "/ngsi-ld/v1/jsonldContexts?kind=Hosted").await;
+    assert_eq!(list, json!([]), "{list}");
 }
 
 /// Request carrying an explicit NGSILD-Tenant (6.3.14).

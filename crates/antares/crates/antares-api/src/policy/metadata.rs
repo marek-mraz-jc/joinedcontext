@@ -634,6 +634,24 @@ mod tests {
         );
     }
 
+    /// A GeoJSON Feature is stripped inside its `properties`; one whose
+    /// `properties` is no object (null, as RFC 7946 allows) has nothing to
+    /// strip, and its own members are not Attributes to strip either.
+    #[test]
+    fn a_feature_without_properties_is_left_as_it_came() {
+        let feature = json!({"id": "urn:ngsi-ld:A:1", "type": "Feature",
+                             "geometry": null, "properties": null});
+        let mut stripped = feature.clone();
+        public().strip(&mut stripped, core());
+        assert_eq!(stripped, feature);
+        let mut collection = json!({"type": "FeatureCollection", "features": [
+            {"type": "Feature", "properties": {"type": "A", "pm10": instance()}}]});
+        public().strip(&mut collection, core());
+        let pm10 = &collection["features"][0]["properties"]["pm10"];
+        assert!(pm10.get("unitCode").is_none(), "{collection}");
+        assert_eq!(pm10["observedAt"], "2026-11-01T10:00:00Z");
+    }
+
     /// F-10: a sub-Attribute carries the members of its parent's grant, stripped the same way.
     #[test]
     fn a_sub_attribute_is_stripped_as_its_parent() {

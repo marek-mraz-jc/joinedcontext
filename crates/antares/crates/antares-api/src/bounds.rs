@@ -1141,6 +1141,13 @@ mod tests {
             b.answers(),
         ];
         assert_eq!(shares.iter().sum::<u64>(), 172 << 20);
+        // applying the default split sets the caches to what they hold
+        // already, so no other test sees a change
+        b.apply();
+        assert_eq!(
+            antares_ql::regex::cache_bytes(),
+            antares_ql::regex::DEFAULT_REGEX_CACHE_BYTES
+        );
         let st = &mut crate::AppState::new("antares-budget-split".into());
         MemoryBudget { total: 100 << 20 }.set_on(st);
         assert_eq!(st.answer_pool.cap(), 32 << 20);

@@ -1289,19 +1289,23 @@ pub(crate) async fn schema_admits(
 /// hasher, then the `0xff` that `str`'s Hash writes after it, so every
 /// entity tag keeps its value (R1-016).
 fn hash_json(v: &serde_json::Value, h: &mut impl std::hash::Hasher) {
-    struct Into<'a, H>(&'a mut H);
-    impl<H: std::hash::Hasher> std::io::Write for Into<'_, H> {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0.write(buf);
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     // writing a Value into a sink that never fails cannot fail
-    let _ = serde_json::to_writer(Into(&mut *h), v);
+    let _ = serde_json::to_writer(HashWriter(&mut *h), v);
     h.write_u8(0xff);
+}
+
+/// A [`std::io::Write`] whose bytes go into a hasher: nothing to fail,
+/// nothing to flush.
+struct HashWriter<'a, H>(&'a mut H);
+
+impl<H: std::hash::Hasher> std::io::Write for HashWriter<'_, H> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 #[cfg(test)]
 mod tests {
@@ -1333,6 +1337,17 @@ mod tests {
             hash_json(&v, &mut new);
             assert_eq!(old.finish(), new.finish(), "{v}");
         }
+        // the writer is a hasher: every byte reaches it, a flush is a no-op
+        use std::io::Write as _;
+        let (mut direct, mut streamed) = (
+            std::hash::DefaultHasher::new(),
+            std::hash::DefaultHasher::new(),
+        );
+        direct.write(b"abc");
+        let mut w = HashWriter(&mut streamed);
+        assert_eq!(w.write(b"abc").expect("a hasher takes bytes"), 3);
+        assert!(w.flush().is_ok());
+        assert_eq!(direct.finish(), streamed.finish());
     }
 
     struct Narrowing(Filter);
@@ -1374,6 +1389,29 @@ mod tests {
             with_view(Some(&view), "5.13.4", Ok(Arc::new(Filter::default()))).is_err(),
             "serving a stored @context is refused under a view"
         );
+    }
+
+    /// Rule 5: through a view that hides a name the list holds the core
+    /// @context alone, never a stored one that may define a hidden term.
+    #[tokio::test]
+    async fn the_context_list_through_a_hiding_view_holds_no_stored_one() {
+        let st = seeded(None).await;
+        let body = json!({"@context": {"secret": "urn:ngsi-ld:attributes:secret"}});
+        let (s, b, h) = send(&st, "POST", "/ngsi-ld/v1/jsonldContexts", Some(body)).await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let hosted = h
+            .get("location")
+            .and_then(|v| v.to_str().ok())
+            .expect("a Location")
+            .to_owned();
+        let list = "/ngsi-ld/v1/jsonldContexts?kind=Hosted";
+        let (s, all, _) = send(&st, "GET", list, None).await;
+        assert_eq!(s, StatusCode::OK, "{all}");
+        assert!(all.to_string().contains(&hosted), "{all}");
+        let view = st.with_view(Arc::new(cars()));
+        let (s, seen, _) = send(&view, "GET", list, None).await;
+        assert_eq!(s, StatusCode::OK, "{seen}");
+        assert_eq!(seen, json!([]), "the stored one is not listed");
     }
 
     /// T-3778: the pairing kept per thread is handed out again for the same
@@ -1855,6 +1893,89 @@ mod tests {
         );
     }
 
+    /// T-3789: the guard's `If-Match` holds for `*` or the strong tag of
+    /// what the view shows, every field line read; a tag that does not hold
+    /// is the 412, and a post-image out of the view is the 403's reason.
+    #[tokio::test]
+    async fn the_write_guard_reads_if_match_and_the_post_image() {
+        let st = seeded(None).await;
+        let view = st.with_view(Arc::new(cars()));
+        let tenant = antares_model::TenantId::default();
+        let car = st
+            .store
+            .get(&tenant, antares_store::Kind::Entity, "urn:ngsi-ld:Car:0")
+            .await
+            .expect("read")
+            .expect("seeded");
+        let guard = |lines: &[&[u8]]| {
+            let mut headers = axum::http::HeaderMap::new();
+            for l in lines {
+                headers.append(
+                    axum::http::header::IF_MATCH,
+                    axum::http::HeaderValue::from_bytes(l).expect("a field value"),
+                );
+            }
+            WriteGuard::of(&view, ["speed"])
+                .expect("a view state has a guard")
+                .matching(&headers)
+        };
+        let tag = guard(&[]).tag(&car);
+
+        let unmatched = guard(&[b"\"other\"", b"\xff"]);
+        assert!(!unmatched.keeps(&car));
+        assert!(matches!(
+            unmatched.settled(),
+            Err(crate::negotiate::ApiError::Bare(
+                StatusCode::PRECONDITION_FAILED
+            ))
+        ));
+        let any = guard(&[b"*"]);
+        assert!(any.keeps(&car));
+        assert!(any.settled().is_ok());
+        let listed = guard(&[b"\"other\"", tag.as_bytes()]);
+        assert!(listed.keeps(&car), "the second field line holds");
+        assert!(
+            !guard(&[format!("W/{tag}").as_bytes()]).keeps(&car),
+            "weak never holds"
+        );
+
+        let mut bike = car.clone();
+        bike["type"] = json!(["https://uri.etsi.org/ngsi-ld/default-context/Bike"]);
+        let moved = guard(&[]);
+        assert!(moved.post(&bike).is_err());
+        assert_eq!(moved.verdict(), Err(Denied(MOVES_OUT.to_owned())));
+
+        // a Relationship to an Entity the view does not show, or to none
+        let fragment = json!({"owns": [{"type": "Relationship", "object": "urn:ngsi-ld:Bike:0"}]});
+        let found = std::collections::HashMap::from([("urn:ngsi-ld:Bike:0".to_owned(), bike)]);
+        assert_eq!(
+            guard(&[]).targets_in(&fragment, &found),
+            Err(Denied(TARGET_NOT_SHOWN.to_owned()))
+        );
+        assert!(guard(&[])
+            .targets_in(&fragment, &std::collections::HashMap::new())
+            .is_err());
+    }
+
+    /// Rule 9: a Subscription through a view watches only what the view
+    /// shows; naming nothing it shows is refused.
+    #[test]
+    fn watched_attributes_keep_only_what_the_view_shows() {
+        let view = cars();
+        let (speed, secret) = (
+            json!("https://uri.etsi.org/ngsi-ld/default-context/speed"),
+            json!("https://uri.etsi.org/ngsi-ld/default-context/secret"),
+        );
+        assert_eq!(
+            watched_in(&view, &[speed.clone(), secret.clone()]),
+            Ok(vec![speed])
+        );
+        assert_eq!(
+            watched_in(&view, &[secret, json!(7)]),
+            Err("watchedAttributes names no Attribute this view shows".to_owned())
+        );
+    }
+
     /// `expiresAt` is an Entity member (4.22, Table 5.2.4-1), not an
     /// Attribute: a write through a view that carries it lands, and a hidden
     /// Attribute beside it is still refused.
@@ -2332,13 +2453,34 @@ mod tests {
         fn refuse(_: u64, _: &Arc<[u8]>, _: &Value, _: bool) -> Result<(), String> {
             Err("checked".into())
         }
+        let t = antares_model::TenantId::default();
+        let schema = BTreeMap::from([(
+            t.as_str().to_owned(),
+            Schema {
+                revision: 1,
+                bytes: Arc::from(&b"{}"[..]),
+            },
+        )]);
         let st = AppState::new("schema-off".into());
         st.views.schema_writes.set(refuse);
+        st.views.replace_schemas(schema.clone());
         st.views
             .schema_writes
             .set_mode(crate::schema_writes::Mode::Off);
-        let t = antares_model::TenantId::default();
         assert!(schema_admits_typed(&st, &t, &json!({"type": ["Car"]}), true).is_ok());
+        // the same check under enforce runs, and refuses
+        let enforcing = AppState::new("schema-enforce".into());
+        enforcing.views.schema_writes.set(refuse);
+        enforcing.views.replace_schemas(schema);
+        enforcing
+            .views
+            .schema_writes
+            .set_mode(crate::schema_writes::Mode::Enforce);
+        let refused = schema_admits_typed(&enforcing, &t, &json!({"type": ["Car"]}), true);
+        assert!(
+            matches!(&refused, Err(antares_model::NgsiError::BadRequestData(m)) if m == "checked"),
+            "{refused:?}"
+        );
     }
 
     /// A `within` box from longitude `west` to `east`, 1 degree either side

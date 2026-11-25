@@ -75,15 +75,7 @@ impl ApiSurface for Admin {
     /// `tenant_move::MAX_LINE_BYTES` per line; behind the bounds wall it was
     /// buffered whole and refused past `ANTARES_MAX_BODY_BYTES`.
     fn streaming_router(&self, st: AppState) -> Option<Router<AppState>> {
-        let [_, _, _, _, _, _, _, import_p, _, _, _, _] = Self::PATHS;
-        Some(
-            Router::new()
-                .route(import_p, post(tenant_move::import))
-                .route_layer(axum::middleware::from_fn_with_state(
-                    st,
-                    admin_auth::require,
-                )),
-        )
+        Some(Self::import_router(st))
     }
 
     fn version_info(&self) -> serde_json::Value {
@@ -92,6 +84,19 @@ impl ApiSurface for Admin {
 }
 
 impl Admin {
+    /// The tenant import, which streams its body and bounds it itself, under
+    /// the credential rule of the rest of the surface: the admin surface's
+    /// streaming router, and the ops router's import route.
+    pub(crate) fn import_router(st: AppState) -> Router<AppState> {
+        let [_, _, _, _, _, _, _, import_p, _, _, _, _] = Self::PATHS;
+        Router::new()
+            .route(import_p, post(tenant_move::import))
+            .route_layer(axum::middleware::from_fn_with_state(
+                st,
+                admin_auth::require,
+            ))
+    }
+
     /// `/q/metrics` alone, under the credential rule of the rest of the
     /// surface: the admin router mounts it, and so does the metrics listener
     /// (`metrics_router`, T-5095). Prometheus text format; 404 until the
@@ -638,34 +643,31 @@ pub(super) async fn tenant_get(
         Err(e) => return ApiError::from(e).into_response(),
     };
     let usage = tenant_usage(&st, &tenant, stats.entities).await;
-    let mut row = serde_json::json!({
-        "tenant": stats.tenant,
-        "counts": {
-            "entities": stats.entities,
-            "subscriptions": stats.subscriptions,
-            "csourceSubscriptions": stats.csource_subscriptions,
-            "registrations": stats.registrations,
-            "snapshots": stats.snapshots,
-            "entityMaps": stats.entity_maps,
-            "distSubs": stats.dist_subs,
-        },
+    let mut counts = serde_json::json!({
+        "entities": stats.entities,
+        "subscriptions": stats.subscriptions,
+        "csourceSubscriptions": stats.csource_subscriptions,
+        "registrations": stats.registrations,
+        "snapshots": stats.snapshots,
+        "entityMaps": stats.entity_maps,
+        "distSubs": stats.dist_subs,
     });
     // a count that was neither measured nor estimated is left out, never 0
     if let (Some(n), Some(counts)) = (
         usage.as_ref().and_then(|u| u.get("attrInstances")),
-        row.get_mut("counts")
-            .and_then(serde_json::Value::as_object_mut),
+        counts.as_object_mut(),
     ) {
         counts.insert("attrInstances".into(), n.clone());
     }
-    if let Some(row) = row.as_object_mut() {
-        if let Some(c) = stats.created_at {
-            row.insert("createdAt".into(), serde_json::Value::String(c));
-        }
-        for key in ["bytes", "estimated", "measuredAt"] {
-            if let Some(v) = usage.as_ref().and_then(|u| u.get(key)) {
-                row.insert(key.into(), v.clone());
-            }
+    let mut row = serde_json::Map::new();
+    row.insert("tenant".into(), serde_json::json!(stats.tenant));
+    row.insert("counts".into(), counts);
+    if let Some(c) = stats.created_at {
+        row.insert("createdAt".into(), serde_json::Value::String(c));
+    }
+    for key in ["bytes", "estimated", "measuredAt"] {
+        if let Some(v) = usage.as_ref().and_then(|u| u.get(key)) {
+            row.insert(key.into(), v.clone());
         }
     }
     (StatusCode::OK, axum::Json(row)).into_response()
@@ -1138,6 +1140,24 @@ mod tests {
         assert_eq!(body["commitQueueDepth"], 0, "{body}");
         assert!(body["commitQueuePeak"].is_u64(), "{body}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// T-5895: memory statistics that are an object gain the answer pool
+    /// and the @context cache counts; a draining broker answers 503 with
+    /// status DRAINING, so a load balancer stops routing to it.
+    #[tokio::test]
+    async fn health_adds_the_pools_to_memory_and_says_draining() {
+        let mut st = AppState::new("ops-draining".into());
+        st.mem_stats = Some(Arc::new(|| json!({"rss": 7})));
+        st.draining
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let (status, body) = call(crate::router(st), "GET", "/q/health", None, None).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert_eq!(body["status"], "DRAINING", "{body}");
+        assert_eq!(body["memory"]["rss"], 7, "{body}");
+        assert!(body["memory"]["answerPool"]["capBytes"].is_u64(), "{body}");
+        assert!(body["memory"]["answerPool"]["heldBytes"].is_u64(), "{body}");
+        assert!(body["memory"]["contextCaches"].is_object(), "{body}");
     }
 
     /// A store that refuses answers every admin read and write with its

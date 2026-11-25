@@ -4,8 +4,7 @@
 
 use crate::context::Context;
 use crate::pinned::{
-    core_context, is_pinned, merge_context_value, pinned, CORE_CONTEXT, MAX_CONTEXT_BYTES,
-    MAX_CONTEXT_URLS,
+    core_context, is_pinned, merge_core, pinned, MAX_CONTEXT_BYTES, MAX_CONTEXT_URLS,
 };
 use antares_model::{NgsiError, TenantId};
 use serde_json::Value;
@@ -1244,12 +1243,7 @@ impl Loader {
             }
         }
         // Core context last: its (protected) terms win — CIM 009 4.4.
-        // CORE_CONTEXT is a PINNED entry and every entry parses: pinned by
-        // `every_pinned_context_parses_and_carries_an_at_context`. A request
-        // reaches this line, so a broken pin is a 500, never a panic (T-3915).
-        let core = pinned(CORE_CONTEXT)
-            .ok_or_else(|| NgsiError::InternalError("the core @context is not pinned".into()))?;
-        merge_context_value(&mut ctx, &core);
+        merge_core(&mut ctx);
         ctx.freeze();
         ctx.source = user.clone();
         let arc = Arc::new(ctx);
@@ -1353,9 +1347,11 @@ impl Loader {
                         )));
                     }
                     let doc = self.fetch(&resolved, tenant).await?;
-                    if let Ok(mut u) = urls.lock() {
-                        u.push(resolved.clone());
-                    }
+                    // nothing panics while holding the lock, so a poisoned
+                    // one still holds a whole list
+                    urls.lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(resolved.clone());
                     self.merge_entry(
                         ctx,
                         &doc,
@@ -1543,6 +1539,11 @@ impl Loader {
             };
             Ok((ttl, bytes))
         };
+        // Natively the client carries its own timeouts; the browser fetch
+        // has none, so wasm32 bounds the whole interaction here.
+        #[cfg(not(target_arch = "wasm32"))]
+        let (ttl, bytes) = interact.await?;
+        #[cfg(target_arch = "wasm32")]
         let (ttl, bytes) = http_interaction(async {
             match io_deadline(interact, 10_000).await {
                 Some(r) => r,
@@ -1659,6 +1660,7 @@ impl Loader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pinned::CORE_CONTEXT;
 
     /// 4.4: "the Core @context is protected and shall remain immutable and
     /// invariant during expansion or compaction of terms. […] implementations
@@ -1997,6 +1999,54 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         );
     }
 
+    // A hop to a host NAME is not an IP literal: the redirect policy follows
+    // it and leaves the check to the DNS-pinning resolver, which with
+    // allow_private passes loopback. The server is hit twice: the start and
+    // the hop by name.
+    #[tokio::test]
+    async fn redirect_to_a_host_name_is_left_to_the_resolver() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let server = tokio::spawn(async move {
+            let mut paths = Vec::new();
+            for _ in 0..2 {
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0u8; 2048];
+                let n = sock.read(&mut buf).await.expect("read");
+                let head = String::from_utf8_lossy(buf.get(..n).unwrap_or_default()).into_owned();
+                let hop = head.starts_with("GET /hop ");
+                paths.push(head.lines().next().unwrap_or_default().to_owned());
+                let resp = if hop {
+                    "HTTP/1.1 200 OK\r\nConnection: close\r\nContent-Length: 0\r\n\r\n".to_owned()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://localhost:{port}/hop\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                    )
+                };
+                sock.write_all(resp.as_bytes()).await.expect("write");
+            }
+            paths
+        });
+        let client = client_builder(EgressPolicy {
+            allow_private: true,
+            private_hosts: &[],
+        })
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .expect("client");
+        let resp = client
+            .get(format!("http://127.0.0.1:{port}/start"))
+            .send()
+            .await
+            .expect("the hop by name is followed");
+        assert_eq!(resp.status().as_u16(), 200);
+        let paths = server.await.expect("server");
+        assert_eq!(paths, ["GET /start HTTP/1.1", "GET /hop HTTP/1.1"]);
+    }
+
     // SSRF: the same refusal for the IPv6 spelling of a literal. `Url`
     // returns an IPv6 host BRACKETED (`[::1]`), which `IpAddr::from_str`
     // rejects, so a hop check that parses `host_str()` as it comes waves the
@@ -2005,23 +2055,10 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
     // never be reached.
     #[tokio::test]
     async fn redirect_to_private_ipv6_literal_is_blocked() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Arc;
         let target = tokio::net::TcpListener::bind("[::1]:0")
             .await
             .expect("bind v6");
         let target_addr = target.local_addr().expect("addr");
-        let reached = Arc::new(AtomicUsize::new(0));
-        let hit = reached.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = target.accept().await {
-                hit.fetch_add(1, Ordering::SeqCst);
-                use tokio::io::AsyncWriteExt;
-                let _ = sock
-                    .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")
-                    .await;
-            }
-        });
 
         let entry = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -2052,9 +2089,10 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .await
             .expect("stop returns the 3xx, not an error");
         assert_eq!(resp.status().as_u16(), 302, "redirect was not followed");
-        assert_eq!(
-            reached.load(Ordering::SeqCst),
-            0,
+        // nothing ever connected to the target: its backlog stays empty
+        let reached = tokio::time::timeout(std::time::Duration::from_millis(100), target.accept());
+        assert!(
+            reached.await.is_err(),
             "the IPv6-literal hop was followed into loopback"
         );
     }

@@ -305,10 +305,12 @@ pub async fn sweep_expired_docs(st: &AppState) -> usize {
         return 0;
     };
     let mut n: usize = 0;
-    for name in tenants {
-        let Ok(tenant) = antares_model::TenantId::new(&name) else {
-            continue;
-        };
+    // a driver lists client tenants only; one that named a broker tenant
+    // would have it skipped here, never swept as a client's
+    for tenant in tenants
+        .iter()
+        .filter_map(|name| antares_model::TenantId::new(name).ok())
+    {
         match st.store.confirmation_sweep(&tenant).await {
             Ok(gone) => n = n.saturating_add(usize::try_from(gone).unwrap_or(usize::MAX)),
             Err(e) => tracing::warn!("the sweep of expired write confirmations failed: {e}"),

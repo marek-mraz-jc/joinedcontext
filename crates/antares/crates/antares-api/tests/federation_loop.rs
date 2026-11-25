@@ -252,6 +252,41 @@ async fn clause_9_7_self_in_via_without_a_registration_is_a_loop_on_writes() {
     assert_eq!(res.status(), StatusCode::LOOP_DETECTED);
 }
 
+/// The same rule on the batch writes: each one whose chain names this
+/// broker is 508 and writes nothing (5.6.7-5.6.10).
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_9_7_self_in_via_is_a_loop_on_batch_writes() {
+    let st = state();
+    let one = serde_json::json!([{"id": ENTITY, "type": "Vehicle"}]).to_string();
+    let ids = serde_json::json!([ENTITY]).to_string();
+    for (op, body) in [
+        ("create", &one),
+        ("upsert", &one),
+        ("update", &one),
+        ("delete", &ids),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri(format!("/ngsi-ld/v1/entityOperations/{op}"))
+            .header("Via", "1.1 antares1")
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .body(Body::from(body.clone()))
+            .expect("request");
+        let res = send(&st, req).await;
+        assert_eq!(res.status(), StatusCode::LOOP_DETECTED, "{op}");
+    }
+    let res = send(
+        &st,
+        Request::get(format!("/ngsi-ld/v1/entities/{ENTITY}"))
+            .header("Via", "1.1 other")
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND, "nothing was written");
+}
+
 /// Table 5.2.40-1: "In the multi-tenancy use case … this id shall be
 /// identifying a specific Tenant within a registered Context Source." A chain
 /// naming this broker's DEFAULT tenant says nothing about tenant `zvolen`, so
@@ -514,6 +549,66 @@ async fn inclusive_partial_failure_is_207() {
         doc["errors"][0]["error"]["status"], 500,
         "an inclusive source's error keeps its own status in the 207: {doc}"
     );
+}
+
+/// clause 5.6.10, item 4: a source offering Delete Entity alone gets one forward per
+/// Entity, and a failed one is an error naming that source's status; an
+/// inclusive source offering neither delete operation is not contacted and
+/// contributes nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_6_10_4_a_failed_per_entity_delete_forward_is_an_error() {
+    let st = state();
+    let failing = mock_replying("HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n");
+    let (idle, idle_hits) = mock_source();
+    for (id, ops, port) in [
+        (
+            "urn:ngsi-ld:ContextSourceRegistration:per-entity",
+            "deleteEntity",
+            failing.port,
+        ),
+        (
+            "urn:ngsi-ld:ContextSourceRegistration:no-delete",
+            "createEntity",
+            idle,
+        ),
+    ] {
+        register_doc(
+            &st,
+            serde_json::json!({
+                "id": id,
+                "type": "ContextSourceRegistration",
+                "operations": [ops],
+                "information": [{"entities": [{"type": "Vehicle", "id": ENTITY}]}],
+                "endpoint": format!("http://127.0.0.1:{port}"),
+            }),
+        )
+        .await;
+    }
+    let (status, doc) = post_json(
+        &st,
+        "/ngsi-ld/v1/entityOperations/delete",
+        serde_json::json!([ENTITY]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{doc}");
+    let errors = doc["errors"].as_array().expect("errors");
+    assert_eq!(
+        errors.len(),
+        1,
+        "the source without a delete adds nothing: {doc}"
+    );
+    assert_eq!(errors[0]["entityId"], ENTITY, "{doc}");
+    assert_eq!(errors[0]["error"]["status"], 500, "{doc}");
+    assert_eq!(
+        errors[0]["error"]["detail"], "forwarded delete returned 500",
+        "{doc}"
+    );
+    assert_eq!(
+        failing.hits.load(Ordering::SeqCst),
+        1,
+        "one forward per Entity"
+    );
+    assert_eq!(idle_hits.load(Ordering::SeqCst), 0, "{doc}");
 }
 
 /// POST one Context Source Registration document.

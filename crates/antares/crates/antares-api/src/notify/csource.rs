@@ -171,7 +171,9 @@ static FANOUT_SHARES: std::sync::LazyLock<FanoutShares> =
 pub(super) async fn fanout_permits(tenant: &TenantId) -> impl Sized {
     let shares = {
         // a poisoned map is a past panic; what it holds is rebuildable
-        let mut map = FANOUT_SHARES.lock().unwrap_or_else(|p| p.into_inner());
+        let mut map = FANOUT_SHARES
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         match map.get(tenant.as_str()) {
             Some(s) => std::sync::Arc::clone(s),
             None => {
