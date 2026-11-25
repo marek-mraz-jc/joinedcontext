@@ -172,8 +172,20 @@ fn open_checked(dir: &Path, file: &str, sha: &str) -> Result<std::fs::File, Erro
     Ok(opened)
 }
 
-fn loading(what: &str) -> impl Fn(String) -> Error + '_ {
-    move |why| Error::Model(format!("the {what} did not load: {why}"))
+/// `result` with its error named as the `what` that did not load.
+fn loaded<T, E: std::fmt::Display>(what: &str, result: Result<T, E>) -> Result<T, Error> {
+    match result {
+        Ok(v) => Ok(v),
+        Err(why) => Err(Error::Model(format!("the {what} did not load: {why}"))),
+    }
+}
+
+/// `result` with its error named as a failed embedding; never the text.
+fn embedded<T, E: std::fmt::Display>(result: Result<T, E>) -> Result<T, Error> {
+    match result {
+        Ok(v) => Ok(v),
+        Err(why) => Err(Error::Model(format!("embedding failed: {why}"))),
+    }
 }
 
 impl Engine {
@@ -187,13 +199,10 @@ impl Engine {
             #[cfg(test)]
             Self::Broken => return Err(Error::Model("embedding failed: broken".into())),
         };
-        let failed = |why: String| Error::Model(format!("embedding failed: {why}"));
-        let encoding = tokenizer
-            .encode(text, true)
-            .map_err(|err| failed(err.to_string()))?;
+        let encoding = embedded(tokenizer.encode(text, true))?;
         let tokens = encoding.get_ids().len();
         if tokens == 0 {
-            return Err(failed("the text has no tokens".into()));
+            return embedded(Err("the text has no tokens"));
         }
         let ids: Vec<i64> = encoding.get_ids().iter().map(|&id| i64::from(id)).collect();
         let mask: Vec<i64> = encoding
@@ -201,24 +210,20 @@ impl Engine {
             .iter()
             .map(|&bit| i64::from(bit))
             .collect();
-        let tensor = |values: Vec<i64>| {
-            Tensor::from_array(([1usize, tokens], values)).map_err(|err| failed(err.to_string()))
-        };
-        let outputs = session
-            .run(ort::inputs![
-                "input_ids" => tensor(ids)?,
-                "attention_mask" => tensor(mask)?,
-                "token_type_ids" => tensor(vec![0; tokens])?,
-            ])
-            .map_err(|err| failed(err.to_string()))?;
-        let hidden = outputs
-            .get("last_hidden_state")
-            .ok_or_else(|| failed("the model has no last_hidden_state output".into()))?;
-        let (shape, values) = hidden
-            .try_extract_tensor::<f32>()
-            .map_err(|err| failed(err.to_string()))?;
+        let tensor = |values: Vec<i64>| embedded(Tensor::from_array(([1usize, tokens], values)));
+        let outputs = embedded(session.run(ort::inputs![
+            "input_ids" => tensor(ids)?,
+            "attention_mask" => tensor(mask)?,
+            "token_type_ids" => tensor(vec![0; tokens])?,
+        ]))?;
+        let hidden = embedded(
+            outputs
+                .get("last_hidden_state")
+                .ok_or("the model has no last_hidden_state output"),
+        )?;
+        let (shape, values) = embedded(hidden.try_extract_tensor::<f32>())?;
         if shape.len() != 3 || values.len() != tokens * DIMENSIONS {
-            return Err(failed(format!(
+            return embedded(Err(format!(
                 "the model answered a {shape:?} tensor for {tokens} tokens"
             )));
         }
@@ -249,25 +254,27 @@ impl Embedder {
     /// Loads the model from `dir` after checking every file's hash.
     pub fn load(dir: &Path, threads: usize) -> Result<Self, Error> {
         let [(onnx_file, onnx_sha), (tokenizer_file, tokenizer_sha)] = MODEL_FILES;
-        let mut tokenizer =
-            Tokenizer::from_bytes(read_checked(dir, tokenizer_file, tokenizer_sha)?)
-                .map_err(|err| loading("tokenizer")(err.to_string()))?;
-        tokenizer
-            .with_truncation(Some(TruncationParams {
+        let mut tokenizer = loaded(
+            "tokenizer",
+            Tokenizer::from_bytes(read_checked(dir, tokenizer_file, tokenizer_sha)?),
+        )?;
+        loaded(
+            "tokenizer",
+            tokenizer.with_truncation(Some(TruncationParams {
                 max_length: MAX_TOKENS,
                 ..TruncationParams::default()
-            }))
-            .map_err(|err| loading("tokenizer")(err.to_string()))?;
+            })),
+        )?;
         tokenizer.with_padding(None);
         let onnx = open_checked(dir, onnx_file, onnx_sha)?;
         // ONNX Runtime opens the descriptor's own path: the inode that was hashed, read from
         // the file rather than from a copy of it in memory.
-        let session = Session::builder()
-            .map_err(|err| loading("model")(err.to_string()))?
-            .with_intra_threads(threads.max(1))
-            .map_err(|err| loading("model")(err.to_string()))?
-            .commit_from_file(format!("/proc/self/fd/{}", onnx.as_raw_fd()))
-            .map_err(|err| loading("model")(err.to_string()))?;
+        let builder = loaded("model", Session::builder())?;
+        let builder = loaded("model", builder.with_intra_threads(threads.max(1)))?;
+        let session = loaded(
+            "model",
+            builder.commit_from_file(format!("/proc/self/fd/{}", onnx.as_raw_fd())),
+        )?;
         drop(onnx);
         Ok(Self {
             engine: Arc::new(Mutex::new(Engine::Onnx {
@@ -356,6 +363,46 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(millis)).await;
         done.lock().expect("lock").push(who);
         drop(turn);
+    }
+
+    /// Errors from the tokenizer and ONNX Runtime keep their reason and name what failed.
+    #[test]
+    fn library_errors_name_what_failed() {
+        let load = loaded::<(), _>("model", Err("bad header")).expect_err("refused");
+        assert_eq!(
+            load.to_string(),
+            Error::Model("the model did not load: bad header".into()).to_string()
+        );
+        assert_eq!(loaded::<u8, &str>("model", Ok(1)).expect("kept"), 1);
+        let embed = embedded::<(), _>(Err("no tokens")).expect_err("refused");
+        assert!(
+            matches!(&embed, Error::Model(m) if m == "embedding failed: no tokens"),
+            "{embed:?}"
+        );
+    }
+
+    /// A panic while the model was held poisons it: the next text is refused by name, not hung.
+    #[tokio::test]
+    async fn a_poisoned_model_refuses_the_next_text() {
+        let embedder = Embedder::fake(0);
+        let engine = Arc::clone(&embedder.engine);
+        let _ = std::thread::spawn(move || {
+            let _held = engine.lock().expect("lock");
+            panic!("poison the model");
+        })
+        .join();
+        let turn = Arc::new(tokio::sync::Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("turn");
+        let err = embedder
+            .run(turn, "text".into())
+            .await
+            .expect_err("poisoned");
+        assert!(
+            matches!(&err, Error::Model(m) if m.contains("an earlier embedding panicked")),
+            "{err:?}"
+        );
     }
 
     /// A fresh directory under the system's temp dir, holding `files`.
