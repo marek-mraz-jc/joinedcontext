@@ -6,10 +6,13 @@
 # - One connector (the Helsinki air quality Endpoint, public), far under the 12 the plan allows:
 #   the router's prompt grows with each connector and the 0.10 USD cap counts every token.
 # - A rateLimit is required: an anonymous deployment without one answers 404 (chat/mod.rs).
-# - Budget: within() adds the next call's largest output to what is spent (routed.rs), so the
-#   token cap sits well above the ~63,450 tokens estimated for the ten questions; the money guard
-#   is costPerConversationUsd, which leaves 0.01 USD of the run's 0.10 for the model judge.
-#   After the first green run, set tokensPerConversation to the run's measured tokens x 1.5.
+# - Budget, sized from the measured jc-dev run of 2026-11-25 03:33Z (conversation 966057ee):
+#   4 turns cost 0.0965 USD and 53,436 tokens, 0.018 to 0.037 USD a turn (router, its hedge and
+#   1-3 data calls on the cluster's model). Ten turns in one conversation: about 134,000 tokens
+#   and 0.24 to 0.37 USD, so tokensPerConversation is that x 1.5 (within() adds the next call's
+#   largest output to what is spent, routed.rs) and costPerConversationUsd 0.40 lets all ten
+#   answer: a 0.09 cap stopped the fifth question with a 429. The run's own cap (fixture.json
+#   limits.costUsd) still judges what the ten cost; the conversation cap only stops a runaway.
 apiVersion: joinedcontext.com/v1alpha1
 kind: AssistantDeployment
 metadata:
@@ -43,9 +46,9 @@ spec:
     streamsPerClient: 1
   budget:
     tokensPerDay: 1000000
-    tokensPerConversation: 120000
-    costPerDayUsd: 1
-    costPerConversationUsd: 0.09
+    tokensPerConversation: 210000
+    costPerDayUsd: 2
+    costPerConversationUsd: 0.40
     outputTokensPerAnswer: 700
     messagesPerConversation: 10
     questionChars: 500
