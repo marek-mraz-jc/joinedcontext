@@ -105,6 +105,41 @@ fn a_source_the_repository_does_not_hold_is_named_not_guessed() {
     let _ = std::fs::remove_dir_all(&origin);
 }
 
+/// Without --json the command names the proposal and its file count; the run after it over the
+/// same origin proposes nothing and prints the phase with its reason (exit 0); a source the
+/// repository lacks exits 1.
+#[test]
+fn the_text_report_names_the_proposal_then_the_phase() {
+    let repo = repo_with_source("sync-cmd-text");
+    let origin = checkout("sync-cmd-text-origin");
+    let state = temp_dir("sync-cmd-text-state").join("state.json");
+    let run = |source: &str| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .arg("sync")
+            .arg("--repo-dir")
+            .arg(&repo)
+            .args(["--source", source, "--checkout"])
+            .arg(&origin)
+            .arg("--state")
+            .arg(&state)
+            .arg("--once")
+            .output()
+            .expect("jcctl runs")
+    };
+    let first = run("ovzdusie/regional");
+    let said = String::from_utf8_lossy(&first.stdout);
+    assert_eq!(first.status.code(), Some(2), "{first:?}");
+    assert!(said.contains("file(s) to review"), "{said}");
+
+    let second = run("ovzdusie/regional");
+    assert_eq!(second.status.code(), Some(0), "{second:?}");
+    assert!(String::from_utf8_lossy(&second.stdout).contains(": "));
+
+    let unknown = run("ovzdusie/nowhere");
+    assert_eq!(unknown.status.code(), Some(1));
+    assert!(!unknown.stderr.is_empty());
+}
+
 #[test]
 fn the_command_prints_the_change_and_exits_two_when_a_proposal_is_open() {
     let repo = repo_with_source("sync-cmd-cli");

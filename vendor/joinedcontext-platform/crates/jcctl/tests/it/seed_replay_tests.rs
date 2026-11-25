@@ -291,6 +291,18 @@ fn plan_reports_what_apply_would_do_and_writes_nothing() {
     let before = seed::plan(&repo, &gateway).expect("the plan runs");
     assert_eq!(before.pending(), 3);
     assert!(
+        before.render().contains("create    ovzdusie"),
+        "{}",
+        before.render()
+    );
+    let json = before.to_json();
+    assert_eq!(json["summary"]["drifted"], 3);
+    assert_eq!(json["drifted"][0]["drift"], "MISSING");
+    assert_eq!(
+        json["drifted"][0]["resolutions"],
+        serde_json::json!(["revert"])
+    );
+    assert!(
         platform.lock().expect("the platform").writes().is_empty(),
         "plan is read-only (CC-15)"
     );
@@ -312,6 +324,15 @@ fn an_entity_changed_in_the_repository_is_the_only_one_written_again() {
         "projects/mesto/spaces/ovzdusie/entities/seed/stations.json",
         &format!("[{},{}]", air("1", 42), air("2", 99)),
     );
+    let planned = seed::plan(&repo, &gateway).expect("the plan runs");
+    assert!(
+        planned.render().contains("update    ovzdusie"),
+        "{}",
+        planned.render()
+    );
+    let json = planned.to_json();
+    assert_eq!(json["summary"]["drifted"], 1);
+    assert_eq!(json["drifted"][0]["drift"], "MODIFIED");
 
     let report = seed::apply(&repo, &gateway).expect("the second replay");
     let updated: Vec<&str> = report

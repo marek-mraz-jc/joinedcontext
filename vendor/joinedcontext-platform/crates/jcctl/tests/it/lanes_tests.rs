@@ -144,6 +144,12 @@ fn a_public_dashboard_or_knowledge_source_is_red() {
     let project = "apiVersion: joinedcontext.com/v1alpha1\nkind: Dashboard\nmetadata:\n  \
                    name: x\n  namespace: ovzdusie\nspec:\n  visibility: project\n";
     assert_eq!(lane_of(&change(Action::Update, project)).lane, Lane::Green);
+    // A visibility wider than the project's and short of public is reviewed, never green.
+    let organization = project.replace("visibility: project", "visibility: organization");
+    assert_ne!(
+        lane_of(&change(Action::Update, &organization)).lane,
+        Lane::Green
+    );
 }
 
 #[test]

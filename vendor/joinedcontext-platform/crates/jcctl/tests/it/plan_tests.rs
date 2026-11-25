@@ -71,6 +71,18 @@ fn a_changed_member_is_an_update_carrying_its_field_diff() {
     assert_eq!(update.id.name, "public-air");
     assert_eq!(update.diff.len(), 1);
     assert_eq!(update.diff[0].path, "spec.enabledRepresentations");
+    let text = changes.render();
+    assert!(
+        text.contains("  update    Endpoint/ovzdusie/public-air\n"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "      spec.enabledRepresentations: [\"ngsi-ld\"] -> [\"ngsi-ld\",\"csv\"]\n"
+        ),
+        "{text}"
+    );
+    assert!(text.contains("  unchanged "), "{text}");
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -99,6 +111,11 @@ fn a_resource_missing_from_the_repository_is_reported_for_deletion() {
         .expect("the endpoint is gone from Git");
     assert_eq!(deletion.id.name, "public-air");
     assert!(deletion.declared.is_none());
+    assert!(
+        changes.render().contains("  delete    Endpoint/"),
+        "{}",
+        changes.render()
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
