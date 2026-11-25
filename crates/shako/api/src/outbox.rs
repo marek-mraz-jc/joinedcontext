@@ -21,10 +21,19 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// Computes lowercase hex HMAC-SHA256 signature of `body` with `secret` (`X-Gitea-Signature`, S14).
 pub fn compute_gitea_signature(secret: &str, body: &[u8]) -> ShakoResult<String> {
-    let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-        .map_err(|e| ShakoError::Internal(format!("hmac init: {e}")))?;
+    let mut mac = keyed(secret)?;
     mac.update(body);
     Ok(hex::encode(mac.finalize().into_bytes()))
+}
+
+/// HMAC-SHA256 keyed with `secret`.
+fn keyed(secret: &str) -> ShakoResult<HmacSha256> {
+    HmacSha256::new_from_slice(secret.as_bytes()).map_err(key_refused)
+}
+
+/// HMAC takes a key of any length, so the library's refusal is a defect, never the caller's.
+fn key_refused(e: hmac::digest::InvalidLength) -> ShakoError {
+    ShakoError::Internal(format!("hmac init: {e}"))
 }
 
 /// Verifies a hex HMAC-SHA256 signature in constant time (`Mac::verify_slice`, Threat T11).
@@ -33,11 +42,10 @@ pub fn verify_gitea_signature(secret: &str, body: &[u8], presented_hex: &str) ->
     let Ok(expected) = hex::decode(presented_hex.trim()) else {
         return false;
     };
-    let Ok(mut mac) = HmacSha256::new_from_slice(secret.as_bytes()) else {
-        return false;
-    };
-    mac.update(body);
-    mac.verify_slice(&expected).is_ok()
+    keyed(secret).is_ok_and(|mut mac| {
+        mac.update(body);
+        mac.verify_slice(&expected).is_ok()
+    })
 }
 
 /// Builds a Gitea-compatible `push` webhook payload (`portal:src/api/webhook.rs:61-77`).
@@ -410,7 +418,8 @@ async fn deliver_webhook(
         WebhookFormat::Gitea => payload.clone(),
         WebhookFormat::Shako => native_webhook_payload(event_kind, payload),
     };
-    let body_bytes = serde_json::to_vec(&body).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    // A `Value`'s Display is its compact JSON, which cannot fail.
+    let body_bytes = body.to_string().into_bytes();
     // A reference stored before the API refused non-key names still signs; the warning names
     // the hook, never the reference, which may be a pasted secret.
     if !shako_core::is_secret_ref(&hook.secret_ref)
@@ -520,6 +529,22 @@ fn delivery_outcome(code: u16) -> Delivery {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Any key length signs, the empty one and one past the hash's block size included; the
+    /// library's length refusal, were it ever to come, is an internal error naming the init.
+    #[test]
+    fn every_key_length_signs_and_a_refused_key_is_internal() -> Result<(), ShakoError> {
+        for secret in [String::new(), "k".into(), "k".repeat(65), "k".repeat(4096)] {
+            let sig = compute_gitea_signature(&secret, b"body")?;
+            assert_eq!(sig.len(), 64);
+            assert!(verify_gitea_signature(&secret, b"body", &sig));
+        }
+        assert!(matches!(
+            key_refused(hmac::digest::InvalidLength),
+            ShakoError::Internal(m) if m.starts_with("hmac init: ")
+        ));
+        Ok(())
+    }
 
     /// A signature that is no hex, or is another secret's, never verifies; the right one does.
     #[test]

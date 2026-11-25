@@ -40,5 +40,5 @@ uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 [dev-dependencies]
 jc-secret = { path = "../../shared/jc-secret" }
 shako-store-memory = { path = "../store-memory" }
-tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "test-util"] }
 tower = { version = "0.5", features = ["util"] }
