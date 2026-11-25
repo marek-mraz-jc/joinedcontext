@@ -515,6 +515,20 @@ async fn answer_signalled(
     events_in(&text)
 }
 
+/// The proxy's calls once at least `n` arrived, or after 5 s: a side round (the judge, the
+/// `answers` check) finishes beside the loop and can reach the proxy after the turn's last event.
+async fn model_calls_settled(proxy: &MockServer, n: usize) -> Vec<(axum::http::HeaderMap, Value)> {
+    let mut calls = model_calls(proxy).await;
+    for _ in 0..50 {
+        if calls.len() >= n {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        calls = model_calls(proxy).await;
+    }
+    calls
+}
+
 async fn model_calls(proxy: &MockServer) -> Vec<(axum::http::HeaderMap, Value)> {
     proxy
         .received_requests()
@@ -5164,9 +5178,10 @@ async fn a_data_question_reads_again_until_the_model_answers() {
         named("citations")[0],
         json!([{"n": 2, "tool": "query_entities", "endpoint": "ovzdusie"}])
     );
-    // T-4654: a visitor's `done` carries no call count; the proxy saw the four.
+    // T-4654: a visitor's `done` carries no call count; the proxy saw the four. The side round
+    // finishes beside the loop and can reach the proxy after `done` (ci 45484290683, 45533424430).
     assert!(named("done")[0].get("modelCalls").is_none());
-    assert_eq!(model_calls(&w.proxy).await.len(), 4);
+    assert_eq!(model_calls_settled(&w.proxy, 4).await.len(), 4);
 
     let all = model_calls(&w.proxy).await;
     let calls = calls_of(&all, None);
@@ -5432,9 +5447,13 @@ async fn the_tenth_tool_call_is_the_last_and_the_answer_comes_from_what_was_read
     );
     // 1 (the router's) + 4 + 3 new + 1: the repeat was not sent, the eleventh call not either.
     assert_eq!(tool_calls_of(&w.gateway, "query_entities").await.len(), 9);
-    let calls = model_calls(&w.proxy).await;
+    // The judge runs beside the loop and can reach the proxy after `answer` (ci 45540034516).
+    let calls = model_calls_settled(&w.proxy, 6).await;
     assert_eq!(calls.len(), 6, "router, judge and four loop calls");
-    let last = &calls[5].1;
+    // The loop's own calls, wherever the judge's landed among them.
+    let looped = calls_of(&calls, None);
+    assert_eq!(looped.len(), 4, "four loop calls");
+    let last = looped[3];
     assert_eq!(last["tool_choice"], "none");
     let messages = last["messages"].as_array().cloned().unwrap_or_default();
     assert!(messages

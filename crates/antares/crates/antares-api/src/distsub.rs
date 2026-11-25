@@ -1265,6 +1265,263 @@ fn project_forwarded(sub: &Value, data: Vec<Value>, ctx: &antares_jsonld::Contex
         .collect()
 }
 
+/// The mapping bookkeeping of clauses 5.8.1, 5.8.2 and 5.8.5 (step 4) against the inputs
+/// that take its other arms: a rewrite of a stored mapping, a Subscription
+/// without an id or gone, registrations that are gone or do not offer the
+/// operation, and a store that refuses every call.
+#[cfg(test)]
+mod mapping_edges {
+    use super::*;
+
+    const OWN: &str = "urn:ngsi-ld:Subscription:own";
+
+    fn sub(extra: Value) -> Value {
+        let mut s = json!({
+            "id": OWN,
+            "type": "Subscription",
+            "entities": [{"type": "Building"}],
+            "notification": {"endpoint": {"uri": "http://127.0.0.1:1/notify"}, "attributes": ["height"]}
+        });
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            s[k] = v.clone();
+        }
+        s
+    }
+
+    #[tokio::test]
+    async fn a_second_put_rewrites_the_stored_mapping() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        assert_eq!(
+            ds_get(&st, &t, OWN).await,
+            Some(json!({})),
+            "no mapping yet reads empty"
+        );
+        ds_put(&st, &t, OWN, json!({"csr_sub": "a"})).await;
+        ds_put(&st, &t, OWN, json!({"csr_sub": "b"})).await;
+        assert_eq!(ds_get(&st, &t, OWN).await, Some(json!({"csr_sub": "b"})));
+    }
+
+    #[tokio::test]
+    async fn a_subscription_without_id_or_gone_builds_no_mapping() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        let mut anonymous = sub(json!({}));
+        anonymous.as_object_mut().map(|o| o.remove("id"));
+        on_subscription_created(&st, &t, &anonymous).await;
+        on_subscription_updated(&st, &t, OWN).await;
+        assert!(st
+            .store
+            .list(&t, Kind::DistSub)
+            .await
+            .expect("list")
+            .is_empty());
+    }
+
+    /// Clause 5.8.2, step 4: a Subscription that became distributed only by this update
+    /// gets its Registration Subscription now.
+    #[tokio::test]
+    async fn an_update_of_an_unmapped_subscription_creates_its_half() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        st.store
+            .create(&t, Kind::Subscription, OWN, sub(json!({})))
+            .await
+            .expect("seed");
+        on_subscription_updated(&st, &t, OWN).await;
+        let mapping = ds_get(&st, &t, OWN).await.expect("read");
+        let csr = mapping["csr_sub"]
+            .as_str()
+            .expect("a Registration Subscription id");
+        let doc = st
+            .store
+            .get(&t, Kind::DistSub, csr)
+            .await
+            .expect("read")
+            .expect("created");
+        assert_eq!(doc["entities"], json!([{"type": "Building"}]));
+        assert_eq!(doc["notification"]["attributes"], json!(["height"]));
+    }
+
+    /// Clause 5.8.2, step 4: the Registration Subscription follows the update, a member
+    /// the update dropped goes, and a remote whose registration is gone or
+    /// offers no updateSubscription is not contacted.
+    #[tokio::test]
+    async fn an_update_mirrors_the_match_members_and_skips_unfit_remotes() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        st.store
+            .create(
+                &t,
+                Kind::Subscription,
+                OWN,
+                sub(json!({"notification": {"endpoint": {"uri": "http://127.0.0.1:1/n"}}})),
+            )
+            .await
+            .expect("seed");
+        st.store
+            .create(
+                &t,
+                Kind::DistSub,
+                "csr-1",
+                json!({
+                    "id": "csr-1", "watchedAttributes": ["old"],
+                    "notification": {"attributes": ["old"]}
+                }),
+            )
+            .await
+            .expect("seed csr");
+        st.store
+            .create(
+                &t,
+                Kind::Registration,
+                "urn:ngsi-ld:ContextSourceRegistration:ro",
+                json!({
+                    "id": "urn:ngsi-ld:ContextSourceRegistration:ro",
+                    "endpoint": "http://127.0.0.1:1", "operations": ["retrieveOps"]
+                }),
+            )
+            .await
+            .expect("seed reg");
+        ds_put(
+            &st,
+            &t,
+            OWN,
+            json!({"csr_sub": "csr-1", "remotes": {
+                "urn:ngsi-ld:ContextSourceRegistration:gone": ["http://127.0.0.1:1", "r1"],
+                "urn:ngsi-ld:ContextSourceRegistration:ro": ["http://127.0.0.1:1", "r2"]
+            }}),
+        )
+        .await;
+        on_subscription_updated(&st, &t, OWN).await;
+        let csr = st
+            .store
+            .get(&t, Kind::DistSub, "csr-1")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert_eq!(csr["entities"], json!([{"type": "Building"}]));
+        assert!(
+            csr.get("watchedAttributes").is_none(),
+            "a member the update dropped goes: {csr}"
+        );
+        assert!(csr["notification"].get("attributes").is_none(), "{csr}");
+        assert!(csr.get("modifiedAt").is_some());
+    }
+
+    /// A Registration Subscription without a notification object is not one
+    /// create built: an update leaves it as found.
+    #[tokio::test]
+    async fn an_update_leaves_a_mapping_without_notification_unstamped() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        st.store
+            .create(&t, Kind::Subscription, OWN, sub(json!({})))
+            .await
+            .expect("seed");
+        st.store
+            .create(&t, Kind::DistSub, "csr-2", json!({"id": "csr-2"}))
+            .await
+            .expect("seed csr");
+        ds_put(&st, &t, OWN, json!({"csr_sub": "csr-2"})).await;
+        on_subscription_updated(&st, &t, OWN).await;
+        let csr = st
+            .store
+            .get(&t, Kind::DistSub, "csr-2")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert!(csr.get("modifiedAt").is_none(), "{csr}");
+    }
+
+    /// Clause 5.8.5, step 4: a delete drops the mapping, its Registration Subscription
+    /// and the inbound index; a registration without deleteSubscription is
+    /// not asked to delete its copy.
+    #[tokio::test]
+    async fn a_delete_drops_the_mapping_and_skips_sources_without_the_operation() {
+        let st = AppState::new("me".into());
+        let t = TenantId::default();
+        st.store
+            .create(&t, Kind::DistSub, "csr-3", json!({"id": "csr-3"}))
+            .await
+            .expect("seed csr");
+        st.store
+            .create(
+                &t,
+                Kind::Registration,
+                "urn:ngsi-ld:ContextSourceRegistration:ro",
+                json!({
+                    "id": "urn:ngsi-ld:ContextSourceRegistration:ro",
+                    "endpoint": "http://127.0.0.1:1", "operations": ["retrieveOps"]
+                }),
+            )
+            .await
+            .expect("seed reg");
+        inbound_put(&st, "r3", &t, OWN, "digest").await;
+        ds_put(
+            &st,
+            &t,
+            OWN,
+            json!({"csr_sub": "csr-3", "remotes": {
+                "urn:ngsi-ld:ContextSourceRegistration:ro": ["http://127.0.0.1:1", "r3"]
+            }}),
+        )
+        .await;
+        on_subscription_deleted(&st, &t, OWN).await;
+        assert!(st
+            .store
+            .get(&t, Kind::DistSub, OWN)
+            .await
+            .expect("read")
+            .is_none());
+        assert!(st
+            .store
+            .get(&t, Kind::DistSub, "csr-3")
+            .await
+            .expect("read")
+            .is_none());
+        assert!(
+            inbound_get(&st, "r3").await.is_none(),
+            "the inbound key is gone"
+        );
+    }
+
+    /// A notification without a parseable notifiedAt, outside the window or
+    /// without an id is never fresh.
+    #[test]
+    fn a_notification_needs_time_and_id_to_be_fresh() {
+        let sid = "urn:ngsi-ld:Subscription:fresh";
+        assert!(!notification_fresh(&json!({"id": "urn:n:1"}), sid));
+        assert!(!notification_fresh(
+            &json!({"id": "urn:n:1", "notifiedAt": "yesterday"}),
+            sid
+        ));
+        assert!(!notification_fresh(
+            &json!({"id": "urn:n:1", "notifiedAt": "2001-01-01T00:00:00Z"}),
+            sid
+        ));
+        assert!(!notification_fresh(&json!({"notifiedAt": now_iso()}), sid));
+        let n = json!({"id": format!("urn:n:{}", uuid::Uuid::new_v4()), "notifiedAt": now_iso()});
+        assert!(notification_fresh(&n, sid));
+        assert!(!notification_fresh(&n, sid), "a replay inside the window");
+    }
+
+    /// An unread mapping is not an empty one: with the store refusing, no
+    /// mapping is read, written, created or torn down, and nothing panics.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn a_refusing_store_changes_nothing() {
+        let st = crate::state::refusing_state();
+        let t = TenantId::new("refused").expect("tenant");
+        assert_eq!(ds_get(&st, &t, OWN).await, None);
+        ds_put(&st, &t, OWN, json!({"csr_sub": "x"})).await;
+        on_subscription_created(&st, &t, &sub(json!({}))).await;
+        on_subscription_updated(&st, &t, OWN).await;
+        on_subscription_deleted(&st, &t, OWN).await;
+        assert_eq!(ds_get(&st, &t, OWN).await, None);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2215,9 +2472,7 @@ mod tests {
                     .into_iter()
                     .flatten()
                 {
-                    if let Some(o) = e.as_object_mut() {
-                        o.remove("secret");
-                    }
+                    e.as_object_mut().map(|o| o.remove("secret"));
                 }
                 NotifyDecision::Deliver
             }
@@ -2234,9 +2489,8 @@ mod tests {
             axum::routing::post(move |body: String| {
                 let sink = sink.clone();
                 async move {
-                    if let Ok(v) = serde_json::from_str::<Value>(&body) {
-                        sink.lock().expect("bodies").push(v);
-                    }
+                    let v = serde_json::from_str::<Value>(&body).expect("a JSON notification");
+                    sink.lock().expect("bodies").push(v);
                     StatusCode::OK
                 }
             }),
@@ -2308,6 +2562,15 @@ mod tests {
             vec![vec![("x-user".to_owned(), "alice".to_owned())]],
             "asked once, about the original subscriber"
         );
+        assert_eq!(engine.name(), "omit-secret");
+        let probe = Subject {
+            tenant: TenantId::default(),
+            headers: Vec::new(),
+        };
+        assert!(matches!(
+            engine.decide(&probe, &Operation::new("5.7.1")).await,
+            Decision::Allow
+        ));
     }
 
     /// T-7421: a proof names one mapping. The proof of copy A sent under the

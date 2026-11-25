@@ -75,13 +75,23 @@ pub fn repo_tenant(
     project: &str,
     name: &str,
 ) -> Result<String, String> {
-    context_gateway::store::tenant_name(
+    repo_tenant_as(
+        repo,
         project,
         name,
-        || repo.space_segment(project, name),
         context_gateway::store::TenantNames::from_env(),
     )
-    .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
+}
+
+/// [`repo_tenant`] under `names` (the reconciler's tests name the scheme, not the environment).
+pub(crate) fn repo_tenant_as(
+    repo: &jcctl::loader::Repository,
+    project: &str,
+    name: &str,
+    names: context_gateway::store::TenantNames,
+) -> Result<String, String> {
+    context_gateway::store::tenant_name(project, name, || repo.space_segment(project, name), names)
+        .map_err(|reason| format!("the space {project}/{name} has no broker tenant yet: {reason}"))
 }
 
 /// The broker the Context Space `name` of `project` lives on (PF-111): its `brokerRef`, else the

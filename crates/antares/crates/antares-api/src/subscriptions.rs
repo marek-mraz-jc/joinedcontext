@@ -671,7 +671,13 @@ pub fn normalize_subscription(
         // 5.4 Fragment member removal: null and the NGSI-LD Null both delete
         // the member. Read literally, the NGSI-LD Null was stored as the
         // string it is spelled with, so the member survived carrying it.
-        if is_patch && k != "id" && (v.is_null() || v.as_str() == Some("urn:ngsi-ld:null")) {
+        // A `__` member is the broker's to remove, never a fragment's: it
+        // goes on to norm_member, which drops it.
+        if is_patch
+            && k != "id"
+            && !k.starts_with("__")
+            && (v.is_null() || v.as_str() == Some("urn:ngsi-ld:null"))
+        {
             if ["type", "notification"].contains(&k.as_str()) {
                 return Err(bad(format!("cannot remove mandatory member {k} (5.8.3)")));
             }
@@ -1741,6 +1747,24 @@ mod tests {
         assert!(
             normalize_subscription(sub(json!("1.8")).as_object().unwrap(), &ctx, false).is_ok()
         );
+    }
+
+    /// The `__` members are the broker's (the notification @context, the Via
+    /// chain, the creating subject): a fragment can neither write one nor
+    /// remove one with null or the NGSI-LD Null, so a subscriber cannot strip
+    /// the subject an engine narrows by.
+    #[test]
+    fn a_fragment_cannot_remove_a_broker_internal_member() {
+        let ctx = Loader::new().core();
+        for v in [Value::Null, json!("urn:ngsi-ld:null"), json!("seeded")] {
+            for k in ["__subject", "__context", "__via"] {
+                let frag = json!({ k: v.clone(), "description": "kept" });
+                let out = normalize_subscription(frag.as_object().expect("object"), &ctx, true)
+                    .expect("a legal fragment");
+                assert!(!out.contains_key(k), "{k}: {v} reached the merge: {out:?}");
+                assert_eq!(out["description"], json!("kept"));
+            }
+        }
     }
 
     /// 5.5.4: "urn:ngsi-ld:null" as a first-level member value is
