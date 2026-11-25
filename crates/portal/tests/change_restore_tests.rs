@@ -502,3 +502,150 @@ async fn a_steward_of_one_space_restores_and_undoes_nothing_of_another() {
     assert_eq!(status, 403, "{body}");
     assert!(writes(&shako).await.is_empty(), "nothing is written");
 }
+
+/// Mounts change `number` with its pull request as the forge answers it and the files it touched.
+async fn change(shako: &MockServer, number: u64, pull: Value, files: Value) {
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests({number})")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(pull))
+        .mount(shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests({number})/Files")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": files })))
+        .mount(shako)
+        .await;
+}
+
+fn detail(body: &Value) -> &str {
+    body["detail"].as_str().unwrap_or_default()
+}
+
+/// T-7827: a merged change the Portal did not open answers like no change; a forge that leaves out
+/// the commits a change was cut from or ended on gets a 503 to retry, never a guess.
+#[tokio::test]
+async fn a_foreign_branch_is_no_change_and_a_forge_without_commits_is_retried() {
+    let (shako, state) = world().await;
+    change(
+        &shako,
+        9,
+        pull(9, "feature/hand-made", true),
+        json!([{ "Filename": MANIFEST, "Status": "deleted" }]),
+    )
+    .await;
+    let (status, body) = restore(&state, "restorer", "chg-00000009").await;
+    assert_eq!(status, 404, "{body}");
+
+    let mut blind = pull(10, "portal/update-pipeline-air-ingest-0a1b2c3d", true);
+    blind["MergeBase"] = json!("");
+    blind["HeadSha"] = json!("");
+    change(
+        &shako,
+        10,
+        blind,
+        json!([
+            { "Filename": MANIFEST, "Status": "deleted" },
+            { "Filename": NATIVE, "Status": "modified" }
+        ]),
+    )
+    .await;
+    for (status, body) in [
+        restore(&state, "restorer", "chg-0000000a").await,
+        undo(&state, "restorer", "chg-0000000a").await,
+        manifests(&state, "restorer", "chg-0000000a").await,
+    ] {
+        assert_eq!(status, 503, "{body}");
+        assert!(detail(&body).contains("try again"), "{body}");
+    }
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
+}
+
+/// T-7827: a file missing from the commit the change was cut from is neither restored nor undone,
+/// and a change that removed only native files has no manifest to restore.
+#[tokio::test]
+async fn a_file_the_base_commit_lacks_or_a_change_without_a_manifest_is_refused() {
+    let (shako, state) = world().await;
+    let gone = "projects/ovzdusie/spaces/air/pipelines/gone/pipeline.yaml";
+    change(
+        &shako,
+        11,
+        pull(11, "portal/delete-pipeline-gone-0a1b2c3d", true),
+        json!([{ "Filename": gone, "Status": "deleted" }]),
+    )
+    .await;
+    let (status, body) = restore(&state, "restorer", "chg-0000000b").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(detail(&body).contains("not in the commit"), "{body}");
+
+    change(
+        &shako,
+        14,
+        pull(14, "portal/update-pipeline-gone-0a1b2c3d", true),
+        json!([{ "Filename": gone, "Status": "modified" }]),
+    )
+    .await;
+    let (status, body) = undo(&state, "restorer", "chg-0000000e").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(detail(&body).contains("not in the commit"), "{body}");
+
+    change(
+        &shako,
+        12,
+        pull(12, "portal/delete-pipeline-air-ingest-0a1b2c3d", true),
+        json!([{ "Filename": NATIVE, "Status": "deleted" }]),
+    )
+    .await;
+    let (status, body) = restore(&state, "restorer", "chg-0000000c").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(detail(&body).contains("removed no manifest"), "{body}");
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
+}
+
+/// T-7827: undoing a native file needs `propose` on the kind its folder names, and a file under no
+/// kind's folder is undone by nobody.
+#[tokio::test]
+async fn undoing_a_native_file_is_held_to_its_folder_and_a_file_of_no_kind_to_nobody() {
+    let (shako, state) = world().await;
+    change(
+        &shako,
+        13,
+        pull(13, "portal/import-pipeline-air-ingest-0a1b2c3d", true),
+        json!([
+            { "Filename": NATIVE, "Status": "modified" },
+            { "Filename": NOTE, "Status": "modified" }
+        ]),
+    )
+    .await;
+    let (status, body) = undo(&state, "reader", "chg-0000000d").await;
+    assert_eq!(status, 403, "{body}");
+    assert!(detail(&body).contains("needs `propose` on Pipeline"), "{body}");
+    let (status, body) = undo(&state, "restorer", "chg-0000000d").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(detail(&body).contains("no kind this platform serves"), "{body}");
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
+}
+
+async fn manifests(state: &AppState, who: &str, id: &str) -> (u16, Value) {
+    let answer = send(
+        state,
+        person(who),
+        "GET",
+        &format!("/api/v1/projects/{PROJECT}/changes/{id}/manifests"),
+        None,
+    )
+    .await;
+    (
+        answer.status.as_u16(),
+        serde_json::from_str(&answer.text).unwrap_or(Value::Null),
+    )
+}
+
+/// T-7827: the manifests of a change that only removed files, or touched files outside the
+/// project, are an empty list: a deleted file and another project's file are left out.
+#[tokio::test]
+async fn a_change_that_only_removed_files_wrote_no_manifest() {
+    let (_shako, state) = world().await;
+    let (status, body) = manifests(&state, "restorer", "chg-00000007").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["items"], json!([]), "{body}");
+}
