@@ -449,6 +449,52 @@ pub(crate) async fn land(
 mod tests {
     use super::rewrite_imports;
 
+    /// A carried model whose source the archive lacks, or whose source is not the one the
+    /// index's SHA-256 names, refuses the import before anything else is read (MF-42, MF-49).
+    #[tokio::test]
+    async fn a_missing_or_altered_model_source_is_refused() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let index: super::Bundle = serde_json::from_value(serde_json::json!({
+            "apiVersion": jc_core::API_VERSION,
+            "kind": "Bundle",
+            "metadata": { "name": "air", "namespace": crate::permissions::ORG_NAMESPACE },
+            "spec": {
+                "exportedAt": "2026-11-25T00:00:00Z",
+                "exportedBy": "jana",
+                "sourceRevision": "abc1234",
+                "items": [],
+                "files": [],
+                "omitted": 0,
+                "models": [{
+                    "name": "stations", "version": "1.0.0",
+                    "manifest": "models/stations.yaml", "file": "models/stations.linkml.yaml",
+                    "sha256": "0".repeat(64),
+                    "origin": { "organization": "bbsk", "name": "stations" }
+                }]
+            }
+        }))
+        .expect("a Bundle");
+        let mut files = std::collections::BTreeMap::new();
+        let missing = super::plan(&state, &index, &files)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&missing, crate::error::ApiError::BadRequest(m) if m.contains("has no models/stations.linkml.yaml")),
+            "{missing:?}"
+        );
+        files.insert(
+            "models/stations.linkml.yaml".to_owned(),
+            b"id: other".to_vec(),
+        );
+        let altered = super::plan(&state, &index, &files)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&altered, crate::error::ApiError::BadRequest(m) if m.contains("SHA-256 differs")),
+            "{altered:?}"
+        );
+    }
+
     // MF-50: only the whole import name of a landed model is rewritten.
     #[test]
     fn a_landed_models_import_is_rewritten_and_nothing_else() {

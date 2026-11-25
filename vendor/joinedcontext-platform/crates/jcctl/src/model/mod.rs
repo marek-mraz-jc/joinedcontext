@@ -666,13 +666,12 @@ fn one(
         if committed.as_deref() == Some(rendered.as_str()) {
             continue;
         }
-        match mode {
-            Mode::Generate => {
-                write(root, &target, &rendered)?;
-                report.written.push(display(&target));
-            }
-            Mode::Diff => report.stale.push(display(&target)),
-            Mode::Validate => unreachable!("returned above"),
+        // Validate returned above: what is left is a diff or a generation.
+        if mode == Mode::Diff {
+            report.stale.push(display(&target));
+        } else {
+            write(root, &target, &rendered)?;
+            report.written.push(display(&target));
         }
     }
 
@@ -790,6 +789,30 @@ impl fmt::Display for Mode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_mode_prints_its_command_word() {
+        let words: Vec<String> = [Mode::Generate, Mode::Diff, Mode::Validate]
+            .iter()
+            .map(Mode::to_string)
+            .collect();
+        assert_eq!(words, ["generate", "diff", "validate"]);
+    }
+
+    #[test]
+    fn a_settings_file_that_is_not_yaml_names_the_file() {
+        let dir =
+            std::env::temp_dir().join(format!("jcctl-model-bad-settings-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join(SETTINGS_FILE);
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("parent dir");
+        std::fs::write(&file, "modelTools: [unclosed\n").expect("write");
+        let err = pinned_generator(&dir).expect_err("not yaml");
+        assert!(
+            matches!(err, Error::Settings(ref m) if m.contains(SETTINGS_FILE)),
+            "{err}"
+        );
+    }
 
     #[test]
     fn a_string_artifact_is_written_as_it_is_and_a_json_one_pretty_printed() {

@@ -901,10 +901,65 @@ mod tests {
                 json!({"type": "Subscription", "entities": [{"type": "Vehicle", "id": 3}]}),
                 "id is a string",
             ),
+            (
+                sub(json!({"geoQ": "near;maxDistance==5"})),
+                "geoQ is an object",
+            ),
         ] {
             let refused = compile(&body, &ctx()).expect_err(says);
             assert!(refused.contains(says), "{body}: {refused}");
         }
+    }
+
+    /// The small canonical forms the index keys on: a boolean term keys like a boolean value, a
+    /// list of ids is a selector, a coordinates text is read as JSON (and an unreadable one is no
+    /// bound), a bound orders totally, and the instance targets untype and expand their lists.
+    #[test]
+    fn each_canonical_form_keys_as_its_value_does() {
+        assert_eq!(canonical_q(&QValue::Bool(true)), canonical(&json!(true)));
+        assert_eq!(canonical(&json!(null)), None);
+        let listed = json!({"type": "Subscription",
+            "entities": [{"type": "Vehicle", "id": ["urn:a", "urn:b"]}], "q": "open==true"});
+        let f = filter(listed);
+        assert!(
+            matches!(&f.key, Key::Eq(_, value) if value == "b:true"),
+            "{:?}",
+            f.key
+        );
+        assert_eq!(
+            bounds(&json!("[[1, 2], [3, -4]]")),
+            Some((1.0, -4.0, 3.0, 2.0))
+        );
+        assert_eq!(bounds(&json!("not json")), None);
+        assert_eq!(
+            Bound(1.0).partial_cmp(&Bound(f64::NEG_INFINITY)),
+            Some(Ordering::Greater)
+        );
+        let mut index = Index::default();
+        assert_eq!(index.len(), 0);
+        index.insert(1, filter(sub(json!({}))));
+        assert_eq!(index.len(), 1);
+        let ctx = ctx();
+        let read = targets(
+            &json!([
+                {"valueList": [{"@value": 1}, 2]},
+                {"vocab": ["bus", 3]},
+                {"vocab": 4},
+                {"neither": 5},
+                7,
+            ]),
+            &ctx,
+        );
+        assert_eq!(
+            read,
+            vec![
+                json!(1),
+                json!(2),
+                json!(ctx.expand_key("bus")),
+                json!(3),
+                json!(4)
+            ]
+        );
     }
 
     #[test]

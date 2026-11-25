@@ -58,6 +58,41 @@ fn options(namespace: &str) -> Options {
     }
 }
 
+/// A write that meets a file where a folder goes, or a folder where a file goes, fails naming
+/// the path instead of writing half the bundle silently.
+#[test]
+fn a_write_blocked_by_the_tree_names_the_path() {
+    let source = bundle("import-blocked-src");
+    let dest = destination("import-blocked-dest");
+    let report = collect(&source, &dest, &options("ovzdusie")).expect("import collects");
+    let first = report.imported[0].path.clone();
+    let parent = dest.join(&first).parent().expect("a parent").to_path_buf();
+    std::fs::remove_dir_all(&parent).ok();
+    std::fs::create_dir_all(parent.parent().expect("a grandparent")).expect("the grandparent");
+    std::fs::write(&parent, "a file where the folder goes").expect("block the folder");
+    let error = write(&dest, &report).expect_err("the folder is a file");
+    assert!(
+        error.to_string().contains(
+            &parent
+                .file_name()
+                .expect("a name")
+                .to_string_lossy()
+                .into_owned()
+        ),
+        "{error}"
+    );
+
+    std::fs::remove_file(&parent).expect("unblock");
+    std::fs::create_dir_all(dest.join(&first)).expect("a folder where the file goes");
+    let error = write(&dest, &report).expect_err("the file is a folder");
+    assert!(
+        error
+            .to_string()
+            .contains(&first.to_string_lossy().into_owned()),
+        "{error}"
+    );
+}
+
 #[test]
 fn a_bundle_lands_under_the_target_project_at_the_paths_its_kinds_prescribe() {
     let source = bundle("import-namespace-src");
@@ -163,6 +198,70 @@ fn the_organisation_domain_of_every_entity_urn_is_rewritten() {
     );
 
     let _ = std::fs::remove_dir_all(&source);
+    let _ = std::fs::remove_dir_all(&dest);
+}
+
+/// Each conflict policy has its name and its outcome: an existing space is replaced, renamed
+/// or skipped as asked, and an unknown policy name is refused.
+#[test]
+fn each_conflict_policy_says_what_it_did() {
+    assert_eq!(Conflict::parse("fail"), Some(Conflict::Fail));
+    assert_eq!(Conflict::parse("overwrite"), None);
+    for (name, word) in [
+        ("replace", "REPLACED"),
+        ("rename", "RENAMED"),
+        ("skip", "SKIPPED"),
+    ] {
+        let source = temp_dir(&format!("import-policy-{name}"));
+        write_file(
+            &source,
+            "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+            common::SPACE,
+        );
+        let dest = destination(&format!("import-policy-{name}-dest"));
+        let options = Options {
+            namespace: Some("ovzdusie".to_owned()),
+            conflict: Conflict::parse(name).expect("a policy"),
+            ..Options::default()
+        };
+        let report = collect(&source, &dest, &options).expect("import collects");
+        let outcomes: Vec<&str> = report.imported.iter().map(|i| i.outcome.as_str()).collect();
+        assert_eq!(outcomes, [word], "{name}");
+        let _ = std::fs::remove_dir_all(&source);
+        let _ = std::fs::remove_dir_all(&dest);
+    }
+}
+
+/// One file is a bundle too; its empty documents are skipped, a document that is no manifest
+/// is a rejection the JSON report lists with its source, and the same resource twice is an
+/// error naming it.
+#[test]
+fn a_single_file_bundle_with_a_broken_document_is_rejected_by_source() {
+    let dir = temp_dir("import-file");
+    let file = dir.join("bundle.yaml");
+    std::fs::write(
+        &file,
+        format!("---\n---\n{}---\nkind: [unclosed\n", common::SPACE),
+    )
+    .expect("bundle");
+    let dest = destination("import-file-dest");
+    let report = collect(&file, &dest, &options("ovzdusie")).expect("import collects");
+    assert!(!report.is_acceptable());
+    let json = report.to_json();
+    let rejections = json["rejections"].as_array().expect("a list");
+    assert!(
+        rejections.iter().any(|r| r["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("does not parse"))
+            && r["source"]
+                .as_str()
+                .is_some_and(|s| s.ends_with("bundle.yaml:10"))),
+        "{json}"
+    );
+
+    std::fs::write(&file, format!("{}---\n{}", common::SPACE, common::SPACE)).expect("twice");
+    assert!(collect(&file, &dest, &options("ovzdusie")).is_err());
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&dest);
 }
 

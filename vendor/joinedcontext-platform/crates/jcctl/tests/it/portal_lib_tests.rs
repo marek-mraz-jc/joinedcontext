@@ -273,6 +273,27 @@ fn ops_that_answer_something_other_than_a_list_are_refused() {
     );
 }
 
+/// A document that is no manifest, a kind jcctl does not know and a manifest naming no project
+/// without --project are refused with the document they came from.
+#[test]
+fn a_document_that_cannot_be_sent_is_named() {
+    for (text, words) in [
+        ("kind: [unclosed\n", "not a manifest"),
+        (
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Teapot\nmetadata:\n  name: x\n  namespace: p\nspec: {}\n",
+            "no kind 'Teapot'",
+        ),
+        (
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: x\nspec: {}\n",
+            "names no project",
+        ),
+    ] {
+        let refused = portal::targets(text, None).expect_err(words);
+        assert!(refused.to_string().contains(words), "{refused}");
+        assert!(refused.to_string().contains("document 1"), "{refused}");
+    }
+}
+
 #[test]
 fn a_file_with_only_empty_documents_holds_no_manifest() {
     for text in ["", "---\n---\n", "# a comment\n"] {

@@ -112,6 +112,138 @@ spec:
   validity: { notAfter: "2026-12-31T23:59:59Z" }
 "#;
 
+/// A manifest of each kind whose spec does not parse is one finding of its own; the checks
+/// that read that kind's typed spec skip it instead of stopping or reporting it twice.
+#[test]
+fn a_spec_that_does_not_parse_is_reported_once_for_every_kind() {
+    let dir = valid_repo("unparsed-specs");
+    for (kind, rel) in [
+        ("Policy", "projects/ovzdusie/policies/broken.yaml"),
+        ("McpServer", "projects/ovzdusie/mcpservers/broken.yaml"),
+        ("MqttBroker", "projects/ovzdusie/mqttbrokers/broken.yaml"),
+        (
+            "ServiceAccount",
+            "projects/ovzdusie/serviceaccounts/broken.yaml",
+        ),
+        (
+            "ModelProjection",
+            "projects/ovzdusie/spaces/ovzdusie/projections/broken.yaml",
+        ),
+        (
+            "DataModel",
+            "projects/ovzdusie/spaces/ovzdusie/datamodels/broken.yaml",
+        ),
+        ("ContextSpace", "projects/ovzdusie/spaces/broken/space.yaml"),
+        ("Project", "projects/broken/project.yaml"),
+    ] {
+        let namespace = if kind == "Project" { "org" } else { "ovzdusie" };
+        write(
+            &dir,
+            rel,
+            &format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: broken\n  namespace: {namespace}\nspec:\n  bogusField: 1\n"
+            ),
+        );
+    }
+    let report = validate::run(&dir);
+    for kind in [
+        "Policy",
+        "McpServer",
+        "MqttBroker",
+        "ServiceAccount",
+        "ModelProjection",
+        "DataModel",
+        "ContextSpace",
+        "Project",
+    ] {
+        assert!(
+            report
+                .findings
+                .iter()
+                .any(
+                    |f| f.message.contains("bogusField") && f.message.contains(kind)
+                        || f.message.contains("bogusField")
+                            && f.path.to_string_lossy().contains("broken")
+                ),
+            "{kind}: {:#?}",
+            report.findings
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A kind the registry does not know and an identity declared twice point at the file that
+/// carries them.
+#[test]
+fn an_unknown_kind_and_a_duplicate_identity_point_at_their_files() {
+    let dir = valid_repo("unknown-kind");
+    write(
+        &dir,
+        "projects/ovzdusie/gadget.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Gadget\nmetadata: { name: g, namespace: ovzdusie }\nspec: {}\n",
+    );
+    let report = validate::run(&dir);
+    assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
+    assert_eq!(
+        report.findings[0].path,
+        PathBuf::from("projects/ovzdusie/gadget.yaml")
+    );
+
+    let dir = valid_repo("duplicate-identity");
+    write(&dir, "users/groups/zz-copy.yaml", GROUP);
+    let report = validate::run(&dir);
+    assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
+    assert_eq!(
+        report.findings[0].path,
+        PathBuf::from("users/groups/zz-copy.yaml")
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An organization whose registry holds a project directory where an entry goes is refused as
+/// one finding naming why, not a crash and not a pass (CC-86).
+#[test]
+fn an_organization_that_cannot_assemble_is_one_finding() {
+    let dir = temp_repo("cannot-assemble");
+    write(&dir, "org.yaml", "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata: { name: banskabystrica, namespace: org }\nspec: { domain: banskabystrica.sk, locales: [sk], defaultLocale: sk }\n");
+    write(&dir, ".jc/layout", "2\n");
+    write(&dir, "projects/ovzdusie/project.yaml", "x: 1\n");
+    let report = validate::run_assembled(&dir, &jc_manifest::assemble::Directories::default());
+    assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
+    assert!(
+        report.findings[0].message.contains("jcctl migrate"),
+        "{}",
+        report.findings[0].message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A layout 1 organization validated through the assembling entry point is checked where it
+/// is, with the same findings as `run`.
+#[test]
+fn a_layout_1_organization_validates_in_place_through_the_assembling_entry() {
+    let dir = valid_repo("layout-1-assembled");
+    let report = validate::run_assembled(&dir, &jc_manifest::assemble::Directories::default());
+    assert!(report.is_valid(), "{:#?}", report.findings);
+    assert_eq!(report.checked, validate::run(&dir).checked);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The open-data Endpoints the reconciler marks: a public read-only Endpoint binds no write
+/// Policy (EP-187).
+#[test]
+fn a_public_endpoint_without_a_write_policy_is_open_data_that_only_reads() {
+    let dir = valid_repo("open-data");
+    let repo = jc_manifest::loader::Repository::load(&dir).expect("loads");
+    let open = validate::open_data_endpoints(&repo);
+    assert!(
+        open.iter()
+            .all(|(id, write)| id.kind == "Endpoint" && write.is_none()),
+        "{open:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// PF-49: `users/` is validated like everything else; a binding with two scopes is refused
 /// with the file that carries it.
 #[test]

@@ -34,10 +34,13 @@ fn run(words: &[&str]) -> ExitCode {
         ["roles", rest @ ..] => roles_command(rest),
         ["workspace", rest @ ..] => workspace_command(rest),
         ["schema", "export", rest @ ..] => schema_export(rest),
-        ["get" | "describe", ..] | ["apply" | "diff" | "delete" | "plan", "-f", ..] => {
-            client(words)
+        [verb @ ("get" | "describe"), rest @ ..] => client(verb, rest),
+        [verb @ ("apply" | "diff" | "delete" | "plan"), rest @ ..]
+            if rest.first() == Some(&"-f") =>
+        {
+            client(verb, rest)
         }
-        ["ops" | "op", ..] => operations_command(words),
+        [verb @ ("ops" | "op"), rest @ ..] => operations_command(verb, rest),
         ["login", rest @ ..] => login_command(rest),
         ["token", rest @ ..] => token_command(rest),
         ["fmt", rest @ ..] => fmt_command(rest),
@@ -406,14 +409,11 @@ fn sign_in(options: &ClientOptions, scope: &str, default: Option<PathBuf>) -> Ex
 
 /// `ops --project <p>` and `op <name> --project <p> [-f <input>]`: the operation registry, the
 /// same operations an MCP client and the Portal assistant call (T-5966).
-fn operations_command(args: &[&str]) -> ExitCode {
-    let Some((verb, rest)) = args.split_first() else {
-        return usage();
-    };
+fn operations_command(verb: &str, rest: &[&str]) -> ExitCode {
     let Some(options) = client_options(rest) else {
         return usage();
     };
-    let shape_fits = match (*verb, options.words.as_slice()) {
+    let shape_fits = match (verb, options.words.as_slice()) {
         ("ops", []) => options.file.is_none(),
         ("op", [_]) => true,
         _ => false,
@@ -452,20 +452,17 @@ fn operations_command(args: &[&str]) -> ExitCode {
 }
 
 /// `get`, `describe`, `apply -f`, `diff -f`, `plan -f` and `delete -f` (MF-14).
-fn client(args: &[&str]) -> ExitCode {
-    let Some((verb, rest)) = args.split_first() else {
-        return usage();
-    };
+fn client(verb: &str, rest: &[&str]) -> ExitCode {
     let Some(options) = client_options(rest) else {
         return usage();
     };
     let output = match options.output.map(jcctl::portal::Output::parse) {
         None => jcctl::portal::Output::Name,
-        Some(Some(output)) if *verb == "get" => output,
+        Some(Some(output)) if verb == "get" => output,
         Some(_) => return usage(),
     };
-    let reads = matches!(*verb, "get" | "describe");
-    let shape_fits = match (*verb, options.words.as_slice(), options.file) {
+    let reads = matches!(verb, "get" | "describe");
+    let shape_fits = match (verb, options.words.as_slice(), options.file) {
         ("get", [_] | [_, _], None) | ("describe", [_, _], None) => options.project.is_some(),
         ("apply" | "diff" | "delete" | "plan", [], Some(_)) => options.selector.is_none(),
         _ => false,
@@ -489,7 +486,7 @@ fn client(args: &[&str]) -> ExitCode {
         Err(e) => return fail(&e),
     };
     let project = options.project.unwrap_or_default();
-    let printed = match (*verb, options.words.as_slice()) {
+    let printed = match (verb, options.words.as_slice()) {
         ("get", [plural, name @ ..]) => jcctl::portal::get(
             &portal,
             project,
@@ -500,7 +497,7 @@ fn client(args: &[&str]) -> ExitCode {
         ),
         ("describe", [plural, name]) => jcctl::portal::describe(&portal, project, plural, name),
         _ => {
-            let report = match *verb {
+            let report = match verb {
                 "apply" => jcctl::portal::apply(&portal, &targets),
                 "diff" => jcctl::portal::diff_file(&portal, &targets),
                 "plan" => jcctl::portal::plan(&portal, &targets),
@@ -1196,10 +1193,7 @@ fn plan(dir: &Path, live: Connection, as_json: bool) -> ExitCode {
     };
 
     if as_json {
-        match serde_json::to_string_pretty(&changes.to_json()) {
-            Ok(json) => println!("{json}"),
-            Err(err) => return fail(&err.to_string()),
-        }
+        println!("{}", json(&changes.to_json()));
     } else {
         print!("{}", changes.render());
         println!(
@@ -1759,7 +1753,7 @@ fn infer_options(args: &[&str]) -> Option<(PathBuf, Option<String>)> {
 
 /// One JSON document per run, so a CI step reads the result instead of the log.
 fn json(value: &serde_json::Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    format!("{value:#}")
 }
 
 /// Parses the two deletion flags, in either order; `None` on anything else (CC-19).
@@ -2149,13 +2143,10 @@ fn pipeline_test(options: &PipelineTestOptions) -> ExitCode {
         sheet: None,
     };
     match jcctl::pipeline_test::harness(&envelope.spec, &sample, &options.capture) {
-        Ok(harness) => match serde_json::to_string_pretty(&harness) {
-            Ok(json) => {
-                println!("{json}");
-                ExitCode::SUCCESS
-            }
-            Err(err) => fail(&err.to_string()),
-        },
+        Ok(harness) => {
+            println!("{}", json(&harness));
+            ExitCode::SUCCESS
+        }
         Err(err) => fail(&err.to_string()),
     }
 }
@@ -2392,7 +2383,7 @@ mod tests {
 
         for info in jc_core::registry::KINDS {
             let text = std::fs::read_to_string(dir.join(format!("{}.json", info.kind)))
-                .unwrap_or_else(|e| panic!("{}: {e}", info.kind));
+                .expect("a schema file per registered kind");
             let schema: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
             assert_eq!(
                 schema["$schema"],
@@ -2710,24 +2701,10 @@ mod tests {
                 let Ok(mut stream) = stream else { continue };
                 let mut raw = Vec::new();
                 let mut buffer = [0_u8; 4096];
-                while let Ok(read) = stream.read(&mut buffer) {
+                loop {
+                    let read = stream.read(&mut buffer).unwrap_or(0);
                     raw.extend_from_slice(&buffer[..read]);
-                    let text = String::from_utf8_lossy(&raw);
-                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
-                        if read == 0 {
-                            break;
-                        }
-                        continue;
-                    };
-                    let length = head
-                        .lines()
-                        .find_map(|l| {
-                            let (n, v) = l.split_once(':')?;
-                            n.eq_ignore_ascii_case("content-length")
-                                .then(|| v.trim().parse::<usize>().ok())?
-                        })
-                        .unwrap_or(0);
-                    if body.len() >= length || read == 0 {
+                    if read == 0 || request_complete(&raw) {
                         break;
                     }
                 }
@@ -2745,6 +2722,22 @@ mod tests {
             }
         });
         (format!("http://127.0.0.1:{port}"), calls)
+    }
+
+    /// Whether `raw` holds the request's headers and the body its Content-Length announces.
+    fn request_complete(raw: &[u8]) -> bool {
+        let text = String::from_utf8_lossy(raw);
+        text.split_once("\r\n\r\n").is_some_and(|(head, body)| {
+            let length = head
+                .lines()
+                .find_map(|l| {
+                    let (n, v) = l.split_once(':')?;
+                    n.eq_ignore_ascii_case("content-length")
+                        .then(|| v.trim().parse::<usize>().ok())?
+                })
+                .unwrap_or(0);
+            body.len() >= length
+        })
     }
 
     const CONFIRMED: commands::apply::Options = commands::apply::Options {

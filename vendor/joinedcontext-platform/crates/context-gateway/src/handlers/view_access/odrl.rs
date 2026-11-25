@@ -359,4 +359,34 @@ mod tests {
             assert!(out.contains(term), "{term} in {out}");
         }
     }
+
+    /// Every character the Turtle grammar escapes inside a string is escaped, so a value cannot
+    /// end its literal; a target's refinement, a missing right operand, a boolean, a null and a
+    /// set each keep their own Turtle form.
+    #[test]
+    fn literals_escape_and_each_operand_shape_has_its_form() {
+        assert_eq!(literal("a\\b\"c\nd\re\tf"), r#""a\\b\"c\nd\re\tf""#);
+        let out = turtle(&json!({
+            "permission": [{
+                "action": ["ngsi-ld:queryEntity"],
+                "target": {"uid": "urn:t\"x", "refinement": [
+                    {"leftOperand": "ngsi-ld:type", "operator": "isAnyOf", "rightOperand": ["A", 2]},
+                ]},
+                "constraint": [
+                    {"leftOperand": "ngsi-ld:open", "operator": "eq", "rightOperand": true},
+                    {"leftOperand": "ngsi-ld:gone", "operator": "eq", "rightOperand": null},
+                    {"leftOperand": "ngsi-ld:any", "operator": "eq"},
+                ],
+            }],
+        }));
+        for term in [
+            r#"odrl:uid "urn:t\"x""#,
+            r#"odrl:refinement [ odrl:leftOperand ngsi-ld:type ; odrl:operator odrl:isAnyOf ; odrl:rightOperand "A", 2 ]"#,
+            "odrl:rightOperand true ]",
+            r#"odrl:leftOperand ngsi-ld:gone ; odrl:operator odrl:eq ; odrl:rightOperand "" ]"#,
+            r#"odrl:leftOperand ngsi-ld:any ; odrl:operator odrl:eq ; odrl:rightOperand "" ]"#,
+        ] {
+            assert!(out.contains(term), "{term} in {out}");
+        }
+    }
 }

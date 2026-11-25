@@ -601,9 +601,9 @@ mod tests {
         assert!(terms("a NO2").contains(&"no2".to_owned()));
     }
 
-    /// T-4493: the index of 10,000 Datasets builds in under a second (release).
+    /// T-4493: the index of 10,000 Datasets builds in under a second (release; a debug or
+    /// instrumented build checks the answer, not the time).
     #[test]
-    #[ignore = "a 10,000-Dataset measurement; run in release"]
     fn ten_thousand_datasets_index_in_under_a_second() {
         let entities: Vec<Value> = (0..10_000)
             .map(|n| {
@@ -619,7 +619,10 @@ mod tests {
         let index = Index::build(&entities, &HashMap::new());
         let took = started.elapsed();
         eprintln!("10,000 Datasets indexed in {took:?}");
-        assert!(took.as_secs_f64() < 1.0, "{took:?}");
+        assert!(
+            cfg!(debug_assertions) || took.as_secs_f64() < 1.0,
+            "{took:?}"
+        );
         let started = std::time::Instant::now();
         let hits = index.search(
             &json!({ "query": "stanica 4242" })
@@ -684,6 +687,71 @@ mod tests {
             );
             assert!(own["structuredContent"].get("elsewhere").is_none(), "{own}");
         }
+    }
+
+    /// Each argument of `search` refused with what it takes (an empty, an overlong and a
+    /// non-text value, a limit out of 1..=50); a hit's title falls back from the asked language
+    /// to English and then to any language; a theme the caller narrowed by is a reason.
+    #[test]
+    fn search_checks_its_arguments_and_titles_a_hit_in_the_nearest_language() {
+        let entities = [json!({
+            "id": "urn:ngsi-ld:Dataset:air", "type": "Dataset",
+            "title": { "languageMap": { "sk": "Kvalita ovzdušia" } },
+            "searchText": { "value": "air quality ovzdusie" },
+            "theme": { "value": ["ENVI"] },
+            "refDataService": { "type": "Relationship", "object": "urn:ngsi-ld:DataService:air" },
+        })];
+        let index = Index::build(&entities, &HashMap::new());
+        let ask = |arguments: Value| index.search(arguments.as_object().expect("arguments"));
+        let long = "a".repeat(201);
+        for (arguments, says) in [
+            (
+                json!({ "query": "air", "colour": "red" }),
+                "`colour` is not an argument",
+            ),
+            (json!({}), "`query` is the question"),
+            (json!({ "query": "  " }), "`query` is a text of 1 to 200"),
+            (json!({ "query": long }), "`query` is a text of 1 to 200"),
+            (
+                json!({ "query": "air", "lang": 7 }),
+                "`lang` is a text of 1 to 200",
+            ),
+            (json!({ "query": "air", "limit": 0 }), "from 1 to 50"),
+            (json!({ "query": "air", "limit": 51 }), "from 1 to 50"),
+            (json!({ "query": "air", "limit": "5" }), "from 1 to 50"),
+        ] {
+            assert!(
+                ask(arguments.clone()).is_err_and(|e| e.contains(says)),
+                "{arguments}"
+            );
+        }
+        let hit = |lang: &str| {
+            ask(json!({ "query": "air quality", "lang": lang, "theme": "ENVI", "limit": 1 }))
+                .expect("an answer")["structuredContent"]["hits"][0]
+                .clone()
+        };
+        let german = hit("de");
+        assert_eq!(german["title"], "Kvalita ovzdušia", "{german}");
+        assert!(german["why"]
+            .as_str()
+            .is_some_and(|why| why.contains("theme envi")));
+        let index = Index::build(
+            &[json!({
+                "id": "urn:ngsi-ld:Dataset:en", "type": "Dataset",
+                "title": { "languageMap": { "sk": "Ovzdušie", "en": "Air" } },
+                "searchText": { "value": "air" },
+                "refDataService": { "type": "Relationship", "object": "urn:ngsi-ld:DataService:en" },
+            })],
+            &HashMap::new(),
+        );
+        let english = index
+            .search(
+                json!({ "query": "air", "lang": "de" })
+                    .as_object()
+                    .expect("arguments"),
+            )
+            .expect("an answer");
+        assert_eq!(english["structuredContent"]["hits"][0]["title"], "Air");
     }
 
     #[test]

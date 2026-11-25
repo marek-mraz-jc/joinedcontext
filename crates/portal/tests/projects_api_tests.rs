@@ -936,6 +936,40 @@ async fn deleting_a_project_removes_its_whole_tree_and_every_binding_that_names_
     );
 }
 
+/// One deletion at a time (CC-34): a second one while the first is open names it and writes
+/// nothing.
+#[tokio::test]
+async fn a_second_deletion_waits_for_the_open_one() {
+    let shako = forge_with_a_tree(json!([])).await;
+    Mock::given(http_method("GET"))
+        .and(url_path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "value": [
+                {
+                    "Number": 9,
+                    "HtmlUrl": "https://shako.example/pulls/9",
+                    "State": "open",
+                    "Title": "delete project banskabystrica",
+                    "Head": "portal/delete-project-banskabystrica",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-16T09:00:00Z",
+                    "Mergeable": true,
+                    "Merged": false
+                }
+            ]
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = common::state_on(&shako);
+    world_to_delete(&state);
+
+    let (status, body) = delete_project(&state, person("admin"), "banskabystrica").await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(body.contains("already proposed"), "{body}");
+    assert!(removed(&shako).await.is_empty(), "nothing was written");
+}
+
 #[tokio::test]
 async fn a_share_from_another_project_refuses_the_deletion_and_names_it() {
     let shako = forge_with_a_tree(json!([])).await;

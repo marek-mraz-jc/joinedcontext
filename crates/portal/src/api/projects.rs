@@ -1943,15 +1943,69 @@ mod tests {
         }
     }
 
+    /// A new project's manifest keeps a display name and a description the opener typed, and
+    /// leaves out a blank one; the opener is the steward of it alone.
+    #[test]
+    fn a_new_project_keeps_what_the_opener_typed_and_drops_blanks() {
+        let identity = crate::auth::session::Identity {
+            subject: "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23".into(),
+            username: "jana".into(),
+            email: None,
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            client: None,
+            second_factor: false,
+        };
+        let open = |display: &str, about: &str| -> OpenProject {
+            serde_json::from_value(
+                serde_json::json!({ "name": "air", "displayName": display, "description": about }),
+            )
+            .expect("an OpenProject")
+        };
+        let files = open_project_files(
+            &identity,
+            &open("Air", "The air of the city"),
+            "air",
+            "bbsk",
+        )
+        .expect("files");
+        assert_eq!(files[0].0, "projects/air/project.yaml");
+        assert!(
+            files[0].1.contains("joinedcontext.com/display-name: Air"),
+            "{}",
+            files[0].1
+        );
+        assert!(
+            files[0]
+                .1
+                .contains("joinedcontext.com/description: The air of the city"),
+            "{}",
+            files[0].1
+        );
+        assert!(
+            files[1].1.contains("5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23")
+                && files[1].1.contains("project: air"),
+            "{}",
+            files[1].1
+        );
+        let blank = open_project_files(&identity, &open(" ", "  "), "air", "bbsk").expect("files");
+        assert!(
+            !blank[0].1.contains("labels") && !blank[0].1.contains("annotations"),
+            "{}",
+            blank[0].1
+        );
+    }
+
     #[test]
     fn a_branch_shaped_name_is_refused_naming_metadata_name() {
         let branch = format!("b-{}", jc_types::ProjectId::mint().path_segment());
-        match refuse_branch_name(&branch) {
-            Err(ApiError::Unprocessable { errors, .. }) => {
-                assert!(errors[0].starts_with("metadata.name: "), "{errors:?}");
-            }
-            other => panic!("{branch}: {other:?}"),
-        }
+        let refused = refuse_branch_name(&branch).expect_err("refused");
+        assert_eq!(
+            refused.first_field(),
+            "metadata.name",
+            "{branch}: {refused:?}"
+        );
         for name in [
             "b-helsinki",
             "helsinki",

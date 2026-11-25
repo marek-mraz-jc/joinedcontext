@@ -86,8 +86,46 @@ impl Platform for RefusesSpaces {
     }
 
     fn delete(&mut self, id: &ResourceId) -> Result<(), PlatformError> {
+        if id.kind == "ContextSpace" {
+            return Err(PlatformError::Rejected {
+                id: Box::new(id.clone()),
+                message: "the space still holds entities".to_owned(),
+            });
+        }
         self.inner.delete(id)
     }
+}
+
+/// CC-19: a confirmed deletion the platform refuses is a failure of that resource, reported
+/// with the platform's words; the rest of the prune still runs.
+#[test]
+fn a_refused_deletion_is_a_failure_of_that_resource() {
+    let dir = demo_repo("apply-refused-delete");
+    let mut platform = RefusesSpaces::default();
+    platform
+        .inner
+        .put(&manifest(&SPACE.replacen(
+            "  name: ovzdusie\n",
+            "  name: old\n",
+            1,
+        )))
+        .expect("the stray space is there");
+    let options = Options {
+        prune: true,
+        confirm_deletions: true,
+    };
+    let report = run(&load(&dir), &mut platform, options).expect("apply runs");
+    let old = report
+        .results
+        .iter()
+        .find(|r| r.id.name == "old")
+        .expect("the stray space was reported");
+    assert!(
+        matches!(&old.outcome, Outcome::Failed(err) if err.to_string().contains("still holds")),
+        "{:?}",
+        old.outcome
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

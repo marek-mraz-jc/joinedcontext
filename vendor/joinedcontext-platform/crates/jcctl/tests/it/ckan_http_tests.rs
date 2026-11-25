@@ -688,6 +688,99 @@ fn a_proxy_error_page_is_unavailable_with_its_status() {
     assert!(message.contains("Bad Gateway"), "{message}");
 }
 
+/// A server answering every request with `status` and the JSON `body`.
+fn answering_json(status: &str, body: &str) -> String {
+    let head: &'static str = Box::leak(
+        format!(
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+        .into_boxed_str(),
+    );
+    answering(head, 0)
+}
+
+/// EP-62: a writing action CKAN answers 404 is an action this CKAN does not know; a 401 page
+/// that is no JSON is a refusal, not an outage; CKAN's validation errors read field by field,
+/// whatever shape each value has; an error without a message says so.
+#[test]
+fn each_refusal_reads_as_what_ckan_meant() {
+    let base = answering_json(
+        "404 Not Found",
+        r#"{"success":false,"error":{"__type":"Not Found Error","message":"Not found"}}"#,
+    );
+    let mut api = client(&base, TOKEN);
+    match api.action("package_create", &json!({ "name": "x" })) {
+        Err(CkanError::Rejected { message, .. }) => {
+            assert!(message.contains("not known"), "{message}")
+        }
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+
+    let head: &'static str = "HTTP/1.1 401 Unauthorized\r\nContent-Length: 9\r\n\r\nsign in!!";
+    let api = client(&answering(head, 0), TOKEN);
+    match api.show("package_show", "x") {
+        Err(CkanError::Rejected { message, .. }) => assert!(message.contains("401"), "{message}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+
+    let base = answering_json(
+        "409 Conflict",
+        r#"{"success":false,"error":{"name":["That URL is already in use.",5],"title":"too short","count":3}}"#,
+    );
+    let mut api = client(&base, TOKEN);
+    let message = api
+        .action("package_create", &json!({ "name": "x" }))
+        .expect_err("refused")
+        .to_string();
+    assert!(
+        message.contains("name: That URL is already in use.; 5"),
+        "{message}"
+    );
+    assert!(message.contains("title: too short"), "{message}");
+    assert!(message.contains("count: 3"), "{message}");
+
+    let base = answering_json("409 Conflict", r#"{"success":false,"error":{}}"#);
+    let mut api = client(&base, TOKEN);
+    let message = api
+        .action("package_create", &json!({ "name": "x" }))
+        .expect_err("refused")
+        .to_string();
+    assert!(
+        message.contains("CKAN refused without a message"),
+        "{message}"
+    );
+}
+
+/// A page cut at the snippet's length inside a multi-byte character is shortened to the
+/// character before it, never split.
+#[test]
+fn a_snippet_never_splits_a_character() {
+    let body = format!("{}é tail", "x".repeat(199));
+    let base = answering_json("502 Bad Gateway", &body);
+    let api = client(&base, TOKEN);
+    let message = api
+        .show("package_show", "x")
+        .expect_err("a 502")
+        .to_string();
+    assert!(message.contains(&"x".repeat(199)), "{message}");
+    assert!(!message.contains('é'), "{message}");
+}
+
+/// A CKAN URL that is no http(s) URL naming a host is refused before any request; one reached
+/// at a given address keeps its own host name.
+#[test]
+fn a_ckan_url_must_name_an_http_host() {
+    std::env::set_var("JCCTL_TEST_CKAN_TOKEN_URL", TOKEN);
+    let token = || SecretValue::from_env("JCCTL_TEST_CKAN_TOKEN_URL").expect("the token");
+    assert!(matches!(
+        HttpCkan::new("ftp://ckan.example", token()),
+        Err(CkanError::Unavailable(_))
+    ));
+    let addr: std::net::SocketAddr = ([127, 0, 0, 1], 9).into();
+    assert!(HttpCkan::reaching("https://ckan.example", token(), Some(addr)).is_ok());
+}
+
 /// A server that answers every request with `head` and then `body` bytes of `x`.
 fn answering(head: &'static str, body: usize) -> String {
     let listener = TcpListener::bind("127.0.0.1:0").expect("a port");

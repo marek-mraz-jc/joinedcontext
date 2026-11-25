@@ -291,6 +291,58 @@ fn an_address_the_token_must_not_travel_to_is_refused_at_start_up() {
     assert_eq!(inside.address(), "http://openbao.openbao.svc:8200");
 }
 
+/// A login to a path OpenBao answers 404 with no error, the auth method not mounted, says
+/// so instead of handing back an empty session.
+#[test]
+fn a_login_to_an_unmounted_auth_method_says_so() {
+    let (_store, address) = store_answering(vec![(404, json!({"errors": []}))]);
+    let mut api = HttpBao::new(&address).expect("a client");
+    match login(&mut api, &Settings::new("pipeline-runner"), "a.b.c") {
+        Err(BaoError::Api {
+            status, message, ..
+        }) => {
+            assert_eq!(status, 404);
+            assert!(message.contains("mounted"), "{message}");
+        }
+        other => panic!("expected a 404 refusal, got {other:?}"),
+    }
+}
+
+/// A CA file holding a real certificate is trusted beside the bundle; armour around a body
+/// that is no certificate is refused when the client is built, before any connection.
+#[test]
+fn a_ca_file_with_a_certificate_is_added_to_the_roots() {
+    let dir = std::env::temp_dir().join(format!("jcctl-bao-ca-ok-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let ca = dir.join("ca.pem");
+    std::fs::write(&ca, CA_PEM).expect("write");
+    let api = HttpBao::with_ca_file("https://bao.example/", &ca).expect("the root is added");
+    assert_eq!(api.address(), "https://bao.example");
+
+    let garbled = dir.join("garbled.pem");
+    std::fs::write(
+        &garbled,
+        "-----BEGIN CERTIFICATE-----\n%%%%\n-----END CERTIFICATE-----\n",
+    )
+    .expect("write");
+    // The armour passes the first look; the client refuses the body when it is built.
+    let message = transport(HttpBao::with_ca_file("https://bao.example", &garbled));
+    assert!(message.starts_with("HTTP client:"), "{message}");
+}
+
+/// A self-signed test root (CN bao.test), public by nature: no key goes with it.
+const CA_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIBejCCASGgAwIBAgIUJp7SdhUndZ/d8eEVXtFeTZvPTwgwCgYIKoZIzj0EAwIw
+EzERMA8GA1UEAwwIYmFvLnRlc3QwHhcNMjYxMTI1MDY1OTI1WhcNMzYxMTIyMDY1
+OTI1WjATMREwDwYDVQQDDAhiYW8udGVzdDBZMBMGByqGSM49AgEGCCqGSM49AwEH
+A0IABBSEYOBDT1U7KxzsIUNH+q1+7owH69Rmqf/28w7lfquYBB8NBx0gTGvUAjf7
+zbp8stsSfRgBOXayHR0RRkKeg8mjUzBRMB0GA1UdDgQWBBRaqfBc/0cpzXHy7EuH
+WEau0+B+ejAfBgNVHSMEGDAWgBRaqfBc/0cpzXHy7EuHWEau0+B+ejAPBgNVHRMB
+Af8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIDrLgd0fmXshsRg4WV/XiYa48R19
+3hD+z0Wzn3SV1lc5AiBgNpIYPWappnkW/wrPzV7DT6LzA80weBLbnrtr/DxlgA==
+-----END CERTIFICATE-----
+";
+
 #[test]
 fn a_ca_file_that_is_missing_or_not_a_certificate_is_refused_before_any_connection() {
     let dir = std::env::temp_dir().join(format!("jcctl-bao-ca-{}", std::process::id()));

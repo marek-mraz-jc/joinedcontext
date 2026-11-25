@@ -1204,7 +1204,7 @@ mod tests {
         let key = |path: &str| {
             let uri: axum::http::Uri = format!("/api/v1/projects/p/odata/{path}")
                 .parse()
-                .unwrap_or_else(|e| panic!("{e}"));
+                .expect("a request path");
             row_key(&uri, "p").map_err(|Refusal(status, ..)| status)
         };
         assert_eq!(key("endpointList('air')"), Ok("air".to_owned()));
@@ -1296,5 +1296,126 @@ mod tests {
     fn identifiers_are_odata_simple_identifiers() {
         assert!(identifier("jc_resource_propose") && identifier("dryRun"));
         assert!(!identifier("") && !identifier("1a") && !identifier("a-b") && !identifier("a\"b"));
+    }
+
+    /// A store's refusal keeps its status and code; the source's own text never reaches the
+    /// caller, only the log.
+    #[test]
+    fn a_table_refusal_keeps_its_status_and_hides_the_sources_text() {
+        let refusal = |e: TableError| Refusal::from(e);
+        assert_eq!(
+            refusal(TableError::NotImplemented("$apply".into())).0,
+            StatusCode::NOT_IMPLEMENTED
+        );
+        let Refusal(status, code, text) = refusal(TableError::UnknownProperty("nope".into()));
+        assert_eq!((status, code), (StatusCode::BAD_REQUEST, "BadRequest"));
+        assert!(text.contains("no property nope"), "{text}");
+        assert_eq!(refusal(TableError::BadRequest("why".into())), bad("why"));
+        assert_eq!(
+            refusal(TableError::Forbidden("no".into())),
+            Refusal(StatusCode::FORBIDDEN, "Forbidden", "no".into())
+        );
+        assert_eq!(
+            refusal(TableError::Conflict("twice".into())),
+            Refusal(StatusCode::CONFLICT, "Conflict", "twice".into())
+        );
+        let Refusal(status, code, text) =
+            refusal(TableError::Source("password=hunter2 at db:5432".into()));
+        assert_eq!(
+            (status, code),
+            (StatusCode::INTERNAL_SERVER_ERROR, "InternalServerError")
+        );
+        assert!(
+            !text.contains("hunter2") && !text.contains("5432"),
+            "{text}"
+        );
+    }
+
+    /// A key literal is a string or an integer; a number with a fraction, a boolean or null is
+    /// refused with an example.
+    #[test]
+    fn a_key_is_a_string_or_an_integer() {
+        assert_eq!(key_value(&Literal::String("air".into())), Ok(json!("air")));
+        assert_eq!(key_value(&Literal::Int(-7)), Ok(json!(-7)));
+        for literal in [
+            Literal::Null,
+            Literal::Bool(true),
+            Literal::Decimal("1.5".into()),
+        ] {
+            let Err(Refusal(status, _, text)) = key_value(&literal) else {
+                panic!("{literal:?} is no key");
+            };
+            assert_eq!(status, StatusCode::BAD_REQUEST);
+            assert!(text.contains("('air-counters')"), "{text}");
+        }
+    }
+
+    /// A row that is not an object passes through; a scalar `status` stays the row's own member
+    /// and a top-level member wins over a nested one of the same name.
+    #[test]
+    fn flat_leaves_scalars_and_top_level_members_alone() {
+        assert_eq!(flat(json!("text")), json!("text"));
+        assert_eq!(flat(json!(null)), json!(null));
+        let row = flat(json!({
+            "name": "top",
+            "status": "Running",
+            "metadata": { "name": "nested", "namespace": "helsinki" }
+        }));
+        assert_eq!(row["name"], json!("top"));
+        assert_eq!(row["status"], json!("Running"));
+        assert_eq!(row["namespace"], json!("helsinki"));
+    }
+
+    /// The collection's context names its entity set; a path without one still answers, with an
+    /// empty set name, and a next page carries the skip token in `@odata.nextLink`.
+    #[test]
+    fn a_collection_names_its_set_and_links_the_next_page() {
+        let answer = |next| odata_table::Answer {
+            rows: vec![json!({ "name": "air" })],
+            count: Some(3),
+            next,
+            keys: vec![json!("air")],
+            select: None,
+        };
+        let path = [Segment::EntitySet("endpoints".into())];
+        let body = collection(
+            "https://p/odata/",
+            &path,
+            &QueryOptions::default(),
+            answer(Some(1)),
+        );
+        assert_eq!(
+            body["@odata.context"],
+            json!("https://p/odata/$metadata#endpoints")
+        );
+        assert_eq!(body["@odata.count"], json!(3));
+        let next = body["@odata.nextLink"].as_str().expect("a next link");
+        assert!(
+            next.starts_with("https://p/odata/endpoints") && next.contains("skiptoken=1"),
+            "{next}"
+        );
+        let body = collection(
+            "https://p/odata/",
+            &[],
+            &QueryOptions::default(),
+            answer(None),
+        );
+        assert_eq!(body["@odata.context"], json!("https://p/odata/$metadata#"));
+        assert!(body.get("@odata.nextLink").is_none());
+    }
+
+    /// An action parameter's EDM type follows its schema; a number is a double, anything not
+    /// primitive is untyped. An operation that lists nothing has no properties.
+    #[test]
+    fn schema_types_map_to_edm_types() {
+        assert_eq!(edm_type(&json!({ "type": "number" })), "Edm.Double");
+        assert_eq!(
+            edm_type(&json!({ "type": "string", "format": "date-time" })),
+            "Edm.DateTimeOffset"
+        );
+        assert_eq!(edm_type(&json!({ "type": "object" })), "Edm.Untyped");
+        assert_eq!(edm_type(&json!({})), "Edm.Untyped");
+        let op = ops::find("jc_resource_propose").expect("registered");
+        assert!(fields_of(op, "name").is_empty());
     }
 }

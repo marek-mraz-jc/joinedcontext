@@ -126,6 +126,69 @@ fn diff_names_what_the_workspace_creates_changes_and_removes() {
     assert_eq!(bikes[1].live, Some(serde_json::json!(3)));
 }
 
+/// The text listing names each operation and each field as `from -> to`, `-` for a side that
+/// lacks it; a render without --out-dir is one YAML stream, and one into a file is an error
+/// naming the path.
+#[test]
+fn the_command_lists_fields_as_text_and_renders_to_stdout() {
+    let base = repo(
+        "txt-base",
+        &[
+            ("bikes", "  defaultLocale: en\n  ttlDays: 3\n"),
+            ("trams", "  defaultLocale: en\n"),
+        ],
+    );
+    let changed = repo(
+        "txt-changed",
+        &[
+            ("bikes", "  defaultLocale: fi\n"),
+            ("parks", "  defaultLocale: en\n"),
+        ],
+    );
+    let diff = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["workspace", "diff", "--base-dir"])
+        .arg(&base)
+        .arg("--repo-dir")
+        .arg(&changed)
+        .env("JC_ENVIRONMENT", " ")
+        .output()
+        .expect("ran");
+    assert_eq!(diff.status.code(), Some(2));
+    let said = String::from_utf8_lossy(&diff.stdout);
+    assert!(said.contains("Update "), "{said}");
+    assert!(said.contains("Create "), "{said}");
+    assert!(said.contains("Delete "), "{said}");
+    assert!(
+        said.contains("  spec.defaultLocale: \"en\" -> \"fi\""),
+        "{said}"
+    );
+    assert!(said.contains("  spec.ttlDays: 3 -> -"), "{said}");
+
+    let stream = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["workspace", "render", "--repo-dir"])
+        .arg(&base)
+        .args(["--prefix", "ws-b-"])
+        .output()
+        .expect("ran");
+    assert_eq!(stream.status.code(), Some(0));
+    let said = String::from_utf8_lossy(&stream.stdout);
+    assert!(
+        said.starts_with("---\n") && said.contains("ws-b-helsinki"),
+        "{said}"
+    );
+
+    let file = base.join("org.yaml");
+    let blocked = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["workspace", "render", "--repo-dir"])
+        .arg(&base)
+        .args(["--prefix", "ws-c-", "--out-dir"])
+        .arg(&file)
+        .output()
+        .expect("ran");
+    assert_eq!(blocked.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&blocked.stderr).contains("org.yaml"));
+}
+
 #[test]
 fn the_command_exits_2_on_a_change_and_0_on_none() {
     let base = repo("cli-base", &[("bikes", "  defaultLocale: en\n")]);

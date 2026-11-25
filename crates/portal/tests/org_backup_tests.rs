@@ -812,6 +812,17 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
     );
     assert!(refused.text.contains("unencrypted"), "{}", refused.text);
     assert!(refused.text.contains(&taken), "{}", refused.text);
+    // It still downloads as the plain zip it was uploaded as.
+    let download = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DOOR}/versions/plain"),
+        None,
+    )
+    .await;
+    assert_eq!(download.status, StatusCode::OK, "{}", download.text);
+    assert!(download.text.starts_with("PK"), "a zip");
 
     // The wrong identity opens nothing and says which field.
     let other = secret_of(&age::x25519::Identity::generate());
@@ -838,6 +849,77 @@ async fn a_plain_bundle_from_before_encryption_is_refused_with_its_date() {
         wrong.text
     );
     assert!(!wrong.text.contains(&other), "the identity is never echoed");
+}
+
+/// A version whose bundle has no index, is of another Organization, or names a project the
+/// Organization no longer holds plans no restore and says which (T-7154).
+#[tokio::test]
+async fn a_bundle_that_is_not_this_organizations_plans_no_restore() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    let files = unzip(&opened(&latest(&world.bucket, &key)));
+    let zipped = |files: &BTreeMap<String, String>| {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for (path, text) in files {
+            writer
+                .start_file(path.as_str(), zip::write::SimpleFileOptions::default())
+                .expect("entry");
+            std::io::Write::write_all(&mut writer, text.as_bytes()).expect("write");
+        }
+        writer.finish().expect("zip").into_inner()
+    };
+    let mut no_index = files.clone();
+    no_index.remove("index.yaml");
+    let mut other_org = files.clone();
+    let index = other_org["index.yaml"].replace("organization: alfa", "organization: bravo");
+    other_org.insert("index.yaml".into(), index);
+    let moved: BTreeMap<String, String> = files
+        .iter()
+        .map(|(path, text)| {
+            (
+                path.replace("alfa-city", "bravo-town"),
+                text.replace("alfa-city", "bravo-town"),
+            )
+        })
+        .collect();
+    for (version, bundle, says) in [
+        ("no-index", no_index, "no index.yaml"),
+        ("other-org", other_org, "of Organization 'bravo'"),
+        (
+            "moved",
+            moved,
+            "Project/bravo-town belongs to another Organization",
+        ),
+    ] {
+        world
+            .bucket
+            .lock()
+            .expect("bucket")
+            .objects
+            .get_mut(&key)
+            .expect("alfa's bundle")
+            .push((
+                version.into(),
+                Some(sealed(&zipped(&bundle))),
+                "2026-11-16T11:00:00.000Z".into(),
+            ));
+        let refused = send(
+            &world.state,
+            person("ada"),
+            "POST",
+            &format!("{DOOR}/versions/{version}/restore"),
+            Some(json!({ "identity": identity(), "apply": false })),
+        )
+        .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{version}: {}",
+            refused.text
+        );
+        assert!(refused.text.contains(says), "{version}: {}", refused.text);
+    }
 }
 
 #[tokio::test]
@@ -1469,6 +1551,23 @@ async fn the_data_archive_holds_only_its_organizations_rows_and_no_secret() {
     let run = data_saved_and_run(&world, &ids).await;
     assert_eq!(run["ok"], true, "{run}");
     let sealed = latest(&world.bucket, &key_of(&world, "alfa", "data").await);
+    // The data archive downloads as stored, still encrypted.
+    let download = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!(
+            "{DATA_DOOR}/versions/{}",
+            run["versionId"].as_str().expect("version")
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(download.status, StatusCode::OK, "{}", download.text);
+    assert!(
+        download.text.starts_with("age-encryption.org/v1"),
+        "encrypted"
+    );
     assert!(
         zip::ZipArchive::new(std::io::Cursor::new(&sealed)).is_err(),
         "the stored archive is encrypted"
@@ -2550,6 +2649,28 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
     .await;
     assert_eq!(again.status, StatusCode::NOT_FOUND, "{}", again.text);
 
+    // A second request is declined by another administrator and writes nothing.
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    let declined = send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &format!("{DATA_DOOR}/restores/{id}/decline"),
+        None,
+    )
+    .await;
+    assert_eq!(declined.status, StatusCode::OK, "{}", declined.text);
+    assert_eq!(body(&declined)["state"], "declined", "{}", declined.text);
+
     let overview = send(&world.state, person("ada"), "GET", DATA_DOOR, None).await;
     let requests = send(
         &world.state,
@@ -2583,7 +2704,12 @@ async fn a_deleted_backups_version_restores_with_a_second_admin_and_an_erased_pe
             );
         }
     }
-    for action in ["restore-plan", "restore-request", "restore"] {
+    for action in [
+        "restore-plan",
+        "restore-request",
+        "restore",
+        "restore-decline",
+    ] {
         assert!(
             body(&overview)["log"]
                 .as_array()

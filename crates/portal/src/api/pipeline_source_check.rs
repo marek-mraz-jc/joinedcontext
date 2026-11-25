@@ -390,6 +390,51 @@ mod tests {
         }
     }
 
+    /// A runner that refuses the harness names each error once, a step counted from one.
+    #[test]
+    fn a_refused_run_names_each_runner_error_once_and_its_step_from_one() {
+        let error =
+            |value: Value| -> TestError { serde_json::from_value(value).expect("an error") };
+        let tally = Tally::refused(vec![
+            error(json!({ "stage": "lint", "message": "unknown processor" })),
+            error(json!({ "stage": "mapping", "step": 1, "message": "bad mapping" })),
+            error(json!({ "stage": "lint", "message": "unknown processor" })),
+        ]);
+        assert_eq!(tally.errors, ["unknown processor", "step 2: bad mapping"]);
+        assert_eq!(tally.records(), 0);
+    }
+
+    /// A message with neither output nor error is no record; a failed step whose input is no
+    /// JSON, or which carries no input, is rejected as the text it was given.
+    #[test]
+    fn an_empty_message_counts_nothing_and_unparsed_input_is_rejected_as_text() {
+        let mut tally = Tally::default();
+        let none = |_: &Value| Vec::new();
+        tally.add(Captured::default(), &none);
+        tally.add(
+            Captured {
+                output: Some(Value::Null),
+                ..Captured::default()
+            },
+            &none,
+        );
+        assert_eq!(tally.records(), 0);
+        for input in [Some("not json".to_owned()), None] {
+            let message = Captured {
+                input: input.clone(),
+                error: Some("boom".into()),
+                step: Some("0".into()),
+                ..Captured::default()
+            };
+            assert_eq!(
+                failed_record(&message, Some(0)),
+                Value::String(input.clone().unwrap_or_default())
+            );
+            tally.add(message, &none);
+        }
+        assert_eq!(tally.rejected, 2);
+    }
+
     /// The model's verdict per record, the first problem naming the group, a step's failure as
     /// `step` and the source's own failure as an error, not a record.
     #[test]

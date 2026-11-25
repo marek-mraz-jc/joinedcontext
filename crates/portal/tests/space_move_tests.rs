@@ -133,8 +133,22 @@ async fn world_with(held: bool, target_digest: Value, on_main: &str, empty_first
         Duration::from_millis(20),
         Duration::from_millis(300),
     ));
-    let image = format!("ghcr.io/x/antares@sha256:{}", "a".repeat(64));
     let to = "localhost".to_owned();
+    seed(&state, &to);
+    std::mem::forget(gateway);
+    World {
+        state,
+        forge,
+        source,
+        target,
+        to,
+    }
+}
+
+/// An Organization administrator (jana), the default broker `main`, the broker `to` and the
+/// space `ovzdusie/air`.
+fn seed(state: &AppState, to: &str) {
+    let image = format!("ghcr.io/x/antares@sha256:{}", "a".repeat(64));
     for item in [
         envelope(
             "Role",
@@ -156,21 +170,13 @@ async fn world_with(held: bool, target_digest: Value, on_main: &str, empty_first
         ),
         envelope(
             "ContextBroker",
-            &to,
+            to,
             ORG_NAMESPACE,
             json!({ "image": image }),
         ),
         envelope("ContextSpace", "air", "ovzdusie", json!({ "title": "Air" })),
     ] {
         state.mirror.upsert(item);
-    }
-    std::mem::forget(gateway);
-    World {
-        state,
-        forge,
-        source,
-        target,
-        to,
     }
 }
 
@@ -354,6 +360,110 @@ async fn only_an_administrator_moves_and_only_to_another_declared_broker() {
     }
     let none = send(&world.state, person("jana"), "GET", route, None).await;
     assert_eq!(none.status, StatusCode::NOT_FOUND);
+    assert!(commits(&world.forge).await.is_empty());
+}
+
+/// A body that is no move is 400 and a space the project lacks 404; a Portal missing a broker's
+/// address, the gateway or the forge says which one, and nothing is written.
+#[tokio::test]
+async fn a_move_names_what_it_lacks_before_it_starts() {
+    let world = world(true, digest(1), SPACE).await;
+    let route = "/api/v1/projects/ovzdusie/spaces/air/move";
+    for body in [
+        json!({"to": 5}),
+        json!({"to": world.to, "from": "main"}),
+        json!([]),
+    ] {
+        let bad = send(
+            &world.state,
+            person("jana"),
+            "POST",
+            route,
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(bad.status, StatusCode::BAD_REQUEST, "{body}: {}", bad.text);
+        assert!(bad.text.contains("is not a move"), "{}", bad.text);
+    }
+    let missing = send(
+        &world.state,
+        person("jana"),
+        "POST",
+        "/api/v1/projects/ovzdusie/spaces/water/move",
+        Some(json!({"to": world.to})),
+    )
+    .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text);
+    assert!(missing.text.contains("'water'"), "{}", missing.text);
+
+    let full = || {
+        let mut config = Config::for_tests();
+        config.broker_url = Some("http://main.invalid".into());
+        config.broker_url_template = Some("http://{broker}.invalid".into());
+        config.gateway_url = Some("http://gateway.invalid".into());
+        config.broker_admin_token_file = world.state.config.broker_admin_token_file.clone();
+        config
+    };
+    let shako = || {
+        Arc::new(
+            ShakoClient::new(
+                world.forge.uri().parse().expect("mock url"),
+                "test-owner",
+                "test-repo",
+                "token-xyz",
+            )
+            .expect("client"),
+        )
+    };
+    let cases: [(Config, bool, &str); 4] = [
+        (
+            Config {
+                broker_url: None,
+                ..full()
+            },
+            true,
+            "no address for broker 'main'",
+        ),
+        (
+            Config {
+                broker_url_template: None,
+                ..full()
+            },
+            true,
+            "no address for broker 'localhost'",
+        ),
+        (
+            Config {
+                gateway_url: None,
+                ..full()
+            },
+            true,
+            "JC_PORTAL_GATEWAY_URL",
+        ),
+        (full(), false, "has no forge"),
+    ];
+    for (config, forge, says) in cases {
+        let mut state = AppState::new(config, None);
+        if forge {
+            state = state.with_shako(shako());
+        }
+        seed(&state, &world.to);
+        let lacking = send(
+            &state,
+            person("jana"),
+            "POST",
+            route,
+            Some(json!({"to": world.to})),
+        )
+        .await;
+        assert_eq!(
+            lacking.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{says}: {}",
+            lacking.text
+        );
+        assert!(lacking.text.contains(says), "{says}: {}", lacking.text);
+    }
     assert!(commits(&world.forge).await.is_empty());
 }
 

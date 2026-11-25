@@ -1213,16 +1213,10 @@ async fn audit(
     .execute(conn)
     .await
     .map_err(db)?;
-    tracing::info!(
-        target: "operator_audit",
-        actor,
-        change = %change,
-        action,
-        before = %before.map(serde_json::Value::to_string).unwrap_or_default(),
-        after = %after.map(serde_json::Value::to_string).unwrap_or_default(),
-        source = source.unwrap_or_default(),
-        "operator audit"
-    );
+    let before = before.map(Value::to_string).unwrap_or_default();
+    let after = after.map(Value::to_string).unwrap_or_default();
+    let source = source.unwrap_or_default();
+    tracing::info!(target: "operator_audit", %actor, %change, %action, %before, %after, %source, "operator audit");
     Ok(())
 }
 
@@ -2524,5 +2518,298 @@ mod tests {
             operator(&state, &password_only),
             Err(ApiError::SecondFactorRequired)
         ));
+    }
+
+    /// The field a refused request names first.
+    fn refused(change: Value) -> String {
+        let request: ChangeRequest = serde_json::from_value(change).expect("a ChangeRequest");
+        let err = payload(request).expect_err("the request is refused");
+        assert_eq!(err.field_errors().len(), 1, "{err:?}");
+        err.first_field().to_owned()
+    }
+
+    fn smtp(port: u16, from: &str, user: &str, password: &str) -> Value {
+        json!({ "host": "smtp.example.org", "port": port, "tls": "starttls", "from": from, "user": user, "password": password })
+    }
+
+    /// Each kind takes its own fields and no other, and each field it needs is named when it
+    /// is missing or malformed.
+    #[test]
+    fn each_kind_names_the_field_it_refuses() {
+        let good_smtp = smtp(587, "noreply@example.org", "", "");
+        for (change, field) in [
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "smtp": good_smtp }),
+                "smtp",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "branding": {} }),
+                "branding",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "singlePerson": true }),
+                "singlePerson",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "automation": true }),
+                "automation",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "connector": "bbsk-mcp" }),
+                "connector",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "project": "doprava" }),
+                "project",
+            ),
+            (
+                json!({ "kind": "HostRemove", "host": "a.example.org", "role": "working" }),
+                "role",
+            ),
+            (json!({ "kind": "HostRemove" }), "host"),
+            (
+                json!({ "kind": "HostAdd", "host": "a.example.org", "organization": "bbsk", "role": "root" }),
+                "role",
+            ),
+            (
+                json!({ "kind": "HostAdd", "host": "a.example.org", "organization": "  ", "role": "working" }),
+                "organization",
+            ),
+            (
+                json!({ "kind": "OperatorAdd", "subject": "not a user id" }),
+                "subject",
+            ),
+            (
+                json!({ "kind": "OperatorRemove", "host": "a.example.org" }),
+                "host",
+            ),
+            (json!({ "kind": "SmtpSet" }), "smtp"),
+            (
+                json!({ "kind": "ProjectMove", "project": "Bad_Name", "organization": "bbsk" }),
+                "project",
+            ),
+            (
+                json!({ "kind": "ProjectMove", "project": "doprava" }),
+                "organization",
+            ),
+            (
+                json!({ "kind": "ProjectMove", "organization": "bbsk" }),
+                "project",
+            ),
+            (
+                json!({ "kind": "SmtpSet", "smtp": good_smtp, "subject": "x" }),
+                "subject",
+            ),
+            (json!({ "kind": "BrandingSet" }), "branding"),
+            (
+                json!({ "kind": "BrandingSet", "branding": { "homeWidgets": ["doprava/prehlad"] } }),
+                "branding.homeWidgets",
+            ),
+            (
+                json!({ "kind": "BrandingSet", "branding": { "opendataWidgets": ["doprava/prehlad"] } }),
+                "branding.opendataWidgets",
+            ),
+            (
+                json!({ "kind": "SinglePersonSet", "organization": "bbsk" }),
+                "singlePerson",
+            ),
+            (
+                json!({ "kind": "SinglePersonSet", "singlePerson": true }),
+                "organization",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bad login", "automation": true }),
+                "subject",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "x".repeat(256), "automation": true }),
+                "subject",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bbsk-mcp-admin" }),
+                "automation",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bbsk-mcp-admin", "automation": false, "connector": "bbsk-mcp" }),
+                "connector",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bbsk-mcp-admin", "automation": true, "connector": "no id!" }),
+                "connector",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bbsk-mcp-admin", "automation": true, "connector": "c".repeat(65) }),
+                "connector",
+            ),
+            (
+                json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "bbsk-mcp-admin", "automation": true, "role": "working" }),
+                "role",
+            ),
+        ] {
+            assert_eq!(refused(change.clone()), field, "{change}");
+        }
+    }
+
+    /// The e-mail server's settings: a public host, a port, TLS, a sender address, a one-line
+    /// user and password of bounded length.
+    #[test]
+    fn the_e_mail_server_settings_are_checked_field_by_field() {
+        let long = "p".repeat(1025);
+        for (smtp, field) in [
+            (smtp(0, "noreply@example.org", "", ""), "smtp.port"),
+            (smtp(587, "nobody", "", ""), "smtp.from"),
+            (smtp(587, "a@b@example.org", "", ""), "smtp.from"),
+            (smtp(587, "<x>@example.org", "", ""), "smtp.from"),
+            (smtp(587, "noreply@.example.org", "", ""), "smtp.from"),
+            (
+                smtp(587, "noreply@example.org", "mail\ner", ""),
+                "smtp.user",
+            ),
+            (
+                smtp(587, "noreply@example.org", &"u".repeat(257), ""),
+                "smtp.user",
+            ),
+            (
+                smtp(587, "noreply@example.org", "mailer", &long),
+                "smtp.password",
+            ),
+            (
+                smtp(587, "noreply@example.org", "mailer", "pass\u{7}word"),
+                "smtp.password",
+            ),
+            (
+                json!({ "host": "smtp.example.org", "port": 25, "tls": "none", "from": "noreply@example.org" }),
+                "smtp.tls",
+            ),
+            (
+                json!({ "host": "10.0.0.1", "port": 587, "tls": "ssl", "from": "noreply@example.org" }),
+                "smtp.host",
+            ),
+            (
+                json!({ "host": "-bad.example.org", "port": 587, "tls": "ssl", "from": "noreply@example.org" }),
+                "smtp.host",
+            ),
+            (
+                json!({ "host": "localhost", "port": 587, "tls": "ssl", "from": "noreply@example.org" }),
+                "smtp.host",
+            ),
+        ] {
+            assert_eq!(
+                refused(json!({ "kind": "SmtpSet", "smtp": smtp })),
+                field,
+                "{smtp}"
+            );
+        }
+        let (kind, made, target, password) = payload(
+            serde_json::from_value(json!({ "kind": "SmtpSet", "smtp": {
+                "host": "SMTP.Example.org.", "port": 465, "tls": "ssl",
+                "from": " noreply@example.org ", "user": " mailer ", "password": ""
+            } }))
+            .expect("a ChangeRequest"),
+        )
+        .expect("taken");
+        assert_eq!(kind, OperatorKind::SmtpSet);
+        assert_eq!(target, "smtp");
+        assert_eq!(password, None, "an empty password keeps the stored one");
+        let settings = made.smtp.expect("settings");
+        assert_eq!(
+            (
+                settings.host.as_str(),
+                settings.from.as_str(),
+                settings.user.as_str()
+            ),
+            ("smtp.example.org", "noreply@example.org", "mailer")
+        );
+        assert!(!settings.new_password);
+    }
+
+    /// An automation login keeps a trimmed connector beside it, and an empty one is none.
+    #[test]
+    fn an_automation_login_keeps_its_connector() {
+        for (connector, kept) in [(json!(" bbsk-mcp "), Some("bbsk-mcp")), (json!("  "), None)] {
+            let (_, made, target, _) = payload(
+                serde_json::from_value(json!({ "kind": "AutomationLoginSet", "organization": "bbsk", "subject": "BBSK-MCP-Admin", "automation": true, "connector": connector }))
+                    .expect("a ChangeRequest"),
+            )
+            .expect("taken");
+            assert_eq!(target, "automation:bbsk:bbsk-mcp-admin");
+            assert_eq!(made.connector.as_deref(), kept);
+        }
+    }
+
+    /// Turning the single-person mode off applies at once; a host Change never does, and
+    /// without the realm nothing says the proposer is the one operator.
+    #[tokio::test]
+    async fn only_turning_a_mode_off_applies_at_once_without_the_realm() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let off = ChangePayload {
+            single_person: Some(false),
+            ..ChangePayload::default()
+        };
+        let on = ChangePayload {
+            single_person: Some(true),
+            ..ChangePayload::default()
+        };
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &off, "ops-a").await,
+            Some("turning off needs no second operator")
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::HostAdd, &on, "ops-a").await,
+            None
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "ops-a").await,
+            None
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::AutomationLoginSet, &on, "ops-a").await,
+            None
+        );
+    }
+
+    /// A Change id is a UUID, any other is not found; a realm without the e-mail door is told
+    /// apart from one that failed; the source is the caller's address.
+    #[test]
+    fn ids_realm_refusals_and_the_source_are_read_as_documented() {
+        assert_eq!(
+            parse_id("5F1C2B9E-0D3A-4C7E-9A41-2B6F8E0C1D23").expect("a UUID"),
+            "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23"
+        );
+        for bad in ["", "not-a-uuid", "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23/x"] {
+            assert!(matches!(parse_id(bad), Err(ApiError::NotFound(_))), "{bad}");
+        }
+        use crate::people::PeopleError;
+        for err in [
+            PeopleError::NotFound,
+            PeopleError::Refused(403, "forbidden".into()),
+        ] {
+            assert!(
+                matches!(no_smtp_door(err), ApiError::Unavailable(m) if m.contains("manage-smtp"))
+            );
+        }
+        assert!(!matches!(
+            no_smtp_door(PeopleError::Unreachable("down".into())),
+            ApiError::Unavailable(m) if m.contains("manage-smtp")
+        ));
+        let addr = std::net::IpAddr::from([127, 0, 0, 1]);
+        assert_eq!(
+            source(Some(Extension(jc_router::ClientAddr(addr)))).as_deref(),
+            Some("127.0.0.1")
+        );
+        assert_eq!(source(None), None);
+    }
+
+    /// A Portal without a database or without the installation's hosts takes no Change, and
+    /// says which is missing.
+    #[test]
+    fn a_portal_without_a_database_or_the_installation_hosts_takes_no_change() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(
+            matches!(database(&state), Err(ApiError::Unavailable(m)) if m.contains("has none"))
+        );
+        assert!(
+            matches!(rules(&state), Err(ApiError::Unavailable(m)) if m.contains("JC_PORTAL_INSTALLATION_DOMAIN"))
+        );
     }
 }

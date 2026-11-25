@@ -62,6 +62,56 @@ fn index(dir: &Path) -> Bundle {
         .expect("parses")
 }
 
+/// MF-45: an export writes only into an empty directory and takes a project repository, not
+/// a registry entry; an index listing nothing is refused by the index's own check.
+#[test]
+fn an_export_or_import_that_cannot_be_a_git_bundle_is_refused() {
+    let project = project_repository("bundle-refusals-project");
+    let full = temp_dir("bundle-refusals-full");
+    write(&full, "left-over.txt", "an earlier run");
+    let refused = export(
+        &project,
+        "ovzdusie",
+        &BTreeMap::new(),
+        None,
+        &full,
+        "tester",
+    )
+    .expect_err("a directory that is not empty");
+    assert!(refused.to_string().contains("not empty"), "{refused}");
+
+    let entry = project_repository("bundle-refusals-entry");
+    write(
+        &entry,
+        "project.yaml",
+        &(PROJECT.to_owned() + "  repository: { name: ovzdusie }\n  ref: main\n"),
+    );
+    let refused = export(
+        &entry,
+        "ovzdusie",
+        &BTreeMap::new(),
+        None,
+        &temp_dir("bundle-refusals-e"),
+        "tester",
+    )
+    .expect_err("a registry entry");
+    assert!(refused.to_string().contains("registry entry"), "{refused}");
+
+    let out = temp_dir("bundle-refusals-out");
+    export(&project, "ovzdusie", &BTreeMap::new(), None, &out, "tester").expect("exports");
+    let mut listed: serde_json::Value =
+        serde_norway::from_str(&std::fs::read_to_string(out.join(INDEX)).expect("the index"))
+            .expect("yaml");
+    listed["spec"]["repositories"] = serde_json::json!([]);
+    std::fs::write(
+        out.join(INDEX),
+        serde_norway::to_string(&listed).expect("yaml"),
+    )
+    .expect("write");
+    let refused = import(&out, &temp_dir("bundle-refusals-in")).expect_err("no repository");
+    assert!(refused.to_string().contains("MF-45"), "{refused}");
+}
+
 /// MF-45, MF-46: a project and its application travel as bundles with their whole history and
 /// tags, the entry without this deployment's values, and each head checked on the way in.
 #[test]
@@ -113,6 +163,78 @@ fn a_project_round_trips_with_its_history_and_equal_heads() {
         "the bundle is not left as a remote"
     );
     assert!(landed.join("projects/ovzdusie.yaml").is_file());
+}
+
+/// The commands: `export --format git` lists each bundle with its head, `import --format git`
+/// says each landed equal, an --app-dir that is no repository fails the export, and an
+/// --app-dir without `<name>=` is usage.
+#[test]
+fn the_commands_list_each_repository_and_its_head() {
+    let project = project_repository("bundle-cli-project");
+    let app = app_repository("bundle-cli-app");
+    let org = temp_dir("bundle-cli-org");
+    let out = temp_dir("bundle-cli-out");
+    let run = |args: &[&std::ffi::OsStr]| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(args)
+            .output()
+            .expect("jcctl runs")
+    };
+    let app_dir = format!("app-air={}", app.display());
+    let exported = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--repo-dir".as_ref(),
+        project.as_os_str(),
+        "--project".as_ref(),
+        "ovzdusie".as_ref(),
+        "--out-dir".as_ref(),
+        out.as_os_str(),
+        "--app-dir".as_ref(),
+        app_dir.as_ref(),
+    ]);
+    assert_eq!(exported.status.code(), Some(0), "{exported:?}");
+    let said = String::from_utf8_lossy(&exported.stdout);
+    assert!(said.contains(" ovzdusie at "), "{said}");
+    assert!(said.contains(" app-air at "), "{said}");
+
+    let landed = temp_dir("bundle-cli-in");
+    let imported = run(&[
+        "import".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        out.as_os_str(),
+        "--out-dir".as_ref(),
+        landed.as_os_str(),
+    ]);
+    assert_eq!(imported.status.code(), Some(0), "{imported:?}");
+    assert!(String::from_utf8_lossy(&imported.stdout).contains(", equal"));
+
+    let broken = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--repo-dir".as_ref(),
+        project.as_os_str(),
+        "--project".as_ref(),
+        "ovzdusie".as_ref(),
+        "--out-dir".as_ref(),
+        temp_dir("bundle-cli-out-2").as_os_str(),
+        "--org-dir".as_ref(),
+        org.as_os_str(),
+        "--app-dir".as_ref(),
+        "app-air=/nonexistent/app".as_ref(),
+    ]);
+    assert_eq!(broken.status.code(), Some(1), "{broken:?}");
+    let bare = run(&[
+        "export".as_ref(),
+        "--format".as_ref(),
+        "git".as_ref(),
+        "--app-dir".as_ref(),
+        "bare".as_ref(),
+    ]);
+    assert!(String::from_utf8_lossy(&bare.stderr).starts_with("usage:"));
 }
 
 /// MF-46: a bundle that is not the file the index names, and a head that is not the one it

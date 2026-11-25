@@ -197,10 +197,7 @@ impl HeldWrite<'_> {
         }
         let ids: Vec<String> = permitted.iter().filter_map(batch_entry_id).collect();
         divide(divided, ids, refused, permitted.is_empty())?;
-        *sent = serde_json::to_vec(&permitted).map_err(|error| {
-            tracing::error!(%error, "the entities a relationship check kept do not serialize");
-            refuse(ProblemDetails::internal())
-        })?;
+        *sent = Value::from(permitted).to_string().into_bytes();
         Ok(())
     }
 
@@ -617,10 +614,7 @@ impl HeldDelete<'_> {
         }
         let ids: Vec<String> = permitted.iter().filter_map(batch_entry_id).collect();
         divide(divided, ids, refused, permitted.is_empty())?;
-        *sent = serde_json::to_vec(&permitted).map_err(|error| {
-            tracing::error!(%error, "the ids a delete's rules kept do not serialize");
-            answer(Box::new(ProblemDetails::internal()))
-        })?;
+        *sent = Value::from(permitted).to_string().into_bytes();
         Ok(plans)
     }
 
@@ -1120,10 +1114,7 @@ pub(crate) fn filled_units(
     let filled = crate::units::enforce(&mut payload, shape, rules)
         .map_err(|refusal| Box::new(ProblemDetails::from(refusal)))?;
     if !filled.is_empty() {
-        *sent = serde_json::to_vec(&payload).map_err(|error| {
-            tracing::error!(%error, "a write with its units filled does not serialize");
-            Box::new(ProblemDetails::internal())
-        })?;
+        *sent = payload.to_string().into_bytes();
     }
     Ok(filled)
 }
@@ -1157,10 +1148,7 @@ pub(crate) async fn minimised(
     match ingest::apply(&mut payload, shape, schema, key.as_ref()) {
         Ok(false) => Ok(()),
         Ok(true) => {
-            *sent = serde_json::to_vec(&payload).map_err(|error| {
-                tracing::error!(%error, "a minimised write does not serialize");
-                Box::new(ProblemDetails::internal())
-            })?;
+            *sent = payload.to_string().into_bytes();
             Ok(())
         }
         Err(Refusal::NoKey { attribute }) => {
@@ -1207,10 +1195,7 @@ pub(crate) fn owned_guarded(sent: &mut Vec<u8>, path: &str) -> Result<bool, Box<
     if !crate::quality::strip_owned(&mut payload) {
         return Ok(false);
     }
-    *sent = serde_json::to_vec(&payload).map_err(|error| {
-        tracing::error!(%error, "a write without the quarantine mark does not serialize");
-        Box::new(ProblemDetails::internal())
-    })?;
+    *sent = payload.to_string().into_bytes();
     Ok(true)
 }
 
@@ -1292,10 +1277,7 @@ pub(crate) fn quality_judged(
         payload => judge(payload).map_err(refuse)?,
     }
     if changed || before.is_some_and(|before| before != payload) {
-        *sent = serde_json::to_vec(&payload).map_err(|error| {
-            tracing::error!(%error, "a judged write does not serialize");
-            refuse(Box::new(ProblemDetails::internal()))
-        })?;
+        *sent = payload.to_string().into_bytes();
     }
     Ok(())
 }

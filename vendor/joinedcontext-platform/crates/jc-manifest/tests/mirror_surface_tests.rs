@@ -7,7 +7,7 @@
 //! DM-48 is explicit that the last case is not an error — the reference stands without a
 //! model — so it comes back as a sentence a reviewer reads, not as a failure.
 
-use jc_manifest::foreign_models::{self, Surface};
+use jc_manifest::foreign_models::{self, MirrorError, Surface};
 use jc_manifest::loader::{RawManifest, Repository};
 use std::path::{Path, PathBuf};
 
@@ -108,6 +108,116 @@ fn local(base: &str) -> Surface {
 
 fn surface(reference: &RawManifest, repo: &Repository) -> Surface {
     foreign_models::surface_of(reference, HERE, repo).expect("the reference resolves")
+}
+
+/// A reference whose spec does not parse or fails its own validation names the problem
+/// instead of serving a surface, for both reference kinds; any other kind is no reference.
+#[test]
+fn a_broken_reference_serves_no_surface() {
+    let dir = repo_dir("broken");
+    let repo = load(&dir);
+    let mut endpoint = shared_reference();
+    endpoint.kind = "Endpoint".to_owned();
+    assert!(matches!(
+        foreign_models::surface_of(&endpoint, HERE, &repo),
+        Err(MirrorError::NotAReference)
+    ));
+    let spec_error = |kind: &str, spec: serde_json::Value| {
+        let mut broken = shared_reference();
+        broken.kind = kind.to_owned();
+        broken.spec = spec;
+        assert!(
+            matches!(
+                foreign_models::surface_of(&broken, HERE, &repo),
+                Err(MirrorError::Spec(_))
+            ),
+            "{kind}"
+        );
+    };
+    spec_error(
+        "SharedSpaceReference",
+        serde_json::json!({ "alias": "a", "extra": 1 }),
+    );
+    spec_error(
+        "SharedSpaceReference",
+        serde_json::json!({ "endpointSlug": SLUG, "alias": "No Label" }),
+    );
+    spec_error(
+        "ContextSourceRegistration",
+        serde_json::json!({ "contextSpaceRef": "hub", "extra": 1 }),
+    );
+    spec_error(
+        "ContextSourceRegistration",
+        serde_json::json!({ "contextSpaceRef": "hub", "federation": { "identity": "caller" },
+                            "information": [{ "entities": [{ "type": "AirQualityObserved" }] }] }),
+    );
+}
+
+/// A shared reference whose endpointRef the loader could not resolve carries no slug, so it
+/// serves no surface and says why (EP-77).
+#[test]
+fn a_shared_reference_without_a_slug_serves_no_surface() {
+    let dir = repo_dir("no-slug");
+    let reference = manifest(
+        r#"apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: partner
+  namespace: ovzdusie
+spec:
+  endpointRef: { name: air, project: partner }
+  alias: partner-air
+"#,
+    );
+    match surface(&reference, &load(&dir)) {
+        Surface::None(why) => assert!(why.contains("EP-77"), "{why}"),
+        other => panic!("expected no surface, got {other:?}"),
+    }
+}
+
+/// A registration's broker with a `..` segment is refused by the same base check a peer's URL
+/// meets, even though it is https and ends in /ngsi-ld/v1.
+#[test]
+fn a_broker_base_climbing_out_of_its_path_serves_no_surface() {
+    let dir = repo_dir("dotdot");
+    let reference = registration("endpoint: https://hub.example/a/../ngsi-ld/v1");
+    match foreign_models::surface_of(&reference, HERE, &load(&dir)) {
+        Ok(Surface::None(why)) => assert!(why.contains("hub.example"), "{why}"),
+        Err(MirrorError::Spec(_)) => {}
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}
+
+/// The plan's mirror flags: a registration naming an Endpoint the repository lacks is flagged;
+/// one whose spec does not parse, or that names neither broker nor Endpoint, is left to
+/// `jcctl validate`.
+#[test]
+fn plan_flags_name_an_unresolved_endpoint_and_skip_what_validate_refuses() {
+    let named = |name: &str, spec: serde_json::Value| {
+        let mut reference = registration("endpoint: https://hub.example/ngsi-ld/v1");
+        reference.metadata.name = name.to_owned();
+        reference.spec = spec;
+        reference
+    };
+    let base = serde_json::json!({ "contextSpaceRef": "hub", "federation": { "identity": "caller" },
+                                   "information": [{ "entities": [{ "type": "AirQualityObserved" }] }] });
+    let mut unresolved = base.clone();
+    unresolved["endpointRef"] = serde_json::json!("nowhere");
+    let repo = Repository::from_manifests(
+        vec![
+            named("unresolved", unresolved),
+            named(
+                "unparsed",
+                serde_json::json!({ "contextSpaceRef": "hub", "extra": 1 }),
+            ),
+            named("neither", base),
+        ],
+        Some("banskabystrica.sk"),
+    )
+    .expect("the repository builds");
+    let flags = foreign_models::plan_flags(&repo);
+    assert_eq!(flags.len(), 1, "{flags:?}");
+    assert!(flags[0].contains("nowhere"), "{flags:?}");
 }
 
 #[test]

@@ -489,6 +489,36 @@ mod visible_tests {
         assert!(!seen.covers_attr("speed"));
     }
 
+    /// EP-47: a compiled schema describing its class inline is projected per granted class, its
+    /// `required` list losing the slots the grant does not reach and its patterns dropped; a
+    /// model without an artifact is derived from the granted attributes only.
+    #[test]
+    fn an_inline_schema_is_projected_and_a_missing_one_derived_from_the_grant() {
+        let granted = endpoint(vec![granting(&["AirQualityObserved"], &["pm10"])]);
+        let seen = visible(&Subject::anonymous(), &granted, now());
+        let mut inline = model(&["AirQualityObserved", "Vehicle"]);
+        inline.json_schema = Some(std::sync::Arc::new(json!({
+            "type": "object",
+            "properties": { "pm10": { "type": "number" }, "secret": { "type": "string" } },
+            "required": ["pm10", "secret", 7],
+            "patternProperties": { "^s": {} },
+        })));
+        let mut redacted = Vec::new();
+        let schema = json_schema(&[&inline], &seen, &mut redacted);
+        let air = &schema["$defs"]["AirQualityObserved"];
+        assert_eq!(air["required"], json!(["pm10"]), "{schema}");
+        assert!(air["properties"].get("secret").is_none(), "{schema}");
+        assert!(air.get("patternProperties").is_none(), "{schema}");
+        assert!(schema["$defs"].get("Vehicle").is_none(), "{schema}");
+        assert_eq!(redacted, vec!["AirQualityObserved.secret"]);
+
+        let derived = json_schema(&[&model(&["AirQualityObserved"])], &seen, &mut redacted);
+        let air = &derived["$defs"]["AirQualityObserved"];
+        assert_eq!(air["properties"]["pm10"], json!({}), "{derived}");
+        assert_eq!(air["additionalProperties"], true, "{derived}");
+        assert_eq!(derived["title"], "air-quality 1.0.0");
+    }
+
     /// T-1158, GW8, EP-47: a prohibition that names no attribute takes the whole type back, and
     /// one that names attributes takes only those.
     #[test]

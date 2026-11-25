@@ -509,5 +509,42 @@ mod tests {
         let two = layout(r#"{"manifests":[{"digest":"sha256:aa"},{"digest":"sha256:bb"}]}"#);
         assert!(digest_of(&two, true).is_err());
         assert!(digest_of(b"not a tar", true).is_err());
+        assert_eq!(
+            digest_of(&layout(r#"{"manifests":[{"mediaType":"x"}]}"#), true),
+            Err("index.json names no digest".to_owned())
+        );
+        assert!(digest_of(&layout("{"), true).is_err_and(|e| e.contains("not JSON")));
+    }
+
+    /// An image layout whose index.json follows other files is read; one with none is refused.
+    #[test]
+    fn the_index_of_an_image_layout_is_found_among_its_blobs_or_its_absence_named() {
+        let tar_of = |files: &[(&str, &[u8])]| {
+            let mut tar = tar::Builder::new(Vec::new());
+            for (path, bytes) in files {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(bytes.len() as u64);
+                header.set_mode(0o644);
+                header.set_cksum();
+                tar.append_data(&mut header, path, *bytes).expect("append");
+            }
+            tar.into_inner().expect("tar")
+        };
+        let index = br#"{"manifests":[{"digest":"sha256:cc"}]}"#;
+        let layout = tar_of(&[
+            ("oci-layout", b"{}"),
+            ("blobs/sha256/cc", b"x"),
+            ("index.json", index),
+        ]);
+        assert_eq!(digest_of(&layout, true).expect("a digest"), "sha256:cc");
+        assert_eq!(
+            digest_of(&tar_of(&[("oci-layout", b"{}")]), true),
+            Err("the image layout has no index.json".to_owned())
+        );
+        assert_eq!(
+            digest_of(&[], true),
+            Err("the image layout has no index.json".to_owned()),
+            "an empty upload holds no layout"
+        );
     }
 }
