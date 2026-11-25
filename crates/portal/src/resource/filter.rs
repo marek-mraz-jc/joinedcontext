@@ -655,6 +655,28 @@ mod tests {
         assert!(!known("spec.odd.anything = x"));
         assert!(!known("spec.loop.anything = x"), "a self-reference ends");
         assert!(known("spec.either.b = x") && !known("spec.either.c = x"));
+
+        // `$defs` serves where `definitions` is absent; a reference to no definition, and a
+        // combinator none of whose branches holds the member, know nothing; a node without a
+        // type takes any member.
+        let defs = json!({
+            "properties": {
+                "spec": {
+                    "properties": {
+                        "kept": {"$ref": "#/$defs/kept"},
+                        "dangling": {"$ref": "#/$defs/none"},
+                        "all": {"allOf": [{"properties": {"a": {}}}]},
+                        "free": {}
+                    }
+                }
+            },
+            "$defs": {"kept": {"properties": {"k": {}}}}
+        });
+        let known = |text: &str| Filter::parse(text, Some(&defs)).is_ok();
+        assert!(known("spec.kept.k = x") && !known("spec.kept.j = x"));
+        assert!(!known("spec.dangling.k = x"));
+        assert!(known("spec.all.a = x") && !known("spec.all.b = x"));
+        assert!(known("spec.free.anything = x"));
     }
 
     #[test]

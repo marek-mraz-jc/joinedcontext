@@ -25,6 +25,8 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 
 const REALM_PATH: &str = "/realms/banskabystrica";
+mod common;
+
 const PORTAL_AUDIENCE: &str = "joinedcontext-portal";
 
 /// One open change and one model source on the forge, so the two resource shapes AG-60 names
@@ -471,6 +473,67 @@ async fn mcp_initialize_and_discover() {
     assert_eq!(disc_res["id"], 2);
     assert_eq!(disc_res["result"]["protocolVersion"], "2026-07-28");
     assert!(disc_res["result"]["tools"]["count"].as_u64().unwrap() > 0);
+}
+
+/// On a Portal with its database the project door's handshake names the server after the
+/// project's Organization and key (`{organization}.{project}.manage`), so a client holding
+/// several project doors tells them apart; a project the registry does not hold keeps the plain
+/// name.
+#[tokio::test]
+async fn the_project_door_handshake_names_the_server_after_the_projects_key() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let (mut state, issuer, signer, kid) = setup_state_with(Vec::new()).await;
+    common::keyed_project(&state, &pool, "ovzdusie", "hel").await;
+    joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, "ovzdusie")
+        .await
+        .expect("the registry answers")
+        .expect("the project gets its key");
+    state.db = Some(pool.clone());
+    let (organization, key) = joinedcontext_portal::project_ids::owned(&pool, "ovzdusie")
+        .await
+        .expect("the registry answers")
+        .expect("the project is keyed");
+    let app = server::app(state);
+    let token = sign_token(
+        &signer,
+        &kid,
+        &issuer,
+        PORTAL_AUDIENCE,
+        "steward.user",
+        &[],
+        &["platform-admins"],
+    );
+    let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"protocolVersion": "2026-07-28", "capabilities": {}}});
+    let resp = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/ovzdusie/mcp")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&init).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    let answer: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(
+        answer["result"]["serverInfo"]["name"],
+        format!("{organization}.{}.manage", key.project.path_segment()),
+        "{answer}"
+    );
 }
 
 /// The project door's handshake answers a caller who may not read the project as it answers an

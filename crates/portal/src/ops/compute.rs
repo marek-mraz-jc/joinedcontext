@@ -793,6 +793,32 @@ mod tests {
 
     const SLUG: &str = "citycounterszzzzzzzzzzzzzz";
 
+    /// `jc_script_test` checks its input's shape, and a request the Script check refuses (no
+    /// code, no tests) is answered before any runner is asked.
+    #[tokio::test]
+    async fn the_script_test_operation_refuses_a_request_without_code_or_tests() {
+        let op = operations()
+            .into_iter()
+            .find(|op| op.name == "jc_script_test")
+            .expect("the operation is registered");
+        assert!((op.validate)(&json!({ "tests": [] })).is_err());
+        assert!((op.validate)(&json!({ "code": "root = this", "tests": [] })).is_ok());
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        for input in [
+            json!({ "code": "root = this", "tests": [] }),
+            json!({ "code": "  ", "tests": [] }),
+        ] {
+            let refused = (op.run)(&caller(), &state, "doprava", input.clone())
+                .await
+                .expect_err("refused");
+            let api = refused.into_api_error().to_string();
+            assert!(
+                api.contains("code") || api.contains("tests"),
+                "{input}: {api}"
+            );
+        }
+    }
+
     /// A compute through a Portal whose mirror holds a public Endpoint on `gateway`.
     async fn compute(gateway: &wiremock::MockServer, args: Value) -> Result<Value, OpError> {
         let mut config = crate::config::Config::for_tests();

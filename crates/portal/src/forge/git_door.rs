@@ -525,6 +525,42 @@ mod tests {
             assert!(!readable(&bare, &anyone, "configuration"));
         }
 
+        /// A pack request without a bearer is the same 404, an Authorization header that is no
+        /// text reads as none, and a person past the minute's rate is refused before the forge
+        /// is asked.
+        #[tokio::test]
+        async fn a_bare_pack_an_opaque_header_and_a_busy_person_are_refused() {
+            let forge = MockServer::start().await;
+            let (state, signer) = portal(&forge.uri());
+            let pack =
+                axum::http::Request::post("/git/joinedcontext/configuration.git/git-upload-pack")
+                    .body(Body::empty())
+                    .expect("request");
+            assert_eq!(send(&state, pack).await.0, StatusCode::NOT_FOUND);
+            let at = "/git/joinedcontext/configuration.git/info/refs?service=git-upload-pack";
+            let opaque = axum::http::Request::get(at)
+                .header(
+                    header::AUTHORIZATION,
+                    axum::http::HeaderValue::from_bytes(b"Bearer \xff").expect("opaque"),
+                )
+                .body(Body::empty())
+                .expect("request");
+            assert_eq!(send(&state, opaque).await.0, StatusCode::NOT_FOUND);
+            let busy = "f:1:admin-busy";
+            let now = Instant::now();
+            while within_rate(busy, now) {}
+            let admin = format!("Bearer {}", token(&signer, busy, &["portal-approver"]));
+            assert_eq!(
+                send(&state, refs(at, Some(&admin))).await.0,
+                StatusCode::NOT_FOUND
+            );
+            assert!(forge
+                .received_requests()
+                .await
+                .expect("recorded")
+                .is_empty());
+        }
+
         #[tokio::test]
         async fn a_forge_that_fails_or_refuses_is_502_or_404() {
             let forge = MockServer::start().await;

@@ -781,6 +781,13 @@ mod tests {
                 .contains("config.labels")
         );
         assert!(bad(json!({ "config": { "labels": { "a": "line\nbreak" } } })).contains("control"));
+        let rules: Vec<serde_json::Value> = (0..=MAX_COLOUR_RULES)
+            .map(|_| json!({ "when": "a==1", "colour": "danger" }))
+            .collect();
+        assert_eq!(
+            bad(json!({ "config": { "colour": rules } })),
+            format!("config.colour holds at most {MAX_COLOUR_RULES} rules")
+        );
         let many: Vec<String> = (0..=MAX_COLUMNS).map(|i| format!("a{i}")).collect();
         assert!(bad(json!({ "config": { "order": many } })).contains("at most"));
         assert!(
@@ -861,6 +868,30 @@ mod tests {
         ] {
             assert!(!is_id(bad), "{bad}");
         }
+    }
+
+    /// On PostgreSQL a project without a tenancy key keeps no view: its list is empty, a view
+    /// of it is not found, and a save is refused naming the step that places the project.
+    #[tokio::test]
+    async fn a_project_without_a_key_keeps_no_view_on_the_database() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let store = DataViewStore::new(Some(pool), Default::default());
+        assert!(store.list("no-key-here", "bikes").await.unwrap().is_empty());
+        assert_eq!(
+            store.get("no-key-here", "bikes", "v1").await,
+            Err(DataViewError::NotFound)
+        );
+        assert_eq!(
+            store.create("no-key-here", "bikes", JANA, view()).await,
+            Err(DataViewError::Unplaced("no-key-here".into()))
+        );
     }
 
     #[tokio::test]

@@ -473,6 +473,163 @@ async fn update_from_main_refuses_an_unanswered_conflict_and_merges_an_answered_
     );
 }
 
+/// A file at `path` of `git_ref` holding `content`.
+async fn file_at(server: &MockServer, file_path: &str, git_ref: &str, content: &str) {
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{file_path}'")))
+        .and(query_param("@r", format!("'{git_ref}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "x",
+            "Content": encode(content)
+        })))
+        .mount(server)
+        .await;
+}
+
+/// CC-80 beyond one manifest: a file only main changed is taken, one main removed is removed,
+/// a file that is no manifest and that both sides changed (or one removed) is a whole-file
+/// choice, and a credential's field in a conflict is never shown, on either side.
+#[tokio::test]
+async fn update_from_main_takes_mains_files_asks_for_whole_files_and_masks_a_credential() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    const README: &str = "projects/ovzdusie/README.md";
+    const NOTES: &str = "projects/ovzdusie/notes.txt";
+    const GONE: &str = "projects/ovzdusie/gone.txt";
+    const OLD: &str = "projects/ovzdusie/old.txt";
+    tree(
+        &server,
+        "workspace/air-v2",
+        &[
+            (AIR, "a-ours"),
+            (README, "r-ours"),
+            (NOTES, "n1"),
+            (GONE, "g1"),
+        ],
+    )
+    .await;
+    tree(
+        &server,
+        "base1",
+        &[
+            (AIR, "a-base"),
+            (README, "r-base"),
+            (NOTES, "n1"),
+            (GONE, "g1"),
+            (OLD, "o1"),
+        ],
+    )
+    .await;
+    tree(
+        &server,
+        "main",
+        &[
+            (AIR, "a-main"),
+            (README, "r-main"),
+            (NOTES, "n2"),
+            (OLD, "o2"),
+        ],
+    )
+    .await;
+    let with_password = |password: &str| format!("{}  password: {password}\n", space("en", 10));
+    file(&server, "workspace/air-v2", &with_password("ours-value")).await;
+    file(&server, "base1", &with_password("base-value")).await;
+    file(&server, "main", &with_password("main-value")).await;
+    file_at(&server, README, "main", "# main's words\n").await;
+    file_at(&server, NOTES, "main", "main's notes\n").await;
+    file_at(&server, OLD, "main", "main kept this\n").await;
+
+    let uri = format!("{WS}/air-v2/update");
+    let refused = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text);
+    let conflicts = body(&refused.text)["conflicts"].clone();
+    let at = |file_path: &str| {
+        conflicts
+            .as_array()
+            .and_then(|all| all.iter().find(|c| c["path"] == file_path))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(at(README)["fields"][0]["ours"], "changed", "{conflicts}");
+    assert_eq!(at(README)["fields"][0]["theirs"], "changed", "{conflicts}");
+    assert_eq!(at(OLD)["fields"][0]["ours"], "removed", "{conflicts}");
+    assert_eq!(at(OLD)["fields"][0]["theirs"], "changed", "{conflicts}");
+    let password = at(AIR)["fields"]
+        .as_array()
+        .and_then(|fields| fields.iter().find(|f| f["path"] == "spec.password"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    for side in ["ours", "theirs", "base"] {
+        assert_eq!(password[side], "[REDACTED]", "{side}: {conflicts}");
+    }
+    for value in ["ours-value", "base-value", "main-value"] {
+        assert!(
+            !refused.text.contains(value),
+            "{value} leaked: {}",
+            refused.text
+        );
+    }
+
+    let answers = json!({ "resolutions": [
+        { "path": README, "field": "", "keep": "theirs" },
+        { "path": OLD, "field": "", "keep": "ours" },
+        { "path": AIR, "field": "spec.password", "keep": "ours" },
+        { "path": AIR, "field": "spec.ttlDays", "keep": "ours" },
+    ] });
+    // Keeping a literal credential is the merged manifest's check to refuse, at its file.
+    let kept_secret = send(&state, steward(), "POST", &uri, Some(answers.clone())).await;
+    assert_eq!(
+        kept_secret.status,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        kept_secret.text
+    );
+    assert!(
+        kept_secret.text.contains(&format!("{AIR}: literal secret")),
+        "{}",
+        kept_secret.text
+    );
+    assert!(
+        calls(&server, "POST", "/Shako.CommitFiles")
+            .await
+            .is_empty(),
+        "nothing written"
+    );
+
+    // The workspace drops the credential; main changed the ttl the workspace changed too.
+    for (git_ref, ttl) in [("workspace/air-v2", 12), ("base1", 10), ("main", 13)] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{AIR}'")))
+            .and(query_param("@r", format!("'{git_ref}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "x",
+                "Content": encode(&space("en", ttl))
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let resolved = send(&state, steward(), "POST", &uri, Some(answers)).await;
+    assert_eq!(resolved.status, StatusCode::OK, "{}", resolved.text);
+    let answer = body(&resolved.text);
+    assert_eq!(answer["taken"], json!([GONE, NOTES]), "{answer}");
+    assert!(
+        answer["merged"]
+            .as_array()
+            .is_some_and(|merged| merged.contains(&json!(README))),
+        "{answer}"
+    );
+    let commit = calls(&server, "POST", "/Shako.CommitFiles").await.remove(0);
+    let text = commit.to_string();
+    assert!(
+        text.contains(NOTES) && text.contains(README) && text.contains(GONE),
+        "{text}"
+    );
+    assert!(!text.contains(OLD), "ours kept: {text}");
+}
+
 #[tokio::test]
 async fn only_the_owner_updates_brings_back_or_discards() {
     let (server, state) = world().await;

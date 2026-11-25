@@ -637,3 +637,95 @@ async fn an_origin_that_did_not_answer_says_so_and_leaves_the_repository_alone()
         "the project page says why, rather than leaving an operator to read the log"
     );
 }
+
+/// A source asked for by hand that the repository does not hold is refused naming it; another
+/// project's source of that name is not it.
+#[tokio::test]
+async fn a_run_asked_for_a_source_the_repository_does_not_hold_names_it() {
+    let (server, recorded) = repository(json!({"interval": "30m"})).await;
+    let origin = Origin::at(MOVED);
+    let states = Arc::new(States::new(None));
+    let driver = driver(&server, &origin, &states);
+
+    for (project, name) in [("bb", "elsewhere"), ("other", "regional")] {
+        let refused = driver
+            .run_now(project, name, NOW)
+            .await
+            .expect_err("no such source");
+        assert_eq!(
+            refused.to_string(),
+            joinedcontext_portal::sync::driver::RunError::NoSuchSource(
+                name.to_owned(),
+                project.to_owned()
+            )
+            .to_string()
+        );
+    }
+    assert!(origin.calls().is_empty(), "{:?}", origin.calls());
+    assert!(recorded.branches().is_empty());
+}
+
+/// MF-24: a document of the origin the import gate refuses opens nothing; the run flags it,
+/// the source keeps the reason, and its revision is not observed, so the next run tries again.
+#[tokio::test]
+async fn a_document_the_gate_refuses_opens_nothing_and_is_tried_again() {
+    let (server, recorded) = repository(json!({"interval": "30m"})).await;
+    let origin = Arc::new(Origin {
+        revision: Mutex::new(MOVED.to_owned()),
+        documents: vec![("broken.yaml", "kind: [unclosed".to_owned())],
+        calls: Mutex::new(Vec::new()),
+    });
+    let states = Arc::new(States::new(None));
+
+    let run = driver(&server, &origin, &states)
+        .tick(NOW)
+        .await
+        .expect("the pass runs");
+
+    assert!(run.proposed.is_empty(), "{:?}", run.proposed);
+    assert!(
+        run.flags
+            .iter()
+            .any(|flag| flag.starts_with("bb/regional: ") && flag.contains("does not parse")),
+        "{:?}",
+        run.flags
+    );
+    assert!(recorded.branches().is_empty(), "nothing is written");
+    let status = states.get("bb", "regional").await;
+    assert!(
+        status
+            .last_error
+            .as_deref()
+            .is_some_and(|why| why.contains("does not parse")),
+        "{:?}",
+        status.last_error
+    );
+    assert_eq!(status.state.observed_revision, None);
+}
+
+/// A merge request the forge refuses to open leaves no proposal recorded as open: the source
+/// says why and runs again on its next turn.
+#[tokio::test]
+async fn a_merge_request_the_forge_refuses_is_never_recorded_as_open() {
+    let (server, _recorded) = repository(json!({"interval": "30m"})).await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let origin = Origin::at(MOVED);
+    let states = Arc::new(States::new(None));
+
+    let refused = driver(&server, &origin, &states).tick(NOW).await;
+
+    if let Ok(run) = &refused {
+        assert!(run.proposed.is_empty() && !run.flags.is_empty(), "{run:?}");
+    }
+    let status = states.get("bb", "regional").await;
+    assert_eq!(status.state.open_proposal, None);
+    assert_eq!(status.merge_request, None);
+    assert!(status.last_error.is_some(), "{status:?}");
+}

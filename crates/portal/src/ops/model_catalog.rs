@@ -504,18 +504,16 @@ mod tests {
     /// names the internal address (the reason is logged, not told).
     #[tokio::test]
     async fn a_missing_or_failing_model_tools_is_a_503_that_hides_its_address() {
-        match run(
+        let answer = run(
             &crate::ops::testkit::state(),
             SEARCH,
             json!({ "q": "spot" }),
         )
-        .await
-        {
-            Err(OpError::Api(ApiError::Unavailable(why))) => {
-                assert_eq!(why, "no model tools service is configured")
-            }
-            other => panic!("a 503, got {other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unavailable(why))) if *why == "no model tools service is configured"),
+            "{answer:?}"
+        );
         for answer in [
             ResponseTemplate::new(500),
             ResponseTemplate::new(200).set_body_string("<html>"),
@@ -526,13 +524,11 @@ mod tests {
                 .respond_with(answer)
                 .mount(&server)
                 .await;
-            match run(&on(&server), SEARCH, json!({ "q": "spot" })).await {
-                Err(OpError::Api(ApiError::Unavailable(why))) => {
-                    assert_eq!(why, "the model tools service did not answer");
-                    assert!(!why.contains(&server.uri()));
-                }
-                other => panic!("a 503, got {other:?}"),
-            }
+            let answer = run(&on(&server), SEARCH, json!({ "q": "spot" })).await;
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::Unavailable(why))) if *why == "the model tools service did not answer" && !why.contains(&server.uri())),
+                "{answer:?}"
+            );
         }
     }
 
@@ -559,24 +555,18 @@ mod tests {
             .mount(&server)
             .await;
         let state = on(&server);
-        match run(
+        let answer = run(
             &state,
             IMPORT,
             json!({ "model": "dataModel.Parking/Spot9" }),
         )
-        .await
-        {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/model");
-                assert!(
-                    message.contains(
-                        "dataModel.Parking/Spot9 is not in the Smart Data Models catalogue"
-                    ),
-                    "{message}"
-                );
-            }
-            other => panic!("a 422, got {other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, message }) if *path == "/model" && message.contains(
+                "dataModel.Parking/Spot9 is not in the Smart Data Models catalogue"
+            )),
+            "{answer:?}"
+        );
         let imported = run(
             &state,
             IMPORT,
@@ -625,17 +615,17 @@ mod tests {
         assert_eq!(imported["classes"], json!([]));
         assert_eq!(imported["source"], Value::Null);
         let op = find(IMPORT).expect("listed");
-        match (op.run)(
+        let answer = (op.run)(
             &admin(&state),
             &state,
             "helsinki",
             json!({ "model": "https://evil.example/x" }),
         )
-        .await
-        {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/model"),
-            other => panic!("a 422, got {other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/model"),
+            "{answer:?}"
+        );
     }
 
     /// Generate posts the source as written and answers Model Tools' artifacts; a blank source
@@ -658,14 +648,16 @@ mod tests {
             .await
             .expect("artifacts");
         assert_eq!(built["shacl"], "@prefix sh: <x> .");
-        match run(&state, GENERATE, json!({ "source": " \n " })).await {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/source"),
-            other => panic!("a 422, got {other:?}"),
-        }
+        let answer = run(&state, GENERATE, json!({ "source": " \n " })).await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/source"),
+            "{answer:?}"
+        );
         let op = find(GENERATE).expect("listed");
-        match (op.run)(&admin(&state), &state, "helsinki", json!({ "source": "" })).await {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/source"),
-            other => panic!("a 422, got {other:?}"),
-        }
+        let answer = (op.run)(&admin(&state), &state, "helsinki", json!({ "source": "" })).await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/source"),
+            "{answer:?}"
+        );
     }
 }

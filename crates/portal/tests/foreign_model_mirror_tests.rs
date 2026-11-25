@@ -43,7 +43,11 @@ struct FakePeer {
 
 impl FakePeer {
     fn new() -> Self {
-        let base = format!("{PUBLIC_URL}/api/endpoint/{SLUG}");
+        Self::at(&format!("{PUBLIC_URL}/api/endpoint/{SLUG}"))
+    }
+
+    /// The same documents under the schema surface at `base`.
+    fn at(base: &str) -> Self {
         let mut documents = HashMap::new();
         documents.insert(
             format!("{base}/schema/index.json"),
@@ -444,6 +448,68 @@ async fn the_schedule_decides_whether_a_peer_is_fetched_at_all() {
     );
 }
 
+/// A registration naming a broker elsewhere is read from that broker's schema surface over
+/// https (DM-48); one in the clear, or one whose spec does not parse, is flagged and never read.
+#[tokio::test]
+async fn a_registered_broker_elsewhere_is_read_over_https_and_never_in_the_clear() {
+    let registration = |name: &str, where_clause: &str| {
+        (
+            "projects/bb/registrations/hub.yaml",
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\n\
+                 kind: ContextSourceRegistration\n\
+                 metadata:\n  name: {name}\n  namespace: bb\n\
+                 spec:\n  contextSpaceRef: partner\n  {where_clause}\n\
+                 \x20 federation: {{ identity: caller }}\n\
+                 \x20 information:\n    - entities: [{{ type: AirQualityObserved }}]\n"
+            ),
+        )
+    };
+    let files = [registration(
+        "hub",
+        "endpoint: https://peer.example/ngsi-ld/v1",
+    )];
+    let (server, recorded) = forge(&files).await;
+    let peer = Arc::new(FakePeer::at("https://peer.example"));
+    let run = pass(
+        &client(&server),
+        &files,
+        &peer,
+        &LastFetch::default(),
+        1_757_000_000,
+    )
+    .await;
+    assert_eq!(run.proposed.len(), 1, "flags: {:?}", run.flags);
+    assert!(
+        peer.fetches.load(Ordering::Relaxed) > 0,
+        "the peer was read"
+    );
+    assert!(!recorded.writes.lock().expect("the write log").is_empty());
+
+    for files in [
+        [registration(
+            "plain",
+            "endpoint: http://peer.example/ngsi-ld/v1",
+        )],
+        [registration("broken", "endpoint: [not, a, url]")],
+    ] {
+        let (server, recorded) = forge(&files).await;
+        let peer = Arc::new(FakePeer::at("https://peer.example"));
+        let run = pass(
+            &client(&server),
+            &files,
+            &peer,
+            &LastFetch::default(),
+            1_757_000_000,
+        )
+        .await;
+        assert!(run.proposed.is_empty(), "{run:?}");
+        assert_eq!(run.flags.len(), 1, "{run:?}");
+        assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
+        assert!(recorded.writes.lock().expect("the write log").is_empty());
+    }
+}
+
 #[tokio::test]
 async fn a_peer_that_publishes_no_surface_is_flagged_and_nothing_else() {
     let files = [reference()];
@@ -582,4 +648,35 @@ async fn a_shared_endpoint_is_read_in_process_and_proposed_in_the_project_reposi
         "the project repository's own path: {paths:?}"
     );
     assert_eq!(recorded.pulls.lock().expect("the pull log").len(), 1);
+}
+
+/// DM-49: before the first sync there is no tree to mirror; after it, the timer's pass reads the
+/// accepted tree, and a reference no Endpoint of the mirror shares is flagged and never read.
+#[tokio::test]
+async fn the_timer_mirrors_the_tree_the_last_sync_accepted() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::store::Mirror;
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let syncer = Arc::new(Syncer::new(Arc::clone(&shako), Arc::clone(&mirror)));
+    assert!(Tree::of(&syncer, &mirror).is_none(), "no sync, no tree");
+    syncer.sync_once().await.expect("the repository loads");
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert!(tree.admitted.is_empty(), "{:?}", tree.admitted);
+
+    let peer = Arc::new(FakePeer::new());
+    let task = joinedcontext_portal::sync::mirror::spawn_periodic(
+        shako,
+        syncer,
+        mirror,
+        PUBLIC_URL.to_owned(),
+        peers(&peer),
+        peers(&peer),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    task.abort();
+    assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
+    assert!(recorded.writes.lock().expect("the write log").is_empty());
 }

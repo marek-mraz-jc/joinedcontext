@@ -348,11 +348,11 @@ fn words_capitalized(raw: &str) -> String {
     parts
         .iter()
         .map(|p| {
+            // `p` is never empty: the filter above drops empty parts.
             let mut c = p.chars();
-            match c.next() {
-                None => String::new(),
-                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-            }
+            c.next()
+                .map(|f| f.to_uppercase().collect::<String>() + c.as_str())
+                .unwrap_or_default()
         })
         .collect::<Vec<_>>()
         .join(" ")
@@ -379,18 +379,17 @@ pub async fn run(
     // A name is local to its project and its ids render `{project}-{name}` (PF-84); only a
     // segment another space pins is taken, and that is said here while it is still a draft.
     let proposal = crate::spaces::propose_name(state, &caller.identity, project, &space_name);
-    let space_name = if proposal.available {
-        proposal.name
-    } else {
-        return Err(OpError::InvalidInput {
-            path: "/space".into(),
-            message: format!(
-                "the ids of '{space_name}' would carry {}; choose another name",
-                proposal
-                    .reason
-                    .unwrap_or_else(|| "a taken segment".to_owned()),
-            ),
-        });
+    // `available` is `reason.is_none()`, so the reason is the one test.
+    let space_name = match proposal.reason {
+        None => proposal.name,
+        Some(reason) => {
+            return Err(OpError::InvalidInput {
+                path: "/space".into(),
+                message: format!(
+                    "the ids of '{space_name}' would carry {reason}; choose another name"
+                ),
+            });
+        }
     };
 
     let mut found_kinds = Vec::new();
@@ -884,11 +883,6 @@ pub async fn run(
         // agent just made holds nothing and shows nothing (T-0908). Two grants, no more: the
         // service account that loads it writes, and the endpoint's own audience reads.
         if inferred_endpoint || app_endpoint {
-            let audience = m
-                .pointer("/spec/audience")
-                .and_then(Value::as_str)
-                .unwrap_or("organization")
-                .to_owned();
             let name = m
                 .pointer("/metadata/name")
                 .and_then(Value::as_str)
@@ -904,7 +898,6 @@ pub async fn run(
                     &space_name,
                     &name,
                     &class_name,
-                    &audience,
                     &caller.identity.subject,
                 ),
             };
@@ -1653,29 +1646,25 @@ fn space_name_of(input: &SpaceCompleteInput) -> String {
 /// The two grants a space the agent just made needs to be loaded and read (T-0908, PF-31):
 /// the write for the account the runner authenticates as, taken from a write Policy the project
 /// already has so a project that renamed it keeps working, and the reads for the audience the
-/// endpoint declares — the same mapping `propose_endpoint` uses (EP-72).
+/// endpoint declares — the same mapping `propose_endpoint` uses (EP-72). The Endpoint this
+/// drafts beside them is always an `organization` one, so the reads are that audience's.
 fn policies_for(
     state: &AppState,
     project: &str,
     space: &str,
     endpoint: &str,
     class: &str,
-    audience: &str,
     owner: &str,
 ) -> Vec<Value> {
     let (writer, account) = writer_of(state, project, space, owner);
-    // Whom the audience admits, as `propose_endpoint` grants it (T-6464): the organization's
-    // domain names no group, so a grant to it matched nobody and the assistant read no row.
-    let project_group = json!({ "kind": "group", "id": project });
-    let readers = match audience {
-        "public" => vec![("read", json!({ "kind": "role", "id": "public" }))],
-        "organization" => vec![
-            ("read", json!({ "kind": "organization" })),
-            // A person of the project's root group carries no `jc_org` (T-6408).
-            ("project-read", project_group),
-        ],
-        _ => vec![("read", project_group)],
-    };
+    // Whom the organization audience admits, as `propose_endpoint` grants it (T-6464): the
+    // organization's domain names no group, so a grant to it matched nobody and the assistant
+    // read no row.
+    let readers = [
+        ("read", json!({ "kind": "organization" })),
+        // A person of the project's root group carries no `jc_org` (T-6408).
+        ("project-read", json!({ "kind": "group", "id": project })),
+    ];
     let policy = |name: String, title: String, assignee: Value, operations: Value, typed: bool| {
         let mut spec = json!({
             "contextSpaceRef": { "kind": "ContextSpace", "name": space },
@@ -2149,6 +2138,90 @@ mod tests {
         let (text, findings, _) = super::infer_linkml(&state, "p", "Bike", None, None, None).await;
         assert!(text.is_empty());
         assert_eq!(findings[0].path, "linkml");
+    }
+
+    /// The input's own limits, each refused at its member: a type name that is no PascalCase
+    /// word, a description over the cap and files over the byte cap; one of files or url.
+    #[test]
+    fn an_input_over_a_limit_is_refused_at_its_member() {
+        let refused = |input: serde_json::Value| {
+            super::validate_input(&input)
+                .expect_err("refused")
+                .to_string()
+        };
+        let file = |content: String| json!([{ "name": "a.json", "content": content }]);
+        assert_eq!(
+            refused(json!({ "files": file("{}".into()), "typeName": "bike counter" })),
+            "invalid input at /typeName: 'bike counter' is not a PascalCase type name (a capital \
+             letter, then up to 62 letters or digits)"
+        );
+        assert_eq!(
+            refused(json!({
+                "files": file("{}".into()),
+                "description": "d".repeat(super::MAX_DESCRIPTION_CHARS + 1)
+            })),
+            format!(
+                "invalid input at /description: description is longer than {} characters",
+                super::MAX_DESCRIPTION_CHARS
+            )
+        );
+        assert_eq!(
+            refused(json!({ "files": file("x".repeat(super::MAX_TOTAL_FILES_BYTES + 1)) })),
+            format!(
+                "invalid input at /files: total file size exceeds limit of {} bytes",
+                super::MAX_TOTAL_FILES_BYTES
+            )
+        );
+        assert!(refused(json!({})).contains("exactly one of files or url"));
+        assert!(super::validate_input(&json!({ "url": "https://x.example/a.json" })).is_ok());
+    }
+
+    /// A name that folds to nothing is `space`; letters Unicode does not decompose are spelled
+    /// out; a description goes only onto a class that parses as a mapping without one.
+    #[test]
+    fn names_fold_and_a_description_lands_only_where_it_can() {
+        assert_eq!(super::sanitize_dns1123("---"), "space");
+        assert_eq!(super::fold_to_ascii("đĐøØæÆœŒ"), "ddooaeaeoeoe");
+        let same = |source: &str| assert_eq!(describe_class(source, "Bike", "d"), source);
+        same("classes: [unclosed");
+        same("classes: {Car: {}}");
+        same("classes: {Bike: plain}");
+        same("classes: {Bike: {description: kept}}");
+        let filled = describe_class("classes: {Bike: null}", "Bike", "counted bikes");
+        assert!(filled.contains("description: counted bikes"), "{filled}");
+    }
+
+    /// A space name that sanitises to a label ending in a hyphen (cut at 63 characters) is
+    /// refused at `/space` before anything is read.
+    #[tokio::test]
+    async fn a_space_name_cut_into_no_label_is_refused() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                client: None,
+                subject: "sub-jana".into(),
+                username: "jana".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            crate::ops::Via::Mcp,
+        );
+        let space = format!("{} b", "a".repeat(62));
+        let input = json!({ "space": space, "url": "https://x.example/a.json" });
+        let why = super::run(&caller, &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert_eq!(
+            why,
+            format!(
+                "invalid input at /space: '{}-' is not a valid DNS-1123 label",
+                "a".repeat(62)
+            )
+        );
     }
 
     /// EP-75 (T-6285): an Endpoint uploaded with a slug the caller typed is refused before its
