@@ -110,3 +110,68 @@ async fn a_private_host_with_a_port_resolves_on_that_port_alone() {
     let own = url::Url::parse("http://127.0.0.1:1883/").unwrap();
     assert!(resolve_checked(&own, &loopback).await.is_err());
 }
+
+/// An IPv4-compatible IPv6 address (::a.b.c.d, deprecated) is refused even for a public IPv4.
+#[test]
+fn an_ipv4_compatible_address_is_refused_even_when_public() {
+    let public = std::net::Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0x0808, 0x0808);
+    assert_eq!(
+        classify(IpAddr::V6(public)),
+        AddrClass::Forbidden("IPv4-compatible")
+    );
+}
+
+/// A `.localhost` name is loopback without a lookup; a name that does not resolve is named.
+#[tokio::test]
+async fn localhost_names_are_refused_and_a_failed_lookup_is_named() {
+    use ekiben_io_http::outbound::resolve_host_checked;
+    let resources = ResourceManager::new();
+    let org = resources.set_org_quotas(&OrgId::new("o"), OrgQuotas::default());
+    for host in ["LOCALHOST", "api.Localhost"] {
+        let err = resolve_host_checked(host, 80, &org)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("is loopback and is refused"), "{host}: {err}");
+    }
+    let err = resolve_host_checked("", 80, &org)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("failed to resolve ''"), "{err}");
+}
+
+/// A peer that never completes the handshake times out; no address at all is named too.
+#[tokio::test]
+async fn a_connect_that_never_completes_times_out() {
+    use ekiben_io_http::outbound::connect_checked;
+    use std::time::Duration;
+    let err = connect_checked(&[], Duration::from_millis(10))
+        .await
+        .unwrap_err();
+    assert!(
+        err.to_string().contains("connect failed: no address"),
+        "{err}"
+    );
+    // A listener with a full accept queue drops further handshakes.
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let listener = socket.listen(1).unwrap();
+    let addr = listener.local_addr().unwrap();
+    let mut queued = Vec::new();
+    for _ in 0..8 {
+        if let Ok(Ok(s)) = tokio::time::timeout(
+            Duration::from_millis(50),
+            tokio::net::TcpStream::connect(addr),
+        )
+        .await
+        {
+            queued.push(s);
+        }
+    }
+    let err = connect_checked(&[addr], Duration::from_millis(50))
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("connect timed out"), "{err}");
+    drop((queued, listener));
+}

@@ -900,6 +900,18 @@ mod tests {
     use antares_model::EntityId;
     use serde_json::json;
 
+    /// The mirror-sync retry waits 0.2 s and doubles to 3.2 s, where it stays
+    /// however many attempts follow (no shift overflow at u32::MAX).
+    #[test]
+    fn mirror_sync_backoff_doubles_to_a_ceiling() {
+        let ms = |a| mirror_sync_backoff(a).as_millis();
+        assert_eq!(
+            (0..6).map(ms).collect::<Vec<_>>(),
+            [200, 400, 800, 1600, 3200, 3200]
+        );
+        assert_eq!(ms(u32::MAX), 3200);
+    }
+
     #[test]
     fn roles_parse_accepts_the_role_set_and_refuses_anything_else() {
         assert!(Roles::parse("all").expect("all").all());

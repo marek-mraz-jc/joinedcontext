@@ -358,9 +358,7 @@ impl HttpServerConf {
             None | Some(JsonValue::Null) => {
                 response_headers.push((
                     "Content-Type".to_string(),
-                    env.compile_field("application/octet-stream").map_err(|e| {
-                        CoreError::config(format!("http_server.sync_response.headers: {e}"))
-                    })?,
+                    env.compile_field("application/octet-stream")?,
                 ));
                 response_header_keys.push("Content-Type".to_string());
             }
@@ -560,11 +558,12 @@ impl Drop for RouteGuard {
     fn drop(&mut self) {
         self.endpoint.closing.store(true, Ordering::SeqCst);
         let mut table = routes().write().unwrap_or_else(PoisonError::into_inner);
-        if let Some(eps) = table.get_mut(&self.key) {
+        let emptied = table.get_mut(&self.key).is_some_and(|eps| {
             eps.retain(|e| e.id != self.endpoint.id);
-            if eps.is_empty() {
-                table.remove(&self.key);
-            }
+            eps.is_empty()
+        });
+        if emptied {
+            table.remove(&self.key);
         }
     }
 }
@@ -578,9 +577,7 @@ struct OwnServer {
 impl Drop for OwnServer {
     fn drop(&mut self) {
         self.endpoint.closing.store(true, Ordering::SeqCst);
-        if let Some(stop) = self.stop.take() {
-            let _ = stop.send(());
-        }
+        let _ = self.stop.take().map(|stop| stop.send(()));
     }
 }
 
@@ -740,15 +737,12 @@ impl Input for HttpServerInput {
 
     async fn read_batch(
         &mut self,
-        ctx: &StreamContext,
+        _ctx: &StreamContext,
     ) -> Result<(Batch, AckResponder), CoreError> {
-        let Some(rx) = self.rx.as_mut() else {
+        // `connect` sets both; `close` clears the receiver.
+        let (Some(rx), Some(shutdown)) = (self.rx.as_mut(), self.shutdown.clone()) else {
             return Err(CoreError::NotConnected);
         };
-        let shutdown = self
-            .shutdown
-            .clone()
-            .unwrap_or_else(|| ctx.shutdown_rx.clone());
         if *shutdown.borrow() {
             return Err(CoreError::EndOfInput);
         }
@@ -825,10 +819,8 @@ fn unauthorized() -> Response {
 }
 
 fn with_retry_after(mut resp: Response, secs: u64) -> Response {
-    if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
-        resp.headers_mut()
-            .insert(axum::http::header::RETRY_AFTER, v);
-    }
+    resp.headers_mut()
+        .insert(axum::http::header::RETRY_AFTER, HeaderValue::from(secs));
     resp
 }
 
@@ -896,22 +888,23 @@ fn hmac_ok(headers: &HeaderMap, header: &str, secret: &SecretString, body: &[u8]
     let Ok(sig_bytes) = hex::decode(hex_sig) else {
         return false;
     };
-    let Ok(mut mac) = <Hmac<Sha256>>::new_from_slice(secret.expose().as_bytes()) else {
-        return false;
-    };
+    body_mac(secret.expose().as_bytes(), body)
+        .is_some_and(|mac| mac.verify_slice(&sig_bytes).is_ok())
+}
+
+/// HMAC-SHA256 over `body`; HMAC takes a key of any length, so this is `None` only if the
+/// hmac crate ever starts refusing one.
+fn body_mac(secret: &[u8], body: &[u8]) -> Option<Hmac<Sha256>> {
+    let mut mac = <Hmac<Sha256>>::new_from_slice(secret).ok()?;
     mac.update(body);
-    mac.verify_slice(&sig_bytes).is_ok()
+    Some(mac)
 }
 
 /// The hex HMAC-SHA256 signature of `body` that `auth.hmac` accepts.
 pub fn hmac_signature(secret: &str, body: &[u8]) -> String {
-    match <Hmac<Sha256>>::new_from_slice(secret.as_bytes()) {
-        Ok(mut mac) => {
-            mac.update(body);
-            hex::encode(mac.finalize().into_bytes())
-        }
-        Err(_) => String::new(),
-    }
+    body_mac(secret.as_bytes(), body)
+        .map(|mac| hex::encode(mac.finalize().into_bytes()))
+        .unwrap_or_default()
 }
 
 /// `mime.ParseMediaType`, enough for the type and its `boundary`.
@@ -1433,8 +1426,7 @@ mod tests {
 
     fn refused(val: JsonValue, want: &str) {
         let err = conf(val.clone())
-            .err()
-            .unwrap_or_else(|| panic!("{val} must be refused"))
+            .expect_err("the config is refused")
             .to_string();
         assert!(err.contains(want), "{val}: {err}");
     }
@@ -1611,5 +1603,264 @@ mod tests {
         let mut cut = vec![b'a'; 511];
         cut.extend("é".as_bytes());
         assert_eq!(detect_content_type(&cut), "text/plain; charset=utf-8");
+    }
+
+    struct BrokenLimit;
+
+    #[async_trait]
+    impl ekiben_core::RateLimit for BrokenLimit {
+        async fn access(&self, _parts: &[Part]) -> Result<Duration, CoreError> {
+            Err(CoreError::other("limit store down"))
+        }
+    }
+
+    fn endpoint(
+        val: JsonValue,
+        resources: ResourceManager,
+    ) -> (Arc<Endpoint>, mpsc::Receiver<Pending>) {
+        let conf = conf(val).expect("conf");
+        let (tx, rx) = mpsc::channel(1);
+        let ep = Endpoint {
+            id: u64::MAX,
+            in_flight: Arc::new(Semaphore::new(conf.max_in_flight)),
+            conf: Arc::new(conf),
+            tx,
+            closing: AtomicBool::new(false),
+            org_id: OrgId::new("org-unit"),
+            resources,
+        };
+        (Arc::new(ep), rx)
+    }
+
+    fn post(body: Body) -> Request {
+        Request::builder()
+            .method("POST")
+            .uri("/post")
+            .body(body)
+            .expect("request")
+    }
+
+    async fn answer(ep: &Arc<Endpoint>, req: Request) -> (StatusCode, HeaderMap, String) {
+        let resp = handle(ep.clone(), req, "/post".into(), Vec::new(), None).await;
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (status, headers, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    #[tokio::test]
+    async fn a_request_the_endpoint_cannot_take_gets_an_answer_naming_why() {
+        let (ep, _rx) = endpoint(json!({}), ResourceManager::new());
+        ep.closing.store(true, Ordering::SeqCst);
+        assert_eq!(
+            answer(&ep, post(Body::from("x"))).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        // A declared length whose body breaks off is a bad request, not a size refusal.
+        let (ep, _rx) = endpoint(json!({}), ResourceManager::new());
+        let broken = futures::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from("abc")),
+            Err(std::io::Error::other("reset")),
+        ]);
+        let mut req = post(Body::from_stream(broken));
+        req.headers_mut()
+            .insert("content-length", HeaderValue::from_static("10"));
+        let (status, _, body) = answer(&ep, req).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::BAD_REQUEST, "Bad request\n")
+        );
+
+        let mut req = post(Body::from("x"));
+        req.headers_mut().insert(
+            "content-type",
+            HeaderValue::from_static("multipart/form-data"),
+        );
+        assert_eq!(
+            answer(&ep, req).await.0,
+            StatusCode::BAD_REQUEST,
+            "a multipart body needs a boundary"
+        );
+
+        // A rate limit that is gone or failing answers 502 without reading the request on.
+        let (ep, _rx) = endpoint(json!({ "rate_limit": "gone" }), ResourceManager::new());
+        assert_eq!(
+            answer(&ep, post(Body::from("x"))).await.0,
+            StatusCode::BAD_GATEWAY
+        );
+        let resources = ResourceManager::new();
+        resources.insert_rate_limit(&OrgId::new("org-unit"), "broken", Arc::new(BrokenLimit));
+        let (ep, _rx) = endpoint(json!({ "rate_limit": "broken" }), resources);
+        let (status, _, body) = answer(&ep, post(Body::from("x"))).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::BAD_GATEWAY, "Server error\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_that_is_full_gone_or_silent_answers_408_or_503() {
+        // The one slot of the channel is taken: the send waits past the timeout.
+        let (ep, rx) = endpoint(json!({ "timeout": "20ms" }), ResourceManager::new());
+        let (ack, _keep) = AckResponder::channel();
+        ep.tx.send((Vec::new(), ack)).await.expect("slot");
+        assert_eq!(
+            answer(&ep, post(Body::from("x"))).await.0,
+            StatusCode::REQUEST_TIMEOUT
+        );
+        drop(rx);
+        assert_eq!(
+            answer(&ep, post(Body::from("x"))).await.0,
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        // The pipeline drops the ack unanswered: the stream is going away.
+        let (ep, mut rx) = endpoint(json!({}), ResourceManager::new());
+        tokio::spawn(async move { drop(rx.recv().await) });
+        let (status, _, body) = answer(&ep, post(Body::from("x"))).await;
+        assert_eq!(
+            (status, body.as_str()),
+            (StatusCode::SERVICE_UNAVAILABLE, "Server closing\n")
+        );
+
+        // Acked without a sync response: a plain 200.
+        let (ep, mut rx) = endpoint(json!({}), ResourceManager::new());
+        tokio::spawn(async move {
+            let (_, ack) = rx.recv().await.expect("a request");
+            ack.ack();
+        });
+        let (status, _, body) = answer(&ep, post(Body::from("x"))).await;
+        assert_eq!((status, body.as_str()), (StatusCode::OK, ""));
+    }
+
+    #[tokio::test]
+    async fn a_cors_preflight_echoes_the_asked_headers() {
+        let (ep, _rx) = endpoint(
+            json!({ "cors": { "enabled": true, "allowed_origins": ["*"] }, "allowed_verbs": ["PUT", "POST"] }),
+            ResourceManager::new(),
+        );
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/post")
+            .header("access-control-request-headers", "x-a, x-b")
+            .body(Body::empty())
+            .expect("request");
+        let (status, headers, _) = answer(&ep, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(headers["access-control-allow-methods"], "POST, PUT");
+        assert_eq!(headers["access-control-allow-headers"], "x-a, x-b");
+
+        // A verb that cannot be a header value is left out of the answer.
+        let (ep, _rx) = endpoint(
+            json!({ "cors": { "enabled": true, "allowed_origins": ["*"] }, "allowed_verbs": ["BAD\nVERB"] }),
+            ResourceManager::new(),
+        );
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/post")
+            .body(Body::empty())
+            .expect("request");
+        let (status, headers, _) = answer(&ep, req).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(headers.get("access-control-allow-methods").is_none());
+    }
+
+    fn sync(val: JsonValue, parts: Vec<Part>) -> Response {
+        build_sync_response(&conf(val).expect("conf"), vec![parts])
+    }
+
+    #[test]
+    fn a_sync_response_that_cannot_be_built_answers_502() {
+        let over = Part::new(vec![b'a'; MAX_SYNC_RESPONSE_BYTES + 1]);
+        assert_eq!(
+            sync(json!({}), vec![over]).status(),
+            StatusCode::BAD_GATEWAY
+        );
+        let text = || vec![Part::new(b"text".to_vec())];
+        let bad_status = json!({ "sync_response": { "status": "${! content().number() }" } });
+        assert_eq!(sync(bad_status, text()).status(), StatusCode::BAD_GATEWAY);
+        for status in ["abc", "99", "70000"] {
+            let val = json!({ "sync_response": { "status": status } });
+            assert_eq!(
+                sync(val, text()).status(),
+                StatusCode::BAD_GATEWAY,
+                "{status}"
+            );
+        }
+        // A header that fails to interpolate is left out; the answer still goes.
+        let resp = sync(
+            json!({ "sync_response": { "status": "201", "headers": { "X-N": "${! content().number() }" } } }),
+            text(),
+        );
+        assert_eq!(resp.status(), StatusCode::CREATED);
+        assert!(resp.headers().get("x-n").is_none());
+        // No configured Content-Type: the body is sniffed.
+        let resp = sync(json!({ "sync_response": { "headers": {} } }), text());
+        assert_eq!(resp.headers()["content-type"], "text/plain; charset=utf-8");
+    }
+
+    #[test]
+    fn a_multipart_sync_response_carries_metadata_headers_and_sniffs_failed_types() {
+        let mut one = Part::new(b"one".to_vec());
+        one.meta_set_str("x-trace", "t1");
+        one.meta_set_str("bad key", "dropped");
+        let two = Part::new(vec![0u8, 1, 2]);
+        let resp = sync(
+            json!({ "sync_response": {
+                "headers": { "content-type": "${! content().number() }" },
+                "metadata_headers": { "include_patterns": [".*"] },
+            } }),
+            vec![one, two],
+        );
+        assert_eq!(resp.headers()["x-trace"], "t1");
+        assert!(
+            resp.headers().get("bad key").is_none(),
+            "an invalid header name is skipped"
+        );
+        let ct = resp.headers()["content-type"]
+            .to_str()
+            .expect("ascii")
+            .to_string();
+        assert!(ct.starts_with("multipart/form-data; boundary="), "{ct}");
+    }
+
+    #[test]
+    fn config_numbers_paths_and_auth_print_as_written() {
+        let c = conf(json!({ "max_in_flight": " 8 ", "max_body_bytes": 2048 })).expect("numbers");
+        assert_eq!((c.max_in_flight, c.max_body_bytes), (8, 2048));
+        refused(
+            json!({ "max_in_flight": "lots" }),
+            "http_server.max_in_flight: expected a number",
+        );
+        refused(json!({ "max_in_flight": -1 }), "expected a number");
+        let root = PathPattern::parse("/").unwrap();
+        assert_eq!(root.matches(""), None);
+        assert_eq!(format!("{:?}", IngestAuth::Public), "Public");
+    }
+
+    #[tokio::test]
+    async fn a_stop_sender_gone_without_a_stop_never_stops_the_input() {
+        let (tx, rx) = watch::channel(false);
+        drop(tx);
+        let waited = tokio::time::timeout(Duration::from_millis(20), shutdown_signal(rx)).await;
+        assert!(waited.is_err(), "still waiting");
+    }
+
+    #[test]
+    fn the_streams_lint_skips_odd_shapes_and_names_a_ws_path() {
+        let errors = lint_streams_mode(&json!({ "input": { "http_server": "not an object" } }));
+        assert!(errors.is_empty(), "{errors:?}");
+        let errors = lint_streams_mode(
+            &json!({ "input": { "http_server": { "ws_path": "/ws", "auth": { "public": true } } } }),
+        );
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("http_server.ws_path is not allowed in streams mode")),
+            "{errors:?}"
+        );
     }
 }
