@@ -20,7 +20,12 @@ fn inside(root: &Path, dir: &Path) {
             .path()
             .canonicalize()
             .expect("an unpacked path resolves");
-        assert!(path.starts_with(root), "{} left {}", path.display(), root.display());
+        assert!(
+            path.starts_with(root),
+            "{} left {}",
+            path.display(),
+            root.display()
+        );
         if kind.is_dir() {
             inside(root, &entry.path());
         }
