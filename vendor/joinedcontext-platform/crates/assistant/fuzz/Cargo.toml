@@ -52,7 +52,14 @@ bench = false
 [workspace]
 members = ["."]
 
-# The root workspace's patches the assistant's dependency tree needs (Cargo.toml at the jc root).
+# The root workspace's patches the assistant's dependency tree needs (Cargo.toml at the jc root):
+# one ngsild, Antares' own crates, as jc-core's role.rs calls antares_ql APIs the released tag lacks.
+[patch."https://github.com/marek-mraz-jc/ngsild"]
+ngsild-ql = { path = "../../../../../crates/antares/crates/antares-ql" }
+ngsild-jsonld = { path = "../../../../../crates/antares/crates/antares-jsonld" }
+ngsild-matcher = { path = "../../../../../crates/antares/crates/antares-matcher" }
+ngsild-model = { path = "../../../../../crates/antares/crates/antares-model" }
+
 [patch.crates-io]
 kreuzberg = { path = "../../../vendor/kreuzberg" }
 paste = { path = "../../../../paste" }
