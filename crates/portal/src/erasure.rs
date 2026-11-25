@@ -846,18 +846,21 @@ async fn conversations(
     }
     let mut gone = 0;
     for batch in terms.chunks(1000) {
-        let (status, body) = crate::api::knowledge::ask(
+        let answer = crate::api::knowledge::ask(
             state,
             reqwest::Method::POST,
             &format!("{}/knowledge/erasures", erasure.project),
             Some(json!({ "terms": batch })),
         )
-        .await
-        .map_err(|err| err.to_string())?;
+        .await;
+        let (status, body) = match answer {
+            Ok(answer) => answer,
+            // A project the assistant never heard of holds no conversation.
+            Err(crate::error::ApiError::NotFound(_)) => continue,
+            Err(err) => return Err(err.to_string()),
+        };
         match status.as_u16() {
             200 => gone += body["conversations"].as_u64().unwrap_or(0),
-            // A project the assistant never heard of holds no conversation.
-            404 => {}
             other => return Err(format!("the assistant answered {other}")),
         }
     }
@@ -1306,5 +1309,793 @@ classes:
             Ok(vec![format!("{slot}==\"r-42\"")])
         );
         assert!(subject_classes("classes: {}").is_empty());
+    }
+
+    // --- coverage: the stores, the log's re-apply and the minute loop -------------------------
+
+    use crate::reconciler::views::ViewSync;
+    use sqlx::postgres::PgPoolOptions;
+    use std::sync::Arc;
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const SPACE: &str = "trips";
+    const SUBJECT: &str = "abababababababababababababababab";
+    const T1: &str = "urn:ngsi-ld:Trip:hel.fi:trips:1";
+    const T2: &str = "urn:ngsi-ld:Trip:hel.fi:trips:2";
+    const T3: &str = "urn:ngsi-ld:Trip:hel.fi:bikes:3";
+
+    fn database_url() -> Option<String> {
+        std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+    }
+
+    fn dead_pool() -> PgPool {
+        PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    fn group(urns: &[&str]) -> Group {
+        Group {
+            class: "Trip".into(),
+            entities: urns.iter().map(|urn| (*urn).to_owned()).collect(),
+            attrs: Some(vec!["rider".into()]),
+        }
+    }
+
+    fn approved(project: &str, space: &str, groups: Vec<Group>) -> Erasure {
+        let mut erasure = begin(
+            (project, space),
+            SUBJECT.to_owned(),
+            "Art. 17",
+            "user:anna",
+            groups,
+        );
+        erasure.approval = Approval::Approved;
+        erasure
+    }
+
+    fn broker_done(mut erasure: Erasure) -> Erasure {
+        erasure.stores.insert(
+            "broker".into(),
+            Store {
+                state: StoreState::Done,
+                ..Store::default()
+            },
+        );
+        erasure
+    }
+
+    fn envelope(
+        kind: &str,
+        name: &str,
+        namespace: &str,
+        spec: Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    /// A broker that keeps `records` and takes every erasure; the state reaches it.
+    async fn broker_with(records: Value, counts: Value) -> MockServer {
+        let broker = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex("^/q/erasures/.+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(records))
+            .mount(&broker)
+            .await;
+        Mock::given(method("POST"))
+            .and(path_regex("^/q/erasures/.+$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "counts": counts })))
+            .mount(&broker)
+            .await;
+        broker
+    }
+
+    fn token_file(label: &str) -> std::path::PathBuf {
+        let file =
+            std::env::temp_dir().join(format!("cov-erasure-{label}-{}.token", std::process::id()));
+        std::fs::write(&file, "admin-token\n").expect("write the token");
+        file
+    }
+
+    fn viewing(state: &mut AppState, broker: &MockServer, label: &str) {
+        state.views = Some(Arc::new(ViewSync::new(broker.uri(), token_file(label))));
+    }
+
+    fn plain_state() -> AppState {
+        AppState::new(crate::config::Config::for_tests(), None)
+    }
+
+    async fn requests(server: &MockServer, verb: &str) -> Vec<wiremock::Request> {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|request| request.method.as_str() == verb)
+            .collect()
+    }
+
+    // The broker store.
+
+    #[tokio::test]
+    async fn the_broker_store_adds_up_each_group_and_skips_a_group_without_entities() {
+        let broker = broker_with(json!([]), json!({ "entities": 1, "history": 3 })).await;
+        let mut state = plain_state();
+        viewing(&mut state, &broker, "sum");
+        let erasure = approved("hel", SPACE, vec![group(&[T1]), group(&[]), group(&[T2])]);
+        assert_eq!(super::broker(&state, &erasure).await, Ok((2, Some(6))));
+        let posted = requests(&broker, "POST").await;
+        assert_eq!(posted.len(), 2);
+        let body: Value = serde_json::from_slice(&posted[0].body).expect("json");
+        assert_eq!(body["entities"], json!([T1]));
+        assert_eq!(body["subject"], SUBJECT);
+        assert_eq!(body["actor"], "user:anna");
+    }
+
+    #[tokio::test]
+    async fn the_broker_store_with_nothing_to_erase_asks_nobody() {
+        let broker = broker_with(json!([]), json!({})).await;
+        let mut state = plain_state();
+        viewing(&mut state, &broker, "empty");
+        let none = approved("hel", SPACE, Vec::new());
+        assert_eq!(super::broker(&state, &none).await, Ok((0, Some(0))));
+        let hollow = approved("hel", SPACE, vec![group(&[])]);
+        assert_eq!(super::broker(&state, &hollow).await, Ok((0, Some(0))));
+        assert!(broker
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn counts_the_broker_leaves_out_read_as_zero() {
+        let broker = broker_with(json!([]), json!({ "entities": "many" })).await;
+        let mut state = plain_state();
+        viewing(&mut state, &broker, "zero");
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(super::broker(&state, &erasure).await, Ok((0, Some(0))));
+    }
+
+    #[tokio::test]
+    async fn a_portal_without_a_broker_cannot_erase_there() {
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = super::broker(&plain_state(), &erasure)
+            .await
+            .expect_err("no broker");
+        assert!(err.contains("no broker address or admin token"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_broker_that_refuses_keeps_its_store_pending_with_the_reason() {
+        let broker = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&broker)
+            .await;
+        let mut state = plain_state();
+        viewing(&mut state, &broker, "refused");
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = super::broker(&state, &erasure).await.expect_err("refused");
+        assert!(err.contains("the broker refused the erasure"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_broker_whose_token_cannot_be_read_is_not_asked() {
+        let mut state = plain_state();
+        state.views = Some(Arc::new(ViewSync::new(
+            "http://127.0.0.1:1",
+            "/nonexistent/token",
+        )));
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = super::broker(&state, &erasure).await.expect_err("no token");
+        assert!(err.contains("admin token is not readable"), "{err}");
+    }
+
+    // The assistant's conversations.
+
+    async fn assistant_state(assistant: &MockServer) -> (AppState, MockServer) {
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "portal-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.knowledge_url = Some(assistant.uri());
+        let mut state = AppState::new(config, None);
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        state.oidc = Some(Arc::new(client));
+        (state, realm)
+    }
+
+    async fn assistant_answering(status: u16, body: Value) -> MockServer {
+        let assistant = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/internal/v1/projects/hel/knowledge/erasures"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(body))
+            .mount(&assistant)
+            .await;
+        assistant
+    }
+
+    #[tokio::test]
+    async fn the_terms_go_to_the_assistant_a_thousand_at_a_time() {
+        let assistant = assistant_answering(200, json!({ "conversations": 2 })).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let urns: Vec<String> = (0..1001)
+            .map(|n| format!("urn:ngsi-ld:Trip:hel.fi:t:{n}"))
+            .collect();
+        let refs: Vec<&str> = urns.iter().map(String::as_str).collect();
+        let erasure = approved("hel", SPACE, vec![group(&refs)]);
+        let gone = conversations(&state, &erasure, Some("  Nováček ")).await;
+        assert_eq!(gone, Ok(4));
+        let posted = requests(&assistant, "POST").await;
+        let sizes: Vec<usize> = posted
+            .iter()
+            .map(|r| {
+                serde_json::from_slice::<Value>(&r.body).expect("json")["terms"]
+                    .as_array()
+                    .map_or(0, Vec::len)
+            })
+            .collect();
+        assert_eq!(sizes, [1000, 2]);
+    }
+
+    #[tokio::test]
+    async fn a_word_under_five_characters_is_never_searched_for() {
+        let assistant = assistant_answering(200, json!({ "conversations": 1 })).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(conversations(&state, &erasure, Some("Ján")).await, Ok(1));
+        let posted = requests(&assistant, "POST").await;
+        let body: Value = serde_json::from_slice(&posted[0].body).expect("json");
+        assert_eq!(body["terms"], json!([T1]));
+    }
+
+    #[tokio::test]
+    async fn no_entity_and_no_long_word_means_nothing_to_search() {
+        let assistant = assistant_answering(200, json!({ "conversations": 9 })).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let erasure = approved("hel", SPACE, Vec::new());
+        assert_eq!(conversations(&state, &erasure, None).await, Ok(0));
+        assert_eq!(conversations(&state, &erasure, Some("abcd")).await, Ok(0));
+        assert_eq!(conversations(&state, &erasure, Some("     ")).await, Ok(0));
+        assert!(assistant
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_portal_without_an_assistant_has_no_conversations_to_erase() {
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(
+            conversations(&plain_state(), &erasure, Some("Nováček")).await,
+            Ok(0)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_assistant_that_cannot_be_asked_leaves_the_store_pending() {
+        let mut config = crate::config::Config::for_tests();
+        config.knowledge_url = Some("http://127.0.0.1:1".to_owned());
+        let state = AppState::new(config, None);
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = conversations(&state, &erasure, None)
+            .await
+            .expect_err("no client");
+        assert!(err.contains("Keycloak"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_assistant_that_fails_or_answers_oddly_leaves_the_store_pending() {
+        for status in [500, 409] {
+            let assistant = assistant_answering(status, json!({ "detail": "no" })).await;
+            let (state, _realm) = assistant_state(&assistant).await;
+            let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+            let err = conversations(&state, &erasure, None)
+                .await
+                .expect_err("refused");
+            assert!(!err.is_empty(), "{status}");
+        }
+        let assistant = assistant_answering(204, Value::Null).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(
+            conversations(&state, &erasure, None).await,
+            Err("the assistant answered 204".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_project_the_assistant_never_heard_of_holds_no_conversation() {
+        let assistant = assistant_answering(404, json!({ "detail": "no such project" })).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(conversations(&state, &erasure, None).await, Ok(0));
+    }
+
+    #[tokio::test]
+    async fn an_answer_without_a_count_reads_as_none_erased() {
+        let assistant = assistant_answering(200, json!({})).await;
+        let (state, _realm) = assistant_state(&assistant).await;
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        assert_eq!(conversations(&state, &erasure, None).await, Ok(0));
+    }
+
+    // The Portal's own copies.
+
+    #[tokio::test]
+    async fn a_dead_database_does_not_reach_the_portals_copies() {
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = portal_copies(&dead_pool(), &erasure)
+            .await
+            .expect_err("down");
+        assert!(
+            err.starts_with("the Portal's copies were not reached"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_connection_in_a_failed_transaction_does_not_reach_the_portals_copies() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("migrate");
+        let mut conn = pool.acquire().await.expect("a connection");
+        sqlx::raw_sql("BEGIN")
+            .execute(&mut *conn)
+            .await
+            .expect("begin");
+        assert!(sqlx::query("SELECT 1/0").execute(&mut *conn).await.is_err());
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        let err = erase_portal_copies(&mut conn, &erasure)
+            .await
+            .expect_err("aborted");
+        sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *conn)
+            .await
+            .expect("rollback");
+        assert!(
+            err.starts_with("the Portal's copies were not reached"),
+            "{err}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_erasure_that_cannot_be_saved_does_not_stop_the_attempt() {
+        let erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        attempt(&plain_state(), &dead_pool(), &erasure, Some("Nováček")).await;
+        let mut proposed = erasure.clone();
+        proposed.approval = Approval::Proposed;
+        attempt(&plain_state(), &dead_pool(), &proposed, None).await;
+        assert_eq!(erasure.stores["broker"].attempts, 0);
+    }
+
+    // The words of the log.
+
+    #[test]
+    fn an_approval_is_written_and_read_back_as_its_word() {
+        for (approval, word) in [
+            (Approval::Proposed, "proposed"),
+            (Approval::Approved, "approved"),
+            (Approval::Declined, "declined"),
+        ] {
+            assert_eq!(approval.as_str(), word);
+            assert_eq!(Approval::parse(word), approval);
+        }
+        assert_eq!(
+            Approval::parse(""),
+            Approval::Approved,
+            "logged before the four eyes"
+        );
+        assert_eq!(Approval::parse("PROPOSED"), Approval::Approved);
+    }
+
+    #[test]
+    fn the_view_counts_the_brokers_versions_beside_the_stores() {
+        let mut erasure = approved("hel", SPACE, vec![group(&[T1])]);
+        erasure.stores.insert(
+            "broker".into(),
+            Store {
+                state: StoreState::Done,
+                count: 2,
+                versions: Some(7),
+                attempts: 1,
+                error: None,
+            },
+        );
+        let view = erasure.view();
+        assert_eq!(view["counts"]["versions"], 7);
+        assert_eq!(view["counts"]["broker"], 2);
+        assert_eq!(view["entities"], 1);
+        erasure.approval = Approval::Declined;
+        erasure.decided_by = Some("user:boris".into());
+        assert_eq!(erasure.view()["declinedBy"], "user:boris");
+    }
+
+    #[test]
+    fn a_model_without_classes_or_with_a_subject_slot_not_listed_names_the_slot_alone() {
+        assert!(subject_classes("id: https://example.org/none\nname: none\n").is_empty());
+        assert!(subject_classes("classes: [Trip]").is_empty());
+        assert!(subject_classes("").is_empty());
+        let linkml =
+            "classes:\n  Trip:\n    annotations: { dataSubjectRef: rider }\n    slots: [station]\n";
+        assert_eq!(
+            subject_classes(linkml),
+            [SubjectClass {
+                class: "Trip".into(),
+                slot: "rider".into(),
+                attrs: Some(vec!["rider".into()]),
+                hashed: false,
+            }]
+        );
+    }
+
+    // On a database of its own: the log, the re-apply and the minute loop ask every open
+    // erasure of the database, so no parallel test may share it.
+
+    struct Scratch {
+        admin: PgPool,
+        name: String,
+    }
+
+    struct Rig {
+        state: AppState,
+        pool: PgPool,
+        db: Scratch,
+        project: String,
+    }
+
+    async fn rig(label: &str) -> Option<Rig> {
+        let url = database_url()?;
+        let admin = PgPool::connect(&url).await.expect("connect");
+        let name = format!("jc_cov_er_{label}_{}", std::process::id());
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {name}"
+        )))
+        .execute(&admin)
+        .await
+        .expect("drop");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create");
+        let mut own = url::Url::parse(&url).expect("url");
+        own.set_path(&name);
+        let pool = crate::db::connect(own.as_str()).await.expect("migrate");
+        let state = plain_state().with_db(pool.clone());
+        let project = "cov-trips".to_owned();
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ('cov-org', 'cov-org.example', 'active', 'test') ON CONFLICT DO NOTHING",
+        )
+        .execute(&pool)
+        .await
+        .expect("an Organization");
+        state.mirror.upsert(envelope(
+            "Project",
+            &project,
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "cov-org" }),
+        ));
+        crate::project_ids::key_of(&pool, &state.mirror, &project)
+            .await
+            .expect("the registry")
+            .expect("a registered project has a key");
+        Some(Rig {
+            state,
+            pool,
+            db: Scratch { admin, name },
+            project,
+        })
+    }
+
+    impl Rig {
+        async fn log(&self, erasure: &Erasure) {
+            insert(&self.pool, erasure).await.expect("logged");
+        }
+
+        async fn read(&self, erasure: &Erasure) -> Erasure {
+            get(&self.pool, &erasure.project, &erasure.space, &erasure.id)
+                .await
+                .expect("read")
+                .expect("held")
+        }
+
+        async fn end(self) {
+            self.pool.close().await;
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP DATABASE {} WITH (FORCE)",
+                self.db.name
+            )))
+            .execute(&self.db.admin)
+            .await
+            .expect("drop");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_approved_erasure_is_done_once_every_store_answered_even_a_store_no_longer_kept() {
+        let Some(mut rig) = rig("attempt").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let broker = broker_with(json!([]), json!({ "entities": 1, "history": 4 })).await;
+        viewing(&mut rig.state, &broker, "attempt");
+        let mut erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        erasure
+            .stores
+            .insert("ckanDatastore".into(), Store::default());
+        rig.log(&erasure).await;
+        attempt(&rig.state, &rig.pool, &erasure, None).await;
+        let held = rig.read(&erasure).await;
+        let broker_part = held.stores["broker"].clone();
+        let legacy = held.stores["ckanDatastore"].clone();
+        let (state, completed) = (held.state(), held.completed_at.is_some());
+        rig.end().await;
+        assert_eq!((broker_part.count, broker_part.versions), (1, Some(4)));
+        assert_eq!(
+            (legacy.state, legacy.count, legacy.attempts),
+            (StoreState::Done, 0, 1)
+        );
+        assert_eq!(state, "done");
+        assert!(completed);
+    }
+
+    #[tokio::test]
+    async fn a_declined_erasure_reaches_no_store() {
+        let Some(rig) = rig("declined").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let mut erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        erasure.approval = Approval::Declined;
+        rig.log(&erasure).await;
+        attempt(&rig.state, &rig.pool, &erasure, Some("Nováček")).await;
+        let held = rig.read(&erasure).await;
+        let attempts = held.stores["portal"].attempts;
+        let state = held.state();
+        rig.end().await;
+        assert_eq!(attempts, 0);
+        assert_eq!(state, "declined");
+    }
+
+    #[tokio::test]
+    async fn a_store_that_cannot_be_reached_stays_pending_with_its_error_while_the_others_finish() {
+        let Some(rig) = rig("pending").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        rig.log(&erasure).await;
+        attempt(&rig.state, &rig.pool, &erasure, None).await;
+        let held = rig.read(&erasure).await;
+        let (broker_part, portal) = (held.stores["broker"].clone(), held.stores["portal"].clone());
+        rig.end().await;
+        assert_eq!(
+            (broker_part.state, broker_part.attempts),
+            (StoreState::Pending, 1)
+        );
+        assert!(broker_part
+            .error
+            .is_some_and(|e| e.contains("no broker address")));
+        assert_eq!(portal.state, StoreState::Done);
+    }
+
+    #[tokio::test]
+    async fn the_log_is_sent_again_for_a_record_the_broker_lost() {
+        let Some(mut rig) = rig("reapply").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let broker = broker_with(
+            json!([{ "subject": SUBJECT, "entities": [T1] }]),
+            json!({ "entities": 1, "history": 1 }),
+        )
+        .await;
+        viewing(&mut rig.state, &broker, "reapply");
+        let kept = broker_done(approved(&rig.project, SPACE, vec![group(&[T1])]));
+        let lost = broker_done(approved(&rig.project, SPACE, vec![group(&[T2])]));
+        let hollow = broker_done(approved(&rig.project, SPACE, vec![group(&[])]));
+        let elsewhere = broker_done(approved(&rig.project, "bikes", vec![group(&[T3])]));
+        let mut proposed = broker_done(approved(&rig.project, SPACE, vec![group(&[T2])]));
+        proposed.approval = Approval::Proposed;
+        let waiting = approved(&rig.project, SPACE, vec![group(&[T2])]);
+        for erasure in [&kept, &lost, &hollow, &elsewhere, &proposed, &waiting] {
+            rig.log(erasure).await;
+        }
+        let outcome = reapply(&rig.state, &rig.pool).await;
+        let asked = requests(&broker, "GET").await.len();
+        let sent: Vec<Value> = requests(&broker, "POST")
+            .await
+            .iter()
+            .map(|r| serde_json::from_slice::<Value>(&r.body).expect("json")["entities"].clone())
+            .collect();
+        rig.end().await;
+        assert_eq!(outcome, Ok((2, 4)));
+        assert_eq!(asked, 2, "one read of the records per tenant");
+        assert_eq!(sent.len(), 2);
+        assert!(
+            sent.contains(&json!([T2])) && sent.contains(&json!([T3])),
+            "{sent:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_log_nobody_wrote_to_sends_nothing_again() {
+        let Some(mut rig) = rig("reapply_none").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let broker = broker_with(json!([]), json!({})).await;
+        viewing(&mut rig.state, &broker, "reapply-none");
+        let outcome = reapply(&rig.state, &rig.pool).await;
+        rig.end().await;
+        assert_eq!(outcome, Ok((0, 0)));
+        assert!(broker
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_portal_without_a_broker_cannot_apply_the_log_again() {
+        let err = reapply(&plain_state(), &dead_pool())
+            .await
+            .expect_err("no broker");
+        assert!(err.contains("no broker address or admin token"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn a_dead_database_cannot_be_read_for_the_log() {
+        let mut state = plain_state();
+        state.views = Some(Arc::new(ViewSync::new(
+            "http://127.0.0.1:1",
+            "/nonexistent",
+        )));
+        assert!(reapply(&state, &dead_pool()).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_broker_that_will_not_list_its_records_or_take_the_erasure_stops_the_reapply() {
+        let Some(mut rig) = rig("reapply_refused").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        rig.log(&broker_done(approved(
+            &rig.project,
+            SPACE,
+            vec![group(&[T1])],
+        )))
+        .await;
+        let down = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&down)
+            .await;
+        viewing(&mut rig.state, &down, "reapply-down");
+        let unlisted = reapply(&rig.state, &rig.pool).await;
+        let refusing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&refusing)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&refusing)
+            .await;
+        viewing(&mut rig.state, &refusing, "reapply-refusing");
+        let unsent = reapply(&rig.state, &rig.pool).await;
+        rig.end().await;
+        assert!(unlisted.is_err(), "{unlisted:?}");
+        assert!(unsent.expect_err("refused").contains("refused the erasure"),);
+    }
+
+    #[tokio::test]
+    async fn a_minute_asks_the_open_erasures_and_applies_the_log_every_sixtieth() {
+        let Some(mut rig) = rig("pass").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let broker = broker_with(json!([]), json!({ "entities": 1, "history": 1 })).await;
+        viewing(&mut rig.state, &broker, "pass");
+        let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        rig.log(&erasure).await;
+        let first = pass(&rig.state, &rig.pool, 0).await;
+        let done = rig.read(&erasure).await.state();
+        let reads_after_first = requests(&broker, "GET").await.len();
+        let second = pass(&rig.state, &rig.pool, 1).await;
+        let reads_after_second = requests(&broker, "GET").await.len();
+        let sixtieth = pass(&rig.state, &rig.pool, 60).await;
+        let reads_after_sixtieth = requests(&broker, "GET").await.len();
+        let posts = requests(&broker, "POST").await.len();
+        rig.end().await;
+        assert!(first && second && sixtieth);
+        assert_eq!(done, "done");
+        assert_eq!(reads_after_first, 0, "nothing was logged as done yet");
+        assert_eq!(reads_after_second, 0, "tick 1 does not re-apply");
+        assert_eq!(reads_after_sixtieth, 1, "tick 60 does");
+        assert_eq!(
+            posts, 2,
+            "the erasure, then its resend of the record the broker lacks"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_minute_without_a_broker_still_asks_the_other_stores() {
+        let Some(rig) = rig("pass_nobroker").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        rig.log(&erasure).await;
+        let ran = pass(&rig.state, &rig.pool, 0).await;
+        let held = rig.read(&erasure).await;
+        let (portal, broker_part) = (held.stores["portal"].state, held.stores["broker"].attempts);
+        rig.end().await;
+        assert!(ran);
+        assert_eq!(portal, StoreState::Done);
+        assert_eq!(broker_part, 1);
+    }
+
+    #[tokio::test]
+    async fn a_minute_on_a_dead_database_logs_and_goes_on() {
+        let mut state = plain_state();
+        state.views = Some(Arc::new(ViewSync::new(
+            "http://127.0.0.1:1",
+            "/nonexistent",
+        )));
+        assert!(pass(&state, &dead_pool(), 0).await);
+        assert!(pass(&state, &dead_pool(), 7).await);
+    }
+
+    #[tokio::test]
+    async fn the_loop_asks_the_open_erasures_without_waiting_for_the_next_minute() {
+        let Some(rig) = rig("spawn").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
+        rig.log(&erasure).await;
+        spawn_periodic(rig.state.clone());
+        let mut portal = StoreState::Pending;
+        for _ in 0..100 {
+            portal = rig.read(&erasure).await.stores["portal"].state;
+            if portal == StoreState::Done {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        rig.end().await;
+        assert_eq!(portal, StoreState::Done);
+    }
+
+    #[tokio::test]
+    async fn a_portal_without_a_database_starts_no_loop() {
+        spawn_periodic(plain_state());
+        assert!(plain_state().db.is_none());
     }
 }

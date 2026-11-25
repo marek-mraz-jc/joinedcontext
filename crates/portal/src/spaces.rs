@@ -515,4 +515,33 @@ mod tests {
         );
         assert!(ask("eero@hel.fi", &json!({})).is_ok());
     }
+
+    #[test]
+    fn a_repository_space_has_a_tenant_by_segment_and_none_by_an_unplaced_project_key() {
+        use context_gateway::store::TenantNames;
+        let dir = std::env::temp_dir().join(format!(
+            "portal-spaces-repo-tenant-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        let file = dir.join("projects/ovzdusie/spaces/mhd/space.yaml");
+        std::fs::create_dir_all(file.parent().expect("a parent")).expect("a directory");
+        std::fs::write(
+            &file,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mhd\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n",
+        )
+        .expect("a space file");
+        let repo = jcctl::loader::Repository::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(
+            repo_tenant_as(&repo, "ovzdusie", "mhd", TenantNames::Segment).as_deref(),
+            Ok("ovzdusie-mhd")
+        );
+        let missing = repo_tenant_as(&repo, "ghost-project", "mhd", TenantNames::ProjectKey)
+            .expect_err("a project without a key has no tenant");
+        assert!(
+            missing.starts_with("the space ghost-project/mhd has no broker tenant yet:"),
+            "{missing}"
+        );
+    }
 }

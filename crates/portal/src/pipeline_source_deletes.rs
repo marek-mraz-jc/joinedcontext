@@ -1929,12 +1929,12 @@ mod tests {
     fn more_than_the_share_is_held_and_deletes_nothing() {
         let rows = fifty(&[1, 2, 3, 4, 5, 6], "r2", 1);
         let (misses, verdict) = judge(&rows, "r2", &rule(2, 10));
-        let Verdict::Held(hold) = verdict else {
-            panic!("not held: {verdict:?}")
-        };
-        assert_eq!(hold.reason, HoldReason::ShareExceeded);
-        assert_eq!((hold.would, hold.ledger), (6, 50));
-        assert!(hold.detail().contains("would delete 6 of 50"));
+        assert!(matches!(verdict, Verdict::Held(_)), "{verdict:?}");
+        if let Verdict::Held(hold) = verdict {
+            assert_eq!(hold.reason, HoldReason::ShareExceeded);
+            assert_eq!((hold.would, hold.ledger), (6, 50));
+            assert!(hold.detail().contains("would delete 6 of 50"));
+        }
         // The misses still count, so the next complete run is judged the same way.
         assert_eq!(misses.iter().filter(|(_, m)| *m == 2).count(), 6);
         // Five of fifty is the share exactly and goes.
@@ -2463,5 +2463,782 @@ mod tests {
         );
         assert_eq!(events_rule(&snapshot_spec()), None);
         assert_eq!(Cause::of(&snapshot_spec()), Cause::Snapshot);
+    }
+
+    // ---- the ledger without a database, for a pipeline it never saw, and its bounds ----
+
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use std::sync::Arc;
+
+    fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    /// A mirror that places `project` in an Organization, so a store on a dead pool reaches it.
+    fn mirror_placing(project: &str) -> Arc<crate::store::Mirror> {
+        let mirror = Arc::new(crate::store::Mirror::new());
+        mirror.upsert(envelope(
+            "Project",
+            project,
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        ));
+        mirror
+    }
+
+    fn dead_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    async fn database() -> Option<sqlx::PgPool> {
+        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return None;
+        };
+        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    }
+
+    #[tokio::test]
+    async fn a_pipeline_the_memory_ledger_never_saw_answers_empty_and_changes_nothing() {
+        let ledger = Ledger::new(None, Default::default());
+        let ids = ["urn:a".to_owned()];
+        ledger.forget("p", "x", &ids).await.expect("forget");
+        ledger.keep("p", "x").await.expect("keep");
+        assert!(ledger
+            .mark("p", "x", "r1", &ids)
+            .await
+            .expect("mark")
+            .is_empty());
+        assert_eq!(ledger.take_marked("p", "x").await.expect("take"), None);
+        assert!(ledger
+            .written("p", "x", &ids)
+            .await
+            .expect("written")
+            .is_empty());
+        assert_eq!(ledger.last_complete("p", "x").await.expect("last"), None);
+        assert!(ledger.marking().await.expect("marking").is_empty());
+        assert!(ledger.holds().await.expect("holds").is_empty());
+        assert!(ledger
+            .removals("p", RemovalsOf::Pipeline("x"), 10)
+            .await
+            .expect("removals")
+            .is_empty());
+        // None of the above made a book: another read still finds nothing.
+        assert!(ledger.book("p", "x").await.expect("book").0.is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_read_that_is_not_a_write_keeps_the_time_of_the_last_write() {
+        let ledger = Ledger::new(None, Default::default());
+        let ids = ["urn:a".to_owned()];
+        ledger.seen("p", "x", "r1", &ids, true).await.expect("seen");
+        let wrote = ledger.written("p", "x", &ids).await.expect("written");
+        assert_eq!(wrote.len(), 1);
+        ledger
+            .seen("p", "x", "r2", &ids, false)
+            .await
+            .expect("seen");
+        assert_eq!(
+            ledger.written("p", "x", &ids).await.expect("written"),
+            wrote
+        );
+        let (rows, _) = ledger.book("p", "x").await.expect("book");
+        assert_eq!(rows["urn:a"].last_run, "r2");
+        // An id nothing wrote has no write time.
+        let other = ["urn:never".to_owned()];
+        assert!(ledger
+            .written("p", "x", &other)
+            .await
+            .expect("written")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_memory_ledger_keeps_the_newest_thousand_removals_and_one_per_id() {
+        let ledger = Ledger::new(None, Default::default());
+        let many: Vec<String> = (0..REMOVALS_KEPT + 5)
+            .map(|n| format!("urn:x:{n}"))
+            .collect();
+        ledger
+            .removed("p", "s1", "x", ("r1", Cause::Snapshot), &many)
+            .await
+            .expect("removed");
+        let kept = ledger
+            .removals("p", RemovalsOf::Pipeline("x"), 5000)
+            .await
+            .expect("removals");
+        assert_eq!(kept.len(), REMOVALS_KEPT);
+        assert!(
+            kept.iter().all(|r| r.id != "urn:x:0"),
+            "the oldest went first"
+        );
+        assert!(kept.iter().any(|r| r.id == "urn:x:1004"));
+        // The same id again is one entry, now with the newer run and cause.
+        ledger
+            .removed(
+                "p",
+                "s1",
+                "x",
+                ("r2", Cause::Event),
+                &["urn:x:1004".to_owned()],
+            )
+            .await
+            .expect("removed");
+        let again = ledger
+            .removals("p", RemovalsOf::Pipeline("x"), 5000)
+            .await
+            .expect("removals");
+        let same: Vec<&Removal> = again.iter().filter(|r| r.id == "urn:x:1004").collect();
+        assert_eq!(same.len(), 1);
+        assert_eq!(same[0].run, "r2");
+        assert!(
+            same[0].reason.starts_with("source-event"),
+            "{}",
+            same[0].reason
+        );
+        // Nothing to remove is nothing remembered; one space is not another, and a limit cuts.
+        ledger
+            .removed("p", "s1", "x", ("r3", Cause::Snapshot), &[])
+            .await
+            .expect("removed");
+        let other_space = ledger
+            .removals("p", RemovalsOf::Space("s2"), 10)
+            .await
+            .expect("removals");
+        assert!(other_space.is_empty());
+        let cut = ledger
+            .removals("p", RemovalsOf::Space("s1"), 3)
+            .await
+            .expect("removals");
+        assert_eq!(cut.len(), 3);
+        let other_project = ledger
+            .removals("q", RemovalsOf::Space("s1"), 3)
+            .await
+            .expect("removals");
+        assert!(other_project.is_empty());
+    }
+
+    #[test]
+    fn an_id_the_stream_could_misread_is_not_deletable() {
+        assert!(deletable("urn:ngsi-ld:Garden:1"));
+        assert!(!deletable(""));
+        assert!(!deletable("no-colon"));
+        assert!(!deletable("urn:a b"));
+        assert!(!deletable("urn:a\"b"));
+        assert!(!deletable("urn:${x}"));
+        assert!(!deletable(&format!("urn:{}", "x".repeat(MAX_ID))));
+        assert!(deletable(&format!("urn:{}", "x".repeat(MAX_ID - 4))));
+    }
+
+    // ---- the ledger on a database: a project without a key, and a database that is down ----
+
+    #[tokio::test]
+    async fn a_project_without_a_key_has_no_ledger_and_every_call_answers_empty() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let ledger = Ledger::new(Some(pool), Arc::new(crate::store::Mirror::new()));
+        let ids = ["urn:a".to_owned()];
+        ledger
+            .seen("ghost", "x", "r1", &ids, true)
+            .await
+            .expect("seen");
+        assert!(ledger.book("ghost", "x").await.expect("book").0.is_empty());
+        ledger
+            .settle("ghost", "x", &[], None)
+            .await
+            .expect("settle");
+        ledger.forget("ghost", "x", &ids).await.expect("forget");
+        ledger.keep("ghost", "x").await.expect("keep");
+        assert!(ledger
+            .mark("ghost", "x", "r1", &ids)
+            .await
+            .expect("mark")
+            .is_empty());
+        assert_eq!(ledger.take_marked("ghost", "x").await.expect("take"), None);
+        assert!(ledger
+            .written("ghost", "x", &ids)
+            .await
+            .expect("written")
+            .is_empty());
+        ledger
+            .completed("ghost", "x", "r1")
+            .await
+            .expect("completed");
+        assert_eq!(
+            ledger.last_complete("ghost", "x").await.expect("last"),
+            None
+        );
+        ledger
+            .removed("ghost", "s", "x", ("r1", Cause::Snapshot), &ids)
+            .await
+            .expect("removed");
+        assert!(ledger
+            .removals("ghost", RemovalsOf::Pipeline("x"), 10)
+            .await
+            .expect("removals")
+            .is_empty());
+        assert!(ledger.marking().await.expect("marking").is_empty());
+        assert!(ledger.holds().await.expect("holds").is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_database_that_is_down_fails_every_ledger_call() {
+        let ledger = Ledger::new(Some(dead_pool()), mirror_placing("helsinki"));
+        let ids = ["urn:a".to_owned()];
+        assert!(ledger
+            .seen("helsinki", "x", "r1", &ids, true)
+            .await
+            .is_err());
+        assert!(ledger.book("helsinki", "x").await.is_err());
+        assert!(ledger.settle("helsinki", "x", &[], None).await.is_err());
+        assert!(ledger.forget("helsinki", "x", &ids).await.is_err());
+        assert!(ledger.keep("helsinki", "x").await.is_err());
+        assert!(ledger.mark("helsinki", "x", "r1", &ids).await.is_err());
+        assert!(ledger.take_marked("helsinki", "x").await.is_err());
+        assert!(ledger.written("helsinki", "x", &ids).await.is_err());
+        assert!(ledger.completed("helsinki", "x", "r1").await.is_err());
+        assert!(ledger.last_complete("helsinki", "x").await.is_err());
+        assert!(ledger
+            .removed("helsinki", "s", "x", ("r1", Cause::Event), &ids)
+            .await
+            .is_err());
+        assert!(ledger
+            .removals("helsinki", RemovalsOf::Space("s"), 10)
+            .await
+            .is_err());
+        assert!(ledger.marking().await.is_err());
+        assert!(ledger.holds().await.is_err());
+    }
+
+    // ---- the run end, on the memory ledger and on a database that is down ----
+
+    fn run_end(pipeline: &str, run: &str, finished: bool, reports: ReportCount) -> RunEnd {
+        RunEnd {
+            project: "helsinki".to_owned(),
+            pipeline: pipeline.to_owned(),
+            run: run.to_owned(),
+            finished,
+            reports,
+            stream: String::new(),
+        }
+    }
+
+    /// The project's mirror with the Organization a dead database is asked about.
+    fn dead_world() -> AppState {
+        snapshot_world(vec![envelope(
+            "Project",
+            "helsinki",
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        )])
+        .with_db(dead_pool())
+    }
+
+    #[tokio::test]
+    async fn a_run_end_of_a_pipeline_the_mirror_lacks_changes_nothing() {
+        let state = snapshot_world(Vec::new());
+        state
+            .source_ledger
+            .seen("helsinki", "gone", "r0", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        run_ended(&state, run_end("gone", "r1", true, ReportCount::Complete)).await;
+        let (rows, hold) = state
+            .source_ledger
+            .book("helsinki", "gone")
+            .await
+            .expect("book");
+        assert_eq!(rows["urn:a"].misses, 0);
+        assert!(hold.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_run_whose_reports_did_not_all_arrive_holds_its_deletes_as_incomplete() {
+        for reports in [
+            ReportCount::Lost(3),
+            ReportCount::Unknown("the runner did not answer"),
+        ] {
+            let state = snapshot_world(Vec::new());
+            let ids = ["urn:a", "urn:b"].map(str::to_owned);
+            state
+                .source_ledger
+                .seen("helsinki", "feed", "r1", &ids, true)
+                .await
+                .expect("seen");
+            run_ended(&state, run_end("feed", "r2", true, reports)).await;
+            let (rows, hold) = state
+                .source_ledger
+                .book("helsinki", "feed")
+                .await
+                .expect("book");
+            let hold = hold.expect("held");
+            assert_eq!(hold.reason, HoldReason::Incomplete);
+            assert_eq!((hold.run.as_str(), hold.ledger, hold.would), ("r2", 2, 0));
+            assert!(
+                rows.values().all(|row| row.misses == 0),
+                "an incomplete run counts no miss"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_run_that_did_not_finish_holds_its_deletes_as_incomplete() {
+        let state = snapshot_world(Vec::new());
+        state
+            .source_ledger
+            .seen("helsinki", "feed", "r1", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        run_ended(&state, run_end("feed", "r2", false, ReportCount::Complete)).await;
+        let (_, hold) = state
+            .source_ledger
+            .book("helsinki", "feed")
+            .await
+            .expect("book");
+        assert_eq!(hold.map(|h| h.reason), Some(HoldReason::Incomplete));
+    }
+
+    #[tokio::test]
+    async fn a_complete_run_over_an_empty_ledger_is_noted_as_the_last_complete_run() {
+        let state = snapshot_world(Vec::new());
+        run_ended(&state, run_end("feed", "r9", true, ReportCount::Complete)).await;
+        let last = state
+            .source_ledger
+            .last_complete("helsinki", "feed")
+            .await
+            .expect("last");
+        assert_eq!(last.map(|(run, _)| run), Some("r9".to_owned()));
+        let (_, hold) = state
+            .source_ledger
+            .book("helsinki", "feed")
+            .await
+            .expect("book");
+        assert!(hold.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_id_two_complete_runs_missed_is_due_even_when_its_delete_cannot_start() {
+        let state = snapshot_world(Vec::new());
+        let ledger = &state.source_ledger;
+        let all: Vec<String> = (0..20).map(|n| format!("urn:a:{n}")).collect();
+        ledger
+            .seen("helsinki", "feed", "r0", &all, true)
+            .await
+            .expect("seen");
+        for run in ["r1", "r2"] {
+            ledger
+                .seen("helsinki", "feed", run, &all[1..], false)
+                .await
+                .expect("seen");
+            run_ended(&state, run_end("feed", run, true, ReportCount::Complete)).await;
+        }
+        let (rows, hold) = ledger.book("helsinki", "feed").await.expect("book");
+        assert!(
+            hold.is_none(),
+            "one of twenty is within the share: {hold:?}"
+        );
+        assert_eq!(rows["urn:a:0"].misses, 2);
+        assert_eq!(rows["urn:a:1"].misses, 0);
+        assert_eq!(doomed(&rows, &rule(2, 10)), ["urn:a:0".to_owned()]);
+        // This world's Endpoint has no slug, so the delete was not started and the id is still due.
+        assert!(rows.contains_key("urn:a:0"));
+    }
+
+    #[tokio::test]
+    async fn a_database_that_is_down_costs_a_run_end_its_warnings_and_nothing_else() {
+        let state = dead_world();
+        run_ended(&state, run_end("feed", "r1", true, ReportCount::Complete)).await;
+        // An events pipeline's run end reads its marks and cannot.
+        let events = events_world();
+        events.mirror.upsert(envelope(
+            "Project",
+            "helsinki",
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        ));
+        let events = events.with_db(dead_pool());
+        run_ended(
+            &events,
+            run_end("pushed", "r1", true, ReportCount::Complete),
+        )
+        .await;
+        sweep_marks(&events).await;
+    }
+
+    #[tokio::test]
+    async fn a_report_or_a_seen_id_on_a_database_that_is_down_is_an_error_or_a_warning() {
+        let state = dead_world();
+        note_seen(
+            &state,
+            "helsinki",
+            "feed",
+            "r1",
+            &["urn:a".to_owned()],
+            true,
+        )
+        .await;
+        let report: Report = serde_json::from_value(json!({
+            "run": "r1", "deleted": [], "gone": [], "failed": []
+        }))
+        .expect("report");
+        assert!(reported(&state, "helsinki", "feed", report).await.is_err());
+        let marks: Marks = serde_json::from_value(json!({ "ids": ["urn:a"] })).expect("marks");
+        assert!(marked_at_source(&state, "helsinki", "feed", marks)
+            .await
+            .is_err());
+        assert!(report_of(&state).await.is_err());
+    }
+
+    async fn report_of(state: &AppState) -> Result<Overview, sqlx::Error> {
+        report(state, "helsinki", "feed", &snapshot_spec(), &rule(2, 10)).await
+    }
+
+    // ---- a mark of ids that are all the pipeline's, a feed that cannot be written ----
+
+    #[tokio::test]
+    async fn a_mark_of_ids_that_are_all_in_the_ledger_reports_nothing() {
+        let state = events_world();
+        let ids = ["urn:a", "urn:b"].map(str::to_owned);
+        state
+            .source_ledger
+            .seen("helsinki", "pushed", "r0", &ids, true)
+            .await
+            .expect("seen");
+        let marks: Marks =
+            serde_json::from_value(json!({ "run": "r1", "ids": ["urn:a", "urn:b"] }))
+                .expect("marks");
+        marked_at_source(&state, "helsinki", "pushed", marks)
+            .await
+            .expect("kept");
+        assert!(
+            feed(&state).await.is_empty(),
+            "every id was the pipeline's own"
+        );
+        let taken = state
+            .source_ledger
+            .take_marked("helsinki", "pushed")
+            .await
+            .expect("take");
+        assert_eq!(taken.map(|(_, ids)| ids.len()), Some(2));
+    }
+
+    #[tokio::test]
+    async fn a_mark_that_names_strangers_still_succeeds_when_the_feed_cannot_be_written() {
+        let mut state = events_world();
+        state.mirror.upsert(envelope(
+            "Project",
+            "helsinki",
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        ));
+        state.activity =
+            crate::activity::ActivityStore::new(Some(dead_pool()), Arc::clone(&state.mirror));
+        let marks: Marks =
+            serde_json::from_value(json!({ "run": "r1", "ids": ["urn:stranger"] })).expect("marks");
+        marked_at_source(&state, "helsinki", "pushed", marks)
+            .await
+            .expect("the marks are kept; only the feed line is lost");
+    }
+
+    #[tokio::test]
+    async fn a_report_still_succeeds_when_the_feed_cannot_be_written() {
+        let mut state = events_world();
+        state.mirror.upsert(envelope(
+            "Project",
+            "helsinki",
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        ));
+        state.activity =
+            crate::activity::ActivityStore::new(Some(dead_pool()), Arc::clone(&state.mirror));
+        state
+            .source_ledger
+            .seen("helsinki", "pushed", "r0", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        let report: Report = serde_json::from_value(json!({
+            "run": "r1", "deleted": ["urn:a"], "gone": [], "failed": []
+        }))
+        .expect("report");
+        reported(&state, "helsinki", "pushed", report)
+            .await
+            .expect("the ledger is settled; only the feed line is lost");
+        let (rows, _) = state
+            .source_ledger
+            .book("helsinki", "pushed")
+            .await
+            .expect("book");
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn a_report_of_refusals_names_how_many_and_masks_what_the_gateway_said() {
+        let report: Report = serde_json::from_value(json!({
+            "run": "r1", "deleted": [], "gone": [],
+            "failed": [
+                { "id": "urn:x", "message": "refused" },
+                { "id": "urn:y", "message": "refused too" }
+            ]
+        }))
+        .expect("report");
+        let event = feed_event("p", "pl", Cause::Snapshot, &report, &[], &[]).expect("an event");
+        assert!(
+            event.summary.contains("the gateway refused 2"),
+            "{}",
+            event.summary
+        );
+        assert_eq!(event.severity, "warning");
+        assert_eq!(event.details["refused"].as_array().map(Vec::len), Some(2));
+        let first = event.details["refused"][0].as_str().expect("a line");
+        assert!(first.starts_with("urn:x: "), "{first}");
+    }
+
+    #[test]
+    fn a_report_of_nothing_has_no_feed_line_and_a_quiet_delete_is_info() {
+        let nothing: Report = serde_json::from_value(json!({
+            "run": "r1", "deleted": [], "gone": [], "failed": []
+        }))
+        .expect("report");
+        assert!(feed_event("p", "pl", Cause::Snapshot, &nothing, &[], &[]).is_none());
+        let event = feed_event(
+            "p",
+            "pl",
+            Cause::Snapshot,
+            &nothing,
+            &["urn:a".to_owned()],
+            &[],
+        )
+        .expect("an event");
+        assert_eq!(event.severity, "info");
+        assert!(
+            event.summary.contains("no longer lists"),
+            "{}",
+            event.summary
+        );
+    }
+
+    // ---- sweeping marks: a pipeline the mirror lacks, and one that runs on a clock ----
+
+    #[tokio::test]
+    async fn the_sweep_leaves_the_marks_of_a_missing_or_clocked_pipeline_for_its_run_end() {
+        use crate::resource::ResourceEnvelope as Env;
+        let mut clocked_spec = snapshot_spec();
+        clocked_spec["sourceDeletes"] = json!({ "mode": "events", "deletedWhen": "this.gone" });
+        let clocked: Env = envelope("Pipeline", "clocked", "helsinki", clocked_spec);
+        let state = snapshot_world(vec![clocked]);
+        for pipeline in ["ghost", "clocked"] {
+            state
+                .source_ledger
+                .seen("helsinki", pipeline, "r0", &["urn:a".to_owned()], true)
+                .await
+                .expect("seen");
+            state
+                .source_ledger
+                .mark("helsinki", pipeline, "r1", &["urn:a".to_owned()])
+                .await
+                .expect("mark");
+        }
+        sweep_marks(&state).await;
+        for pipeline in ["ghost", "clocked"] {
+            let taken = state
+                .source_ledger
+                .take_marked("helsinki", pipeline)
+                .await
+                .expect("take");
+            assert_eq!(
+                taken,
+                Some(("r1".to_owned(), vec!["urn:a".to_owned()])),
+                "{pipeline}"
+            );
+        }
+    }
+
+    // ---- starting a delete stream ----
+
+    fn runner_world(runner: Option<&str>, identity: bool, slug: Value) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_runner_url = runner.map(str::to_owned);
+        config.pipeline_test_capture_url = Some("http://portal-internal:9090".to_owned());
+        config.pipeline_identity = identity;
+        let state = AppState::new(config, None);
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "ep-vehicles",
+            "helsinki",
+            json!({ "slug": slug, "contextSpaceRef": { "kind": "ContextSpace", "name": "vehicles" } }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("Pipeline", "feed", "helsinki", snapshot_spec()));
+        state
+    }
+
+    async fn runner_taking_streams() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let runner = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex("^/streams/"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex("^/streams/"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        runner
+    }
+
+    async fn requests_of(runner: &wiremock::MockServer, verb: &str) -> Vec<wiremock::Request> {
+        runner
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.method.as_str() == verb)
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_launch_names_why_it_cannot_start() {
+        let ids = ["urn:a".to_owned()];
+        let state = snapshot_world(Vec::new());
+        assert_eq!(
+            launch(&state, "helsinki", "missing", "r1", &ids).await,
+            Err("the pipeline is gone".to_owned())
+        );
+        assert_eq!(
+            launch(&state, "helsinki", "feed", "r1", &ids).await,
+            Err("the pipeline writes through no Endpoint".to_owned())
+        );
+        let no_slug = runner_world(Some("http://runner"), false, json!(5));
+        assert_eq!(
+            launch(&no_slug, "helsinki", "feed", "r1", &ids).await,
+            Err("the pipeline writes through no Endpoint".to_owned())
+        );
+        let no_runner = runner_world(None, false, json!("veh"));
+        assert_eq!(
+            launch(&no_runner, "helsinki", "feed", "r1", &ids).await,
+            Err("no pipeline runner is configured".to_owned())
+        );
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_runner_url = Some("http://runner".to_owned());
+        let no_internal = AppState::new(config, None);
+        no_internal.mirror.upsert(envelope(
+            "Endpoint",
+            "ep-vehicles",
+            "helsinki",
+            json!({ "slug": "veh" }),
+        ));
+        no_internal
+            .mirror
+            .upsert(envelope("Pipeline", "feed", "helsinki", snapshot_spec()));
+        assert_eq!(
+            launch(&no_internal, "helsinki", "feed", "r1", &ids).await,
+            Err("no internal listener is configured for the runner".to_owned())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_launch_cannot_read_when_the_ledger_is_down() {
+        let state = runner_world(Some("http://runner"), false, json!("veh"));
+        state.mirror.upsert(envelope(
+            "Project",
+            "helsinki",
+            crate::permissions::ORG_NAMESPACE,
+            json!({ "organizationRef": "o" }),
+        ));
+        let state = state.with_db(dead_pool());
+        let refused = launch(&state, "helsinki", "feed", "r1", &["urn:a".to_owned()]).await;
+        assert!(refused.is_err(), "{refused:?}");
+    }
+
+    #[tokio::test]
+    async fn a_runner_that_refuses_the_stream_or_is_not_there_fails_the_launch() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let ids = ["urn:a".to_owned()];
+        let refusing = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&refusing)
+            .await;
+        let state = runner_world(Some(&refusing.uri()), false, json!("veh"));
+        let answer = launch(&state, "helsinki", "feed", "r1", &ids).await;
+        assert!(
+            matches!(&answer, Err(reason) if reason.starts_with("the runner answered 500")),
+            "{answer:?}"
+        );
+        let absent = runner_world(Some("http://127.0.0.1:1"), false, json!("veh"));
+        let answer = launch(&absent, "helsinki", "feed", "r1", &ids).await;
+        assert!(answer.is_err(), "{answer:?}");
+    }
+
+    #[tokio::test]
+    async fn a_launch_posts_the_stream_under_the_pipelines_own_account_when_identity_is_on() {
+        let runner = runner_taking_streams().await;
+        let state = runner_world(Some(&runner.uri()), true, json!("veh"));
+        let ids = ["urn:a".to_owned(), "bad id".to_owned()];
+        let started = launch(&state, "helsinki", "feed", "r1", &ids).await;
+        assert_eq!(started, Ok(1), "an id a stream could misread is left out");
+        let posted = requests_of(&runner, "POST").await;
+        assert_eq!(posted.len(), 1);
+        let body = String::from_utf8_lossy(&posted[0].body).into_owned();
+        assert!(body.contains("veh"), "{body}");
+        assert!(
+            posted[0].url.path().contains("source-deletes"),
+            "{}",
+            posted[0].url
+        );
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_started_stream_is_removed_when_its_window_has_passed() {
+        let runner = runner_taking_streams().await;
+        let state = runner_world(Some(&runner.uri()), false, json!("veh"));
+        let started = launch(&state, "helsinki", "feed", "r1", &["urn:a".to_owned()]).await;
+        assert_eq!(started, Ok(1));
+        assert!(requests_of(&runner, "DELETE").await.is_empty());
+        // The removal task starts its window sleep on its first poll, before the clock stops.
+        tokio::task::yield_now().await;
+        tokio::time::pause();
+        tokio::time::advance(STREAM_WINDOW + Duration::from_secs(1)).await;
+        let waited = std::time::Instant::now();
+        let mut removed = Vec::new();
+        while removed.is_empty() && waited.elapsed() < Duration::from_secs(10) {
+            // A blocking wait parks the runtime (driving its I/O) without moving the paused clock.
+            tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(2)))
+                .await
+                .expect("the wait");
+            removed = requests_of(&runner, "DELETE").await;
+        }
+        assert_eq!(removed.len(), 1);
+        assert!(removed[0].url.path().contains("source-deletes"));
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_stream_the_runner_can_no_longer_remove_is_only_a_warning() {
+        let runner = runner_taking_streams().await;
+        let state = runner_world(Some(&runner.uri()), false, json!("veh"));
+        let started = launch(&state, "helsinki", "feed", "r1", &["urn:a".to_owned()]).await;
+        assert_eq!(started, Ok(1));
+        drop(runner);
+        tokio::time::pause();
+        tokio::time::advance(STREAM_WINDOW + Duration::from_secs(1)).await;
+        for _ in 0..200 {
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(2));
+        }
     }
 }

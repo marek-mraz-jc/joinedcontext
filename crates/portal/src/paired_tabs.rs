@@ -249,4 +249,12 @@ mod tests {
             .listen("c2", &late, "ana", 5, 600, 100 + RENEW_GRACE)
             .is_none());
     }
+
+    #[test]
+    fn a_closed_tab_is_told_to_open_again() {
+        assert!(Undelivered::NotListening
+            .reason()
+            .contains("closed or reloading"));
+        assert!(Undelivered::NotPaired.reason().contains("Connect this tab"));
+    }
 }

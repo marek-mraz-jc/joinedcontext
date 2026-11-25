@@ -829,4 +829,66 @@ mod tests {
         let sweep = render_sweep(&long, &long, "ep-slug", &expiry).expect("sweep");
         assert!(decoded(&sweep).starts_with("expiry: not updated for 2d (PL-64), pipeline ppp"));
     }
+
+    #[test]
+    fn a_pipeline_spec_that_does_not_parse_is_left_to_the_kind_check() {
+        let state = world(Vec::new());
+        let odd = json!({ "class": 5 });
+        assert!(check(&state, "helsinki", "Pipeline", "odd", &odd).is_ok());
+        assert!(check(&state, "helsinki", "Pipeline", "odd", &json!("text")).is_ok());
+    }
+
+    #[test]
+    fn an_expiry_with_no_output_names_the_one_output_it_needs() {
+        let state = world(Vec::new());
+        let spec = json!({
+            "class": "resident",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "expiry": { "after": "14d", "types": ["Vehicle"] },
+        });
+        assert_eq!(
+            refusals(&state, "vehicles", spec),
+            vec!["expiry needs the one output the pipeline writes".to_owned()]
+        );
+    }
+
+    #[test]
+    fn an_expiry_on_an_endpoint_the_mirror_lacks_is_left_to_the_reference_check() {
+        let state = world(Vec::new());
+        let spec = pipeline_spec("ep-missing", expiry(&["Vehicle"]));
+        assert!(refusals(&state, "vehicles", spec).is_empty());
+    }
+
+    #[test]
+    fn a_source_delete_rule_on_an_endpoint_the_mirror_lacks_judges_nothing() {
+        let state = world(Vec::new());
+        let mut spec = pipeline_spec("ep-missing", None);
+        spec["sourceDeletes"] = json!({ "mode": "snapshot" });
+        assert!(check(&state, "helsinki", "Pipeline", "vehicles", &spec).is_ok());
+    }
+
+    #[test]
+    fn an_operation_group_grants_each_operation_it_holds() {
+        let state = world(vec![grant(
+            "vehicles-group",
+            "vehicles",
+            json!(["federationOps"]),
+            json!([]),
+        )]);
+        let held = policies(&state.mirror, "helsinki");
+        assert!(granted(
+            &held,
+            "vehicles",
+            "pipelines",
+            Operation::QueryBatch,
+            None
+        ));
+        assert!(!granted(
+            &held,
+            "stops",
+            "pipelines",
+            Operation::QueryBatch,
+            None
+        ));
+    }
 }

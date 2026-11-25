@@ -1305,4 +1305,201 @@ mod tests {
         let stored = Text::from_columns(text.text.clone(), &text.say_json());
         assert_eq!(stored, text);
     }
+
+    #[test]
+    fn every_kind_has_its_word_its_manifest_kind_and_its_page() {
+        for (kind, word, manifest, plural) in [
+            (Kind::Pipeline, "pipeline", "Pipeline", "pipelines"),
+            (Kind::Space, "space", "ContextSpace", "spaces"),
+            (Kind::Endpoint, "endpoint", "Endpoint", "endpoints"),
+            (Kind::Model, "model", "DataModel", "models"),
+            (Kind::Datasource, "datasource", "DataSource", "datasources"),
+        ] {
+            assert_eq!(kind.as_str(), word);
+            assert_eq!(Kind::parse(word), Some(kind));
+            assert_eq!(kind.manifest_kind(), manifest);
+            assert_eq!(kind.page("bbsk", "x"), format!("/projects/bbsk/{plural}/x"));
+        }
+        assert_eq!(Kind::parse("nothing"), None);
+        assert_eq!(Kind::parse(""), None);
+    }
+
+    #[test]
+    fn a_status_is_written_and_read_back_and_an_unknown_one_reads_as_an_error() {
+        for status in [Status::Ok, Status::Warn, Status::Error] {
+            assert_eq!(Status::parse(status.as_str()), status);
+        }
+        assert_eq!(Status::parse("unheard-of"), Status::Error);
+        assert_eq!(Status::parse(""), Status::Error);
+        assert!(Status::Error < Status::Warn && Status::Warn < Status::Ok);
+    }
+
+    #[test]
+    fn what_a_person_changes_follows_the_words_of_the_failure_and_the_kind() {
+        let code = |kind: Kind, detail: &str| fix_hint(kind, "p", detail).code;
+        assert_eq!(code(Kind::Pipeline, "got 403 Forbidden"), "policyWrite");
+        assert_eq!(code(Kind::Endpoint, "No Policy grants it"), "policy");
+        assert_eq!(code(Kind::Datasource, "forbidden"), "policy");
+        assert_eq!(code(Kind::Datasource, "401 Unauthorized"), "token");
+        assert_eq!(code(Kind::Pipeline, "invalid_client"), "token");
+        assert_eq!(code(Kind::Datasource, "blocked by robots.txt"), "robots");
+        assert_eq!(code(Kind::Pipeline, "connection refused"), "sourceDown");
+        assert_eq!(code(Kind::Datasource, "timed out"), "sourceDown");
+        assert_eq!(code(Kind::Endpoint, "answered 503"), "serviceDown");
+        assert_eq!(code(Kind::Space, "timeout"), "serviceDown");
+        assert_eq!(code(Kind::Pipeline, "something odd"), "runLog");
+        assert_eq!(code(Kind::Pipeline, ""), "runLog");
+        let manifest = fix_hint(Kind::Model, "m", "something odd");
+        assert_eq!(manifest.code, "manifest");
+        assert_eq!(manifest.args["kind"], "DataModel");
+    }
+
+    #[test]
+    fn a_resource_that_drifted_or_waits_or_was_never_applied_warns_with_its_own_hint() {
+        let judge = |phase: Option<Phase>| {
+            let finding = reconcile(
+                "bbsk",
+                Kind::Space,
+                &envelope("ContextSpace", "air", phase, "the message"),
+            );
+            (finding.status, finding.fix.code)
+        };
+        assert_eq!(
+            judge(Some(Phase::Drifted)),
+            (Status::Warn, "drift".to_owned())
+        );
+        assert_eq!(
+            judge(Some(Phase::Draft)),
+            (Status::Warn, "approve".to_owned())
+        );
+        assert_eq!(
+            judge(Some(Phase::Pending)),
+            (Status::Warn, "approve".to_owned())
+        );
+        assert_eq!(judge(None), (Status::Warn, "approve".to_owned()));
+        assert_eq!(judge(Some(Phase::Live)), (Status::Ok, String::new()));
+        assert_eq!(judge(Some(Phase::Deploying)), (Status::Ok, String::new()));
+        assert_eq!(judge(Some(Phase::Error)).0, Status::Error);
+    }
+
+    fn report(
+        invalid: u64,
+        freshness: Vec<crate::quality::Freshness>,
+    ) -> crate::quality::SpaceQuality {
+        crate::quality::SpaceQuality {
+            observed_at: at("2026-10-21T08:00:00Z"),
+            checked: 40,
+            invalid,
+            truncated: false,
+            rules: Vec::new(),
+            freshness,
+            types: Vec::new(),
+        }
+    }
+
+    fn stale(
+        entity_type: &str,
+        newest: Option<TimestampTz>,
+        paused: bool,
+    ) -> crate::quality::Freshness {
+        crate::quality::Freshness {
+            pipeline: "air-feed".into(),
+            entity_type: entity_type.into(),
+            newest,
+            target_seconds: Some(3600),
+            state: crate::quality::FreshState::Stale,
+            paused,
+        }
+    }
+
+    #[test]
+    fn a_stale_pipeline_with_no_type_and_no_data_names_the_space_and_none() {
+        let findings = space_quality("bbsk", "air", &report(0, vec![stale("", None, false)]));
+        let fresh = find(&findings, "air", "freshness");
+        assert_eq!(fresh.status, Status::Warn);
+        assert_eq!(fresh.detail.args["type"], "air");
+        assert_eq!(fresh.detail.args["newest"], "none");
+        let valid = find(&findings, "air", "validation");
+        assert_eq!(valid.status, Status::Ok);
+        assert_eq!(valid.detail.code, "valid");
+        assert_eq!(valid.detail.args["checked"], "40");
+        assert_eq!(valid.fix, Text::default());
+    }
+
+    #[test]
+    fn a_paused_pipeline_and_a_space_with_broken_rules_but_no_rule_listed_are_judged_apart() {
+        let findings = space_quality("bbsk", "air", &report(5, vec![stale("T", None, true)]));
+        let fresh = find(&findings, "air", "freshness");
+        assert_eq!(
+            fresh.status,
+            Status::Ok,
+            "a paused pipeline's data ages by choice"
+        );
+        let valid = find(&findings, "air", "validation");
+        assert_eq!(valid.status, Status::Warn);
+        assert_eq!(valid.detail.args["rule"], "");
+    }
+
+    #[test]
+    fn a_spaces_report_in_the_store_becomes_its_findings_and_a_resource_without_a_project_is_skipped(
+    ) {
+        let quality = crate::quality::Store::default();
+        quality.put(
+            "bbsk",
+            "air",
+            report(2, vec![stale("T", Some(at("2026-10-20T08:00:00Z")), false)]),
+        );
+        let mut homeless = envelope("ContextSpace", "lost", Some(Phase::Live), "");
+        homeless.metadata.namespace = None;
+        let findings = derive(
+            &mirror(vec![
+                envelope("ContextSpace", "air", Some(Phase::Live), ""),
+                envelope("ContextSpace", "bare", Some(Phase::Live), ""),
+                homeless,
+            ]),
+            &quality,
+            &[],
+        );
+        let of = |name: &str| findings.iter().filter(|f| f.name == name).count();
+        assert_eq!(of("air"), 3, "reconcile, freshness and validation");
+        assert_eq!(of("bare"), 1, "no report, only reconcile");
+        assert_eq!(of("lost"), 0);
+    }
+
+    #[tokio::test]
+    async fn the_checks_of_a_log_are_listed_errors_first_and_one_project_alone() {
+        let store = HealthStore::new(None, Default::default());
+        let now = at("2026-10-21T08:00:00Z");
+        let mut ok = finding(Status::Ok);
+        ok.name = "alpha".into();
+        let mut warn = finding(Status::Warn);
+        warn.name = "beta".into();
+        let mut error = finding(Status::Error);
+        error.name = "gamma".into();
+        let mut other = finding(Status::Error);
+        other.project = "other".into();
+        store
+            .record(now, vec![ok, warn, error, other])
+            .await
+            .expect("record");
+        let all = store.list(None, now).await.expect("list");
+        let order: Vec<(&str, Status)> = all.iter().map(|c| (c.name.as_str(), c.status)).collect();
+        assert_eq!(
+            order,
+            [
+                ("gamma", Status::Error),
+                ("events", Status::Error),
+                ("beta", Status::Warn),
+                ("alpha", Status::Ok)
+            ]
+        );
+        let mine = store.list(Some("bbsk"), now).await.expect("list");
+        assert_eq!(mine.len(), 3);
+        assert!(store
+            .list(Some("nobody"), now)
+            .await
+            .expect("list")
+            .is_empty());
+        assert!(store.current("nobody", now).await.expect("list").is_empty());
+    }
 }

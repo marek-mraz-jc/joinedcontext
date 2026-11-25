@@ -204,4 +204,79 @@ mod tests {
         assert_eq!(store.screenshot(plain).await.expect("read"), None);
         assert_eq!(store.screenshot(99).await.expect("read"), None);
     }
+
+    async fn database() -> Option<sqlx::PgPool> {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return None;
+        };
+        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    }
+
+    #[tokio::test]
+    async fn a_database_keeps_lists_and_serves_a_screenshot() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let store = FeedbackStore::new(Some(pool));
+        let plain = store.add(one("db plain", None)).await.expect("kept");
+        let shot = store
+            .add(one("db shot", Some(b"png-bytes")))
+            .await
+            .expect("kept");
+        let listed = store.after(plain - 1).await.expect("listed");
+        assert_eq!(listed[0].id, plain);
+        assert_eq!(listed[0].text, "db plain");
+        assert_eq!(listed[0].page, "/spaces");
+        assert_eq!(listed[0].version, "1.0.0");
+        assert!(!listed[0].screenshot);
+        assert!(listed[0].created_at.contains('T'));
+        let with = listed
+            .iter()
+            .find(|f| f.id == shot)
+            .expect("the second one");
+        assert!(with.screenshot);
+        assert_eq!(
+            store.screenshot(shot).await.expect("read"),
+            Some(b"png-bytes".to_vec())
+        );
+        assert_eq!(store.screenshot(plain).await.expect("read"), None);
+        assert_eq!(store.screenshot(i64::MAX).await.expect("read"), None);
+    }
+
+    #[tokio::test]
+    async fn a_dead_database_answers_an_error_to_every_call() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let store = FeedbackStore::new(Some(pool));
+        assert!(store.add(one("x", None)).await.is_err());
+        assert!(store.after(0).await.is_err());
+        assert!(store.screenshot(1).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_memory_store_still_keeps_lists_and_serves() {
+        let store = FeedbackStore::new(None);
+        if let Inner::Memory(rows) = &store.inner {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _guard = rows.write();
+                panic!("poison the lock on purpose");
+            }));
+            assert!(outcome.is_err());
+        }
+        let id = store
+            .add(one("after the poison", Some(b"p")))
+            .await
+            .expect("kept");
+        assert_eq!(store.after(0).await.expect("listed").len(), 1);
+        assert_eq!(
+            store.screenshot(id).await.expect("read"),
+            Some(b"p".to_vec())
+        );
+    }
 }

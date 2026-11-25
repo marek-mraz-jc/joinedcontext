@@ -922,4 +922,22 @@ mod tests {
         assert!(files.iter().all(|f| f.status == Status::Ok), "{files:?}");
         assert_eq!(building.load(Ordering::SeqCst), 0);
     }
+
+    #[tokio::test]
+    async fn a_space_with_no_project_is_not_counted() {
+        let mirror = Mirror::default();
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+                "metadata": {"name": "orphan"},
+                "spec": {},
+            }))
+            .expect("a space"),
+        );
+        let counter = Arc::new(Counter::new(Some("http://127.0.0.1:1".to_owned()), None));
+        let found = Probes::new(None, Some(counter))
+            .findings(&mirror, TimestampTz::now())
+            .await;
+        assert!(found.is_empty(), "{found:?}");
+    }
 }

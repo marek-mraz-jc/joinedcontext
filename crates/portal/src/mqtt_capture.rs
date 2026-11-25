@@ -762,4 +762,376 @@ mod tests {
             .0
             .is_empty());
     }
+
+    fn dead_pool() -> sqlx::PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    /// A mirror that places `p` in an Organization, so a store on a dead pool reaches the pool.
+    fn mirror_placing_p() -> Arc<crate::store::Mirror> {
+        let mirror = Arc::new(crate::store::Mirror::new());
+        mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": { "name": "p", "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": "o" },
+            }))
+            .expect("a Project"),
+        );
+        mirror
+    }
+
+    async fn database() -> Option<sqlx::PgPool> {
+        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return None;
+        };
+        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    }
+
+    fn unique() -> String {
+        jc_types::ProjectId::mint().path_segment().to_string()
+    }
+
+    fn capture_broker(publish: &str) -> Broker {
+        let spec = serde_json::from_value(serde_json::json!({
+            "mode": "capture",
+            "roles": [{"name": "camera", "serviceAccounts": ["cam"], "publish": [publish]}],
+        }))
+        .map_err(|error| error.to_string());
+        Broker {
+            project: "p".to_owned(),
+            name: "cams".to_owned(),
+            release: "mqtt-p-cams".to_owned(),
+            spec,
+            certificate: None,
+            door: None,
+        }
+    }
+
+    #[test]
+    fn a_manifest_that_does_not_parse_is_no_target() {
+        let bad = broker("bad", "no-such-mode");
+        assert!(bad.spec.is_err());
+        let found = targets(&[bad, broker("ok", "capture")]);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].name, "ok");
+    }
+
+    #[test]
+    fn a_capture_broker_without_roles_subscribes_to_nothing() {
+        let mut empty = broker("none", "capture");
+        if let Ok(spec) = empty.spec.as_mut() {
+            spec.roles.clear();
+        }
+        let found = targets(&[empty]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].publish.is_empty());
+        assert!(filters(&found[0].publish).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_lock_of_the_memory_store_still_serves() {
+        let store = Arc::new(CaptureStore::new(None, Default::default()));
+        let poisoner = Arc::clone(&store);
+        let joined = std::thread::spawn(move || {
+            if let Inner::Memory(memory) = &poisoner.inner {
+                let _held = memory.lock().expect("not poisoned yet");
+                panic!("poison the lock on purpose");
+            }
+        })
+        .join();
+        assert!(joined.is_err());
+        store
+            .keep("p", "b", 5, vec![message("a", 0, 1)], at(1))
+            .await
+            .expect("kept");
+        assert_eq!(store.purge("p", "b").await.expect("purged"), 1);
+        assert_eq!(store.purge("p", "b").await.expect("purged"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_list_of_subscribers_can_still_be_stopped() {
+        let capture = Capture::new(
+            Arc::new(CaptureStore::new(None, Default::default())),
+            "jc-mqtt".to_owned(),
+        );
+        let outcome = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    let _held = capture.running.lock().expect("not poisoned yet");
+                    panic!("poison the lock on purpose");
+                })
+                .join()
+        });
+        assert!(outcome.is_err());
+        capture.stop();
+        assert!(capture.running().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_running_subscriber_stays_until_its_manifest_changes() {
+        let capture = Capture::new(
+            Arc::new(CaptureStore::new(None, Default::default())),
+            "jc-mqtt".to_owned(),
+        );
+        capture
+            .converge(&[capture_broker("cams/${clientid}/frame")], true)
+            .await;
+        capture
+            .converge(&[capture_broker("cams/${clientid}/frame")], true)
+            .await;
+        assert_eq!(capture.running().len(), 1);
+        capture.converge(&[capture_broker("status/#")], true).await;
+        let publish = capture
+            .running()
+            .get("mqtt-p-cams")
+            .map(|(target, _)| target.publish.clone());
+        assert_eq!(publish, Some(vec!["status/#".to_owned()]));
+        capture.stop();
+    }
+
+    #[tokio::test]
+    async fn a_sweep_that_cannot_reach_the_database_does_not_stop_the_convergence() {
+        let store = Arc::new(CaptureStore::new(Some(dead_pool()), mirror_placing_p()));
+        let capture = Capture::new(store, "jc-mqtt".to_owned());
+        capture.converge(&[], true).await;
+        assert!(capture.running().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_database_that_is_down_fails_every_store_call() {
+        let store = CaptureStore::new(Some(dead_pool()), mirror_placing_p());
+        assert!(store
+            .keep("p", "b", 5, vec![message("a", 0, 1)], at(1))
+            .await
+            .is_err());
+        assert!(store.read("p", "b", None, 5, at(1)).await.is_err());
+        assert!(store.purge("p", "b").await.is_err());
+        let capturing: BTreeSet<Key> = BTreeSet::new();
+        assert!(store.sweep(&capturing, at(1)).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_project_without_a_key_keeps_reads_and_purges_nothing() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let store = CaptureStore::new(Some(pool), Arc::new(crate::store::Mirror::new()));
+        let project = format!("cov-{}", unique());
+        store
+            .keep(&project, "cams", 5, vec![message("a", 0, 1)], at(1))
+            .await
+            .expect("nothing kept, no error");
+        let (found, more) = store
+            .read(&project, "cams", None, 5, at(1))
+            .await
+            .expect("read");
+        assert!(found.is_empty());
+        assert!(!more);
+        assert_eq!(store.purge(&project, "cams").await.expect("purged"), 0);
+    }
+
+    #[tokio::test]
+    async fn a_keyed_project_keeps_an_empty_batch_as_a_trim_and_reads_its_messages_back() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let mirror = Arc::new(crate::store::Mirror::new());
+        let project = format!("cov-{}", unique());
+        let organization = format!("cov-org-{}", unique());
+        crate::project_ids::placed(&pool, &mirror, &project, &organization).await;
+        let store = CaptureStore::new(Some(pool), mirror);
+        let now = TimestampTz::now();
+        let fresh = Message {
+            expires_at: now + jiff::SignedDuration::from_hours(1),
+            received_at: now,
+            ..message("cams/a/frame", 0, 4)
+        };
+        store
+            .keep(&project, "cams", 5, vec![fresh.clone()], now)
+            .await
+            .expect("kept");
+        store
+            .keep(&project, "cams", 5, Vec::new(), now)
+            .await
+            .expect("an empty batch only trims");
+        let (found, more) = store
+            .read(&project, "cams", Some("cams/a/frame"), 5, now)
+            .await
+            .expect("read");
+        assert_eq!((found.len(), more), (1, false));
+        assert_eq!(found[0].payload, fresh.payload);
+        let (none, _) = store
+            .read(&project, "cams", Some("other"), 5, now)
+            .await
+            .expect("read");
+        assert!(none.is_empty());
+        assert_eq!(store.purge(&project, "cams").await.expect("purged"), 1);
+    }
+
+    // The MQTT 3.1.1 packets of a broker that answers one subscriber, by hand.
+    async fn read_packet(socket: &mut tokio::net::TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
+        use tokio::io::AsyncReadExt;
+        let first = socket.read_u8().await?;
+        let (mut length, mut shift) = (0usize, 0u32);
+        loop {
+            let byte = socket.read_u8().await?;
+            length |= usize::from(byte & 0x7f) << shift;
+            if byte & 0x80 == 0 {
+                break;
+            }
+            shift += 7;
+        }
+        let mut body = vec![0u8; length];
+        socket.read_exact(&mut body).await?;
+        Ok((first, body))
+    }
+
+    fn publish_packet(topic: &str, payload: &[u8]) -> Vec<u8> {
+        let mut remaining = 2 + topic.len() + payload.len();
+        let mut packet = vec![0x30];
+        loop {
+            let mut byte = (remaining % 128) as u8;
+            remaining /= 128;
+            if remaining > 0 {
+                byte |= 0x80;
+            }
+            packet.push(byte);
+            if remaining == 0 {
+                break;
+            }
+        }
+        packet.extend_from_slice(&(topic.len() as u16).to_be_bytes());
+        packet.extend_from_slice(topic.as_bytes());
+        packet.extend_from_slice(payload);
+        packet
+    }
+
+    /// Answers one connection: CONNACK, SUBACK, then `messages`, then holds it for `hold`.
+    async fn one_connection(
+        mut socket: tokio::net::TcpStream,
+        messages: Vec<(String, Vec<u8>)>,
+        hold: Duration,
+    ) -> std::io::Result<()> {
+        use tokio::io::AsyncWriteExt;
+        read_packet(&mut socket).await?;
+        socket.write_all(&[0x20, 0x02, 0x00, 0x00]).await?;
+        loop {
+            let (first, body) = read_packet(&mut socket).await?;
+            if first >> 4 == 8 {
+                let ack = [0x90, 3, body[0], body[1], 0x00];
+                socket.write_all(&ack).await?;
+                break;
+            }
+        }
+        for (topic, payload) in &messages {
+            socket.write_all(&publish_packet(topic, payload)).await?;
+        }
+        tokio::time::sleep(hold).await;
+        Ok(())
+    }
+
+    fn cams_target() -> Target {
+        Target {
+            project: "p".to_owned(),
+            name: "cams".to_owned(),
+            release: "mqtt-p-cams".to_owned(),
+            publish: vec!["cams/${clientid}/frame".to_owned()],
+            per_topic: 5000,
+            window: 3600,
+            max_message_bytes: 1024 * 1024,
+        }
+    }
+
+    /// A subscriber against a broker of its own on the MQTT port: what arrives is stored with the
+    /// device it names, a burst beyond the broker's cap keeps the newest, and a broker that drops
+    /// the connection or a store that refuses the write stops nothing.
+    #[tokio::test]
+    async fn a_subscriber_stores_what_its_broker_publishes_and_survives_a_refused_store() {
+        let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await else {
+            eprintln!("skipped: the MQTT port is taken on this host");
+            return;
+        };
+        let burst: Vec<(String, Vec<u8>)> = (0..BROKER_MESSAGES + 5)
+            .map(|n| ("cams/cam-1/frame".to_owned(), n.to_string().into_bytes()))
+            .collect();
+        let scripts = Arc::new(Mutex::new(VecDeque::from([
+            burst,
+            vec![("cams/cam-2/frame".to_owned(), b"lost".to_vec())],
+        ])));
+        let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let accepting = {
+            let served = Arc::clone(&served);
+            tokio::spawn(async move {
+                loop {
+                    let Ok((socket, _)) = listener.accept().await else {
+                        return;
+                    };
+                    let script = scripts
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .pop_front()
+                        .unwrap_or_default();
+                    let served = Arc::clone(&served);
+                    tokio::spawn(async move {
+                        let _ = one_connection(socket, script, Duration::from_millis(2500)).await;
+                        served.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    });
+                }
+            })
+        };
+
+        let store = Arc::new(CaptureStore::new(None, Default::default()));
+        let first = tokio::spawn(subscribe(
+            Arc::clone(&store),
+            cams_target(),
+            "127.0.0.1".to_owned(),
+        ));
+        let started = std::time::Instant::now();
+        let mut found = Vec::new();
+        while started.elapsed() < Duration::from_secs(20) {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            found = store
+                .read("p", "cams", None, 5000, TimestampTz::now())
+                .await
+                .expect("read")
+                .0;
+            let newest = (BROKER_MESSAGES + 4).to_string().into_bytes();
+            if found.len() >= BROKER_MESSAGES && found[0].payload == newest {
+                break;
+            }
+        }
+        assert_eq!(found.len(), BROKER_MESSAGES, "the broker's cap holds");
+        assert_eq!(
+            found[0].payload,
+            (BROKER_MESSAGES + 4).to_string().into_bytes()
+        );
+        assert_eq!(found[0].client_id.as_deref(), Some("cam-1"));
+        // The broker drops the connection after its hold: the subscriber says so and dials again.
+        while served.load(std::sync::atomic::Ordering::SeqCst) < 1
+            && started.elapsed() < Duration::from_secs(20)
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 1);
+        first.abort();
+
+        // A store whose database is down: the batch is lost with a warning, the subscriber lives.
+        let refusing = Arc::new(CaptureStore::new(Some(dead_pool()), mirror_placing_p()));
+        let second = tokio::spawn(subscribe(refusing, cams_target(), "127.0.0.1".to_owned()));
+        while served.load(std::sync::atomic::Ordering::SeqCst) < 2
+            && started.elapsed() < Duration::from_secs(40)
+        {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert_eq!(served.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert!(!second.is_finished());
+        second.abort();
+        accepting.abort();
+    }
 }

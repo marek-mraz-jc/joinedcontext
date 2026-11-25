@@ -305,16 +305,12 @@ impl Client {
             .endpoint
             .parse()
             .map_err(|e: url::ParseError| Error::Endpoint(e.to_string()))?;
+        let named = url
+            .host_str()
+            .ok_or_else(|| Error::Endpoint("the endpoint names no host".to_owned()))?;
         let host = match url.port() {
-            Some(port) => format!(
-                "{}:{port}",
-                url.host_str()
-                    .ok_or_else(|| Error::Endpoint("the endpoint names no host".to_owned()))?
-            ),
-            None => url
-                .host_str()
-                .ok_or_else(|| Error::Endpoint("the endpoint names no host".to_owned()))?
-                .to_owned(),
+            Some(port) => format!("{named}:{port}"),
+            None => named.to_owned(),
         };
         // A store that accepts and never answers costs provisioning an error, not the reconciler
         // loop it runs in (T-1716).

@@ -781,4 +781,54 @@ mod tests {
         ));
         assert!(!may_remove(&proposer, "eva-doprava"));
     }
+
+    #[test]
+    fn a_write_owner_without_a_slash_is_the_app_by_its_bare_name() {
+        assert_eq!(written(Some(&"solo".to_owned())), "the App solo");
+        assert_eq!(written(None), "the organization");
+        assert_eq!(
+            written(Some(&"doprava/board".to_owned())),
+            "the App board of project doprava"
+        );
+    }
+
+    #[test]
+    fn a_group_update_without_a_name_proposes_nothing_extra() {
+        let state = world(None);
+        let effective = for_proposal(
+            &state,
+            &who("jana@hel.fi"),
+            ORG_NAMESPACE,
+            "Group",
+            true,
+            &json!({ "kind": "Group", "spec": { "members": [] } }),
+        );
+        assert!(effective.grants.is_empty());
+        let unknown = for_proposal(
+            &state,
+            &who("jana@hel.fi"),
+            ORG_NAMESPACE,
+            "Group",
+            true,
+            &json!({ "metadata": { "name": "no-such-group" } }),
+        );
+        assert!(unknown.grants.is_empty());
+    }
+
+    #[test]
+    fn a_manifest_that_is_no_envelope_differs_by_more_than_members() {
+        let held = manifest("Group", meta("operators", None), json!({ "members": [] }));
+        assert!(!only_members_differ(&held, &json!("text")));
+        assert!(!only_members_differ(&held, &json!({ "kind": 5 })));
+    }
+
+    #[test]
+    fn a_group_whose_spec_is_no_object_is_compared_whole() {
+        let held = manifest("Group", meta("operators", None), json!("odd"));
+        let same = serde_json::to_value(&held).expect("serializes");
+        assert!(only_members_differ(&held, &same));
+        let other = manifest("Group", meta("operators", None), json!("other"));
+        let other = serde_json::to_value(&other).expect("serializes");
+        assert!(!only_members_differ(&held, &other));
+    }
 }

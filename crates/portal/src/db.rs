@@ -1230,10 +1230,7 @@ mod rollback_tests {
             .execute(&db)
             .await
             .expect("plant");
-        let compatible = super::connect(scratch.as_str())
-            .await
-            .map(|_| ())
-            .map_err(|e| e.to_string());
+        let compatible = super::connect(scratch.as_str()).await.is_ok();
         plant(newest + 2, "breaking drop names")
             .execute(&db)
             .await
@@ -1249,7 +1246,7 @@ mod rollback_tests {
         .execute(&admin)
         .await
         .expect("drop");
-        assert_eq!(compatible, Ok(()));
+        assert!(compatible);
         assert_eq!(
             breaking,
             Err(format!(
@@ -1300,13 +1297,10 @@ mod pool_tests {
         let leader = crate::reconciler::Leadership::new(pool.clone(), 0x7494);
         leader.acquire().await.expect("election");
         let mut working = Vec::new();
-        for n in 0..5 {
-            working.push(
-                pool.acquire()
-                    .await
-                    .unwrap_or_else(|e| panic!("working connection {n}: {e}")),
-            );
+        for _ in 0..5 {
+            working.push(pool.acquire().await.expect("a free working connection"));
         }
+        assert_eq!(working.len(), 5);
         drop(working);
         leader.resign().await;
     }
@@ -1332,5 +1326,413 @@ mod pool_tests {
         drop(held);
         assert_eq!(unavailable_for(&pool, &mut failing).await, 0);
         assert!(failing.is_none());
+    }
+}
+
+#[cfg(test)]
+mod coverage_tests {
+    use super::*;
+    use crate::host_registry::SeedOrganization;
+
+    fn database_url() -> Option<String> {
+        std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+    }
+
+    /// A pool whose every acquire fails: the database is down.
+    fn dead_pool() -> PgPool {
+        PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    fn installation() -> SeedOrganization {
+        SeedOrganization {
+            name: "installation".to_owned(),
+            organization_id: None,
+            host: "installation.example.com".to_owned(),
+            catalogue_id: None,
+        }
+    }
+
+    /// A database of its own, so no parallel test boots on the rows or roles planted here.
+    struct Scratch {
+        admin: PgPool,
+        name: String,
+        url: String,
+    }
+
+    async fn scratch(label: &str) -> Option<Scratch> {
+        let url = database_url()?;
+        let admin = PgPool::connect(&url).await.expect("connect");
+        let name = format!("jc_cov_{label}_{}", std::process::id());
+        sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name}")))
+            .execute(&admin)
+            .await
+            .expect("drop");
+        sqlx::query(AssertSqlSafe(format!("CREATE DATABASE {name}")))
+            .execute(&admin)
+            .await
+            .expect("create");
+        let mut own = url::Url::parse(&url).expect("url");
+        own.set_path(&name);
+        Some(Scratch {
+            admin,
+            name,
+            url: own.to_string(),
+        })
+    }
+
+    impl Scratch {
+        async fn remove(self) {
+            sqlx::query(AssertSqlSafe(format!(
+                "DROP DATABASE {} WITH (FORCE)",
+                self.name
+            )))
+            .execute(&self.admin)
+            .await
+            .expect("drop");
+        }
+
+        /// The URL of this database as `role`, whose password is `pw`.
+        fn as_role(&self, role: &str) -> String {
+            let mut url = url::Url::parse(&self.url).expect("url");
+            url.set_username(role).expect("user");
+            url.set_password(Some("pw")).expect("password");
+            url.to_string()
+        }
+    }
+
+    async fn newest(pool: &PgPool) -> i64 {
+        sqlx::query_scalar("SELECT max(version) FROM _sqlx_migrations")
+            .fetch_one(pool)
+            .await
+            .expect("newest")
+    }
+
+    /// A database whose schema stops at migration `version`.
+    async fn migrated_to(scratch: &Scratch, version: i64) -> i64 {
+        let pool = PgPool::connect(&scratch.url).await.expect("connect");
+        sqlx::migrate!("./migrations")
+            .run_to(version, &pool)
+            .await
+            .expect("migrate part way");
+        let applied = applied_newest(&pool).await.expect("applied");
+        pool.close().await;
+        applied
+    }
+
+    /// A start on a database from before the project registry, with the installation
+    /// Organization named, brings it to the newest schema and seeds that Organization (T-7264).
+    #[tokio::test]
+    async fn a_database_from_before_the_registry_migrates_under_the_installation() {
+        let Some(db) = scratch("pre_registry_named").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        assert_eq!(migrated_to(&db, 60).await, 60);
+        let pool = connect_with(&db.url, Some(&installation()))
+            .await
+            .expect("migrate");
+        let seeded: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM organizations WHERE name = 'installation'")
+                .fetch_one(&pool)
+                .await
+                .expect("organizations");
+        let newest = newest(&pool).await;
+        pool.close().await;
+        db.remove().await;
+        assert_eq!(seeded, 1);
+        assert!(newest > PERSON_FORCED);
+    }
+
+    /// The same start with no installation Organization named still migrates: 0080 then holds
+    /// the say over the unkeyed rows, and the boot only warns.
+    #[tokio::test]
+    async fn a_database_from_before_the_registry_migrates_without_an_installation() {
+        let Some(db) = scratch("pre_registry_unnamed").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        assert_eq!(migrated_to(&db, 60).await, 60);
+        let pool = connect_with(&db.url, None).await.expect("migrate");
+        let seeded: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM organizations WHERE name = 'installation'")
+                .fetch_one(&pool)
+                .await
+                .expect("organizations");
+        let newest = newest(&pool).await;
+        pool.close().await;
+        db.remove().await;
+        assert_eq!(seeded, 0);
+        assert!(newest > PERSON_FORCED);
+    }
+
+    /// A start after one that stopped between 0079 and 0080, where the registry holds the
+    /// installation Organization alone, keys under it and goes on.
+    #[tokio::test]
+    async fn a_start_that_stopped_before_the_key_is_forced_goes_on() {
+        let Some(db) = scratch("stopped_79").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        assert_eq!(migrated_to(&db, KEY_FORCED - 1).await, KEY_FORCED - 1);
+        let pool = connect_with(&db.url, Some(&installation()))
+            .await
+            .expect("migrate");
+        let newest = newest(&pool).await;
+        pool.close().await;
+        db.remove().await;
+        assert!(newest >= KEY_FORCED);
+    }
+
+    /// Rows a migration set aside within the day are reported at the next start, which still
+    /// serves.
+    #[tokio::test]
+    async fn rows_set_aside_by_a_migration_do_not_stop_the_start() {
+        let Some(db) = scratch("set_aside").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let first = connect(&db.url).await.expect("migrate");
+        sqlx::query(
+            "INSERT INTO project_rows_set_aside (source_table, project, content) \
+             VALUES ('activity', 'ghost', '{}'::jsonb)",
+        )
+        .execute(&first)
+        .await
+        .expect("a row set aside");
+        first.close().await;
+        let second = connect(&db.url).await.expect("start again");
+        let held: i64 = sqlx::query_scalar("SELECT count(*) FROM project_rows_set_aside")
+            .fetch_one(&second)
+            .await
+            .expect("count");
+        second.close().await;
+        db.remove().await;
+        assert_eq!(held, 1);
+    }
+
+    /// With no migration URL one role migrates and serves: the start warns and answers a pool.
+    #[tokio::test]
+    async fn one_role_migrating_and_serving_gets_a_pool() {
+        let Some(db) = scratch("one_role").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = connect_as(&db.url, None).await.expect("one role");
+        let one: i32 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(&pool)
+            .await
+            .expect("a statement");
+        pool.close().await;
+        db.remove().await;
+        assert_eq!(one, 1);
+    }
+
+    /// The same role named for serving and for migrating is refused before any connection.
+    #[tokio::test]
+    async fn one_role_named_twice_is_refused() {
+        let same = "postgres://jc:pw@127.0.0.1:1/jc";
+        let err = connect_upgrading(same, Some(same), None)
+            .await
+            .expect_err("refused");
+        assert!(err.to_string().contains("both name the role `jc`"), "{err}");
+    }
+
+    /// A serving URL that is no URL is an error of its own, not a connection attempt.
+    #[tokio::test]
+    async fn a_serving_url_that_is_no_url_is_refused() {
+        let err = connect_upgrading("not a url", Some("postgres://a@h/d"), None)
+            .await
+            .expect_err("refused");
+        assert!(!err.to_string().is_empty());
+    }
+
+    /// A serving role that belongs to the role that owns the tables is refused, naming them.
+    #[tokio::test]
+    async fn a_serving_role_in_the_owner_role_is_refused() {
+        let Some(db) = scratch("member_of_owner").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let role = format!("jc_cov_member_{}", std::process::id());
+        let owner: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&db.admin)
+            .await
+            .expect("owner");
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'pw'; \
+             GRANT \"{owner}\" TO {role}"
+        )))
+        .execute(&db.admin)
+        .await
+        .expect("the role");
+        let outcome = connect_upgrading(&db.as_role(&role), Some(&db.url), None).await;
+        let message = outcome.err().map(|e| e.to_string());
+        db.remove().await;
+        let cleanup = PgPool::connect(&database_url().expect("url"))
+            .await
+            .expect("connect");
+        sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
+            .execute(&cleanup)
+            .await
+            .expect("drop role");
+        let message = message.expect("refused");
+        assert!(message.contains("owns, or is a member of"), "{message}");
+    }
+
+    /// A serving role that bypasses row-level security is refused.
+    #[tokio::test]
+    async fn a_serving_role_that_bypasses_row_level_security_is_refused() {
+        let Some(db) = scratch("bypass").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let role = format!("jc_cov_bypass_{}", std::process::id());
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN BYPASSRLS PASSWORD 'pw'"
+        )))
+        .execute(&db.admin)
+        .await
+        .expect("the role");
+        let outcome = connect_upgrading(&db.as_role(&role), Some(&db.url), None).await;
+        let message = outcome.err().map(|e| e.to_string());
+        db.remove().await;
+        let cleanup = PgPool::connect(&database_url().expect("url"))
+            .await
+            .expect("connect");
+        sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
+            .execute(&cleanup)
+            .await
+            .expect("drop role");
+        let message = message.expect("refused");
+        assert!(message.contains("BYPASSRLS"), "{message}");
+    }
+
+    /// A role that owns nothing serves: the start answers its pool.
+    #[tokio::test]
+    async fn a_serving_role_that_owns_nothing_gets_a_pool() {
+        let Some(db) = scratch("owns_nothing").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let role = format!("jc_cov_plain_{}", std::process::id());
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'pw'"
+        )))
+        .execute(&db.admin)
+        .await
+        .expect("the role");
+        let pool = connect_upgrading(&db.as_role(&role), Some(&db.url), None)
+            .await
+            .expect("served");
+        let user: String = sqlx::query_scalar("SELECT current_user::text")
+            .fetch_one(&pool)
+            .await
+            .expect("user");
+        pool.close().await;
+        db.remove().await;
+        let cleanup = PgPool::connect(&database_url().expect("url"))
+            .await
+            .expect("connect");
+        sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
+            .execute(&cleanup)
+            .await
+            .expect("drop role");
+        assert_eq!(user, role);
+    }
+
+    /// The pool watch of a closed pool ends at once; of a dead one it keeps asking.
+    #[tokio::test]
+    async fn the_pool_watch_ends_with_its_pool() {
+        let closed = dead_pool();
+        closed.close().await;
+        watch_pool(closed);
+        watch_pool(dead_pool());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+
+    /// A dead pool answers an error from each read of the migration history, not a default.
+    #[tokio::test]
+    async fn a_dead_pool_answers_an_error_for_the_migration_history() {
+        let pool = dead_pool();
+        assert!(applied_newest(&pool).await.is_err());
+        assert!(newer_migrations(&pool, 1).await.is_err());
+        assert!(registry_holds_only(&pool, "any").await.is_err());
+    }
+
+    /// A pass over the projects stops at a pool with no connection and goes on after any other
+    /// failure, keeping the first.
+    #[test]
+    fn a_pass_stops_for_a_pool_without_connections_and_goes_on_otherwise() {
+        let mut failed = None;
+        assert!(next_project("a", Ok(()), &mut failed).is_ok());
+        assert!(failed.is_none());
+        assert!(matches!(
+            next_project("a", Err(sqlx::Error::PoolTimedOut), &mut failed),
+            Err(sqlx::Error::PoolTimedOut)
+        ));
+        assert!(matches!(
+            next_project("a", Err(sqlx::Error::PoolClosed), &mut failed),
+            Err(sqlx::Error::PoolClosed)
+        ));
+        assert!(failed.is_none());
+        assert!(next_project("b", Err(sqlx::Error::RowNotFound), &mut failed).is_ok());
+        assert!(next_project("c", Err(sqlx::Error::PoolClosed), &mut failed).is_err());
+        assert!(next_project("d", Err(sqlx::Error::WorkerCrashed), &mut failed).is_ok());
+        assert!(matches!(failed, Some(sqlx::Error::RowNotFound)));
+    }
+
+    /// Three unique violations in a row end the append with the last one, each attempt rolled
+    /// back to its savepoint. Temporary tables of one session stand in for the shared ones.
+    #[tokio::test]
+    async fn an_event_that_keeps_colliding_is_refused_after_three_attempts() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = connect(&url).await.expect("migrate");
+        let mut conn = pool.acquire().await.expect("a connection");
+        sqlx::raw_sql(
+            "BEGIN; \
+             CREATE TEMP TABLE agent_runs (id text PRIMARY KEY); \
+             INSERT INTO agent_runs VALUES ('run-1'); \
+             CREATE TEMP TABLE agent_run_events (run_id text NOT NULL, seq bigint NOT NULL, \
+               kind text NOT NULL, payload jsonb NOT NULL, \
+               created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (run_id, seq)); \
+             CREATE FUNCTION pg_temp.collide() RETURNS trigger LANGUAGE plpgsql AS \
+               $$ BEGIN RAISE unique_violation USING MESSAGE = 'collision'; END $$; \
+             CREATE TRIGGER collide BEFORE INSERT ON agent_run_events \
+               FOR EACH ROW EXECUTE FUNCTION pg_temp.collide()",
+        )
+        .execute(&mut *conn)
+        .await
+        .expect("temporary tables");
+        let err = append_agent_run_event(&mut conn, "run-1", "step", &serde_json::json!({}))
+            .await
+            .expect_err("refused");
+        sqlx::raw_sql("ROLLBACK")
+            .execute(&mut *conn)
+            .await
+            .expect("rollback");
+        assert!(is_unique_violation(&err), "{err}");
+    }
+
+    /// An append whose savepoint cannot be set (no transaction) is an error of the store.
+    #[tokio::test]
+    async fn an_append_outside_a_transaction_is_an_error() {
+        let Some(url) = database_url() else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = connect(&url).await.expect("migrate");
+        let mut conn = pool.acquire().await.expect("a connection");
+        let err = append_agent_run_event(&mut conn, "no-run", "step", &serde_json::json!({}))
+            .await
+            .expect_err("no transaction");
+        assert!(!is_unique_violation(&err), "{err}");
     }
 }

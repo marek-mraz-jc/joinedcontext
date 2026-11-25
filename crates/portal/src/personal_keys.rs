@@ -140,4 +140,19 @@ mod tests {
         keys.replace(BTreeMap::new());
         assert!(keys.of("p", "s").is_none());
     }
+
+    #[test]
+    fn a_poisoned_key_table_still_replaces_and_answers() {
+        let keys = Keys::default();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = keys.held.write();
+            panic!("poison the lock on purpose");
+        }));
+        assert!(outcome.is_err());
+        let key = usable(KEY).expect("32 bytes");
+        keys.replace(BTreeMap::from([(("p".to_owned(), "s".to_owned()), key)]));
+        assert_eq!(keys.of("p", "s").expect("a key").expose(), KEY);
+        assert!(keys.of("p", "other").is_none());
+        assert!(keys.of("other", "s").is_none());
+    }
 }

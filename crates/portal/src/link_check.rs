@@ -1781,4 +1781,22 @@ mod tests {
         );
         assert!(asked[0].contains("type=Event"), "{asked:?}");
     }
+
+    /// A link with no host (a `mailto:`) is no host's to ask: nothing is asked and nothing kept.
+    #[tokio::test]
+    async fn a_link_without_a_host_is_never_asked() {
+        let checker = Checker::new(
+            one_space(),
+            Arc::new(LinkStore::new(None, Default::default())),
+            Url::parse("http://127.0.0.1:1/").expect("a url"),
+        );
+        let plan = Plan {
+            project: "bbsk".to_owned(),
+            pipeline: "podujatia-a".to_owned(),
+            links: vec![Url::parse("mailto:someone@example.org").expect("a url")],
+            elsewhere: 0,
+        };
+        let asked = checker.ask(&[plan], &BTreeSet::new()).await;
+        assert!(asked.is_empty(), "{asked:?}");
+    }
 }

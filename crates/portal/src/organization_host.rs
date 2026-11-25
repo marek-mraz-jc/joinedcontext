@@ -641,4 +641,210 @@ mod tests {
         assert!(!gated("/"));
         assert!(!gated("/assets/index.js"));
     }
+
+    fn addresses_of(organization: &str, url: &str) -> OrganizationAddresses {
+        OrganizationAddresses {
+            organization: organization.to_owned(),
+            organization_id: None,
+            addresses: vec![OrganizationAddress {
+                kind: AddressKind::Portal,
+                url: url.parse().expect("a url"),
+            }],
+        }
+    }
+
+    fn catalogue_of(organization: &str, token_file: Option<&str>) -> OrganizationCatalogue {
+        OrganizationCatalogue {
+            organization: organization.to_owned(),
+            url: "https://opendata.example".parse().expect("a url"),
+            api: None,
+            reach: None,
+            data_host: None,
+            token_file: token_file.map(Into::into),
+            token: None,
+        }
+    }
+
+    #[test]
+    fn a_poisoned_set_is_still_read_and_replaced() {
+        let set = Swappable::new(vec![1, 2]);
+        let held = set.clone();
+        let poisoner = std::thread::spawn(move || {
+            let _guard = held.0.write().expect("the set");
+            std::panic::resume_unwind(Box::new("poisoning the set on purpose"));
+        });
+        assert!(poisoner.join().is_err());
+        assert_eq!(*set.current(), vec![1, 2]);
+        set.store(vec![3]);
+        assert_eq!(*set.current(), vec![3]);
+    }
+
+    #[test]
+    fn two_sets_are_equal_when_they_hold_equal_values() {
+        assert_eq!(Swappable::new(1), Swappable::new(1));
+        assert_ne!(Swappable::new(1), Swappable::new(2));
+    }
+
+    #[tokio::test]
+    async fn a_publisher_token_prints_a_placeholder_and_mints() {
+        let token = PublisherToken(std::sync::Arc::new(|| -> Minted {
+            Box::pin(async { Err("no token today".to_owned()) })
+        }));
+        assert_eq!(format!("{token:?}"), "PublisherToken(redacted)");
+        assert_eq!(token, token.clone());
+        let other = PublisherToken(std::sync::Arc::new(|| -> Minted {
+            Box::pin(async { Err("no token today".to_owned()) })
+        }));
+        assert_ne!(token, other);
+        assert_eq!(token.mint().await.err().as_deref(), Some("no token today"));
+    }
+
+    #[test]
+    fn run_time_organizations_replace_the_set_before_and_start_time_entries_win() {
+        let mut config = crate::config::Config::for_tests();
+        config.organization_addresses = vec![
+            addresses_of("start", "https://portal.start.example/"),
+            addresses_of("gone", "https://portal.gone.example/"),
+        ];
+        config.organization_catalogues = vec![catalogue_of("start", Some("/run/start-token"))];
+        let state = AppState::new(config, None);
+
+        state.replace_run_time_organizations(
+            vec![
+                catalogue_of("start", Some("/run/other")),
+                catalogue_of("gone", Some("/run/gone-token")),
+            ],
+            vec![
+                addresses_of("start", "https://portal.elsewhere.example/"),
+                addresses_of("new", "https://portal.new.example/"),
+                addresses_of("gone", "https://portal.gone2.example/"),
+            ],
+            &["gone".to_owned()],
+        );
+        let addresses = state.organization_addresses.current();
+        let names: Vec<&str> = addresses.iter().map(|a| a.organization.as_str()).collect();
+        assert_eq!(names, vec!["start", "new", "gone"]);
+        assert_eq!(
+            addresses[0].addresses[0].url.as_str(),
+            "https://portal.start.example/"
+        );
+        let catalogues = state.organization_catalogues.current();
+        assert_eq!(catalogues.len(), 2);
+        assert_eq!(
+            catalogues[0].token_file.as_deref(),
+            Some(std::path::Path::new("/run/start-token"))
+        );
+        assert!(
+            catalogues[1].token_file.is_none() && catalogues[1].token.is_none(),
+            "a removed Organization keeps its entry without a token"
+        );
+
+        // A second replacement that no longer names `gone` keeps its tokenless entry.
+        state.replace_run_time_organizations(Vec::new(), Vec::new(), &["gone".to_owned()]);
+        let held = state.organization_catalogues.current();
+        assert!(held
+            .iter()
+            .all(|c| c.organization != "gone" || c.token_file.is_none()));
+        assert_eq!(state.organization_addresses.current().len(), 1);
+    }
+
+    #[test]
+    fn replacing_the_hosts_with_a_bad_list_changes_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        assert_eq!(
+            state.replace_organization_hosts("hel=https://portal.hel.example"),
+            Ok(1)
+        );
+        assert!(state.replace_organization_hosts("hel").is_err());
+        assert_eq!(state.organization_hosts.current().len(), 1);
+        assert_eq!(state.replace_organization_hosts(""), Ok(0));
+        assert!(state.organization_hosts.current().is_empty());
+    }
+
+    #[test]
+    fn a_url_that_does_not_parse_is_refused_with_the_name() {
+        let said = parse("hel=not a url").expect_err("refused");
+        assert!(said.starts_with("hel: 'not a url'"), "{said}");
+        assert!(parse("hel=https://a.example?x=1").is_err());
+        assert!(parse("=https://a.example").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_scope_in_pins_the_host_and_its_repository_name() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let host = parse("hel=https://portal.hel.example").expect("parses")[0].clone();
+        let seen = scope_in(&state, host, async {
+            (organization(), repository_organization())
+        })
+        .await;
+        assert_eq!(seen, (Some("hel".to_owned()), Some("hel".to_owned())));
+        assert_eq!(repository_organization(), None);
+    }
+
+    async fn pinned_answer(request: Request<axum::body::Body>, state: AppState) -> (u16, String) {
+        use http_body_util::BodyExt;
+        use tower::ServiceExt;
+        let app = axum::Router::new()
+            .route(
+                "/page",
+                axum::routing::get(|| async { organization().unwrap_or_else(|| "none".into()) }),
+            )
+            .layer(axum::middleware::from_fn_with_state(state, middleware));
+        let response = app.oneshot(request).await.expect("a response");
+        let status = response.status().as_u16();
+        let body = response
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    #[tokio::test]
+    async fn a_request_host_set_by_the_router_pins_the_organization() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state
+            .replace_organization_hosts("hel=https://portal.hel.example")
+            .expect("hosts");
+        let mut request = Request::get("/page")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        request
+            .extensions_mut()
+            .insert(RequestHost("portal.hel.example".to_owned()));
+        assert_eq!(
+            pinned_answer(request, state.clone()).await,
+            (200, "hel".to_owned())
+        );
+        let request = Request::get("/page")
+            .header("host", "portal.hel.example")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        assert_eq!(
+            pinned_answer(request, state.clone()).await,
+            (200, "hel".to_owned())
+        );
+        let request = Request::get("/page")
+            .header("host", "elsewhere.example")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        assert_eq!(
+            pinned_answer(request, state.clone()).await,
+            (200, "none".to_owned())
+        );
+        let mut request = Request::get("/page")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        request
+            .extensions_mut()
+            .insert(RequestOrganization("unknown".to_owned()));
+        assert_eq!(pinned_answer(request, state).await.0, 421);
+    }
+
+    #[test]
+    fn the_starting_answer_asks_to_retry_in_a_minute() {
+        let response = starting(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response());
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "60");
+    }
 }

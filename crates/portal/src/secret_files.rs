@@ -332,4 +332,36 @@ mod tests {
         assert_eq!(path_of("p", "feed"), "projects/p/secrets/feed.enc.yaml");
         assert!(encrypt("feed", &BTreeMap::new(), &["nope".into()], "now").is_err());
     }
+
+    #[test]
+    fn a_secret_needs_a_recipient_and_the_recipient_must_be_one() {
+        let keys = std::collections::BTreeMap::from([(
+            "token".to_owned(),
+            zeroize::Zeroizing::new("hunter2".to_owned()),
+        )]);
+        let none = super::encrypt("t", &keys, &[], "2026-10-22T10:00:00Z").expect_err("no one");
+        assert_eq!(none, "a secret needs at least one age recipient");
+        let bad = super::encrypt("t", &keys, &["not-age".to_owned()], "2026-10-22T10:00:00Z")
+            .expect_err("no age recipient");
+        assert_eq!(bad, "'not-age' is no age recipient");
+        assert!(!none.contains("hunter2") && !bad.contains("hunter2"));
+    }
+
+    #[test]
+    fn an_identity_file_that_cannot_be_read_names_no_recipient() {
+        let err = super::own_recipient(std::path::Path::new("/nonexistent/age-identity.txt"))
+            .expect_err("no such file");
+        assert_eq!(err, "the Portal's age identity file cannot be read");
+    }
+
+    #[test]
+    fn a_document_with_no_sops_block_names_no_recipient() {
+        assert!(super::recipients_of("a: 1\n").is_empty());
+        assert!(super::recipients_of("sops:\n  age: 3\n").is_empty());
+        assert!(super::recipients_of(": : :").is_empty());
+        assert_eq!(
+            super::recipients_of("sops:\n  age:\n    - recipient: age1abc\n    - other: x\n"),
+            vec!["age1abc".to_owned()]
+        );
+    }
 }
