@@ -53,6 +53,7 @@ bin = [
   { name = "export_secrets", path = "fuzz_targets/export_secrets.rs", test = false, doc = false, bench = false },
   { name = "grafana_title", path = "fuzz_targets/grafana_title.rs", test = false, doc = false, bench = false },
   { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
+  { name = "stream_answers", path = "fuzz_targets/stream_answers.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
