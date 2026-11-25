@@ -11,6 +11,8 @@
 # paths and texts, (T-7724) a robots.txt body, a link found in an entity and the manifests a
 # checkout proposes to the judge, and (T-7729) a pipeline test's manifest and records and a public
 # documentation page's path. Its own
+# paths and texts, and (T-7659) an export's revision and kinds filter, the secrets a bundle strips
+# and a visualization's title. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 # The targets, one per line: .gitattributes merges this file with merge=union, so two branches
@@ -47,6 +49,9 @@ bin = [
   { name = "judge_replay", path = "fuzz_targets/judge_replay.rs", test = false, doc = false, bench = false },
   { name = "record_check", path = "fuzz_targets/record_check.rs", test = false, doc = false, bench = false },
   { name = "public_docs", path = "fuzz_targets/public_docs.rs", test = false, doc = false, bench = false },
+  { name = "export_query", path = "fuzz_targets/export_query.rs", test = false, doc = false, bench = false },
+  { name = "export_secrets", path = "fuzz_targets/export_secrets.rs", test = false, doc = false, bench = false },
+  { name = "grafana_title", path = "fuzz_targets/grafana_title.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
