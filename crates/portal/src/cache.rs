@@ -75,13 +75,12 @@ impl<K: Eq + Hash + Clone, V: Clone> ByteLru<K, V> {
             },
         );
         self.bytes += bytes;
-        while self.bytes > self.max_bytes {
-            let Some((_, oldest)) = self.order.pop_first() else {
-                break;
-            };
-            if let Some(gone) = self.entries.remove(&oldest) {
-                self.bytes -= gone.bytes;
-            }
+        // The oldest leave until the held bytes fit; `order` and `entries` hold the same keys.
+        while let Some((_, oldest)) = (self.bytes > self.max_bytes)
+            .then(|| self.order.pop_first())
+            .flatten()
+        {
+            self.bytes -= self.entries.remove(&oldest).map_or(0, |gone| gone.bytes);
         }
     }
 

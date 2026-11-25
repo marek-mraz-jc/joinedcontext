@@ -86,12 +86,7 @@ async fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    tracing::info!(
-        bind = %config.bind,
-        broker = %config.broker_url,
-        allocator = if cfg!(feature = "jemalloc") { "jemalloc" } else { "system" },
-        "context-gateway listening"
-    );
+    tracing::info!(bind = %config.bind, broker = %config.broker_url, allocator = if cfg!(feature = "jemalloc") { "jemalloc" } else { "system" }, "context-gateway listening");
 
     if let Err(error) = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown())

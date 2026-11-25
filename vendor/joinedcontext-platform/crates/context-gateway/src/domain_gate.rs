@@ -238,7 +238,9 @@ mod tests {
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or_default()
                         .to_owned();
-                    let mut log = log.lock().unwrap_or_else(|e| e.into_inner());
+                    let mut log = log
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner);
                     let (status, etag, body) = script[log.len().min(script.len() - 1)];
                     if status == 304 {
                         // A list confirmed long ago: only the 304 makes it current again.

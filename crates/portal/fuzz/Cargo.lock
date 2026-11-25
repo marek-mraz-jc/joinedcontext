@@ -2840,6 +2840,7 @@ dependencies = [
 name = "joinedcontext-portal-fuzz"
 version = "0.0.0"
 dependencies = [
+ "age",
  "axum",
  "cookie",
  "jc-core",
@@ -2848,7 +2849,9 @@ dependencies = [
  "joinedcontext-portal",
  "libfuzzer-sys",
  "serde_json",
+ "tokio",
  "url",
+ "zeroize",
 ]
 
 [[package]]

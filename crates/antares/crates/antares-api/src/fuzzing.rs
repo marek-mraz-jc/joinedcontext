@@ -83,6 +83,31 @@ pub fn accept_header(value: &[u8]) -> bool {
     headers(header::ACCEPT, value).is_some_and(|h| crate::negotiate::parse_accept_geo(&h).is_ok())
 }
 
+/// 5.2.9 Context Source Registration bodies, as create and as a 5.9.3
+/// fragment: never panic, a create that passes names its mandatory members
+/// and its type, and no broker-internal `__` member a client wrote survives
+/// either form (the subject a Registration was created by is the broker's).
+pub fn csource_registration(data: &[u8]) -> bool {
+    let Ok(serde_json::Value::Object(doc)) = serde_json::from_slice(data) else {
+        return false;
+    };
+    let mut accepted = false;
+    for is_patch in [false, true] {
+        if let Ok(out) = crate::csource::normalize_registration(&doc, ctx(), is_patch) {
+            assert!(
+                !out.keys().any(|k| k.starts_with("__")),
+                "an internal member survived"
+            );
+            if !is_patch {
+                assert_eq!(out.get("type"), Some(&json!("ContextSourceRegistration")));
+                assert!(out.contains_key("endpoint") && out.contains_key("information"));
+            }
+            accepted = true;
+        }
+    }
+    accepted
+}
+
 /// The request body's depth scan (`bounds_layer`) and the deployment knobs'
 /// parsers (`ANTARES_MEMORY_BUDGET`, the count knobs): none panics, a depth
 /// never exceeds the bytes scanned, and a knob is a number above zero or

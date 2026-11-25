@@ -281,19 +281,20 @@ pub(super) fn problem(
     detail: String,
     extra: Value,
 ) -> Response {
-    let mut body = json!({
-        "type": format!("https://joinedcontext.com/errors/{slug}"),
-        "title": title,
-        "status": status.as_u16(),
-        "detail": detail,
-    });
-    if let (Some(hint), Some(body)) = (crate::error::hint_of(slug), body.as_object_mut()) {
-        body.insert("hint".into(), Value::String(hint));
-    }
-    if let (Some(body), Value::Object(extra)) = (body.as_object_mut(), extra) {
+    let mut body = serde_json::Map::from_iter([
+        (
+            "type".to_owned(),
+            json!(format!("https://joinedcontext.com/errors/{slug}")),
+        ),
+        ("title".to_owned(), json!(title)),
+        ("status".to_owned(), json!(status.as_u16())),
+        ("detail".to_owned(), json!(detail)),
+    ]);
+    body.extend(crate::error::hint_of(slug).map(|hint| ("hint".to_owned(), Value::String(hint))));
+    if let Value::Object(extra) = extra {
         body.extend(extra);
     }
-    let mut response = (status, body.to_string()).into_response();
+    let mut response = (status, Value::Object(body).to_string()).into_response();
     response.headers_mut().insert(
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/problem+json"),
@@ -349,9 +350,9 @@ pub fn quota_used(service: AppService, quota: &str, now: Option<OffsetDateTime>)
         json!({ "service": name(service), "quota": quota, "resetAt": reset_text }),
     );
     let wait = (reset - now).whole_seconds().max(1);
-    if let Ok(value) = HeaderValue::from_str(&wait.to_string()) {
-        response.headers_mut().insert(header::RETRY_AFTER, value);
-    }
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(wait));
     response
 }
 
@@ -463,6 +464,18 @@ mod tests {
             2,
             "the App may go lower"
         );
+    }
+
+    /// The AI token quota is read from the App's own `aiTokensPerDay`, never above the
+    /// catalog's default when no layer sets one.
+    #[test]
+    fn the_ai_token_quota_is_the_apps_own_or_the_default() {
+        let mirror = layers(json!(["ai"]));
+        let quota = |limits| quota(&mirror, "roads", &app(limits), Quota::AiTokensPerDay);
+        let default = quota(json!({}));
+        assert_eq!(quota(json!({ "aiTokensPerDay": 7 })), default.min(7));
+        assert_eq!(quota(json!({ "aiTokensPerDay": default + 1 })), default);
+        assert_eq!(Quota::AiTokensPerDay.member(), "aiTokensPerDay");
     }
 
     #[test]
@@ -590,6 +603,157 @@ mod tests {
             json!({"type": "https://joinedcontext.com/errors/quota", "title": "Conflict", "status": 409, "detail": "taken",
                 "hint": crate::error::hint_of("quota").expect("quota has a hint")})
         );
+    }
+
+    /// A project of its own placed in the registry, its key, and the pool (T-3661), or `None`
+    /// without a test database.
+    async fn counters() -> Option<(sqlx::PgPool, jc_types::ProjectKey, String)> {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())?;
+        let db = crate::db::connect(&url).await.expect("connect and migrate");
+        let mirror = Mirror::new();
+        let run = jc_types::ProjectId::mint().path_segment();
+        let project = format!("t7654-{run}");
+        crate::project_ids::placed(&db, &mirror, &project, &format!("t7654org-{run}")).await;
+        let key = crate::project_ids::key_of(&db, &mirror, &project)
+            .await
+            .expect("the registry answers")
+            .expect("a placed project has a key");
+        Some((db, key, project))
+    }
+
+    /// A day's counter passes until the limit and never past it; a count above the limit
+    /// passes nothing; each person's counter is their own; a settle moves it down, never
+    /// below 0; an unknown counter reads 0.
+    #[tokio::test]
+    async fn a_counter_takes_up_to_its_limit_and_settles_never_below_zero() {
+        let Some((db, key, project)) = counters().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let app = (project.as_str(), "shop");
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            0
+        );
+        assert!(!take(&db, key, app, "email", "", 6, 5).await.expect("take"));
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            0,
+            "a refused count leaves no row"
+        );
+        assert!(take(&db, key, app, "email", "", 3, 5).await.expect("take"));
+        assert!(!take(&db, key, app, "email", "", 3, 5).await.expect("take"));
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            3
+        );
+        assert!(take(&db, key, app, "email", "", 2, 5).await.expect("take"));
+        assert!(!take(&db, key, app, "email", "", 1, 5).await.expect("take"));
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            5
+        );
+
+        assert!(take(&db, key, app, "email", "ana@example.org", 1, 1)
+            .await
+            .expect("take"));
+        assert!(!take(&db, key, app, "email", "ana@example.org", 1, 1)
+            .await
+            .expect("take"));
+        assert!(take(&db, key, app, "email", "bo@example.org", 1, 1)
+            .await
+            .expect("take"));
+        assert_eq!(
+            used_today(&db, key, (project.as_str(), "other"), "email", "")
+                .await
+                .expect("read"),
+            0,
+            "another App's counter is its own"
+        );
+
+        settle(&db, key, app, "email", "", -2)
+            .await
+            .expect("settle");
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            3
+        );
+        settle(&db, key, app, "email", "", -10)
+            .await
+            .expect("settle");
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            0
+        );
+        settle(&db, key, app, "ai", "", 7)
+            .await
+            .expect("a counter not taken today");
+        assert_eq!(used_today(&db, key, app, "ai", "").await.expect("read"), 0);
+    }
+
+    /// Counters moved in one transaction move all or nothing, and ten calls at once never pass
+    /// more than the limit between them.
+    #[tokio::test]
+    async fn counters_move_together_and_never_pass_the_limit_at_once() {
+        let Some((db, key, project)) = counters().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let app = (project.as_str(), "shop");
+        let mut tx = crate::db::tenant_tx(&db, key).await.expect("a tx");
+        assert!(take_in(&mut tx, app, "email", "", 2, 5)
+            .await
+            .expect("take"));
+        assert!(take_in(&mut tx, app, "email", "ana@example.org", 1, 1)
+            .await
+            .expect("take"));
+        assert!(!take_in(&mut tx, app, "email", "ana@example.org", 2, 1)
+            .await
+            .expect("over"));
+        tx.rollback().await.expect("rollback");
+        assert_eq!(
+            used_today(&db, key, app, "email", "").await.expect("read"),
+            0
+        );
+        assert_eq!(
+            used_today(&db, key, app, "email", "ana@example.org")
+                .await
+                .expect("read"),
+            0
+        );
+
+        let calls = (0..10).map(|_| {
+            let db = db.clone();
+            let project = project.clone();
+            tokio::spawn(async move {
+                take(&db, key, (project.as_str(), "shop"), "ai", "", 1, 5)
+                    .await
+                    .expect("take")
+            })
+        });
+        let mut passed = 0;
+        for call in calls.collect::<Vec<_>>() {
+            passed += usize::from(call.await.expect("joined"));
+        }
+        assert_eq!(passed, 5);
+        assert_eq!(used_today(&db, key, app, "ai", "").await.expect("read"), 5);
+    }
+
+    /// A pool that cannot reach its server fails every counter call with the store's error,
+    /// so the route answers 503 rather than counting the call as free.
+    #[tokio::test]
+    async fn every_counter_call_fails_on_a_store_that_is_not_there() {
+        let db = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let key = jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        let app = ("roads", "shop");
+        assert!(take(&db, key, app, "email", "", 1, 5).await.is_err());
+        assert!(settle(&db, key, app, "email", "", -1).await.is_err());
+        assert!(used_today(&db, key, app, "email", "").await.is_err());
     }
 
     #[test]

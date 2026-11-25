@@ -114,3 +114,49 @@ pub fn model_type_iris<'a>(
     }
     out
 }
+
+#[cfg(test)]
+mod type_iri_tests {
+    use super::*;
+    use serde_json::json;
+
+    /// An absolute IRI or URN is itself, a term is in the default vocabulary, and a compact
+    /// IRI, an empty name or one with a space expands to nothing.
+    #[test]
+    fn a_type_name_expands_under_the_core_context_or_not_at_all() {
+        assert_eq!(
+            type_iri("https://x.org/T").as_deref(),
+            Some("https://x.org/T")
+        );
+        assert_eq!(type_iri("urn:x:T").as_deref(), Some("urn:x:T"));
+        assert_eq!(
+            type_iri("Depot").as_deref(),
+            Some("https://uri.etsi.org/ngsi-ld/default-context/Depot")
+        );
+        for name in ["", "other:Depot", "Bus Stop", "\t"] {
+            assert_eq!(type_iri(name), None, "{name:?}");
+        }
+    }
+
+    /// A term's own definition wins, as a string or an `@id`; else the model's `@vocab`; a
+    /// relative definition, a non-absolute `@vocab`, a non-object context and a definition of
+    /// another shape add nothing.
+    #[test]
+    fn a_models_context_names_the_iris_of_its_types() {
+        let types: BTreeSet<String> = ["A", "B", "C", "D", "https://abs.org/E"]
+            .map(str::to_owned)
+            .into();
+        let contexts = [
+            json!({"@context": {"@vocab": "https://m.org/", "A": "https://a.org/A", "B": {"@id": "https://b.org/B"}, "C": "relative", "D": 7}}),
+            json!({"@context": [{"@vocab": "not-absolute"}, {"D": {"@type": "@id"}}]}),
+            json!("no context"),
+            json!({"@context": "https://only.a.link/"}),
+        ];
+        let iris = model_type_iris(&types, contexts.iter());
+        let want: BTreeSet<String> = ["https://a.org/A", "https://b.org/B", "https://m.org/D"]
+            .map(str::to_owned)
+            .into();
+        assert_eq!(iris, want);
+        assert!(model_type_iris(&types, std::iter::empty()).is_empty());
+    }
+}

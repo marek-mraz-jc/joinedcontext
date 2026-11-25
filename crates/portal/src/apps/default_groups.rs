@@ -307,6 +307,42 @@ mod tests {
 
     /// AP-115: a default group named like the organization's own group, another App's, or an
     /// unmanaged realm group is refused naming both owners; no group is taken over.
+    /// `give` leaves a spec that is no object or whose access is no list as it is, adds the
+    /// group to a role entry that has no subjects yet, never twice, and leaves an entry whose
+    /// subjects are no list untouched.
+    #[test]
+    fn give_adds_a_group_once_and_leaves_a_malformed_access_alone() {
+        let mut not_object = json!(["access"]);
+        give(&mut not_object, "viewer", "alerts-viewer");
+        assert_eq!(not_object, json!(["access"]));
+
+        let mut not_list = json!({ "access": "everyone" });
+        give(&mut not_list, "viewer", "alerts-viewer");
+        assert_eq!(not_list, json!({ "access": "everyone" }));
+
+        let mut no_subjects = json!({ "access": [{ "role": "viewer" }] });
+        give(&mut no_subjects, "viewer", "alerts-viewer");
+        give(&mut no_subjects, "viewer", "alerts-viewer");
+        assert_eq!(
+            no_subjects,
+            json!({ "access": [{ "role": "viewer", "subjects": [{ "group": "alerts-viewer" }] }] })
+        );
+
+        let mut odd = json!({ "access": [{ "role": "viewer", "subjects": "all" }, "editor"] });
+        give(&mut odd, "viewer", "alerts-viewer");
+        assert_eq!(
+            odd,
+            json!({ "access": [{ "role": "viewer", "subjects": "all" }, "editor"] })
+        );
+
+        let mut empty = json!({});
+        give(&mut empty, "editor", "alerts-editor");
+        assert_eq!(
+            empty,
+            json!({ "access": [{ "role": "editor", "subjects": [{ "group": "alerts-editor" }] }] })
+        );
+    }
+
     #[test]
     fn a_default_group_name_another_owner_holds_is_refused() {
         let state = AppState::new(Config::for_tests(), None);
@@ -315,9 +351,11 @@ mod tests {
             .upsert(group("alerts-viewer", None, &["ada@hel.fi"]));
         let mut app = alerts(&["viewer"], json!([]), "published");
         let refused = plan(&state, &who(), "helsinki", &mut app).expect_err("a clash");
-        let ApiError::Denied(message) = refused else {
-            panic!("a clash is a refusal: {refused:?}");
-        };
+        assert!(
+            matches!(refused, ApiError::Denied(_)),
+            "a clash is a refusal: {refused:?}"
+        );
+        let message = refused.to_string();
         assert!(message.contains("belongs to the organization"), "{message}");
         assert!(
             message.contains("the App alerts of project helsinki"),

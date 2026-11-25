@@ -323,6 +323,11 @@ impl Sources {
     /// Reads the kinds the views are made of. A manifest whose spec does not parse is left
     /// out: the load already reported it.
     pub fn read(repo: &Repository) -> Self {
+        Self::read_as(repo, context_gateway::store::TenantNames::from_env())
+    }
+
+    /// [`Sources::read`] with the spaces' tenants named by `names`.
+    fn read_as(repo: &Repository, names: context_gateway::store::TenantNames) -> Self {
         let mut sources = Self::default();
         // Data-space agreements and the offers they were made on, compiled once every Policy
         // they narrow is read (DS-10, T-3927).
@@ -344,13 +349,14 @@ impl Sources {
             match id.kind.as_str() {
                 "ContextSpace" => {
                     let parsed = serde_json::from_value::<ContextSpaceSpec>(spec.clone()).ok();
-                    let tenant = match crate::spaces::repo_tenant(repo, &project, &id.name) {
-                        Ok(tenant) => tenant,
-                        Err(reason) => {
-                            tracing::warn!(%reason, "the space's views wait for its tenant");
-                            continue;
-                        }
-                    };
+                    let tenant =
+                        match crate::spaces::repo_tenant_as(repo, &project, &id.name, names) {
+                            Ok(tenant) => tenant,
+                            Err(reason) => {
+                                tracing::warn!(%reason, "the space's views wait for its tenant");
+                                continue;
+                            }
+                        };
                     let named = declared.iter().map(|(name, spec)| (name.as_str(), spec));
                     let broker_ref = parsed.as_ref().and_then(|spec| spec.broker_ref.as_deref());
                     let broker = jc_core::kinds::broker_of(broker_ref, named)
@@ -381,10 +387,11 @@ impl Sources {
                 }
                 "Endpoint" => {
                     if let Ok(spec) = serde_json::from_value::<EndpointSpec>(spec.clone()) {
-                        let Ok(tenant) = crate::spaces::repo_tenant(
+                        let Ok(tenant) = crate::spaces::repo_tenant_as(
                             repo,
                             &project,
                             spec.context_space_ref.name(),
+                            names,
                         ) else {
                             continue;
                         };
@@ -976,8 +983,7 @@ fn view_of(
         })
         .collect();
     if !ical.is_empty() {
-        let outputs = serde_json::to_value(ical).map_err(|err| err.to_string())?;
-        representations.insert("ical".into(), outputs);
+        representations.insert("ical".into(), json!(ical));
     }
     let feeds: Vec<_> = e
         .spec
@@ -1303,7 +1309,7 @@ fn rows(permits: &[&PolicySpec]) -> Result<Vec<&'static str>, String> {
 
 /// A `geoQ` written as `georel=…;geometry=…;coordinates=…[;geoproperty=…]` as the view's
 /// object; `near;maxDistance==…` keeps its distance in `georel`.
-fn geo(raw: &str) -> Result<Value, String> {
+pub fn geo(raw: &str) -> Result<Value, String> {
     let mut parts: BTreeMap<&str, String> = BTreeMap::new();
     for part in raw.split(';').map(str::trim).filter(|p| !p.is_empty()) {
         match part.split_once('=') {
@@ -1491,7 +1497,7 @@ fn assignee_id(project: &str, policy: &PolicySpec) -> String {
 }
 
 fn with_gateway(mut document: Value) -> Value {
-    if let Some(policies) = document["policies"].as_array_mut() {
+    if let Some(policies) = document.get_mut("policies").and_then(Value::as_array_mut) {
         policies.push(json!({
             "id": format!("@{GATEWAY_CLIENT}"),
             "effect": "permit",
@@ -2668,9 +2674,9 @@ mod tests {
             "contextSpaceRef": "air", "slug": SLUG, "audience": "public",
             "enabledRepresentations": ["ngsi-ld"]
         });
-        if let (Some(spec), Some(extra)) = (spec.as_object_mut(), extra.as_object()) {
-            spec.extend(extra.clone());
-        }
+        spec.as_object_mut()
+            .expect("an object")
+            .extend(extra.as_object().expect("extra fields").clone());
         EndpointSource {
             project: "city".into(),
             name: name.into(),
@@ -2685,9 +2691,9 @@ mod tests {
             "assignee": {"kind": "role", "id": "public"},
             "operations": ["retrieveOps"]
         });
-        if let (Some(spec), Some(extra)) = (spec.as_object_mut(), extra.as_object()) {
-            spec.extend(extra.clone());
-        }
+        spec.as_object_mut()
+            .expect("an object")
+            .extend(extra.as_object().expect("extra fields").clone());
         serde_json::from_value(spec).expect("a Policy spec")
     }
 
@@ -2860,11 +2866,11 @@ mod tests {
 
         let unit = "\n    attributes: {pm10: {range: float, unit: {ucum_code: ug/m3}}}\n";
         let mut imported = fleet(sources(vec![("cars", cars())]));
-        if let Some(Ok(model)) = imported.models.get_mut(&("city".into(), "air".into())) {
-            for text in model.imports.values_mut() {
-                text.push_str("  Air:");
-                text.push_str(unit);
-            }
+        let model = imported.models.get_mut(&("city".into(), "air".into()));
+        let model = model.and_then(|m| m.as_mut().ok()).expect("the model");
+        for text in model.imports.values_mut() {
+            text.push_str("  Air:");
+            text.push_str(unit);
         }
         assert!(
             view_of(&imported, &sta()).is_ok(),
@@ -2872,11 +2878,11 @@ mod tests {
         );
 
         let mut own = fleet(sources(vec![("cars", cars())]));
-        if let Some(Ok(model)) = own.models.get_mut(&("city".into(), "air".into())) {
-            model.source = model
-                .source
-                .replace("slots:\n  id:", &format!("  Air:{unit}slots:\n  id:"));
-        }
+        let model = own.models.get_mut(&("city".into(), "air".into()));
+        let model = model.and_then(|m| m.as_mut().ok()).expect("the model");
+        model.source = model
+            .source
+            .replace("slots:\n  id:", &format!("  Air:{unit}slots:\n  id:"));
         assert!(
             view_of(&own, &sta()).is_ok(),
             "the model's own measurement serves sta"
@@ -3894,9 +3900,10 @@ mod tests {
         s.apps.insert(("city".into(), "map".into()));
         let slug = |c: char| c.to_string().repeat(26);
         let with_slug = |name: &str, c: char, mut extra: Value| {
-            if let Some(o) = extra.as_object_mut() {
-                o.insert("slug".into(), json!(slug(c)));
-            }
+            extra
+                .as_object_mut()
+                .expect("an object")
+                .insert("slug".into(), json!(slug(c)));
             endpoint_named(name, extra)
         };
         s.endpoints = vec![
@@ -4023,7 +4030,7 @@ mod tests {
             if let Some(ical) = ical {
                 spec["representations"] = json!({ "ical": ical });
             }
-            endpoint_view(&s, &endpoint(spec)).unwrap_or_else(|why| panic!("a view: {why}"))
+            endpoint_view(&s, &endpoint(spec)).expect("a view")
         };
         let view = with(json!(["ngsi-ld", "ical"]), Some(&outputs));
         assert_eq!(view["representations"], json!({ "ical": outputs }));
@@ -4067,7 +4074,7 @@ mod tests {
             if let Some(facets) = facets {
                 spec["facets"] = facets;
             }
-            endpoint_view(&s, &endpoint(spec)).unwrap_or_else(|why| panic!("a view: {why}"))
+            endpoint_view(&s, &endpoint(spec)).expect("a view")
         };
         let listed = json!(["eventCategory", "address.addressLocality"]);
         assert_eq!(
@@ -4345,6 +4352,1313 @@ mod tests {
             .and_then(|a| a.iter().find(|(iri, _)| iri.ends_with("/location")))
             .map(|(_, recording)| recording["record"].clone());
         assert_eq!(location, Some(json!("onChange")), "{document}");
+    }
+
+    /// A fresh checkout directory under the temp dir.
+    fn checkout(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "portal-views-{tag}-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ))
+    }
+
+    fn put_file(dir: &Path, rel: &str, body: &str) {
+        let path = dir.join(rel);
+        std::fs::create_dir_all(path.parent().expect("a parent")).expect("mkdir");
+        std::fs::write(path, body).expect("write");
+    }
+
+    /// Where the checkout holds manifest `name` of `kind`, and its text.
+    fn manifest_of(
+        kind: &str,
+        namespace: &str,
+        space: &str,
+        name: &str,
+        spec: &str,
+    ) -> (String, String) {
+        let at = jc_core::registry::by_kind(kind)
+            .expect("a kind")
+            .repo_path(namespace, space, name);
+        let text = format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{spec}"
+        );
+        (at, text)
+    }
+
+    fn put_manifest(
+        dir: &Path,
+        kind: &str,
+        namespace: &str,
+        space: &str,
+        name: &str,
+        spec: &str,
+    ) -> String {
+        let (at, text) = manifest_of(kind, namespace, space, name, spec);
+        put_file(dir, &at, &text);
+        at
+    }
+
+    const PIPELINE: &str = "  class: resident\n  sources: [{dataSourceRef: {kind: DataSource, name: feed}}]\n  outputs:\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Car}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-air:air-public\", type: Bus}\n    - {targetEndpoint: \"urn:ngsi-ld:Endpoint:city.example:city-plain:plain-public\", type: Car}\n  history: [{type: Car, attributes: [{names: [speed], keep: changes, heartbeat: PT15M}]}]\n";
+
+    /// Every kind the views read, each with a manifest whose spec does not read beside a good
+    /// one: the bad one is left out (the load reported it), the good one is read, a declared
+    /// ContextBroker is the space's broker, a quarantining quality rule marks the space, a
+    /// mirrored DataModel selects nothing, and a Pipeline's history reaches its space's
+    /// retention (PL-108) through the Endpoint its output of that type names.
+    #[test]
+    fn the_sources_leave_out_each_manifest_that_does_not_read() {
+        let dir = checkout("kinds");
+        let bad = "  bogus: [1]\n";
+        put_manifest(
+            &dir,
+            "ContextBroker",
+            ORG_NAMESPACE,
+            "",
+            "edge",
+            "  image: antares:1\n",
+        );
+        put_manifest(&dir, "ContextBroker", ORG_NAMESPACE, "", "broken", bad);
+        put_manifest(
+            &dir,
+            "ContextSpace",
+            "city",
+            "air",
+            "air",
+            "  isSandbox: false\n  brokerRef: edge\n  retention: [{entityType: Car, history: P30D}]\n  quality:\n    - {name: stale, entityType: Car, kind: freshness, attribute: location, maxAge: PT10M}\n",
+        );
+        put_manifest(
+            &dir,
+            "ContextSpace",
+            "city",
+            "plain",
+            "plain",
+            "  isSandbox: maybe\n",
+        );
+        put_manifest(
+            &dir,
+            "Endpoint",
+            "city",
+            "air",
+            "air-public",
+            &format!("  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n"),
+        );
+        put_manifest(
+            &dir,
+            "Endpoint",
+            "city",
+            "plain",
+            "plain-public",
+            "  contextSpaceRef: plain\n  slug: aaaaaaaaaaaaaaaaaaaaaaaaaa\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n",
+        );
+        put_manifest(&dir, "Endpoint", "city", "air", "broken-endpoint", bad);
+        let grant = "  contextSpaceRef: air\n  assigner: did:web:city.example\n  assignee: { kind: role, id: public }\n  operations: [retrieveOps]\n  information:\n    - entities: [{ type: Car }]\n";
+        put_manifest(&dir, "Policy", "city", "air", "cars", grant);
+        put_manifest(
+            &dir,
+            "Policy",
+            "city",
+            "air",
+            "shapeless",
+            &format!("{grant}  rules: []\n"),
+        );
+        put_manifest(&dir, "Policy", "city", "air", "broken-policy", bad);
+        put_manifest(
+            &dir,
+            "ModelProjection",
+            "city",
+            "air",
+            "cars-only",
+            "  contextSpaceRef: air\n  dataModelRef: {name: air, version: 1.0.0}\n  classes: [{name: Car, slots: [speed]}]\n",
+        );
+        put_manifest(
+            &dir,
+            "ModelProjection",
+            "city",
+            "air",
+            "broken-projection",
+            bad,
+        );
+        let model = "  linkml: ./m.linkml.yaml\n  contextSpaceRef: air\n  version: 1.0.0\n";
+        put_manifest(
+            &dir,
+            "DataModel",
+            "city",
+            "air",
+            "own",
+            &format!("{model}  lifecycle: draft\n  classes: [Car]\n"),
+        );
+        put_manifest(
+            &dir,
+            "DataModel",
+            "city",
+            "air",
+            "mirror",
+            &format!("{model}  lifecycle: mirrored\n  classes: [Mirror]\n"),
+        );
+        put_manifest(&dir, "DataModel", "city", "air", "broken-model", bad);
+        put_manifest(&dir, "DataOffer", "city", "air", "broken-offer", bad);
+        put_manifest(
+            &dir,
+            "DataAgreement",
+            "city",
+            "air",
+            "broken-agreement",
+            bad,
+        );
+        put_manifest(&dir, "Mapping", "city", "air", "broken-mapping", bad);
+        put_manifest(&dir, "Pipeline", "city", "air", "buses", PIPELINE);
+        put_manifest(&dir, "Pipeline", "city", "air", "broken-pipeline", bad);
+        let repo = Repository::load(&dir).expect("the repository loads");
+        let read = Sources::read_as(&repo, context_gateway::store::TenantNames::Segment);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let names: Vec<&str> = read
+            .spaces
+            .iter()
+            .map(|(_, name, _)| name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            ["air", "plain"],
+            "a space that does not read still has views"
+        );
+        let tenant = &read.spaces[0].2;
+        assert_eq!(read.brokers[tenant], "edge");
+        let air = ("city".to_owned(), "air".to_owned());
+        let plain = ("city".to_owned(), "plain".to_owned());
+        assert!(read.quarantines.contains(&air));
+        assert!(read.quality.contains_key(&air) && !read.quality.contains_key(&plain));
+        assert!(
+            !read.retention.contains_key(&plain),
+            "a space that does not read keeps no retention, a Pipeline's history included"
+        );
+        assert!(
+            read.retention[&air][0].attributes.contains_key("speed"),
+            "the Pipeline's Car history is recorded in the space's retention: {:?}",
+            read.retention[&air]
+        );
+        let endpoints: Vec<&str> = read.endpoints.iter().map(|e| e.name.as_str()).collect();
+        assert_eq!(endpoints, ["air-public", "plain-public"]);
+        let policies: Vec<&str> = read.policies[&air]
+            .iter()
+            .map(|(n, _)| n.as_str())
+            .collect();
+        assert!(policies.contains(&"cars"), "{policies:?}");
+        assert!(
+            policies
+                .iter()
+                .all(|n| !n.starts_with("shapeless") && !n.starts_with("broken")),
+            "{policies:?}"
+        );
+        assert_eq!(
+            read.projections.keys().collect::<Vec<_>>(),
+            [&("city".to_owned(), "cars-only".to_owned())]
+        );
+        assert_eq!(read.classes[&air], BTreeSet::from(["Car".to_owned()]));
+        assert!(read.mappings.is_empty());
+    }
+
+    /// Under project-key tenants a project the registry has no key for yet has no tenant: its
+    /// space and Endpoint wait, and the run says so instead of writing a view under a guess.
+    #[tokio::test]
+    async fn a_space_without_a_tenant_waits_with_its_endpoints() {
+        let dir = checkout("keyless");
+        put_manifest(
+            &dir,
+            "ContextSpace",
+            "keyless",
+            "air",
+            "air",
+            "  isSandbox: false\n",
+        );
+        put_manifest(
+            &dir,
+            "Endpoint",
+            "keyless",
+            "air",
+            "air-public",
+            &format!("  contextSpaceRef: air\n  slug: {SLUG}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n"),
+        );
+        let repo = Repository::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        let (read, log) = crate::reconciler::logged(async {
+            Sources::read_as(&repo, context_gateway::store::TenantNames::ProjectKey)
+        })
+        .await;
+        assert!(read.spaces.is_empty() && read.endpoints.is_empty());
+        assert!(read.brokers.is_empty());
+        assert!(
+            log.contains("the space's views wait for its tenant"),
+            "{log}"
+        );
+        assert!(
+            log.contains("keyless/air has no broker tenant yet"),
+            "{log}"
+        );
+    }
+
+    /// DM-76: an import read once however many models import it, a project model imported from
+    /// the importer's own project, a source that does not parse kept for Model Tools to refuse;
+    /// refused: an organization model importing a project model, an import no checkout holds,
+    /// more imports than allowed, a spec that does not read, a LinkML path that leaves the
+    /// repository and a LinkML file that is not there.
+    #[test]
+    fn a_models_imports_resolve_once_each_and_refuse_what_the_rules_forbid() {
+        let dir = checkout("imports");
+        let model = |namespace: &str, name: &str, lifecycle: &str, imports: &str| {
+            let space = if namespace == ORG_NAMESPACE {
+                ""
+            } else {
+                "air"
+            };
+            let at = put_manifest(
+                &dir,
+                "DataModel",
+                namespace,
+                space,
+                name,
+                &format!(
+                    "  linkml: ./{name}.linkml.yaml\n  version: 1.0.0\n  lifecycle: {lifecycle}\n"
+                ),
+            );
+            let folder = at.rsplit_once('/').map(|(f, _)| f).unwrap_or_default();
+            let source =
+                format!("id: https://city.example/{name}\nname: {name}\nimports: [{imports}]\n");
+            put_file(&dir, &format!("{folder}/{name}.linkml.yaml"), &source);
+            format!("{folder}/{name}.linkml.yaml")
+        };
+        model(
+            "city",
+            "top",
+            "draft",
+            "linkml:types, org.a.v1, org.b.v1, project.local.v1",
+        );
+        model(ORG_NAMESPACE, "a", "published", "linkml:types");
+        model(ORG_NAMESPACE, "b", "published", "org.a.v1");
+        model("city", "local", "published", "");
+        model(ORG_NAMESPACE, "leaky", "published", "project.local.v1");
+        model("city", "uses-leaky", "draft", "org.leaky.v1");
+        model("city", "lost", "draft", "org.nothing.v1");
+        model("city", "malformed", "draft", "org.noversion");
+        let many: Vec<String> = (0..=crate::api::datamodels::MAX_IMPORTS)
+            .map(|n| format!("org.m{n}.v1"))
+            .collect();
+        model("city", "many", "draft", &many.join(", "));
+        for n in 0..=crate::api::datamodels::MAX_IMPORTS {
+            model(ORG_NAMESPACE, &format!("m{n}"), "published", "");
+        }
+        let broken = model(ORG_NAMESPACE, "broken", "published", "");
+        put_file(&dir, &broken, "a: [\n");
+        model("city", "uses-broken", "draft", "org.broken.v1");
+        put_manifest(
+            &dir,
+            "DataModel",
+            "city",
+            "air",
+            "unread",
+            "  linkml: [x]\n",
+        );
+        let spec =
+            |linkml: &str| format!("  linkml: {linkml}\n  version: 1.0.0\n  lifecycle: draft\n");
+        put_manifest(
+            &dir,
+            "DataModel",
+            "city",
+            "air",
+            "outside",
+            &spec("../../../../../../outside.linkml.yaml"),
+        );
+        put_manifest(
+            &dir,
+            "DataModel",
+            "city",
+            "air",
+            "missing",
+            &spec("./missing.linkml.yaml"),
+        );
+        let repo = Repository::load(&dir).expect("the repository loads");
+
+        let top = model_source(&repo, "city", "top");
+        let leaky = model_source(&repo, "city", "uses-leaky");
+        let lost = model_source(&repo, "city", "lost");
+        let malformed = model_source(&repo, "city", "malformed");
+        let too_many = model_source(&repo, "city", "many");
+        let with_broken = model_source(&repo, "city", "uses-broken");
+        let unread = model_source(&repo, "city", "unread");
+        let outside = model_source(&repo, "city", "outside");
+        let missing = model_source(&repo, "city", "missing");
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let top = top.expect("the model reads");
+        assert_eq!(
+            top.imports.keys().collect::<Vec<_>>(),
+            ["org.a.v1", "org.b.v1", "project.local.v1"],
+            "org.a.v1 once, though top and b import it"
+        );
+        assert!(top.imports["project.local.v1"].contains("name: local"));
+        assert!(leaky
+            .is_err_and(|e| e.contains("an organization model imports organization models only")),);
+        assert!(lost.is_err_and(|e| e.contains("has no DataModel nothing")));
+        assert!(malformed.is_err_and(|e| e.contains("org.noversion")));
+        assert!(too_many.is_err_and(|e| e.contains(&format!(
+            "at most {} platform models",
+            crate::api::datamodels::MAX_IMPORTS
+        ))));
+        assert_eq!(
+            with_broken.expect("the import reads").imports["org.broken.v1"],
+            "a: [\n",
+            "Model Tools refuses the source, not the read"
+        );
+        assert!(unread.is_err_and(|e| e.starts_with("the DataModel unread does not read")));
+        assert!(outside.is_err_and(|e| e.starts_with("the DataModel outside: ")));
+        assert!(missing.is_err_and(|e| e.contains("missing.linkml.yaml does not read")));
+    }
+
+    /// AP-96: an Endpoint's own role and one role under it are its grant; an empty, nested or
+    /// merely prefixed role, another role and a service account named like it are not.
+    #[test]
+    fn an_endpoints_own_grant_is_its_role_or_one_role_under_it() {
+        let own = jc_core::kinds::endpoint_role("city", "air-public", None);
+        let role = |id: &str| policy(json!({"assignee": {"kind": "role", "id": id}}));
+        assert!(own_grant(&role(&own), "city", "air-public"));
+        assert!(own_grant(
+            &role(&format!("{own}/editor")),
+            "city",
+            "air-public"
+        ));
+        for other in [
+            format!("{own}/"),
+            format!("{own}/a/b"),
+            format!("{own}x"),
+            "public".to_owned(),
+        ] {
+            assert!(!own_grant(&role(&other), "city", "air-public"), "{other}");
+        }
+        let account = policy(json!({"assignee": {"kind": "serviceAccount", "id": own}}));
+        assert!(!own_grant(&account, "city", "air-public"));
+        assert!(
+            !own_grant(&role(&own), "city", "other"),
+            "another Endpoint's role"
+        );
+    }
+
+    /// A type whose every Attribute is hidden leaves no rule, and a view of no Attribute is
+    /// refused, never written empty.
+    #[test]
+    fn a_view_whose_every_attribute_is_hidden_is_refused() {
+        let shown = BTreeMap::from([("Car".to_owned(), BTreeSet::from(["speed".to_owned()]))]);
+        let hidden = BTreeSet::from(["speed".to_owned()]);
+        let why = Some("it shows no Attribute of any type");
+        assert_eq!(rules(shown, &hidden).err().as_deref(), why);
+        assert_eq!(
+            rules(BTreeMap::new(), &BTreeSet::new()).err().as_deref(),
+            why
+        );
+    }
+
+    /// A geoQ missing one of its members is refused by that member's name; `geoproperty` is
+    /// carried into the object.
+    #[test]
+    fn a_geoq_without_one_of_its_members_is_refused_by_name() {
+        for (raw, missing) in [
+            ("geometry=Point;coordinates=[1,2]", "georel"),
+            ("georel=near;maxDistance==5;coordinates=[1,2]", "geometry"),
+            ("georel=within;geometry=Polygon", "coordinates"),
+            ("", "georel"),
+        ] {
+            assert_eq!(
+                geo(raw).err(),
+                Some(format!("geoQ {raw:?} has no {missing}"))
+            );
+        }
+        let object = geo(
+            "georel=near;maxDistance==5;geometry=Point;coordinates=[1,2];geoproperty=observedAt",
+        )
+        .expect("a geoQ");
+        assert_eq!(object["geoproperty"], json!("observedAt"));
+        assert_eq!(object["georel"], json!("near;maxDistance==5"));
+    }
+
+    /// The gateway's permit joins a rule document's policies; a document with no policy list is
+    /// left as it is.
+    #[test]
+    fn the_gateways_permit_joins_only_a_policy_list() {
+        assert_eq!(with_gateway(json!({"views": {}})), json!({"views": {}}));
+        let joined = with_gateway(json!({"policies": []}));
+        assert_eq!(joined["policies"][0]["id"], json!("@context-gateway"));
+        assert_eq!(joined["policies"].as_array().map(Vec::len), Some(1));
+    }
+
+    /// P-18 (T-6736): an Endpoint listing its Policies also evaluates the grants of each
+    /// Pipeline naming it, once each; an Endpoint listing none evaluates every Policy of its
+    /// space and no door grant beside them.
+    #[test]
+    fn a_pipelines_door_grant_joins_an_endpoint_that_lists_its_policies() {
+        let door = policy(json!({
+            "assignee": {"kind": "serviceAccount", "id": "pl-buses"},
+            "operations": ["upsertBatch"]
+        }));
+        let mut s = sources(vec![("cars", cars()), ("bikes", policy(json!({})))]);
+        s.doors.insert(
+            ("city".into(), "air-public".into()),
+            vec![("pl-buses-w-1".into(), door), ("cars".into(), cars())],
+        );
+        let listing =
+            endpoint(json!({"policyRef": "urn:ngsi-ld:Policy:city.example:city-air:cars"}));
+        let names = |e: &EndpointSource| -> Vec<String> {
+            s.bound(e).into_iter().map(|(n, _)| n.to_owned()).collect()
+        };
+        assert_eq!(names(&listing), ["cars", "pl-buses-w-1"]);
+        assert_eq!(names(&endpoint(json!({}))), ["cars", "bikes"]);
+    }
+
+    /// CC-65: a merged run writes a space's quality rules only when they changed since the last
+    /// read.
+    #[test]
+    fn a_merged_run_writes_a_spaces_quality_rules_only_when_they_changed() {
+        let rule = |name: &str| -> QualityRule {
+            serde_json::from_value(
+                json!({"name": name, "entityType": "Car", "kind": "freshness",
+                                          "attribute": "location", "maxAge": "PT10M"}),
+            )
+            .expect("a rule")
+        };
+        let with = |rules: Vec<QualityRule>| {
+            let mut s = with_model(sources(vec![("cars", cars())]));
+            s.quality.insert(("city".into(), "air".into()), rules);
+            desired(&s)
+        };
+        let before = with(vec![rule("stale")]);
+        let same = with(vec![rule("stale")]).beyond(&before);
+        assert!(same.quality.is_empty() && same.schemas.is_empty() && same.views.is_empty());
+        assert!(before.schemas.contains_key("city-air"));
+        let changed = with(vec![rule("stale"), rule("late")]).beyond(&before);
+        assert!(changed.quality.contains_key("city-air"));
+    }
+
+    /// API/02 §4a: the view carries the feed outputs the Endpoint lists, each as the filter its
+    /// stored query stands for; an output whose query does not read is not served.
+    #[tokio::test]
+    async fn the_view_carries_the_feed_outputs_whose_query_reads() {
+        let s = sources(vec![("cars", cars())]);
+        let e = endpoint(json!({
+            "policyRef": "urn:ngsi-ld:Policy:city.example:city-air:cars",
+            "representations": {"feed": [
+                {"name": "news", "sources": [{"type": "Car"}]},
+                {"name": "broken", "sources": [{"type": "Car"}], "query": "q=a&q=b"}
+            ]}
+        }));
+        let (view, log) = crate::reconciler::logged(async { endpoint_view(&s, &e) }).await;
+        let view = view.expect("a view");
+        let feeds = view["representations"]["feed"]
+            .as_array()
+            .expect("feed outputs");
+        let names: Vec<Option<&str>> = feeds.iter().map(|f| f["name"].as_str()).collect();
+        assert_eq!(names, [Some("news")]);
+        assert!(feeds[0].get("query").is_none());
+        assert!(log.contains("a preset's query does not read"), "{log}");
+    }
+
+    /// T-4840: what a pipeline's write meets is compiled from its own space alone: the view of
+    /// a mapped Endpoint reads the same from the narrowed sources as from the whole read,
+    /// another space's Mapping and classes not copied.
+    #[test]
+    fn a_pipelines_write_view_is_compiled_from_its_own_space() {
+        let vehicles = policy(json!({"information": [{"entities": [{"type": "Vehicle"}]}]}));
+        let mut s = with_mapping(vec![("vehicles", vehicles)], Ok(vehicles_ir()));
+        s.mappings.insert(
+            ("city".into(), "elsewhere".into()),
+            MappingSource {
+                space: "water".into(),
+                ir: Err("not this space's".into()),
+            },
+        );
+        s.classes.insert(
+            ("city".into(), "air".into()),
+            BTreeSet::from(["Car".to_owned()]),
+        );
+        s.classes.insert(
+            ("city".into(), "water".into()),
+            BTreeSet::from(["Pipe".to_owned()]),
+        );
+        let e = mapped_endpoint();
+        let whole = endpoint_view(&s, &e);
+        s.endpoints.push(e);
+        let sync = having(s, "http://broker.invalid", Path::new("/nonexistent"));
+        let write = sync
+            .write_view("city", "air-public", "pl-buses", None)
+            .expect("the Endpoint");
+        assert_eq!(write.view, whole);
+    }
+
+    /// EP-85: a draft of the saved projection's own classes and filter is the saved view; the
+    /// saved projection's model reference is kept.
+    #[test]
+    fn a_draft_of_the_saved_projection_is_the_saved_view() {
+        let mut s = sources(vec![("cars", cars())]);
+        s.projections.insert(
+            ("city".into(), "cars-only".into()),
+            serde_json::from_value(json!({
+                "contextSpaceRef": "air", "dataModelRef": {"name": "air", "version": "1"},
+                "classes": [{"name": "Car", "slots": ["speed"]}],
+                "filter": {"q": "speed>0"}
+            }))
+            .expect("a projection"),
+        );
+        s.endpoints.push(endpoint(
+            json!({"projectionRef": {"kind": "ModelProjection", "name": "cars-only"}}),
+        ));
+        let sync = having(s, "http://broker.invalid", Path::new("/nonexistent"));
+        let draft = Draft {
+            projection: Some((
+                vec![
+                    serde_json::from_value(json!({"name": "Car", "slots": ["speed"]}))
+                        .expect("a class"),
+                ],
+                Some(serde_json::from_value(json!({"q": "speed>0"})).expect("a filter")),
+            )),
+            hidden_attributes: Vec::new(),
+        };
+        let drafted = sync
+            .draft_view("city", "air-public", &draft)
+            .expect("compiles");
+        let saved = sync.saved_view("city", "air-public").expect("a view");
+        assert!(drafted.is_some());
+        assert_eq!(drafted, saved);
+    }
+
+    /// PL-105: the saved view of an Endpoint the last run read; none before a run and none for
+    /// an Endpoint it did not read.
+    #[test]
+    fn the_saved_view_is_the_last_runs_and_none_without_one() {
+        let fresh = ViewSync::new("http://broker.invalid", "/nonexistent");
+        assert_eq!(fresh.saved_view("city", "air-public"), Ok(None));
+        assert!(fresh.last_sources().is_none());
+        let mut s = sources(vec![("cars", cars())]);
+        s.endpoints.push(endpoint(json!({})));
+        let sync = having(s, "http://broker.invalid", Path::new("/nonexistent"));
+        assert!(sync.last_sources().is_some_and(|s| s.endpoints.len() == 1));
+        assert_eq!(sync.saved_view("city", "nowhere"), Ok(None));
+        let (id, view) = sync
+            .saved_view("city", "air-public")
+            .expect("a view")
+            .expect("the Endpoint");
+        assert_eq!(id, SLUG);
+        assert_eq!(view["tenant"], json!("city-air"));
+    }
+
+    /// Every outcome replaces the object's view condition and keeps its other conditions; an
+    /// object without a status, or one the mirror no longer holds, is left alone.
+    #[test]
+    fn each_outcome_replaces_the_view_condition_and_keeps_the_others() {
+        use crate::resource::{ObjectMeta, Phase, ResourceEnvelope, Status, API_VERSION};
+        let mirror = crate::store::Mirror::new();
+        let envelope = |kind: &str, name: &str, status: bool| ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, "city"),
+            spec: json!({}),
+            status: status.then(|| Status {
+                phase: Phase::Pending,
+                observed_revision: None,
+                source_url: None,
+                conditions: vec![
+                    super::super::streams::make_condition(
+                        CONDITION,
+                        "False",
+                        "BrokerRefused",
+                        "old",
+                    ),
+                    super::super::streams::make_condition("Ready", "True", "Ready", "kept"),
+                ],
+                build: None,
+                shard: None,
+                domain_verification: None,
+                jobs: Vec::new(),
+                notifications: None,
+            }),
+        };
+        for (kind, name, status) in [
+            ("Endpoint", "written", true),
+            ("Endpoint", "refused", true),
+            ("ContextSpace", "failed", true),
+            ("Endpoint", "bare", false),
+        ] {
+            mirror.upsert(envelope(kind, name, status));
+        }
+        let owner = |kind: &'static str, name: &str| Owner {
+            kind,
+            project: "city".into(),
+            name: name.into(),
+        };
+        record(
+            &mirror,
+            vec![
+                (owner("Endpoint", "written"), ViewOutcome::Written),
+                (
+                    owner("Endpoint", "refused"),
+                    ViewOutcome::Refused("too wide".into()),
+                ),
+                (
+                    owner("ContextSpace", "failed"),
+                    ViewOutcome::Failed("503".into()),
+                ),
+                (owner("Endpoint", "bare"), ViewOutcome::Written),
+                (owner("Endpoint", "unknown"), ViewOutcome::Written),
+            ],
+        );
+        let conditions = |kind: &str, name: &str| -> Vec<(String, String, String, String)> {
+            mirror
+                .get("city", kind, name)
+                .and_then(|e| e.status)
+                .map(|s| s.conditions)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|c| {
+                    (
+                        c.r#type,
+                        c.status,
+                        c.reason.unwrap_or_default(),
+                        c.message.unwrap_or_default(),
+                    )
+                })
+                .collect()
+        };
+        let kept = (
+            "Ready".to_owned(),
+            "True".to_owned(),
+            "Ready".to_owned(),
+            "kept".to_owned(),
+        );
+        let view = |status: &str, reason: &str, message: &str| {
+            (
+                CONDITION.to_owned(),
+                status.to_owned(),
+                reason.to_owned(),
+                message.to_owned(),
+            )
+        };
+        assert_eq!(
+            conditions("Endpoint", "written"),
+            [
+                kept.clone(),
+                view(
+                    "True",
+                    "Written",
+                    "the broker holds this view and rule document"
+                )
+            ]
+        );
+        assert_eq!(
+            conditions("Endpoint", "refused"),
+            [kept.clone(), view("False", "WriterRefused", "too wide")]
+        );
+        assert_eq!(
+            conditions("ContextSpace", "failed"),
+            [kept, view("False", "BrokerRefused", "503")]
+        );
+        assert!(mirror
+            .get("city", "Endpoint", "bare")
+            .is_some_and(|e| e.status.is_none()));
+        assert!(mirror.get("city", "Endpoint", "unknown").is_none());
+    }
+
+    /// T-7425: the view's LinkML documents are read with the admin token from the broker of
+    /// its space, at most `max` bytes; 404 is none; a refusal, no answer, no token and a broker
+    /// without an address each say so.
+    #[tokio::test]
+    async fn the_views_linkml_is_read_with_the_admin_token_and_capped() {
+        let server = broker().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/x/views/{SLUG}/linkml/schema.yaml")))
+            .and(header("authorization", format!("Bearer {TOKEN}").as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_string("id: x\n"))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/x/views/{SLUG}/linkml/broken")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let file = token_file();
+        let mut s = sources(vec![]);
+        s.endpoints.push(endpoint(json!({})));
+        s.brokers.insert("city-air".into(), "main".into());
+        let sync = having(s, &server.uri(), &file);
+        let read = sync.view_linkml(SLUG, "schema.yaml", 1024).await;
+        let capped = sync.view_linkml(SLUG, "schema.yaml", 3).await;
+        let absent = sync.view_linkml(SLUG, "absent", 1024).await;
+        let broken = sync.view_linkml(SLUG, "broken", 1024).await;
+        let gone = having(Sources::default(), "http://127.0.0.1:1", &file)
+            .view_linkml(SLUG, "schema.yaml", 1024)
+            .await;
+        let tokenless = having(Sources::default(), &server.uri(), Path::new("/nonexistent"))
+            .view_linkml(SLUG, "schema.yaml", 1024)
+            .await;
+        let mut far = sources(vec![]);
+        far.endpoints.push(endpoint(json!({})));
+        far.brokers.insert("city-air".into(), "edge".into());
+        let unaddressed = having(far, &server.uri(), &file)
+            .view_linkml(SLUG, "schema.yaml", 1024)
+            .await;
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(read, Ok(Some(b"id: x\n".to_vec())));
+        assert!(capped.is_err(), "over the cap: {capped:?}");
+        assert_eq!(absent, Ok(None));
+        assert_eq!(
+            broken,
+            Err("the broker answered 500 Internal Server Error".into())
+        );
+        assert!(gone.is_err_and(|e| e.starts_with("the broker did not answer")));
+        assert_eq!(
+            tokenless,
+            Err("the broker's admin token is not readable".into())
+        );
+        assert_eq!(
+            unaddressed,
+            Err("the space's broker 'edge' has no address".into())
+        );
+    }
+
+    /// A preview whose broker does not answer, or whose space's broker has no address, says so
+    /// and sends nothing elsewhere.
+    #[tokio::test]
+    async fn a_preview_without_its_broker_says_why() {
+        let file = token_file();
+        let gone = having(Sources::default(), "http://127.0.0.1:1", &file);
+        let headers = reqwest::header::HeaderMap::new();
+        let silent = gone.preview(SLUG, &json!({}), "type=Car", &headers).await;
+        let mut s = sources(vec![]);
+        s.endpoints.push(endpoint(json!({})));
+        s.brokers.insert("city-air".into(), "edge".into());
+        let unaddressed = having(s, "http://127.0.0.1:1", &file)
+            .ical_preview(SLUG, &json!({}), &headers)
+            .await;
+        let _ = std::fs::remove_file(&file);
+        assert!(silent.is_err_and(|e| e.starts_with("the broker did not answer")));
+        assert_eq!(
+            unaddressed,
+            Err("the space's broker 'edge' has no address".into())
+        );
+    }
+
+    /// T-6717: a broker this Portal cannot address held nothing it wrote, so nothing is purged
+    /// there; an unreadable token is a failed purge that names the file.
+    #[tokio::test]
+    async fn a_purge_without_an_address_or_a_token_sends_nothing() {
+        let file = token_file();
+        let unaddressed = ViewSync::new("http://127.0.0.1:1", &file)
+            .purge_tenant("edge", "city-air")
+            .await;
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(unaddressed, Ok(()));
+        let tokenless = ViewSync::new("http://127.0.0.1:1", "/nonexistent/token")
+            .purge_tenant("main", "city-air")
+            .await;
+        assert!(tokenless.is_err_and(|e| e.contains("/nonexistent/token is unreadable")));
+    }
+
+    /// PF-111: a space on a named broker this Portal has no address for is written nowhere,
+    /// and each of its objects says to set the template.
+    #[tokio::test]
+    async fn a_space_on_an_unaddressed_broker_is_written_nowhere() {
+        let mut s = sources(vec![("cars", cars())]);
+        s.endpoints.push(endpoint(json!({})));
+        s.brokers.insert("city-air".into(), "edge".into());
+        let server = broker().await;
+        json_at("/q/views", 200, json!({})).mount(&server).await;
+        json_at("/q/policy", 404, json!({})).mount(&server).await;
+        let file = token_file();
+        let outcomes = ViewSync::new(server.uri(), &file)
+            .apply(desired(&s), Pass::Whole)
+            .await;
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(outcomes.len(), 2, "{outcomes:?}");
+        for (owner, outcome) in &outcomes {
+            assert!(
+                matches!(outcome, ViewOutcome::Failed(r)
+                    if r.contains("broker 'edge' has no address") && r.contains("JC_PORTAL_BROKER_URL_TEMPLATE")),
+                "{owner:?}: {outcome:?}"
+            );
+        }
+        let sent = server.received_requests().await.expect("recorded");
+        assert!(
+            sent.iter().all(|r| r.method.as_str() == "GET"),
+            "nothing written to main"
+        );
+    }
+
+    /// A removal the broker refuses is logged and retried next run; a broker whose rule
+    /// engine read fails fails the space's document and writes no document.
+    #[tokio::test]
+    async fn refused_removals_are_logged_and_an_unreadable_engine_fails_the_document() {
+        let mut s = sources(vec![("cars", cars())]);
+        s.endpoints.push(endpoint(json!({})));
+        let wanted = desired(&s);
+        let server = broker().await;
+        json_at("/q/views", 200, json!({"cs-gone": {}, "by-hand": {}}))
+            .mount(&server)
+            .await;
+        for (id, (_, view)) in &wanted.views {
+            json_at(&format!("/q/views/{id}"), 200, view.clone())
+                .mount(&server)
+                .await;
+        }
+        for gone in ["/q/views/cs-gone", "/q/schemas/old"] {
+            Mock::given(method("DELETE"))
+                .and(path(gone))
+                .respond_with(ResponseTemplate::new(500))
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        json_at("/q/policy", 503, json!({"detail": "engine down"}))
+            .mount(&server)
+            .await;
+        let file = token_file();
+        let sync = ViewSync::new(server.uri(), &file);
+        lock(&sync.written_schemas).insert("old".into(), server.uri());
+        let (outcomes, log) = crate::reconciler::logged(sync.apply(desired(&s), Pass::Whole)).await;
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            log.contains("view not removed") && log.contains("cs-gone"),
+            "{log}"
+        );
+        assert!(
+            log.contains("schema not removed") && log.contains("old"),
+            "{log}"
+        );
+        assert!(!log.contains(TOKEN));
+        assert_eq!(
+            lock(&sync.written_schemas).keys().collect::<Vec<_>>(),
+            ["old"],
+            "kept for the next run"
+        );
+        let space = outcomes
+            .iter()
+            .find(|(o, _)| o.kind == "ContextSpace")
+            .map(|(_, outcome)| outcome.clone());
+        assert!(
+            matches!(&space, Some(ViewOutcome::Failed(r)) if r.contains("/q/policy") && !r.contains(TOKEN)),
+            "{space:?}"
+        );
+        let e = outcomes.iter().find(|(o, _)| o.kind == "Endpoint");
+        assert!(matches!(e, Some((_, ViewOutcome::Written))), "{outcomes:?}");
+    }
+
+    /// A rule document the broker cannot read back fails its space, and is not taken as
+    /// written; a stale one it refuses to delete is logged and kept for the next run.
+    #[tokio::test]
+    async fn a_rule_document_that_does_not_read_or_delete_is_not_taken_as_done() {
+        let mut s = sources(vec![("cars", cars())]);
+        s.endpoints.push(endpoint(json!({})));
+        let wanted = desired(&s);
+        let server = broker().await;
+        json_at("/q/views", 200, json!({})).mount(&server).await;
+        for (id, (_, view)) in &wanted.views {
+            json_at(&format!("/q/views/{id}"), 200, view.clone())
+                .mount(&server)
+                .await;
+        }
+        json_at("/q/policy", 200, json!({})).mount(&server).await;
+        json_at("/q/policy/city-air", 500, json!({"detail": "store down"}))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/q/policy/old"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let file = token_file();
+        let sync = ViewSync::new(server.uri(), &file);
+        sync.written().insert("old".into(), server.uri());
+        let (outcomes, log) = crate::reconciler::logged(sync.apply(desired(&s), Pass::Whole)).await;
+        let _ = std::fs::remove_file(&file);
+        assert!(log.contains("rule document not removed"), "{log}");
+        let written: Vec<String> = sync.written().keys().cloned().collect();
+        assert_eq!(written, ["old"], "city-air is not written, old is kept");
+        let space = outcomes
+            .iter()
+            .find(|(o, _)| o.kind == "ContextSpace")
+            .map(|(_, outcome)| outcome.clone());
+        assert!(
+            matches!(&space, Some(ViewOutcome::Failed(r)) if r.contains("/q/policy/city-air")),
+            "{space:?}"
+        );
+    }
+
+    /// G-19: a whole run hands the compiled model to the pipelines' stage under the digest of
+    /// its source, and takes it back once the space has no model.
+    #[tokio::test]
+    async fn a_compiled_model_reaches_the_pipelines_stage_and_leaves_with_its_space() {
+        let s = with_model(sources(vec![("cars", cars())]));
+        let schema: Value = serde_json::from_str(include_str!(
+            "../../tests/fixtures/broker-schema-senzor.json"
+        ))
+        .expect("the fixture is JSON");
+        let tools = model_tools(json!({"brokerSchema": schema, "errors": []}), 1).await;
+        let server = broker_with_the_space_view(&s).await;
+        json_at("/q/schemas/city-air", 200, schema.clone())
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/q/schemas/city-air"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let schemas = Arc::new(crate::pipeline_validation::ModelSchemas::with_linkml_stage(
+            true,
+        ));
+        let file = token_file();
+        let sync = ViewSync::new(server.uri(), &file)
+            .with_model_tools(tools.uri())
+            .with_linkml(Arc::clone(&schemas));
+        let first = sync.apply(desired(&s), Pass::Whole).await;
+        let again = sync.apply(desired(&s), Pass::Whole).await;
+        let staged = schemas.stage_linkml("city", "air");
+        let second = sync
+            .apply(desired(&sources(vec![("cars", cars())])), Pass::Whole)
+            .await;
+        let _ = std::fs::remove_file(&file);
+        for outcomes in [&first, &again, &second] {
+            assert!(
+                outcomes.iter().all(|(_, o)| *o == ViewOutcome::Written),
+                "{outcomes:?}"
+            );
+        }
+        let revision: String = air_model()
+            .digest()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(staged.map(|l| l.revision.clone()), Some(revision));
+        assert!(schemas.stage_linkml("city", "air").is_none());
+    }
+
+    /// Model Tools at `uri` answering every `/generate` with `answer`.
+    async fn tools_answering(answer: ResponseTemplate) -> MockServer {
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(answer)
+            .mount(&tools)
+            .await;
+        tools
+    }
+
+    /// DM-76: the schema is compiled again when the model changed (a schema held for another
+    /// digest is not reused), with its imports sent beside its source; Model Tools that do not
+    /// answer, refuse, answer unreadably or render no `brokerSchema` and no error each fail the
+    /// schema with that reason, and nothing is held for the next run.
+    #[tokio::test]
+    async fn model_tools_that_fail_leave_the_schema_unwritten_with_the_reason() {
+        let model = fleet_model();
+        assert!(!model.imports.is_empty());
+        let compiles = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .and(body_json(
+                json!({"source": model.source, "imports": model.imports}),
+            ))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"brokerSchema": {"s": 1}})),
+            )
+            .expect(1)
+            .mount(&compiles)
+            .await;
+        let bare = ModelSource {
+            imports: BTreeMap::new(),
+            ..fleet_model()
+        };
+        let compiles_bare = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .and(body_json(json!({"source": bare.source})))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"brokerSchema": {"s": 2}})),
+            )
+            .expect(1)
+            .mount(&compiles_bare)
+            .await;
+        let refusing = tools_answering(
+            ResponseTemplate::new(422).set_body_json(json!({"detail": "line 3: bad slot"})),
+        )
+        .await;
+        let garbled = tools_answering(ResponseTemplate::new(200).set_body_string("<html>")).await;
+        let silent =
+            tools_answering(ResponseTemplate::new(200).set_body_json(json!({"errors": []}))).await;
+        let with = |uri: &str| {
+            let sync = ViewSync::new("http://broker.invalid", "/nonexistent").with_model_tools(uri);
+            lock(&sync.compiled).insert("city-air".into(), ([0; 32], json!({"held": true}), None));
+            sync
+        };
+        let fresh = with(&compiles.uri());
+        assert_eq!(
+            fresh.broker_schema("city-air", &model).await,
+            Ok(json!({"s": 1}))
+        );
+        assert_eq!(
+            fresh.broker_schema("city-air", &model).await,
+            Ok(json!({"s": 1})),
+            "the second ask is the held schema"
+        );
+        assert_eq!(
+            with(&compiles_bare.uri())
+                .broker_schema("city-air", &bare)
+                .await,
+            Ok(json!({"s": 2})),
+            "a model without imports sends no imports member"
+        );
+        let failed = |outcome: Result<Value, ViewOutcome>, wanted: &str| {
+            assert!(
+                matches!(&outcome, Err(ViewOutcome::Failed(r)) if r.contains(wanted)),
+                "{outcome:?} lacks {wanted}"
+            );
+        };
+        let gone = with("http://127.0.0.1:1");
+        failed(
+            gone.broker_schema("city-air", &model).await,
+            "model tools did not answer for the data model fleet",
+        );
+        let refused = with(&refusing.uri());
+        let outcome = refused.broker_schema("city-air", &model).await;
+        failed(outcome.clone(), "model tools refused the data model fleet");
+        failed(outcome, "line 3: bad slot");
+        failed(
+            with(&garbled.uri()).broker_schema("city-air", &model).await,
+            "model tools answered the data model fleet unreadably",
+        );
+        let unrendered = with(&silent.uri());
+        failed(
+            unrendered.broker_schema("city-air", &model).await,
+            "rendered no brokerSchema for the data model fleet",
+        );
+        assert_eq!(
+            lock(&unrendered.compiled)
+                .get("city-air")
+                .map(|(d, _, _)| *d),
+            Some([0; 32]),
+            "a failed compile holds nothing new"
+        );
+    }
+
+    /// A broker that refuses a read or answers it with something that is not JSON fails the
+    /// write and leaves nothing confirmed; a broker that does not answer a write or a removal
+    /// says so; a removal it refuses names the path, never the token.
+    #[tokio::test]
+    async fn a_broker_that_answers_badly_fails_the_write_and_confirms_nothing() {
+        let server = broker().await;
+        json_at(
+            "/q/views/refused",
+            500,
+            json!({"detail": format!("no for {TOKEN}")}),
+        )
+        .mount(&server)
+        .await;
+        Mock::given(method("GET"))
+            .and(path("/q/views/garbled"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/q/retention/city-air"))
+            .respond_with(ResponseTemplate::new(403).set_body_json(json!({"detail": "not yours"})))
+            .mount(&server)
+            .await;
+        let sync = ViewSync::new(server.uri(), "/nonexistent");
+        let base = server.uri();
+        let doc = json!({"a": 1});
+        let refused = sync
+            .put_if_changed(&base, TOKEN, "/q/views/refused", &doc)
+            .await;
+        assert!(
+            matches!(&refused, ViewOutcome::Failed(r)
+                if r.contains("GET /q/views/refused") && r.contains("[redacted]") && !r.contains(TOKEN)),
+            "{refused:?}"
+        );
+        let garbled = sync
+            .put_if_changed(&base, TOKEN, "/q/views/garbled", &doc)
+            .await;
+        assert!(
+            matches!(&garbled, ViewOutcome::Failed(r) if r.contains("GET /q/views/garbled did not answer JSON")),
+            "{garbled:?}"
+        );
+        assert!(lock(&sync.confirmed).is_empty());
+        let kept = sync
+            .delete_unless_gone(&base, TOKEN, "/q/retention/city-air")
+            .await;
+        assert!(
+            matches!(&kept, ViewOutcome::Failed(r) if r.contains("DELETE /q/retention/city-air") && r.contains("not yours")),
+            "{kept:?}"
+        );
+        assert!(
+            lock(&sync.confirmed).is_empty(),
+            "a refused removal is not taken as gone"
+        );
+        let gone = "http://127.0.0.1:1";
+        let put = sync.put(gone, TOKEN, "/q/views/v", &doc).await;
+        assert!(
+            matches!(&put, ViewOutcome::Failed(r) if r.starts_with("the broker did not answer PUT /q/views/v")),
+            "{put:?}"
+        );
+        assert!(sync.delete(gone, TOKEN, "/q/views/v").await.is_err());
+    }
+
+    /// T-4665: the erasure records come from the broker of the tenant's space, 404 and an
+    /// answer that is no list reading as none; an erasure sends the entities, the Attributes
+    /// expanded to IRIs (none: the whole Entity), who asked and why, and returns the broker's
+    /// counts. A refusal, an answer that is not JSON, no answer, no token and a broker without
+    /// an address each fail with their reason and never the token.
+    #[tokio::test]
+    async fn erasures_go_to_the_spaces_broker_and_say_why_they_fail() {
+        let server = broker().await;
+        let authorized = || header("authorization", format!("Bearer {TOKEN}").as_str());
+        Mock::given(method("GET"))
+            .and(path("/q/erasures/city-air"))
+            .and(authorized())
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([{"subject": "s"}])))
+            .mount(&server)
+            .await;
+        json_at("/q/erasures/odd", 200, json!({"not": "a list"}))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/q/erasures/city-air"))
+            .and(authorized())
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"id": "e1", "counts": {"entities": 1}})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/q/erasures/refusing"))
+            .respond_with(
+                ResponseTemplate::new(403)
+                    .set_body_json(json!({"detail": format!("{TOKEN} may not")})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/q/erasures/garbled"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let file = token_file();
+        let mut s = sources(vec![]);
+        s.brokers.insert("city-air".into(), "main".into());
+        s.brokers.insert("far".into(), "edge".into());
+        let sync = having(s, &server.uri(), &file);
+        let context = json!({"@context": {"speed": "https://vocab.example/speed"}});
+        lock(&sync.compiled).insert("city-air".into(), ([0; 32], json!({}), Some(context)));
+        let entities = vec!["urn:ngsi-ld:Car:1".to_owned()];
+        let who = ("urn:ngsi-ld:Person:1", "alice", "DM-127 request");
+        let speed = ["speed".to_owned()];
+
+        assert_eq!(
+            sync.erasure_records("city-air").await,
+            Ok(vec![json!({"subject": "s"})])
+        );
+        assert_eq!(sync.erasure_records("odd").await, Ok(vec![]));
+        assert_eq!(sync.erasure_records("unknown").await, Ok(vec![]));
+        let unaddressed = Err("the space's broker 'edge' has no address".to_owned());
+        assert_eq!(sync.erasure_records("far").await, unaddressed);
+        assert_eq!(
+            sync.erase("city-air", &entities, Some(&speed), who).await,
+            Ok(json!({"entities": 1}))
+        );
+        assert_eq!(
+            sync.erase("city-air", &entities, None, who).await,
+            Ok(json!({"entities": 1}))
+        );
+        let posted: Vec<Value> = server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).expect("a JSON body"))
+            .collect();
+        assert_eq!(posted.len(), 2);
+        assert_eq!(posted[0]["entities"], json!(entities));
+        assert_eq!(
+            (
+                &posted[0]["subject"],
+                &posted[0]["actor"],
+                &posted[0]["reason"]
+            ),
+            (&json!(who.0), &json!(who.1), &json!(who.2))
+        );
+        let attrs = posted[0]["attrs"].as_array().expect("expanded Attributes");
+        assert!(
+            !attrs.is_empty()
+                && attrs
+                    .iter()
+                    .all(|a| a.as_str().is_some_and(|a| a.ends_with("speed"))),
+            "{attrs:?}"
+        );
+        assert!(
+            attrs.contains(&json!("https://vocab.example/speed")),
+            "expanded under the space's @context: {attrs:?}"
+        );
+        assert_eq!(posted[1]["attrs"], Value::Null, "the whole Entity");
+        let refused = sync.erase("refusing", &entities, None, who).await;
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|e| e.contains("the broker refused the erasure") && !e.contains(TOKEN)),
+            "{refused:?}"
+        );
+        let garbled = sync.erase("garbled", &entities, None, who).await;
+        assert!(garbled.is_err_and(|e| e.starts_with("the broker answered no JSON")));
+        assert_eq!(
+            sync.erase("far", &entities, None, who).await,
+            Err(unaddressed.clone().unwrap_err())
+        );
+        let gone = having(Sources::default(), "http://127.0.0.1:1", &file);
+        let silent = gone.erase("city-air", &entities, None, who).await;
+        assert!(silent.is_err_and(|e| e.starts_with("the broker did not answer")));
+        let tokenless = having(Sources::default(), &server.uri(), Path::new("/nonexistent"));
+        let no_token = Err("the broker's admin token is not readable".to_owned());
+        assert_eq!(tokenless.erasure_records("city-air").await, no_token);
+        assert_eq!(
+            tokenless.erase("city-air", &entities, None, who).await,
+            Err(no_token.clone().unwrap_err())
+        );
+        let _ = std::fs::remove_file(&file);
+    }
+
+    /// DM-85: the counts of what a space's sweeps deleted come from the broker of its space; an
+    /// answer that is not JSON, no answer and a broker without an address each fail.
+    #[tokio::test]
+    async fn retention_counts_go_to_the_spaces_broker_and_say_why_they_fail() {
+        let server = broker().await;
+        json_at("/q/retention/city-air/deleted", 200, json!({}))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/q/retention/garbled/deleted"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let file = token_file();
+        let mut s = sources(vec![]);
+        s.brokers.insert("city-air".into(), "main".into());
+        s.brokers.insert("far".into(), "edge".into());
+        let sync = having(s, &server.uri(), &file);
+        let held = sync.retention_counts("city-air", None, &[]).await;
+        let garbled = sync.retention_counts("garbled", None, &[]).await;
+        let far = sync.retention_counts("far", None, &[]).await;
+        let silent = having(Sources::default(), "http://127.0.0.1:1", &file)
+            .retention_counts("city-air", None, &[])
+            .await;
+        let _ = std::fs::remove_file(&file);
+        assert!(held.is_ok_and(|rows| rows.is_empty()));
+        assert!(garbled.is_err_and(|e| e.starts_with("the broker answered no JSON")));
+        assert!(far.is_err_and(|e| e == "the space's broker 'edge' has no address"));
+        assert!(silent.is_err_and(|e| e.starts_with("the broker did not answer")));
     }
 
     const TOKEN: &str = "an-admin-token-of-at-least-32-bytes!";
@@ -5600,8 +6914,22 @@ mod tests {
     /// admin token. ci-full's `test-all`, the job that starts it, without them is a failure,
     /// never a pass; elsewhere the test returns, other ci-full jobs (the README's commands) too.
     fn jc_broker() -> Option<(String, PathBuf)> {
-        let url = std::env::var("JC_PORTAL_TEST_BROKER_URL").ok();
-        let token = std::env::var("JC_PORTAL_TEST_BROKER_TOKEN_FILE").ok();
+        let ci_full = [("GITHUB_WORKFLOW", "ci-full"), ("GITHUB_JOB", "test-all")]
+            .iter()
+            .all(|(name, value)| std::env::var(name).as_deref() == Ok(*value));
+        jc_broker_from(
+            std::env::var("JC_PORTAL_TEST_BROKER_URL").ok(),
+            std::env::var("JC_PORTAL_TEST_BROKER_TOKEN_FILE").ok(),
+            ci_full,
+        )
+    }
+
+    /// [`jc_broker`] from its two variables, `ci_full` when ci-full's `test-all` runs.
+    fn jc_broker_from(
+        url: Option<String>,
+        token: Option<String>,
+        ci_full: bool,
+    ) -> Option<(String, PathBuf)> {
         match (url, token) {
             (Some(url), Some(token)) if !url.trim().is_empty() && !token.trim().is_empty() => {
                 Some((
@@ -5611,8 +6939,7 @@ mod tests {
             }
             _ => {
                 assert!(
-                    !(std::env::var("GITHUB_WORKFLOW").as_deref() == Ok("ci-full")
-                        && std::env::var("GITHUB_JOB").as_deref() == Ok("test-all")),
+                    !ci_full,
                     "ci-full test-all starts the -jc broker and must set \
                      JC_PORTAL_TEST_BROKER_URL and JC_PORTAL_TEST_BROKER_TOKEN_FILE"
                 );
@@ -5622,6 +6949,34 @@ mod tests {
                 None
             }
         }
+    }
+
+    /// The -jc broker test runs where both variables name something, and returns elsewhere,
+    /// but in ci-full's `test-all`, which starts the broker: there a missing one is red.
+    #[test]
+    fn the_jc_broker_test_runs_only_where_its_broker_is_named() {
+        assert_eq!(
+            jc_broker_from(
+                Some(" http://127.0.0.1:9090/ ".into()),
+                Some("/run/token".into()),
+                true
+            ),
+            Some(("http://127.0.0.1:9090".into(), PathBuf::from("/run/token")))
+        );
+        for (url, token) in [
+            (None, None),
+            (Some("http://b".to_owned()), None),
+            (Some(" ".to_owned()), Some("/run/token".to_owned())),
+            (Some("http://b".to_owned()), Some(String::new())),
+        ] {
+            assert_eq!(jc_broker_from(url, token, false), None);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "ci-full test-all starts the -jc broker")]
+    fn ci_full_without_the_jc_broker_is_red() {
+        jc_broker_from(None, None, true);
     }
 
     /// What [`the_writer_converges_the_jc_broker`] creates: the cars Policy, the Endpoint and a
@@ -5686,9 +7041,8 @@ mod tests {
     /// renders from the platform's `senzor.linkml.yaml` fixture.
     #[tokio::test]
     async fn the_writer_converges_the_jc_broker() {
-        let Some((broker, token_file)) = jc_broker() else {
-            return;
-        };
+        let Some(named) = jc_broker() else { return };
+        let (broker, token_file) = named;
         let token = std::fs::read_to_string(&token_file).expect("the token file reads");
         let token = token.trim();
         let http = reqwest::Client::new();

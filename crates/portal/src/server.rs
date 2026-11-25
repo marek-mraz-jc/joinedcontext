@@ -400,7 +400,7 @@ pub fn spawn_background(state: &AppState) {
     // The kept data-quality reports, read per project once the mirror places them (T-7197).
     crate::quality::spawn_load(state.clone());
     // The assistant's kept answers, forgotten when a Policy or an Endpoint changes (T-4731).
-    crate::answers::spawn_periodic(state.clone());
+    crate::answers::spawn_periodic(state.clone(), crate::answers::EVERY);
     // What a restart of Grafana took, put back from the Portal's rows (T-6509).
     crate::grafana::spawn_periodic(state.clone());
     // Each project's organization and folder in daiya, which Grafana gets from provision.sh.

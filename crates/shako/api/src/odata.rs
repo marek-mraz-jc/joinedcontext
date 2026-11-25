@@ -2345,3 +2345,30 @@ mod query_within_repo_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each odata-table refusal keeps its kind: what the forge does not serve is 501, an
+    /// unknown property or a bad query names itself as a bad request, a source failure is 500.
+    #[test]
+    fn table_errors_keep_their_kind() {
+        assert!(matches!(
+            map_table_error(TableError::NotImplemented("tolower".into())),
+            ShakoError::NotImplemented(m) if m == "tolower"
+        ));
+        assert!(matches!(
+            map_table_error(TableError::UnknownProperty("Colour".into())),
+            ShakoError::BadRequest(m) if m == "unknown OData property 'Colour'"
+        ));
+        assert!(matches!(
+            map_table_error(TableError::BadRequest("bad $top".into())),
+            ShakoError::BadRequest(m) if m == "bad $top"
+        ));
+        assert!(matches!(
+            map_table_error(TableError::Source("store gone".into())),
+            ShakoError::Internal(m) if m == "store gone"
+        ));
+    }
+}
