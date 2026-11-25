@@ -335,6 +335,17 @@ async fn get(uri: &str, with_forge: bool) -> Answer {
 /// filter draws. `bound` seeds the pair the binding needs and signs the caller in as its subject.
 async fn get_as(uri: &str, with_forge: bool, bound: Option<&str>) -> Answer {
     let server = forge().await;
+    ask_as(with_forge.then_some(&server), uri, bound, |_| {}).await
+}
+
+/// One export against `server` (none: no forge configured), as the bootstrap administrator or as
+/// the caller bound to one space, with `prepare` run on the state before the request.
+async fn ask_as(
+    server: Option<&MockServer>,
+    uri: &str,
+    bound: Option<&str>,
+    prepare: impl FnOnce(&AppState),
+) -> Answer {
     let config = Config::for_tests();
     let cookie = match bound {
         None => session_cookie(&config),
@@ -346,11 +357,12 @@ async fn get_as(uri: &str, with_forge: bool, bound: Option<&str>) -> Answer {
             state.mirror.upsert(envelope);
         }
     }
-    if with_forge {
+    if let Some(server) = server {
         let client = ShakoClient::new(server.uri().parse().unwrap(), "bb", "org", "token")
             .expect("shako client");
         state = state.with_shako(Arc::new(client));
     }
+    prepare(&state);
     let response = server::app(state)
         .oneshot(
             Request::builder()
@@ -781,6 +793,13 @@ async fn a_format_or_revision_the_export_does_not_serve_is_refused() {
         StatusCode::BAD_REQUEST,
         "a revision is a commit or a branch, never a path"
     );
+    assert!(
+        traversal
+            .text()
+            .contains("revision must be a commit id or a branch name"),
+        "{}",
+        traversal.text()
+    );
 
     let bad_project = get("/api/v1/projects/Banska%20Bystrica/export", true).await;
     assert_eq!(bad_project.status, StatusCode::NOT_FOUND);
@@ -799,6 +818,8 @@ async fn the_revision_picker_reads_the_history_of_this_project() {
     );
     assert_eq!(items[0]["author"], "Jana Kováčová");
 
+    let not_a_name = get("/api/v1/projects/Banska%20Bystrica/revisions", true).await;
+    assert_eq!(not_a_name.status, StatusCode::NOT_FOUND);
     let too_many = get("/api/v1/projects/banskabystrica/revisions?limit=500", true).await;
     assert_eq!(too_many.status, StatusCode::BAD_REQUEST);
     let none = get("/api/v1/projects/banskabystrica/revisions?limit=0", true).await;
@@ -945,4 +966,345 @@ async fn the_filters_of_an_archive_hold_for_its_native_files() {
     for file in [pipeline, air, noise] {
         assert!(whole.contains(&file.to_string()), "{file}: {whole:?}");
     }
+}
+
+/// Lists `extra` beside the project's files in the tree at REVISION, each answered with its
+/// status: 200 hands its content back, 404 is a path the forge no longer has, 500 a forge that
+/// fails on that one file.
+async fn with_files(server: &MockServer, repository: &str, extra: &[(&str, u16, &str)]) {
+    let listed: Vec<String> = if repository == "org" {
+        files().iter().map(|(path, _)| path.to_string()).collect()
+    } else {
+        Vec::new()
+    };
+    let base = format!("/odata/Repositories(Owner='bb',Name='{repository}')");
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{base}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{REVISION}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Tree": listed
+                .iter()
+                .map(String::as_str)
+                .chain(extra.iter().map(|(path, _, _)| *path))
+                .map(|path| json!({ "Path": path, "Type": "blob" }))
+                .collect::<Vec<_>>(),
+            "Truncated": false
+        })))
+        .with_priority(1)
+        .mount(server)
+        .await;
+    for (file_path, status, content) in extra {
+        Mock::given(method("GET"))
+            .and(path(format!("{base}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file_path}'")))
+            .respond_with(ResponseTemplate::new(*status).set_body_json(json!({
+                "Sha": "b1ob",
+                "Content": STANDARD.encode(content)
+            })))
+            .with_priority(1)
+            .mount(server)
+            .await;
+    }
+}
+
+const SHARED: &str = r#"
+apiVersion: joinedcontext.com/v1alpha1
+kind: SharedSpaceReference
+metadata:
+  name: doprava-feed
+  namespace: banskabystrica
+spec:
+  endpointSlug: zt4qm7ge2xdv6ksb3ncf5arw2y
+  alias: doprava
+"#;
+
+fn endpoint(namespace: Option<&str>, name: &str, spec: Value) -> ResourceEnvelope {
+    ResourceEnvelope {
+        api_version: API_VERSION.into(),
+        kind: "Endpoint".into(),
+        metadata: ObjectMeta {
+            name: name.into(),
+            namespace: namespace.map(Into::into),
+            ..Default::default()
+        },
+        spec,
+        status: None,
+    }
+}
+
+/// EP-77, MF-43: a reference to an Endpoint the mirror holds travels by its project and name, so
+/// the loader resolves it wherever the bundle lands; Endpoints the mirror holds without a slug
+/// name nothing to look up.
+#[tokio::test]
+async fn a_shared_space_reference_to_an_endpoint_here_travels_by_name() {
+    let server = forge().await;
+    let shared = "projects/banskabystrica/sharedspacereferences/doprava-feed.yaml";
+    with_files(&server, "org", &[(shared, 200, SHARED)]).await;
+    let answer = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export?format=json&names=doprava-feed",
+        None,
+        |state| {
+            state.mirror.upsert(endpoint(
+                Some("bb-doprava"),
+                "doprava-public",
+                json!({ "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y" }),
+            ));
+            state
+                .mirror
+                .upsert(endpoint(Some("bb-doprava"), "no-slug", json!({})));
+            state.mirror.upsert(endpoint(
+                Some("bb-doprava"),
+                "numbered",
+                json!({ "slug": 7 }),
+            ));
+        },
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let items = answer.json()["items"].clone();
+    assert_eq!(items.as_array().map(Vec::len), Some(1), "{items}");
+    assert_eq!(
+        items[0]["spec"],
+        json!({ "endpointRef": { "project": "bb-doprava", "name": "doprava-public" }, "alias": "doprava" })
+    );
+}
+
+/// MF-18: a file the forge no longer has and one it fails on are counted as omitted and never
+/// named, and the rest of the export still answers.
+#[tokio::test]
+async fn a_file_the_repository_does_not_hand_back_is_counted_and_never_named() {
+    let server = forge().await;
+    with_files(
+        &server,
+        "org",
+        &[
+            ("projects/banskabystrica/gone.yaml", 404, ""),
+            ("projects/banskabystrica/broken.yaml", 500, ""),
+        ],
+    )
+    .await;
+    let answer = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export?format=json",
+        None,
+        |_| {},
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let list = answer.json();
+    assert_eq!(list["metadata"]["omitted"], 2);
+    assert!(
+        list["readme"]
+            .as_str()
+            .is_some_and(|text| text.contains("2 files of the project are not in this download")),
+        "{}",
+        list["readme"]
+    );
+    let text = answer.text();
+    assert!(
+        !text.contains("gone.yaml") && !text.contains("broken.yaml"),
+        "{text}"
+    );
+}
+
+/// A forge that lists one path twice would write two archive entries of one name: the archive
+/// refuses with a 500 that says so instead of handing out a broken zip.
+#[tokio::test]
+async fn a_tree_listing_a_path_twice_is_an_archive_error_not_a_broken_zip() {
+    let server = forge().await;
+    let twice = "projects/banskabystrica/endpoints/public-air.yaml";
+    with_files(&server, "org", &[(twice, 200, ENDPOINT)]).await;
+    let answer = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export?format=zip",
+        None,
+        |_| {},
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        answer.text()
+    );
+    assert!(
+        !answer.content_type.contains("zip"),
+        "{}",
+        answer.content_type
+    );
+}
+
+/// A file of no kind with no manifest beside it is the bootstrap group's alone (T-1405): a caller
+/// bound to a space finds it counted, not carried.
+#[tokio::test]
+async fn a_file_of_no_kind_is_counted_for_a_caller_bound_to_a_space() {
+    let uri = "/api/v1/projects/banskabystrica/export?format=json&names=air-quality";
+    let before = get_as(uri, true, Some("ovzdusie")).await.json()["metadata"]["omitted"]
+        .as_u64()
+        .expect("a count");
+    let server = forge().await;
+    with_files(
+        &server,
+        "org",
+        &[("projects/banskabystrica/notes.txt", 200, "who to call")],
+    )
+    .await;
+    let answer = ask_as(Some(&server), uri, Some("ovzdusie"), |_| {}).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert_eq!(answer.json()["metadata"]["omitted"], before + 1);
+    let admin = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export?format=zip",
+        None,
+        |_| {},
+    )
+    .await;
+    assert!(
+        archived(&admin).contains(&"projects/banskabystrica/notes.txt".to_owned()),
+        "the bootstrap group reads it"
+    );
+}
+
+/// A branch named as the revision is resolved to its head commit for the index (MF-17).
+#[tokio::test]
+async fn a_branch_named_as_the_revision_is_written_as_its_commit() {
+    let answer = get("/api/v1/projects/banskabystrica/export?revision=main", true).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    let text = answer.text();
+    assert!(
+        text.contains(&format!("sourceRevision: {REVISION}")),
+        "{text}"
+    );
+    assert!(
+        answer.disposition.contains("banskabystrica-main.yaml"),
+        "{}",
+        answer.disposition
+    );
+}
+
+/// The default branch's head is the commit the export reads and names: the forge is asked for it
+/// once, never asked again with the head as a branch name (a forge whose heads are not hex, as the
+/// scenario lane's, would answer that second question with an empty tree).
+#[tokio::test]
+async fn the_default_branch_head_is_resolved_once() {
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Branches('main')",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head-main" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='bb',Name='org')/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))
+        .and(query_param("@r", "'head-main'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Tree": files()
+                .iter()
+                .map(|(path, _)| json!({ "Path": path, "Type": "blob" }))
+                .collect::<Vec<_>>(),
+            "Truncated": false
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export",
+        None,
+        |_| {},
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text());
+    assert!(
+        answer.text().contains("name: public-air"),
+        "{}",
+        answer.text()
+    );
+    let lookups = server
+        .received_requests()
+        .await
+        .expect("recorded requests")
+        .iter()
+        .filter(|request| request.url.path().contains("/Branches("))
+        .count();
+    assert_eq!(lookups, 1);
+}
+
+/// An archive whose filters match no manifest carries no index: a Bundle lists at least one
+/// resource (MF-17).
+#[tokio::test]
+async fn an_archive_that_matches_nothing_carries_no_index() {
+    let names = archived(
+        &get(
+            "/api/v1/projects/banskabystrica/export?format=zip&names=nothing-here",
+            true,
+        )
+        .await,
+    );
+    assert!(names.is_empty(), "{names:?}");
+}
+
+/// MF-45: format=git is a layout 2 project's whole repository at its default branch; a layout 1
+/// project, a narrowed git export and one with a file the caller cannot be handed are refused.
+#[tokio::test]
+async fn a_git_export_is_refused_unless_it_can_carry_the_whole_project_repository() {
+    let layout_1 = get("/api/v1/projects/banskabystrica/export?format=git", true).await;
+    assert_eq!(layout_1.status, StatusCode::CONFLICT);
+    assert!(layout_1.text().contains("layout 2"), "{}", layout_1.text());
+
+    let server = forge().await;
+    let base = "/odata/Repositories(Owner='bb',Name='bb-repo')";
+    Mock::given(method("GET"))
+        .and(path(base))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{base}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": REVISION })))
+        .mount(&server)
+        .await;
+    with_files(
+        &server,
+        "bb-repo",
+        &[
+            ("endpoints/public-air.yaml", 200, ENDPOINT),
+            ("blob.bin", 500, ""),
+        ],
+    )
+    .await;
+    let layout_2 = |state: &AppState| {
+        state
+            .mirror
+            .set_repositories([("banskabystrica".to_owned(), "bb-repo".to_owned())].into());
+    };
+    for narrowed in ["revision=main", "kinds=endpoints", "names=public-air"] {
+        let answer = ask_as(
+            Some(&server),
+            &format!("/api/v1/projects/banskabystrica/export?format=git&{narrowed}"),
+            None,
+            layout_2,
+        )
+        .await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{narrowed}");
+        assert!(answer.text().contains("takes no"), "{}", answer.text());
+    }
+    let partial = ask_as(
+        Some(&server),
+        "/api/v1/projects/banskabystrica/export?format=git",
+        None,
+        layout_2,
+    )
+    .await;
+    assert_eq!(partial.status, StatusCode::FORBIDDEN, "{}", partial.text());
+    assert!(
+        partial.text().contains("1 of its manifests are not"),
+        "{}",
+        partial.text()
+    );
 }

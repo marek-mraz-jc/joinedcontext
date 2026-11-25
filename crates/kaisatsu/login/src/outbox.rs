@@ -510,7 +510,31 @@ fn choice(pattern: &str, n: i64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::choice;
+    use super::*;
+    use kaisatsu_core::RealmConfig;
+
+    /// Keycloak's `{2}` falls back to the realm's name when its display name is blank, and to
+    /// nothing for a realm that is gone.
+    #[tokio::test]
+    async fn a_realm_is_named_by_its_display_name_else_its_name() {
+        let kek = Kek::generate_for_tests();
+        let store: Arc<dyn Store> = Arc::new(kaisatsu_store_memory::MemoryStore::new(kek.clone()));
+        for (id, display) in [("plain", "  "), ("named", "Named City")] {
+            store
+                .upsert_realm(RealmConfig {
+                    id: id.into(),
+                    realm: id.into(),
+                    display_name: display.into(),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+        }
+        let d = OutboxDispatcher::new(store, kek, Arc::new(RecordingSender::new()));
+        assert_eq!(d.realm_display_name("plain").await.unwrap(), "plain");
+        assert_eq!(d.realm_display_name("named").await.unwrap(), "Named City");
+        assert_eq!(d.realm_display_name("gone").await.unwrap(), "");
+    }
 
     #[test]
     fn choice_picks_the_form_of_the_number() {

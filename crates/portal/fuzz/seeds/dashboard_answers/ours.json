@@ -1,0 +1,4 @@
+{"package": {"id": "p1", "name": "bbsk-ukazovatele", "title": "Old", "type": "dashboard", "state": "active",
+  "extras": [{"key": "generated_by", "value": "jcctl/ckan-publisher"}],
+  "resources": [{"id": "r1", "name": "bikes", "url": "https://api.example.sk/api/endpoint/s", "has_views": true}]},
+ "views": [{"id": "v1", "view_type": "jc_visualization", "jc_name": "p0w0", "title": "old"}, {"id": "v2", "view_type": "image_view"}]}

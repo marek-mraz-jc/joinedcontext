@@ -3,7 +3,7 @@ public deployment helsinki/gate (deployment.yaml) on jc-dev, after the deployer 
 candidate image, then a verdict a prod pin of that digest needs (.github/scripts/assistant-gate.py).
 
     bins/jc/smoke/run assistant-gate ask --base-url <url> --domain <d> --out <dir> \\
-        --sha <jc sha> --digest <sha256:...> [--widget-url https://<assistant host>/d/gate/widget]
+        --sha <jc sha> --digest <sha256:...> [--origin <allowed origin>] [--widget-url <url>]
     bins/jc/smoke/run assistant-gate verdict --out <dir> --conversation <portal conversation.json> \\
         --judge-key-file <file> [--judge-model <id>]
 
@@ -34,6 +34,7 @@ import statistics
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -118,8 +119,13 @@ def read_endpoint(http: Http, read: dict) -> tuple[list[dict], int | None, str]:
 # ------------------------------------------------------------------ the visitor's conversation
 
 class Visitor:
-    def __init__(self, base: str, public_id: str, timeout: float = 30):
+    """`origin` is the page the widget sits on, one of the deployment's allowedOrigins: a chat
+    without an Origin shares the deployment's unplaced pool, a sixth of requestsPerMinute (3 of 20
+    a minute, chat/mod.rs unplaced_limit), and the gate's fourth question would get a 429."""
+
+    def __init__(self, base: str, public_id: str, origin: str, timeout: float = 30):
         self.http, self.base, self.pid, self.timeout = Http(base, timeout), base.rstrip("/"), public_id, timeout
+        self.origin = origin
         self.token, self.conversation = None, None
 
     def open(self) -> str:
@@ -139,7 +145,7 @@ class Visitor:
             body["conversation"] = self.conversation
         req = urllib.request.Request(
             module_door(f"{self.base}/api/v1/d/{self.pid}/chat"), data=json.dumps(body).encode(), method="POST",
-            headers={"X-JC-Visitor": self.token or "", "Accept": "text/event-stream", "Content-Type": "application/json"})
+            headers={"X-JC-Visitor": self.token or "", "Origin": self.origin, "Accept": "text/event-stream", "Content-Type": "application/json"})
         t0, first, done, raw, status = time.monotonic(), None, None, b"", 0
         try:
             with urllib.request.urlopen(req, timeout=self.timeout) as r:
@@ -199,8 +205,13 @@ def hosts(q: dict, domain: str) -> list[str]:
     return [h.replace("{domain}", domain) for h in q.get("hosts") or []]
 
 
+def origin_of(url: str) -> str:
+    u = urllib.parse.urlsplit(url)
+    return f"{u.scheme}://{u.netloc}"
+
+
 def ask_all(args, fx: dict) -> dict:
-    v = Visitor(args.base_url, fx["deployment"]["publicId"])
+    v = Visitor(args.base_url, fx["deployment"]["publicId"], args.origin or origin_of(args.base_url))
     why = v.open()
     rows = []
     for q in fx["questions"]:
@@ -421,6 +432,8 @@ def main(argv=None) -> int:
     a.add_argument("--out", required=True, type=Path)
     a.add_argument("--sha", required=True)
     a.add_argument("--digest", required=True)
+    a.add_argument("--origin", help="the Origin the chat sends, one of deployment.yaml's allowedOrigins "
+                   "(default: the origin of --base-url, e.g. https://jc.jcdev.dev.joinedcontext.com)")
     a.add_argument("--widget-url")
     v = sub.add_parser("verdict")
     v.add_argument("--out", required=True, type=Path)

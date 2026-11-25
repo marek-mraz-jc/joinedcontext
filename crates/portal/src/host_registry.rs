@@ -233,6 +233,17 @@ pub fn organization_drift(rows: &[OrganizationRow], forge: &[String]) -> Organiz
     }
 }
 
+/// What [`report_drift`] logs when the forge and the registry disagree.
+const DRIFT: &str = "the forge's Organizations and the registry's disagree: bindings scoped to a \
+                     missing one are refused; an operator renames or adds the Organization so both \
+                     name the same";
+
+/// What [`report_unplaced_pipelines`] logs for the projects with Pipelines and no Organization.
+const UNPLACED: &str =
+    "projects with Pipelines and no Organization: their runs keep no history and \
+                        their imports cannot be checked; an operator adds each Organization on the \
+                        Organizations page";
+
 /// [`organization_drift`] of the database and the mirror, logged and counted
 /// (`jc_organization_drift`); `None` while the mirror holds no Organization yet (before the first
 /// sync), so a loading Portal reports no drift.
@@ -253,12 +264,8 @@ pub async fn report_drift(
         drift.missing_from_registry.len(),
     );
     if !drift.is_empty() {
-        tracing::warn!(
-            missing_from_forge = ?drift.missing_from_forge,
-            missing_from_registry = ?drift.missing_from_registry,
-            "the forge's Organizations and the registry's disagree: bindings scoped to a missing \
-             one are refused; an operator renames or adds the Organization so both name the same"
-        );
+        let (forge, registry) = (&drift.missing_from_forge, &drift.missing_from_registry);
+        tracing::warn!(missing_from_forge = ?forge, missing_from_registry = ?registry, "{DRIFT}");
     }
     Ok(Some(drift))
 }
@@ -304,11 +311,7 @@ pub async fn report_unplaced_pipelines(pool: &PgPool, mirror: &Mirror) -> Result
         .map(|(project, n)| format!("{project}:{n}"))
         .collect::<Vec<_>>()
         .join(",");
-    tracing::warn!(
-        %projects,
-        "projects with Pipelines and no Organization: their runs keep no history and their \
-         imports cannot be checked; an operator adds each Organization on the Organizations page"
-    );
+    tracing::warn!(%projects, "{UNPLACED}");
     Ok(())
 }
 

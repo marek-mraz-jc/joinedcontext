@@ -847,10 +847,9 @@ impl MqttBrokers {
             let (Some(hostname), None) = (&spec.hostname, &broker.certificate) else {
                 continue;
             };
-            let Ok(certificate) = self.certificate(&broker.release).await else {
-                continue;
-            };
-            if let Some(message) = dns_wait(certificate.as_ref(), hostname) {
+            // A Certificate that cannot be read is read again by the next wave.
+            let certificate = self.certificate(&broker.release).await.ok();
+            if let Some(message) = certificate.and_then(|c| dns_wait(c.as_ref(), hostname)) {
                 waiting.insert(broker.label(), message);
             }
         }
@@ -1982,6 +1981,207 @@ spec:
         assert_eq!(want["attributes"][BROKER_ATTRIBUTE], "espoo/cameras");
     }
 
+    mod clients {
+        use super::*;
+        use crate::config::ClientAuth;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        const REALM: &str = "/admin/realms/bb";
+
+        /// A realm whose token endpoint answers `token_status`.
+        async fn realm(token_status: u16) -> MockServer {
+            let keycloak = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/realms/bb/protocol/openid-connect/token"))
+                .respond_with(
+                    ResponseTemplate::new(token_status)
+                        .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+                )
+                .mount(&keycloak)
+                .await;
+            keycloak
+        }
+
+        /// The realm's answer to the client of `id`.
+        async fn held(keycloak: &MockServer, id: &str, status: u16, body: Value) {
+            Mock::given(method("GET"))
+                .and(path(format!("{REALM}/clients")))
+                .and(query_param("clientId", id))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .mount(keycloak)
+                .await;
+        }
+
+        async fn listed(keycloak: &MockServer, status: u16, body: Value) {
+            Mock::given(method("GET"))
+                .and(path(format!("{REALM}/clients")))
+                .and(query_param("briefRepresentation", "false"))
+                .respond_with(ResponseTemplate::new(status).set_body_json(body))
+                .mount(keycloak)
+                .await;
+        }
+
+        async fn answer(keycloak: &MockServer, verb: &str, at: &str, status: u16) {
+            Mock::given(method(verb))
+                .and(path(format!("{REALM}{at}")))
+                .respond_with(ResponseTemplate::new(status))
+                .mount(keycloak)
+                .await;
+        }
+
+        fn sync(keycloak: &MockServer) -> MqttClientSync {
+            MqttClientSync::new(
+                &format!("{}/realms/bb", keycloak.uri()),
+                "portal-reconciler".to_owned(),
+                ClientAuth::Secret("s3cret".into()),
+            )
+            .expect("a realm issuer")
+        }
+
+        fn of<'a>(outcomes: &'a [ClientOutcome], app: &str) -> &'a ClientOutcome {
+            outcomes
+                .iter()
+                .find(|outcome| outcome.app == app)
+                .expect("an outcome of that broker")
+        }
+
+        fn ours(owner: &str, id: Option<&str>) -> Value {
+            let mut client = json!({ "attributes": {
+                MANAGED_BY: MANAGED_VALUE, BROKER_ATTRIBUTE: owner,
+            } });
+            if let Some(id) = id {
+                client["id"] = json!(id);
+            }
+            client
+        }
+
+        #[test]
+        fn an_issuer_that_is_no_realm_url_manages_no_broker_client() {
+            let auth = ClientAuth::Secret("s3cret".into());
+            assert!(MqttClientSync::new("https://id.example", "r".into(), auth).is_none());
+        }
+
+        /// A missing client is created, a drifted one written back, one this wave did not
+        /// make left alone and reported; a managed client of a gone broker is removed, one
+        /// without an id or one the realm will not delete is that broker's error, and any
+        /// other client of the realm is not touched.
+        #[tokio::test]
+        async fn each_broker_gets_its_client_and_a_gone_brokers_client_goes() {
+            let brokers = declared(&mirror(), None);
+            let keycloak = realm(200).await;
+            held(&keycloak, "mqtt-espoo-cameras", 200, json!([])).await;
+            answer(&keycloak, "POST", "/clients", 201).await;
+            let mut drifted = desired(&brokers[1]);
+            drifted["name"] = json!("renamed by hand");
+            drifted["id"] = json!("u1");
+            held(&keycloak, "mqtt-helsinki-cameras", 200, json!([drifted])).await;
+            answer(&keycloak, "PUT", "/clients/u1", 204).await;
+            let foreign = json!({ "id": "u2", "clientId": "mqtt-helsinki-doors" });
+            held(&keycloak, "mqtt-helsinki-doors", 200, json!([foreign])).await;
+            let unmanaged = json!({ "id": "u3", "attributes": { BROKER_ATTRIBUTE: "gone/b" } });
+            let realm_list = json!([
+                ours("gone/a", Some("u9")),
+                ours("gone/c", None),
+                ours("gone/d", Some("u8")),
+                ours("espoo/cameras", Some("u0")),
+                unmanaged,
+                { "id": "u4", "clientId": "account" },
+            ]);
+            listed(&keycloak, 200, realm_list).await;
+            answer(&keycloak, "DELETE", "/clients/u9", 204).await;
+            answer(&keycloak, "DELETE", "/clients/u8", 500).await;
+
+            let outcomes = sync(&keycloak).converge(&brokers).await;
+            assert_eq!(outcomes.len(), 6, "{outcomes:?}");
+            let created = of(&outcomes, "espoo/cameras");
+            assert!(
+                created.error.is_none() && created.drift.is_empty(),
+                "{created:?}"
+            );
+            let written = of(&outcomes, "helsinki/cameras");
+            assert!(written.error.is_none(), "{written:?}");
+            assert!(
+                written.drift.iter().any(|d| d.contains("name")),
+                "{written:?}"
+            );
+            let left = of(&outcomes, "helsinki/doors")
+                .error
+                .clone()
+                .expect("refused");
+            assert!(left.contains("did not create"), "{left}");
+            assert_eq!(
+                of(&outcomes, "gone/a").drift,
+                ["the broker is gone, so its client was removed"]
+            );
+            let without = of(&outcomes, "gone/c").error.clone().expect("no id");
+            assert_eq!(without, "the realm listed a client without an id");
+            assert!(of(&outcomes, "gone/d")
+                .error
+                .clone()
+                .expect("kept")
+                .contains("500"));
+            let received = keycloak.received_requests().await.expect("recorded");
+            let deleted: Vec<_> = received
+                .iter()
+                .filter(|r| r.method.as_str() == "DELETE")
+                .map(|r| r.url.path().to_owned())
+                .collect();
+            assert_eq!(deleted.len(), 2, "{deleted:?}");
+            let created: Value = received
+                .iter()
+                .find(|r| r.method.as_str() == "POST" && r.url.path() == "/admin/realms/bb/clients")
+                .map(|r| serde_json::from_slice(&r.body).expect("json"))
+                .expect("created");
+            assert_eq!(created, desired(&brokers[0]));
+        }
+
+        /// A realm that refuses the token touches nothing; one that cannot be read names the
+        /// broker, a client that matches is left as it is, a drifted one without an id is
+        /// that broker's error, and an unlisted realm ends the wave with the reason.
+        #[tokio::test]
+        async fn a_realm_that_refuses_or_cannot_be_read_says_so_per_broker() {
+            let brokers = declared(&mirror(), None);
+            let keycloak = realm(401).await;
+            let outcomes = sync(&keycloak).converge(&brokers).await;
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0].app, "*");
+            assert!(outcomes[0].error.is_some());
+
+            let keycloak = realm(200).await;
+            held(&keycloak, "mqtt-espoo-cameras", 500, json!({})).await;
+            let mut matching = desired(&brokers[1]);
+            matching["id"] = json!("u1");
+            held(&keycloak, "mqtt-helsinki-cameras", 200, json!([matching])).await;
+            let mut drifted = desired(&brokers[2]);
+            drifted["enabled"] = json!(false);
+            held(&keycloak, "mqtt-helsinki-doors", 200, json!([drifted])).await;
+            listed(&keycloak, 503, json!({})).await;
+
+            let outcomes = sync(&keycloak).converge(&brokers).await;
+            assert_eq!(outcomes.len(), 4, "{outcomes:?}");
+            assert!(of(&outcomes, "espoo/cameras")
+                .error
+                .clone()
+                .expect("unread")
+                .contains("500"));
+            let kept = of(&outcomes, "helsinki/cameras");
+            assert!(kept.error.is_none() && kept.drift.is_empty(), "{kept:?}");
+            let without = of(&outcomes, "helsinki/doors")
+                .error
+                .clone()
+                .expect("no id");
+            assert!(without.contains("without an id"), "{without}");
+            let listing = of(&outcomes, "*").error.clone().expect("unlisted");
+            assert!(
+                listing.starts_with("listing the broker clients: "),
+                "{listing}"
+            );
+            let received = keycloak.received_requests().await.expect("recorded");
+            assert!(received.iter().all(|r| r.method.as_str() != "PUT"));
+        }
+    }
+
     /// The door's template as the chart renders it, reduced: the ConfigMap naming the CA's
     /// Secret and key, and the pod's revision annotation.
     const DOOR_TEXT: &str = "\
@@ -2201,5 +2401,111 @@ spec:
             err.contains("clientCaRef `mqtt-helsinki-cameras-tls`"),
             "{err}"
         );
+    }
+
+    /// A broker naming clientCertificate in a project whose quota names no clientCaRef is
+    /// refused with what the admin sets; a hostname no quota assigns is refused by name.
+    #[test]
+    fn a_door_without_the_projects_ca_or_a_hostname_no_quota_assigns_is_refused() {
+        let mirror = door_mirror("helsinki-device-ca", json!(["clientCertificate"]), None);
+        mirror.upsert(envelope(
+            "Project",
+            crate::permissions::ORG_NAMESPACE,
+            "helsinki",
+            json!({ "organizationRef": { "name": "hel" }, "quotas": { "mqtt": {
+                "enabled": true, "brokers": 3, "connections": 20000, "messagesPerSecond": 100000,
+                "deviceAuth": ["token", "clientCertificate"]
+            } } }),
+        ));
+        let brokers = declared(&mirror, None);
+        let err = helsinki_cameras(&brokers)
+            .spec
+            .clone()
+            .expect_err("refused");
+        assert!(
+            err.contains("needs the project's clientCaRef") && err.contains("`helsinki`"),
+            "{err}"
+        );
+
+        // The allowance refuses an unassigned hostname first; the judge holds on its own too.
+        let mirror = hostname_mirror("mqtt.helsinki.example", None);
+        let mut brokers = declared(&mirror, None);
+        for spec in brokers.iter_mut().filter_map(|b| b.spec.as_mut().ok()) {
+            spec.hostname = Some("mqtt.nobody.example".to_owned());
+        }
+        judge_hostnames(&mirror, &mut brokers);
+        let err = helsinki_cameras(&brokers)
+            .spec
+            .clone()
+            .expect_err("refused");
+        assert!(
+            err.contains("`mqtt.nobody.example` is not assigned to project `helsinki`"),
+            "{err}"
+        );
+    }
+
+    /// A port or door template that does not read, and an edge route without routes, refuse
+    /// the broker with the template named; nothing half-rendered is applied.
+    #[test]
+    fn a_template_that_does_not_read_or_routes_nothing_refuses_the_broker() {
+        let brokers = declared(&mirror(), None);
+        let cameras = helsinki_cameras(&brokers);
+        let spec = cameras.spec.clone().expect("accepted");
+        let broken = Templates {
+            plain: TEMPLATE_TEXT.to_owned(),
+            port: Some("a: [".to_owned()),
+            ..Templates::default()
+        };
+        let err = objects_of(&broken, cameras, &spec, None).expect_err("unread");
+        assert!(err.contains("does not read"), "{err}");
+
+        let routeless = TEMPLATE_TEXT.to_owned()
+            + "---\napiVersion: traefik.io/v1alpha1\nkind: IngressRouteTCP\nmetadata:\n  name: __RELEASE__\n  labels:\n    app.kubernetes.io/instance: __RELEASE__\nspec: {}\n";
+        let doors = brokers
+            .iter()
+            .find(|b| b.label() == "helsinki/doors")
+            .expect("held");
+        let doors_spec = doors.spec.clone().expect("accepted");
+        let plain = Templates {
+            plain: routeless,
+            ..Templates::default()
+        };
+        let err = objects_of(&plain, doors, &doors_spec, None).expect_err("no routes");
+        assert!(err.contains("IngressRouteTCP holds no routes"), "{err}");
+
+        let brokers = declared(
+            &door_mirror("helsinki-device-ca", json!(["clientCertificate"]), None),
+            None,
+        );
+        let cameras = helsinki_cameras(&brokers);
+        let spec = cameras.spec.clone().expect("accepted");
+        let door = cameras.door.clone().expect("a door");
+        let broken = Templates {
+            plain: TEMPLATE_TEXT.to_owned(),
+            certificate: Some("a: [".to_owned()),
+            ..Templates::default()
+        };
+        let err = door_objects(&broken, cameras, &spec, &door, None).expect_err("unread");
+        assert!(err.contains("does not read"), "{err}");
+    }
+
+    /// A broker's warning is logged the first cycle it appears, and not again the next.
+    #[tokio::test]
+    async fn a_warning_reaches_the_log_once() {
+        let air = with_air(json!({"roles": [
+            {"name": "wide", "publish": ["air/${clientid}/#"]},
+            {"name": "narrow", "publish": ["air/${clientid}/pm10"]},
+        ]}));
+        let brokers = [air];
+        let mut seen = BTreeSet::new();
+        let ((), log) =
+            crate::reconciler::logged(async { log_warnings(&brokers, &mut seen) }).await;
+        assert!(
+            log.contains("MQTT broker manifest") && log.contains("espoo/air"),
+            "{log}"
+        );
+        let ((), log) =
+            crate::reconciler::logged(async { log_warnings(&brokers, &mut seen) }).await;
+        assert!(log.is_empty(), "{log}");
     }
 }
