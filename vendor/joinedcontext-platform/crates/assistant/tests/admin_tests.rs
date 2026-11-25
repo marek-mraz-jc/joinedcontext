@@ -524,6 +524,236 @@ async fn every_administration_path_says_the_store_could_not_be_read_when_it_is_d
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// Renames `table` away in the test database until [`table_back`]: a handler's scope and site
+/// lookup still answer, and the query that reads `table` fails as an outage mid-handler would.
+async fn table_away(w: &World, table: &str) -> PgPool {
+    let url = std::env::var("JC_ASSISTANT_TEST_DATABASE_URL").expect("the test server");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("the URL parses");
+    let owner = PgPool::connect_with(options.database(&w.name))
+        .await
+        .expect("the owner connects");
+    // The table names are this file's own words, never input.
+    let statement = format!("ALTER TABLE {table} RENAME TO {table}_gone");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the table is renamed away");
+    owner
+}
+
+async fn table_back(owner: PgPool, table: &str) {
+    let statement = format!("ALTER TABLE {table}_gone RENAME TO {table}");
+    sqlx::query(sqlx::AssertSqlSafe(statement))
+        .execute(&owner)
+        .await
+        .expect("the table is back");
+    owner.close().await;
+}
+
+/// A query that fails after the scope and the site lookup answered is a 503 in words on every
+/// administration path, never the database's own error; a token the identity provider cannot
+/// check is a 503 that says to retry, and a project name that is none a 404.
+#[tokio::test]
+async fn a_store_failing_mid_handler_is_a_503_on_every_path() {
+    let w = world("adminmid").await;
+    let (status, added) = send_file(
+        &w.app,
+        "subory",
+        "zber.md",
+        b"# Zber\n\nOdpad vyvazame v utorok.".to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{added}");
+    let file = added["id"].as_i64().expect("the file's id");
+    let pages = format!("{BASE}/sources/web/pages?parent={}", w.root);
+    let links = format!("{BASE}/sources/web/pages/{}/links", w.root);
+    let passages = format!("{BASE}/sources/web/passages?page={}", w.child);
+    let inclusion = json!({"pages": [w.root], "included": false});
+    let calls: Vec<(&str, &str, String, Option<Value>)> = vec![
+        ("sites", "GET", format!("{BASE}/sources"), None),
+        ("sites", "GET", format!("{BASE}/sources/web/errors"), None),
+        ("chunks", "GET", format!("{BASE}/sources/web/errors"), None),
+        ("chunks", "GET", pages.clone(), None),
+        ("chunks", "GET", format!("{BASE}/sources/web/documents"), None),
+        ("chunks", "GET", format!("{BASE}/sources/web/search?q=odpad"), None),
+        ("pages", "GET", links.clone(), None),
+        ("links", "GET", links, None),
+        ("chunks", "GET", passages, None),
+        ("pages", "POST", format!("{BASE}/sources/web/inclusion"), Some(inclusion)),
+        ("crawl_jobs", "POST", format!("{BASE}/sources/web/recrawl"), None),
+        ("usage", "GET", format!("{BASE}/deployments/obcania/usage"), None),
+        ("feedback", "GET", format!("{BASE}/deployments/obcania/usage"), None),
+        ("documents", "GET", format!("{BASE}/sources/subory/files"), None),
+        ("documents", "DELETE", format!("{BASE}/sources/subory/files/{file}"), None),
+    ];
+    for (table, verb, uri, body) in calls {
+        let owner = table_away(&w, table).await;
+        let (status, problem) = call(&w.app, verb, &uri, Some(PORTAL_TOKEN), body).await;
+        table_back(owner, table).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{verb} {uri} without {table}: {problem}"
+        );
+        assert_eq!(
+            problem["detail"],
+            "The assistant's store could not be read; try again shortly.",
+            "{verb} {uri}"
+        );
+    }
+    // An upload whose site cannot be written, then one whose file cannot be stored.
+    for table in ["sites", "documents"] {
+        let owner = table_away(&w, table).await;
+        let (status, problem) =
+            send_file(&w.app, "subory", "odvoz.md", b"# Odvoz\n\nV piatok.".to_vec()).await;
+        table_back(owner, table).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "upload without {table}: {problem}"
+        );
+    }
+    // The store is whole again: the file is still listed.
+    let (status, listed) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources/subory/files"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"].as_array().map(Vec::len), Some(1), "{listed}");
+
+    // A day with verdicts and no requests is listed with zero requests; a page left out by the
+    // source's patterns says so.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO feedback (project, deployment, conversation, turn, verdict, note, created_at) VALUES ('hronov', 'obcania', gen_random_uuid(), 1, 'up', NULL, now() - interval '2 days')")
+        .execute(&mut *tx).await.expect("an older verdict");
+    sqlx::query("UPDATE pages SET included = false WHERE id = $1")
+        .bind(w.grandchild)
+        .execute(&mut *tx)
+        .await
+        .expect("a page out of the patterns");
+    tx.commit().await.expect("commit");
+    let (status, usage) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/deployments/obcania/usage"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{usage}");
+    let items = usage["items"].as_array().cloned().unwrap_or_default();
+    assert_eq!(items.len(), 2, "{usage}");
+    assert_eq!(
+        (&items[0]["requests"], &items[0]["thumbsUp"]),
+        (&json!(0), &json!(1)),
+        "{usage}"
+    );
+    let (status, level) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources/web/pages?parent={}", w.child),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{level}");
+    assert_eq!(level["items"][0]["excludedBy"], "pattern", "{level}");
+    assert_eq!(level["items"][0]["included"], false, "{level}");
+
+    // A token the identity provider cannot check: 503, retry, never 401.
+    Mock::given(method("POST"))
+        .and(path("/token/introspect"))
+        .and(body_string_contains("token=realm-cannot-say"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&w._realm)
+        .await;
+    let (status, problem) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/sources"),
+        Some("realm-cannot-say"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("try again")),
+        "{problem}"
+    );
+
+    // A project name that is none: 404 from the scope, before any query.
+    let bad = "/internal/v1/projects/Not_A_Project/knowledge";
+    for uri in [
+        format!("{bad}/sources"),
+        format!("{bad}/sources/web/errors"),
+    ] {
+        let (status, problem) = call(&w.app, "GET", &uri, Some(PORTAL_TOKEN), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {problem}");
+    }
+    // An erasure's body: not the shape, no term, and a project name that is none.
+    for (uri, body, expected) in [
+        (format!("{BASE}/erasures"), json!({"terms": 1}), StatusCode::BAD_REQUEST),
+        (format!("{BASE}/erasures"), json!({"terms": []}), StatusCode::BAD_REQUEST),
+        (
+            format!("{bad}/erasures"),
+            json!({"terms": ["urn:ngsi-ld:BikeTrip:t-0"]}),
+            StatusCode::NOT_FOUND,
+        ),
+    ] {
+        let (status, problem) = call(&w.app, "POST", &uri, Some(PORTAL_TOKEN), Some(body)).await;
+        assert_eq!(status, expected, "{uri}: {problem}");
+        assert!(problem["detail"].is_string(), "{uri}: {problem}");
+    }
+    // A listing above a cost names none of the free turns.
+    let (status, listed) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/conversations?minCostUsd=0.5"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["items"], json!([]), "{listed}");
+    // An export of more turns than one file holds asks for a narrower range.
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    sqlx::query("INSERT INTO turns (project, deployment, conversation, turn, expires_at, question, route, total_ms) \
+         SELECT 'hronov', 'obcania', gen_random_uuid(), 1, now() + interval '1 day', 'q', 'search', 1 \
+         FROM generate_series(0, $1)")
+        .bind(assistant::chat::usage::MAX_EXPORT)
+        .execute(&mut *tx)
+        .await
+        .expect("one turn more than an export holds");
+    tx.commit().await.expect("commit");
+    let (status, problem) = call(
+        &w.app,
+        "GET",
+        &format!("{BASE}/conversations/export"),
+        Some(PORTAL_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("narrow the range")),
+        "{problem}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// A stored conversation is listed, read whole, found by its question, exported and erased over
 /// the administration routes; a malformed query or range is a 400 naming it, a project name that
 /// is none a 404, and a conversation or turn that is not stored a 404.
