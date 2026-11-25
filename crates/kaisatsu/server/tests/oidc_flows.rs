@@ -869,6 +869,16 @@ async fn rp_initiated_logout_and_back_channel_logout() {
         store.get_sso_session("dev", &sid).await.unwrap().is_some(),
         "no hint, no cookie: no session to end"
     );
+    // A target that matches only once trimmed (a leading ideographic space) is never followed:
+    // the URL the browser would get does not parse, so the answer is a 400, not a redirect.
+    let (st, h, _) = confirm_logout(
+        &app,
+        &format!("?client_id=edge&post_logout_redirect_uri=%E3%80%80{signed_out}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(!h.contains_key(header::LOCATION));
     // K5: a POST without the confirmation token ends nothing.
     let (st, _, _) = post_form(&app, logout, &[], None).await;
     assert_eq!(st, StatusCode::FORBIDDEN);

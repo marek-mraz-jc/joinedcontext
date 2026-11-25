@@ -6,10 +6,15 @@
 # Endpoint preview's body, (T-7605) the unverified `iss` of a bearer token, the double-submit
 # CSRF check over arbitrary headers, the login redirect target and an Organization realm list from
 # jc's host registry, and (T-7652) a forge's receive-pack answer, an App's host name under the apps
-# apex and an App repository's build workflow, and (T-7711) the assistant's reading of a model
+# apex and an App repository's build workflow, (T-7711) the assistant's reading of a model
 # answer's tool calls, a JSON merge patch of a manifest, a data tool's answer and an App's written
 # paths and texts, and (T-7784) a bucket's version list, the recipients and identity an
 # administrator pastes into a backup and a sealed bundle under its cap. Its own
+# paths and texts, (T-7724) a robots.txt body, a link found in an entity and the manifests a
+# checkout proposes to the judge, and (T-7729) a pipeline test's manifest and records and a public
+# documentation page's path. Its own
+# paths and texts, and (T-7659) an export's revision and kinds filter, the secrets a bundle strips
+# and a visualization's title. Its own
 # workspace, not a member of the Portal's: `cargo +nightly fuzz run <target> fuzz/corpus/<target>
 # fuzz/seeds/<target>` from crates/portal; seeds/ holds the committed seed inputs.
 # The targets, one per line: .gitattributes merges this file with merge=union, so two branches
@@ -46,6 +51,14 @@ bin = [
   { name = "org_backup_recipients", path = "fuzz_targets/org_backup_recipients.rs", test = false, doc = false, bench = false },
   { name = "org_backup_identity", path = "fuzz_targets/org_backup_identity.rs", test = false, doc = false, bench = false },
   { name = "org_backup_decrypt", path = "fuzz_targets/org_backup_decrypt.rs", test = false, doc = false, bench = false },
+  { name = "link_check", path = "fuzz_targets/link_check.rs", test = false, doc = false, bench = false },
+  { name = "judge_replay", path = "fuzz_targets/judge_replay.rs", test = false, doc = false, bench = false },
+  { name = "record_check", path = "fuzz_targets/record_check.rs", test = false, doc = false, bench = false },
+  { name = "public_docs", path = "fuzz_targets/public_docs.rs", test = false, doc = false, bench = false },
+  { name = "export_query", path = "fuzz_targets/export_query.rs", test = false, doc = false, bench = false },
+  { name = "export_secrets", path = "fuzz_targets/export_secrets.rs", test = false, doc = false, bench = false },
+  { name = "grafana_title", path = "fuzz_targets/grafana_title.rs", test = false, doc = false, bench = false },
+  { name = "dashboard_answers", path = "fuzz_targets/dashboard_answers.rs", test = false, doc = false, bench = false },
 ]
 
 [package]
@@ -69,6 +82,8 @@ age = { version = "0.12", default-features = false }
 zeroize = "1"
 joinedcontext-portal = { path = ".." }
 jc-core = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0" }
+jc-time = { path = "../../shared/jc-time" }
+jcctl = { git = "https://github.com/marek-mraz-jc/joinedcontext-platform.git", rev = "9b0b85944083ae547b331d2327db4021e81cd08a", version = "0.1.0", default-features = false, features = ["utoipa"] }
 
 # The Portal's own patches (../Cargo.toml), one directory deeper: the vendored platform, ngsild
 # and the patched rstar and geo-types, so the targets link the code the Portal ships.

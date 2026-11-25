@@ -1,0 +1,2 @@
+[{"apiVersion":"joinedcontext.com/v1","kind":"ContextSpace","metadata":{"name":"air","namespace":"city"},"spec":{"retention":"P30D"}},
+ {"apiVersion":"joinedcontext.com/v1","kind":"Endpoint","metadata":{"name":"open","namespace":"city"},"spec":{"contextSpaceRef":{"name":"air"},"audience":"public","slug":"air"}}]

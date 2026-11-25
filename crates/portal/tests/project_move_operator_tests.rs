@@ -1191,6 +1191,220 @@ async fn a_move_of_a_project_of_the_installation_waits_for_its_owner_too() {
     assert!(refused.contains("declares no domain"), "{refused}");
 }
 
+/// A registry that does not answer is a 503 the person can retry, never a verdict; a Portal
+/// without a database checks no registry and asks no move.
+#[tokio::test]
+async fn a_registry_that_does_not_answer_is_retried_and_no_database_checks_nothing() {
+    use joinedcontext_portal::error::ApiError;
+    use joinedcontext_portal::project_move::{moving_domains, placed};
+    let bare = AppState::new(Config::for_tests(), None);
+    assert_eq!(
+        moving_domains(&bare, "air").await.expect("no database"),
+        Vec::<String>::new()
+    );
+    assert!(placed(&bare, "air", &json!({}), ApiError::Conflict)
+        .await
+        .is_ok());
+    let lazy = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy("postgres://portal@127.0.0.1:1/never-reached")
+        .expect("a lazy pool");
+    let down = AppState::new(Config::for_tests(), None).with_db(lazy);
+    let moving = moving_domains(&down, "air").await;
+    assert!(
+        matches!(&moving, Err(ApiError::Unavailable(m)) if m.contains("try again")),
+        "{moving:?}"
+    );
+    let checked = placed(
+        &down,
+        "air",
+        &json!({ "organizationRef": "hel" }),
+        ApiError::Conflict,
+    )
+    .await;
+    assert!(
+        matches!(&checked, Err(ApiError::Unavailable(m)) if m.contains("project registry") && m.contains("try again")),
+        "{checked:?}"
+    );
+}
+
+/// The owner rules of a Project Change without a database (T-7500): a project that mints and
+/// leaves its Organization for the installation needs the installation's domain; a project
+/// holding indicators under a runner domain is judged on the owner it mints; a layout-2 entry
+/// that names its repository renders nothing and is not judged. An Endpoint that names its
+/// Policy by `policyRef` waits on a target Organization without a domain.
+#[tokio::test]
+async fn the_owner_of_a_projects_ids_is_judged_on_every_change() {
+    use joinedcontext_portal::error::ApiError;
+    use joinedcontext_portal::project_move::{placed, stray_policy_refs};
+    let mut config = Config::for_tests();
+    config.org_domain = None;
+    let state = AppState::new(config.clone(), None);
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "domain": "hel.example" }),
+    ));
+    m.upsert(envelope("Organization", "bare", ORG_NAMESPACE, json!({})));
+    m.upsert(envelope(
+        "Project",
+        "air",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    m.upsert(envelope("ContextSpace", "air", "air", json!({})));
+    m.upsert(envelope(
+        "Policy",
+        "public-read",
+        "air",
+        json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "air" },
+                "assignee": { "kind": "role", "id": "public" }, "operations": ["retrieveOps"] }),
+    ));
+    let segment = joinedcontext_portal::spaces::segment(m, "air", "air");
+    let endpoint = |name: &str, extra: Value| {
+        let mut spec = json!({ "contextSpaceRef": "air", "audience": "public",
+                               "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y", "enabledRepresentations": ["ngsi-ld"] });
+        for (k, v) in extra.as_object().into_iter().flatten() {
+            spec[k] = v.clone();
+        }
+        envelope("Endpoint", name, "air", spec)
+    };
+    m.upsert(endpoint(
+        "single",
+        json!({ "policyRef": format!("urn:ngsi-ld:Policy:hel.example:{segment}:public-read") }),
+    ));
+    m.upsert(endpoint("open", json!({})));
+    m.upsert(envelope(
+        "Endpoint",
+        "broken",
+        "air",
+        json!({ "audience": 5 }),
+    ));
+    let stray = stray_policy_refs(m, "air", Some("hel"), "bare");
+    assert_eq!(stray.len(), 1, "{stray:?}");
+    assert!(
+        stray[0].starts_with("spec.policyRef: Endpoint 'single'")
+            && stray[0].contains("declares no domain"),
+        "{stray:?}"
+    );
+
+    m.upsert(envelope(
+        "Pipeline",
+        "feed",
+        "air",
+        json!({ "class": "scheduled" }),
+    ));
+    let left = placed(&state, "air", &json!({}), ApiError::Conflict).await;
+    assert!(
+        matches!(&left, Err(ApiError::Conflict(line)) if line.contains("the installation declares no domain")),
+        "{left:?}"
+    );
+
+    config.org_domain = Some("run.example".into());
+    let runner = AppState::new(config, None);
+    let r = &runner.mirror;
+    r.upsert(envelope(
+        "Organization",
+        "hel",
+        ORG_NAMESPACE,
+        json!({ "domain": "hel.example" }),
+    ));
+    r.upsert(envelope("Project", "kpi", ORG_NAMESPACE, json!({})));
+    r.upsert(envelope(
+        "ContextSpace",
+        &jc_core::kpi::kpi_space("kpi"),
+        "kpi",
+        json!({}),
+    ));
+    let moved = placed(
+        &runner,
+        "kpi",
+        &json!({ "organizationRef": "hel" }),
+        ApiError::Conflict,
+    )
+    .await;
+    assert!(
+        matches!(&moved, Err(ApiError::Conflict(line)) if line.starts_with("spec.urnOwner:")),
+        "{moved:?}"
+    );
+    r.set_layout(2);
+    let entry = json!({ "organizationRef": "hel", "repository": { "url": "https://forge.example/kpi.git" } });
+    assert!(placed(&runner, "kpi", &entry, ApiError::Conflict)
+        .await
+        .is_ok());
+}
+
+/// The registry's answers a plan and a Project Change read: a name the registry holds no
+/// Organization for is refused naming both; a manifest naming none (and no installation claim)
+/// is not judged; a project filed under no Organization yet is told to need no move; the plan
+/// lists the project's RoleBindings; a store error inside an apply is the store's, not a refusal.
+#[tokio::test]
+async fn the_registry_answers_unknown_names_unfiled_projects_and_store_errors() {
+    use joinedcontext_portal::project_move::{apply, check_manifest, plan, Approval, MoveError};
+    let state = world().await;
+    let (from, to, project) = (run("hel"), run("ctlb"), run("reg"));
+    placed(&state, &project, &from, &to).await;
+    let ghost = run("ghost");
+    let refused = check_manifest(
+        pool(&state),
+        &state.mirror,
+        &project,
+        &json!({ "organizationRef": ghost }),
+    )
+    .await
+    .expect("registry");
+    assert!(
+        matches!(&refused, Err(line) if line.contains(&ghost) && line.contains(&from)),
+        "{refused:?}"
+    );
+    assert_eq!(
+        check_manifest(pool(&state), &state.mirror, &project, &json!({}))
+            .await
+            .expect("registry"),
+        Ok(())
+    );
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        &format!("{project}-readers"),
+        ORG_NAMESPACE,
+        json!({ "scope": { "project": project }, "role": "reader", "subjects": [] }),
+    ));
+    let planned = plan(pool(&state), &state.mirror, &project, &to)
+        .await
+        .expect("registry")
+        .expect("a recorded project");
+    assert_eq!(planned.bindings, [format!("{project}-readers")]);
+
+    let unfiled = run("unfiled");
+    sqlx::query("INSERT INTO project_ids (id, name) VALUES (gen_random_uuid(), $1)")
+        .bind(&unfiled)
+        .execute(&owner_pool().await)
+        .await
+        .expect("a project with no Organization");
+    let planned = plan(pool(&state), &state.mirror, &unfiled, &to)
+        .await
+        .expect("registry")
+        .expect("a recorded project");
+    let blockers = planned.blockers.join("; ");
+    assert!(
+        blockers.contains("has no Organization in the registry yet")
+            && blockers.contains(&format!("holds no Project '{unfiled}'")),
+        "{blockers}"
+    );
+
+    let mut tx = pool(&state).begin().await.expect("a transaction");
+    let _ = sqlx::query("SELECT 1 / 0").execute(&mut *tx).await;
+    let change = Approval {
+        id: "c-1",
+        approver: "ops-b",
+        source_ip: None,
+    };
+    let applied = apply(&mut tx, &state.mirror, &change, &project, &to).await;
+    assert!(matches!(&applied, Err(MoveError::Db(_))), "{applied:?}");
+}
+
 /// A forge holding one open Change of `project`, #5, which adds the Context Space `air`.
 async fn forge_with_open_change(project: &str) -> MockServer {
     let shako = common::forge().await;
