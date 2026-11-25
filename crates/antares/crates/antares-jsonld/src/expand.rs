@@ -1699,9 +1699,11 @@ mod tests {
             insts[at] = inst(0);
             let doc = json!({"id": "urn:ngsi-ld:X:1", "type": "T", "speed": insts});
             let out = expand_entity(doc.as_object().unwrap(), &core(), ExpandOpts::default());
-            let Err(NgsiError::BadRequestData(msg)) = out else {
-                panic!("a repeat at {at} must be BadRequestData: {out:?}");
-            };
+            assert!(
+                matches!(out, Err(NgsiError::BadRequestData(_))),
+                "a repeat at {at} must be BadRequestData: {out:?}"
+            );
+            let msg = out.err().map(|e| e.to_string()).unwrap_or_default();
             assert!(msg.contains("duplicate datasetId"), "{msg}");
         }
     }
@@ -2802,12 +2804,10 @@ mod tests {
             json!({"type": "Polygon", "coordinates": []}),
         ];
         for geom in &good {
-            if let Err(e) = ent(json!({"type": "GeoProperty", "value": geom})) {
-                panic!("{geom} rejected: {e:?}");
-            }
-            if let Err(e) = ent(geom.clone()) {
-                panic!("{geom} concise rejected: {e:?}");
-            }
+            let normalized = ent(json!({"type": "GeoProperty", "value": geom}));
+            assert!(normalized.is_ok(), "{geom} rejected: {normalized:?}");
+            let concise = ent(geom.clone());
+            assert!(concise.is_ok(), "{geom} concise rejected: {concise:?}");
         }
     }
 
@@ -4442,13 +4442,12 @@ mod reserved_member_guards {
                 &core(),
                 ExpandOpts::default(),
             );
-            if let Err(e) = got {
-                assert_eq!(
-                    e.status(),
-                    400,
-                    "{t}: an instance carrying the wrong members is BadRequestData, not {e}"
-                );
-            }
+            // an acceptance passes as well as a BadRequestData
+            let status = got.as_ref().err().map_or(400, NgsiError::status);
+            assert_eq!(
+                status, 400,
+                "{t}: an instance carrying the wrong members is BadRequestData, not {got:?}"
+            );
         }
     }
 }
@@ -4477,10 +4476,7 @@ mod edges {
     }
 
     fn ok(doc: Value, opts: ExpandOpts) -> Value {
-        match run(doc.clone(), opts) {
-            Ok(out) => out,
-            Err(e) => panic!("{doc} refused: {e:?}"),
-        }
+        run(doc, opts).expect("the document is accepted")
     }
 
     fn refused(doc: Value, opts: ExpandOpts) {

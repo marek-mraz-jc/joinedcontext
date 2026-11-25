@@ -782,7 +782,8 @@ mod tests {
         assert!(matches!(c.outside(), Cow::Borrowed(_)));
         let car = c.within("https://example.org/Car").into_owned();
         assert_eq!(car.expand_key("wheels"), "https://example.org/wheels");
-        assert!(car.term("skip").is_none_or(|d| d.iri != "skip"));
+        // a term with no IRI of its own and no @vocab to fall back on defines nothing
+        assert!(car.term("skip").is_none());
         // the outer "name" IRI no longer compacts to "name" inside the Car scope
         assert_ne!(car.compact_iri("https://example.org/name"), "name");
         assert_eq!(car.compact_iri("https://example.org/carName"), "name");
