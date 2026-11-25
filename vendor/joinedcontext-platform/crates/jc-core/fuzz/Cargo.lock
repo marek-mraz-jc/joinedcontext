@@ -677,6 +677,7 @@ version = "0.0.0"
 dependencies = [
  "jc-core",
  "libfuzzer-sys",
+ "serde_json",
 ]
 
 [[package]]

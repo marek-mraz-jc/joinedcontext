@@ -831,15 +831,15 @@ mod tests {
         let at_bound = admit(claims("slug".into(), NOW - LEEWAY), Some(&slug()), NOW);
         assert_eq!(at_bound.map(|c| c.sub), Ok("f:1:a".to_owned()));
         let past = admit(claims("slug".into(), NOW - LEEWAY - 1), Some(&slug()), NOW);
-        assert_eq!(past.map(|c| c.sub), Err(Rejected::Expired));
+        assert_eq!(past.err(), Some(Rejected::Expired));
     }
 
     #[test]
     fn the_audience_is_one_of_those_asked_for_and_a_missing_one_is_none() {
         let other = admit(claims("other".into(), NOW), Some(&slug()), NOW);
-        assert_eq!(other.map(|c| c.sub), Err(Rejected::WrongAudience));
+        assert_eq!(other.err(), Some(Rejected::WrongAudience));
         let missing = admit(claims(serde_json::Value::Null, NOW), Some(&slug()), NOW);
-        assert_eq!(missing.map(|c| c.sub), Err(Rejected::WrongAudience));
+        assert_eq!(missing.err(), Some(Rejected::WrongAudience));
         let many = admit(
             claims(serde_json::json!(["x", "slug"]), NOW),
             Some(&slug()),
