@@ -355,13 +355,7 @@ fn tenant_or_event(
 ) -> Option<Tenant> {
     space_tenant(repo, project, space, names)
         .map_err(|reason| {
-            tracing::error!(
-                %project,
-                %space,
-                %reason,
-                "the space has no tenant: its Endpoints answer 503 until the Project names an \
-                 Organization with a verified domain and the Portal has recorded the project's id"
-            );
+            tracing::error!(%project, %space, %reason, "the space has no tenant: its Endpoints answer 503 until the Project names an Organization with a verified domain and the Portal has recorded the project's id");
         })
         .ok()
 }
@@ -579,25 +573,14 @@ pub fn load_from(
         .iter()
         .filter(|entry| entry.error.is_some())
     {
-        tracing::warn!(
-            project = %entry.slug,
-            git_ref = %entry.git_ref,
-            error = entry.error.as_deref().unwrap_or_default(),
-            kept = entry.rendered,
-            "a registered project has no checkout"
-        );
+        tracing::warn!(project = %entry.slug, git_ref = %entry.git_ref, error = entry.error.as_deref().unwrap_or_default(), kept = entry.rendered, "a registered project has no checkout");
     }
     for (entry, refusal) in assembly
         .entries
         .iter()
         .filter_map(|entry| Some((entry, entry.refused.as_ref()?)))
     {
-        tracing::warn!(
-            project = %entry.slug,
-            reason = %refusal.reason,
-            kept = entry.rendered,
-            "a registered project does not load: its last render serves, the others go on"
-        );
+        tracing::warn!(project = %entry.slug, reason = %refusal.reason, kept = entry.rendered, "a registered project does not load: its last render serves, the others go on");
     }
     Ok(tables(
         &assembly.repository,
@@ -1036,19 +1019,11 @@ fn endpoints_from(
                 Some(_) => {
                     // A projection of another space's model would describe entities this
                     // endpoint never serves: the endpoint stays, unprojected, and says so.
-                    tracing::warn!(
-                        endpoint = %id.name,
-                        projection = %reference.name,
-                        "the projection belongs to another space and is not applied"
-                    );
+                    tracing::warn!(endpoint = %id.name, projection = %reference.name, "the projection belongs to another space and is not applied");
                     None
                 }
                 None => {
-                    tracing::warn!(
-                        endpoint = %id.name,
-                        projection = %reference.name,
-                        "projectionRef names no ModelProjection; the endpoint is not narrowed by it"
-                    );
+                    tracing::warn!(endpoint = %id.name, projection = %reference.name, "projectionRef names no ModelProjection; the endpoint is not narrowed by it");
                     None
                 }
             }
@@ -1110,11 +1085,7 @@ fn endpoints_from(
                     None => {
                         // Serving the source model under the target model's name is worse
                         // than not serving a view: the endpoint stays, as the space's own.
-                        tracing::warn!(
-                            endpoint = %id.name,
-                            mapping = %view.name,
-                            "the view mapping names no Mapping with a readable gateway IR"
-                        );
+                        tracing::warn!(endpoint = %id.name, mapping = %view.name, "the view mapping names no Mapping with a readable gateway IR");
                         None
                     }
                 }
@@ -1454,11 +1425,7 @@ fn policies_by_space(
                 policies.entry((project, space)).or_default().extend(rules);
             }
             Err(error) => {
-                tracing::warn!(
-                    name = %id.name,
-                    %error,
-                    "Policy left out of the endpoint table: its space grants nothing"
-                );
+                tracing::warn!(name = %id.name, %error, "Policy left out of the endpoint table: its space grants nothing");
                 unreadable.insert((project, Some(spec.context_space_ref.name().to_owned())));
             }
         }
@@ -1551,11 +1518,7 @@ fn without_public_write(name: &str, rule: &PolicySpec) -> bool {
     let Some(op) = rule.public_write() else {
         return true;
     };
-    tracing::warn!(
-        rule = %name,
-        operation = %op,
-        "Policy rule left out of the endpoint table: a public grant only reads or creates (EP-187)"
-    );
+    tracing::warn!(rule = %name, operation = %op, "Policy rule left out of the endpoint table: a public grant only reads or creates (EP-187)");
     false
 }
 
@@ -1595,11 +1558,7 @@ fn bound_policies(
     };
     for policy_ref in refs {
         if !named.iter().any(|(name, _)| names(policy_ref, name)) {
-            tracing::warn!(
-                endpoint,
-                policy = %policy_ref,
-                "policyRef names no Policy of the endpoint's space; it grants nothing"
-            );
+            tracing::warn!(endpoint, policy = %policy_ref, "policyRef names no Policy of the endpoint's space; it grants nothing");
         }
     }
     named
@@ -1719,11 +1678,9 @@ fn declared_types(
                     }),
                 );
             }
-            None => tracing::warn!(
-                space = %id.name,
-                model = %named.name(),
-                "spec.dataModelRef names no model of the space; its writes are not narrowed to one"
-            ),
+            None => {
+                tracing::warn!(space = %id.name, model = %named.name(), "spec.dataModelRef names no model of the space; its writes are not narrowed to one")
+            }
         }
     }
     declared
@@ -1738,12 +1695,7 @@ fn spec_of<T: serde::de::DeserializeOwned>(manifest: &RawManifest) -> Option<T> 
     match serde_json::from_value(manifest.spec.clone()) {
         Ok(spec) => Some(spec),
         Err(error) => {
-            tracing::warn!(
-                kind = %manifest.kind,
-                name = %manifest.metadata.name,
-                %error,
-                "manifest left out of the endpoint table"
-            );
+            tracing::warn!(kind = %manifest.kind, name = %manifest.metadata.name, %error, "manifest left out of the endpoint table");
             None
         }
     }

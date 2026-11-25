@@ -166,7 +166,10 @@ pub(crate) struct Ticket {
 
 impl Drop for Ticket {
     fn drop(&mut self) {
-        let mut callers = self.callers.lock().unwrap_or_else(|held| held.into_inner());
+        let mut callers = self
+            .callers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(count) = callers.get_mut(&self.caller) {
             *count = count.saturating_sub(self.weight);
             if *count == 0 {
@@ -216,7 +219,10 @@ impl InFlight {
             true => self.loadtest_per_caller,
             false => self.per_caller,
         };
-        let mut callers = self.callers.lock().unwrap_or_else(|held| held.into_inner());
+        let mut callers = self
+            .callers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let count = callers.entry(caller.clone()).or_insert(0);
         if *count >= cap {
             return Err(Refused::Busy);
@@ -266,7 +272,10 @@ impl InFlight {
         let Ok(slow) = Arc::clone(&self.slow).try_acquire_many_owned(weight) else {
             return false;
         };
-        let mut callers = self.callers.lock().unwrap_or_else(|held| held.into_inner());
+        let mut callers = self
+            .callers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let Some(count) = callers.get_mut(&ticket.caller) else {
             return false;
         };

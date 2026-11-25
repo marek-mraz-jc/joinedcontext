@@ -364,6 +364,16 @@ fn handed_over(events: &[crate::agents::run::AgentRunEvent]) -> Option<Value> {
 mod tests {
     use super::*;
 
+    /// A doubled quote inside a quoted field is one quote, and the separator inside quotes is
+    /// text (T-7818).
+    #[test]
+    fn a_doubled_quote_in_a_quoted_field_is_one_quote() {
+        assert_eq!(
+            fields(r#""say ""hi""";b,c;d"#, ';'),
+            vec![r#"say "hi""#.to_owned(), "b,c".to_owned(), "d".to_owned()]
+        );
+    }
+
     #[test]
     fn the_first_step_of_the_path_is_the_source_step() {
         assert_eq!(

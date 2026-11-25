@@ -1143,6 +1143,85 @@ fn own_count(answer: &ToolAnswer, input: u64) -> Option<u64> {
 mod tests {
     use super::*;
 
+    /// Named lines close together are one window, an empty file quotes nothing, and a window
+    /// past the result cap is left out (T-7818).
+    #[test]
+    fn named_lines_merge_close_windows_and_stop_at_the_cap() {
+        let body: String = (1..=40).map(|n| format!("line {n}\n")).collect();
+        let files: BTreeMap<String, String> = [
+            ("src/App.tsx".to_owned(), body.clone()),
+            ("src/Empty.tsx".to_owned(), String::new()),
+        ]
+        .into();
+        let quoted = with_named_lines("src/App.tsx:10 and src/App.tsx:12 src/Empty.tsx:1", &files);
+        assert_eq!(
+            quoted.matches("=== src/App.tsx, lines 2-20 ===").count(),
+            1,
+            "{quoted}"
+        );
+        assert!(!quoted.contains("src/Empty.tsx, lines"), "{quoted}");
+        let wide: BTreeMap<String, String> =
+            [("src/App.tsx".to_owned(), "x".repeat(RESULT_CAP))].into();
+        let failure = "src/App.tsx:1";
+        assert_eq!(with_named_lines(failure, &wide), failure);
+    }
+
+    /// The file tools at their edges: a path outside the application, a file too large for
+    /// the project, a replaced and a removed file, and one that is not there (T-7818).
+    #[test]
+    fn the_file_tools_refuse_bad_paths_and_oversize_files_and_say_what_they_did() {
+        let mut files: BTreeMap<String, String> =
+            [("src/App.tsx".to_owned(), "a\nb\n".to_owned())].into();
+        let (said, ok) = read_file(&files, &json!({ "path": "../etc/passwd" }));
+        assert_eq!(
+            (said.as_str(), ok),
+            ("not a path of the application", false)
+        );
+        let huge = "x".repeat(code::MAX_BYTES + 1);
+        let (said, ok) = edit_file(
+            &mut files,
+            &json!({ "path": "src/App.tsx", "search": "a", "replace": huge }),
+            None,
+        );
+        assert!(!ok && said.contains("at most"), "{said}");
+        let (said, ok) = edit_file(
+            &mut files,
+            &json!({ "path": "../x", "search": "a", "replace": "b" }),
+            None,
+        );
+        assert_eq!((said.as_str(), ok), (code::REFUSAL, false));
+        let (said, ok) = write_file(
+            &mut files,
+            &json!({ "path": "src/App.tsx", "content": huge }),
+            None,
+        );
+        assert!(!ok && said.contains("at most"), "{said}");
+        let (said, ok) = write_file(
+            &mut files,
+            &json!({ "path": "src/App.tsx", "content": "c" }),
+            None,
+        );
+        assert_eq!(
+            (said.as_str(), ok),
+            ("src/App.tsx: replaced, 1 bytes", true)
+        );
+        let (said, ok) = delete_file(&mut files, &json!({ "path": "../x" }), None);
+        assert_eq!((said.as_str(), ok), (code::REFUSAL, false));
+        let (said, ok) = delete_file(
+            &mut files,
+            &json!({ "path": "src/App.tsx" }),
+            Some("src/Other.tsx"),
+        );
+        assert!(
+            !ok && said.contains("may change src/Other.tsx only"),
+            "{said}"
+        );
+        let (said, ok) = delete_file(&mut files, &json!({ "path": "src/App.tsx" }), None);
+        assert_eq!((said.as_str(), ok), ("src/App.tsx: removed", true));
+        let (said, ok) = delete_file(&mut files, &json!({ "path": "src/App.tsx" }), None);
+        assert_eq!((said.as_str(), ok), ("src/App.tsx: no such file", false));
+    }
+
     /// F-POR1-021: the template's own files (public/, package.json) are not counted against the
     /// model's limit, as code::problems does not count them.
     #[test]
@@ -1604,10 +1683,7 @@ mod tests {
         assert_eq!(opening["cache_control"], json!({ "type": "ephemeral" }));
         // Stable first: the row types and the files, then the turns before and the request.
         let text = opening["text"].as_str().expect("the opening");
-        let at = |needle: &str| {
-            text.find(needle)
-                .unwrap_or_else(|| panic!("{needle} in {text}"))
-        };
+        let at = |needle: &str| text.find(needle).expect("in");
         assert!(at("Row types") < at("Files:"), "{text}");
         assert!(at("Files:") < at("Earlier in this conversation"), "{text}");
         assert!(

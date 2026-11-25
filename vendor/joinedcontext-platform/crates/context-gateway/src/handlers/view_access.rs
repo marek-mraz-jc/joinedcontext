@@ -214,13 +214,7 @@ async fn from_view(
     if method == Method::POST {
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
     }
-    tracing::info!(
-        slug = %endpoint.slug,
-        space = %endpoint.space,
-        principal = %principal_of(subject),
-        %path,
-        "access asked of the broker's view"
-    );
+    tracing::info!(slug = %endpoint.slug, space = %endpoint.space, principal = %principal_of(subject), %path, "access asked of the broker's view");
     let answer = gateway
         .broker
         .send(method, &path, headers, body)
@@ -590,10 +584,7 @@ fn evaluation(
     let member = |name: &str| item.get(name).or_else(|| defaults.get(name));
     if let Some(named) = member("subject") {
         if !names_the_caller(subject, named) {
-            tracing::warn!(
-                principal = %principal_of(subject),
-                "an access evaluation named a subject other than the caller"
-            );
+            tracing::warn!(principal = %principal_of(subject), "an access evaluation named a subject other than the caller");
             return Err(Box::new(
                 ProblemDetails::forbidden()
                     .with_detail("subject must be the caller: omit it or name your own token's")
@@ -764,16 +755,7 @@ pub(crate) async fn access_simulate(
                 Err(answer) => return *answer,
             },
         };
-        tracing::info!(
-            caller = PORTAL_CLIENT,
-            slug = %endpoint.slug,
-            simulated_user = who.user.as_deref().unwrap_or_default(),
-            simulated_service_account = who.service_account.as_deref().unwrap_or_default(),
-            simulated_groups = who.groups.len(),
-            simulated_roles = who.roles.len(),
-            admitted = %answer["admitted"],
-            "access grants simulated"
-        );
+        tracing::info!(caller = PORTAL_CLIENT, slug = %endpoint.slug, simulated_user = who.user.as_deref().unwrap_or_default(), simulated_service_account = who.service_account.as_deref().unwrap_or_default(), simulated_groups = who.groups.len(), simulated_roles = who.roles.len(), admitted = %answer["admitted"], "access grants simulated");
         return json_response(&answer);
     };
     if !Operation::ALL
@@ -821,20 +803,7 @@ pub(crate) async fn access_simulate(
     };
     // The Portal's record names the administrator; this one names whom they asked about, beside
     // the Portal's account that asked (EP-103). Never a token.
-    tracing::info!(
-        caller = PORTAL_CLIENT,
-        slug = %endpoint.slug,
-        simulated_user = who.user.as_deref().unwrap_or_default(),
-        simulated_service_account = who.service_account.as_deref().unwrap_or_default(),
-        simulated_groups = who.groups.len(),
-        simulated_roles = who.roles.len(),
-        action,
-        entity_type = entity_type.unwrap_or_default(),
-        attribute = attribute.unwrap_or_default(),
-        decision = %answer["decision"],
-        reason = %answer["context"]["reason"],
-        "access simulated"
-    );
+    tracing::info!(caller = PORTAL_CLIENT, slug = %endpoint.slug, simulated_user = who.user.as_deref().unwrap_or_default(), simulated_service_account = who.service_account.as_deref().unwrap_or_default(), simulated_groups = who.groups.len(), simulated_roles = who.roles.len(), action, entity_type = entity_type.unwrap_or_default(), attribute = attribute.unwrap_or_default(), decision = %answer["decision"], reason = %answer["context"]["reason"], "access simulated");
     json_response(&answer)
 }
 
