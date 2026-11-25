@@ -3366,7 +3366,8 @@ classes:
             "extras": [
                 { "key": "endpoint", "value": ours },
                 { "key": "temporal_start", "value": "2024-01-01" },
-                { "key": "contact_email", "value": "data@example.org" }
+                { "key": "contact_email", "value": "data@example.org" },
+                { "key": "theme", "value": "http://publications.europa.eu/resource/authority/data-theme/ENVI" }
             ]
         })
     }
@@ -3457,6 +3458,7 @@ classes:
         );
         assert_eq!(resources[1]["description"], "All rows");
         assert!(page["quality"].is_object(), "{page}");
+        assert_eq!(page["themes"][0]["code"], "ENVI", "{page}");
     }
 
     /// A dataset name past 100 characters, an empty one, a private dataset, one CKAN refuses and
@@ -3553,6 +3555,14 @@ classes:
             status,
             StatusCode::SERVICE_UNAVAILABLE,
             "a closed gateway port"
+        );
+        let state = installation(host, &ckan.uri(), None, public_spec());
+        let (status, _) =
+            answer(get_sample(State(state), HeaderMap::new(), Path("air".into())).await).await;
+        assert_eq!(
+            status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no gateway: the public host"
         );
 
         let mut harvest = published(&probe, "harvest");
@@ -3713,6 +3723,31 @@ classes:
             .mount(&gateway)
             .await;
         assert_eq!(counted(&format!("{}/e", gateway.uri()), "Tree").await, None);
+        assert_eq!(
+            counted("http://localhost:9/e", "Tree").await,
+            None,
+            "no answer, no count"
+        );
+    }
+
+    /// A catalogue answering something that is no CKAN document is unreachable, with the status.
+    #[tokio::test]
+    async fn a_catalogue_answer_that_is_no_json_is_unreachable() {
+        let base = answering(
+            "HTTP/1.1 502 Bad Gateway\r\nContent-Length: 4\r\nConnection: close\r\n\r\noops",
+            0,
+        )
+        .await;
+        let read = action_with(&reqwest::Client::new(), &base, "package_show", &[]).await;
+        assert!(
+            matches!(read, Err(Failure::Unreachable(reason)) if reason.contains("502") && reason.contains("no CKAN document"))
+        );
+    }
+
+    #[test]
+    fn a_period_with_only_an_end_is_that_one_year() {
+        let d = json!({ "extras": [{ "key": "temporal_end", "value": "2021-12-31" }] });
+        assert_eq!(years(&d, 2026), vec![2021]);
     }
 
     /// EP-81: every catalogue down is a 503 naming them; a search text CKAN refuses (Solr cannot

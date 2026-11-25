@@ -558,7 +558,7 @@ async fn a_draft_the_check_does_not_take_is_refused_and_previews_nothing() {
     two["pipeline"]["spec"]["steps"] = json!([step.clone(), step]);
     let verdict = checked(&rig, two).await;
     assert!(
-        verdict.to_string().contains("one step of kind kpi"),
+        verdict.to_string().contains("the pipeline's only step"),
         "{verdict}"
     );
     assert_eq!(previews(&rig.broker).await, 0);
