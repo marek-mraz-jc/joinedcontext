@@ -696,6 +696,17 @@ impl AppState {
         Ok(state)
     }
 
+    /// A client of the cluster this Portal runs in, from the ServiceAccount mount; `None`
+    /// outside a cluster.
+    fn in_cluster(
+        &self,
+    ) -> Result<Option<crate::apps::kube::KubeClient>, crate::apps::kube::KubeError> {
+        crate::apps::kube::KubeClient::from_mount(
+            &self.config.service_account_dir,
+            crate::apps::kube::IN_CLUSTER_API,
+        )
+    }
+
     /// The writers into the cluster: the artifact store's root client, the WASM shards, the MQTT
     /// brokers, the credential Secrets and the pipelines' secret resolver.
     fn wire_cluster_writers(&self, mut syncer: Syncer) -> Syncer {
@@ -713,7 +724,7 @@ impl AppState {
         // Each WASM shard's placement and store key, in the host's namespace (AP-157, AP-158).
         // Without that namespace there is nowhere a shard would read them, so none is written.
         if let Some(apps_db) = self.config.apps_db.clone() {
-            match (apps_db.host_namespace.clone(), crate::apps::kube::KubeClient::in_cluster()) {
+            match (apps_db.host_namespace.clone(), self.in_cluster()) {
                 (Some(namespace), Ok(Some(kube))) => {
                     let mut shards = crate::reconciler::wasm_shards::WasmShards::new(
                         kube,
@@ -735,10 +746,7 @@ impl AppState {
         }
         // Each MqttBroker's release, in the brokers' namespace, from the deployment's template
         // (ADR-N-048, T-3994).
-        match (
-            self.config.mqtt_namespace.clone(),
-            crate::apps::kube::KubeClient::in_cluster(),
-        ) {
+        match (self.config.mqtt_namespace.clone(), self.in_cluster()) {
             (Some(namespace), Ok(Some(kube))) => {
                 syncer = syncer.with_mqtt_capture(Arc::new(crate::mqtt_capture::Capture::new(
                     Arc::clone(&self.mqtt_capture),
@@ -760,8 +768,8 @@ impl AppState {
         // artifact-store reader (T-0925) and the pipeline runner's environment (T-0927).
         // Outside a cluster there is nowhere to write one, which is not an error.
         match (
-            crate::apps::kube::KubeClient::in_cluster(),
-            crate::apps::kube::KubeClient::own_namespace(),
+            self.in_cluster(),
+            crate::apps::kube::KubeClient::namespace_of(&self.config.service_account_dir),
         ) {
             (Ok(Some(kube)), Some(namespace)) => {
                 syncer = syncer.with_credential_secrets(Arc::new(kube), namespace);
@@ -828,16 +836,13 @@ impl AppState {
         // settings that say where. Either missing leaves the reconciler reading apps and
         // deploying nothing, which is what a Portal on a laptop does (T-0411, AP-18). No
         // realm is needed: the login front is the edge's one client (AP-27, ADR-N-019).
-        match (
-            self.config.app_settings.clone(),
-            crate::apps::kube::KubeClient::in_cluster(),
-        ) {
+        match (self.config.app_settings.clone(), self.in_cluster()) {
             (Some(settings), Ok(Some(kube))) => {
                 // The edge file has its own client: the converger owns the other one.
-                match crate::apps::kube::KubeClient::in_cluster() {
+                match self.in_cluster() {
                     Ok(Some(edge_kube)) => {
                         let namespace = settings.apisix_namespace.clone();
-                        match crate::apps::kube::KubeClient::in_cluster() {
+                        match self.in_cluster() {
                             Ok(Some(hosts_kube)) => {
                                 syncer = syncer.with_app_hosts(Arc::new(
                                     crate::reconciler::app_hosts::AppHosts::new(
@@ -847,8 +852,9 @@ impl AppState {
                                 ));
                             }
                             _ => {
-                                #[rustfmt::skip]
-                                tracing::warn!("no third API client: no App host gets a certificate");
+                                tracing::warn!(
+                                    "no third API client: no App host gets a certificate"
+                                );
                             }
                         }
                         syncer = self.wire_org_hosts(syncer, &namespace);
@@ -907,7 +913,7 @@ impl AppState {
             tracing::error!(%name, "JC_PORTAL_DNS01_ISSUER is not a Kubernetes name: no registry host gets a certificate");
             return syncer;
         }
-        match crate::apps::kube::KubeClient::in_cluster() {
+        match self.in_cluster() {
             Ok(Some(kube)) => syncer.with_org_hosts(Arc::new(
                 crate::reconciler::org_hosts::OrgHosts::new(
                     kube,
@@ -942,14 +948,16 @@ impl AppState {
                         ))
                     }
                     None => {
-                        #[rustfmt::skip]
-                        tracing::warn!("the issuer is not a realm URL, so no Keycloak group is managed");
+                        tracing::warn!(
+                            "the issuer is not a realm URL, so no Keycloak group is managed"
+                        );
                     }
                 }
             }
             _ => {
-                #[rustfmt::skip]
-                tracing::info!("no Keycloak admin client: Group manifests are read, the realm is not written");
+                tracing::info!(
+                    "no Keycloak admin client: Group manifests are read, the realm is not written"
+                );
             }
         }
         // Each Organization's realm, as that realm's own `portal-reconciler` (T-7144).
@@ -1057,8 +1065,9 @@ impl AppState {
                     syncer = syncer.with_workload_clients(Arc::new(clients))
                 }
                 None => {
-                    #[rustfmt::skip]
-                    tracing::warn!("the issuer is not a realm URL, so no workload client is managed");
+                    tracing::warn!(
+                        "the issuer is not a realm URL, so no workload client is managed"
+                    );
                 }
             }
             // The MCP hub's `endpoint:{slug}` scopes (T-2490), by the same identity.
@@ -1094,13 +1103,14 @@ impl AppState {
         // Each Pipeline's own Kubernetes ServiceAccount (PL-19, T-1508), by the Portal's
         // in-cluster identity, which the deployment lets write that one namespace.
         if let Some(namespace) = self.config.pipeline_namespace.clone() {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => {
                     syncer = syncer.with_pipeline_service_accounts(Arc::new(kube), namespace)
                 }
                 Ok(None) => {
-                    #[rustfmt::skip]
-                    tracing::warn!("no ServiceAccount mount: the pipelines' Kubernetes accounts are not made");
+                    tracing::warn!(
+                        "no ServiceAccount mount: the pipelines' Kubernetes accounts are not made"
+                    );
                 }
                 Err(err) => {
                     tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so the pipelines' Kubernetes accounts are not made")
@@ -1110,7 +1120,7 @@ impl AppState {
         // Each App's job ServiceAccount (AP-159, T-3539), by the same in-cluster identity,
         // which the deployment lets write the identities namespace.
         match self.config.app_identity_namespace.clone() {
-            Some(namespace) => match crate::apps::kube::KubeClient::in_cluster() {
+            Some(namespace) => match self.in_cluster() {
                 Ok(Some(kube)) => {
                     syncer = syncer.with_app_job_service_accounts(Arc::new(kube), namespace)
                 }
@@ -1326,8 +1336,9 @@ impl AppState {
     fn attach_stores(&mut self, db: &Option<sqlx::PgPool>) {
         self.agents = Arc::new(AgentStore::new(db.clone(), self.mirror.clone()));
         if !self.agents.is_durable() {
-            #[rustfmt::skip]
-            tracing::info!("no database: a builder run and its stream live only until this process ends");
+            tracing::info!(
+                "no database: a builder run and its stream live only until this process ends"
+            );
         }
         self.drafts =
             DraftStore::new(db.clone(), self.mirror.clone()).with_hub(self.draft_events.clone());
@@ -1406,7 +1417,7 @@ impl AppState {
             .as_ref()
             .is_some_and(|settings| settings.namespace.is_some())
         {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => self.kube = Some(Arc::new(kube)),
                 Ok(None) => {
                     tracing::info!("no ServiceAccount mount: a builder run is driven by its caller, not scheduled");
@@ -1418,15 +1429,16 @@ impl AppState {
         }
         // The run's test sandbox (SDK-38): its own client, in the namespace that fences it.
         if let Some(settings) = self.config.app_tests.clone() {
-            match crate::apps::kube::KubeClient::in_cluster() {
+            match self.in_cluster() {
                 Ok(Some(kube)) => {
                     self.app_tests = Some(Arc::new(crate::agents::sandbox::Sandbox::new(
                         kube, settings,
                     )))
                 }
                 Ok(None) => {
-                    #[rustfmt::skip]
-                    tracing::info!("no ServiceAccount mount: a run's tests are left to the build lane");
+                    tracing::info!(
+                        "no ServiceAccount mount: a run's tests are left to the build lane"
+                    );
                 }
                 Err(err) => {
                     tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so a run's tests are left to the build lane")
@@ -1783,8 +1795,9 @@ impl AppState {
         match serde_json::from_value::<jc_core::kinds::OrganizationAppearance>(look) {
             Ok(look) if look.validate().is_ok() => self.set_installation_look(look),
             _ => {
-                #[rustfmt::skip]
-                tracing::error!("the installation's approved look fails its check; the branding file shows");
+                tracing::error!(
+                    "the installation's approved look fails its check; the branding file shows"
+                );
             }
         }
     }

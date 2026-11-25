@@ -383,6 +383,10 @@ pub struct Config {
     /// (`JC_SHAKO_*`) the environment leaves unset, read by `AppState::from_config` after
     /// `from_vars`. Empty for the standalone Portal; an environment value always wins.
     pub host_vars: std::collections::BTreeMap<String, String>,
+    /// The ServiceAccount mount the in-cluster API clients read their token from, the kubelet's
+    /// path; the environment never sets it, a test points it at a mount of its own.
+    #[doc(hidden)]
+    pub service_account_dir: std::path::PathBuf,
     /// Whether the Portal's own router serves the `/metrics` scrape (OPS-16; the edge refuses the
     /// path in the cluster). A hosting process with its own guarded scrape (`jc`'s admin
     /// listener) turns it off; no environment key turns it on again.
@@ -2566,6 +2570,7 @@ impl Config {
             apps_db,
             pipeline_secrets,
             host_vars: std::collections::BTreeMap::new(),
+            service_account_dir: crate::apps::kube::SERVICE_ACCOUNT_DIR.into(),
             public_metrics: true,
         })
     }
@@ -2573,11 +2578,11 @@ impl Config {
     pub fn for_tests() -> Self {
         Self {
             host_vars: std::collections::BTreeMap::new(),
+            service_account_dir: crate::apps::kube::SERVICE_ACCOUNT_DIR.into(),
             public_metrics: true,
             bind: SocketAddr::from(([127, 0, 0, 1], 0)),
             internal_bind: SocketAddr::from(([127, 0, 0, 1], 0)),
-            public_base_url: Url::parse("http://localhost:8080")
-                .unwrap_or_else(|_| unreachable!("valid test url")),
+            public_base_url: Url::parse("http://localhost:8080").expect("valid test url"),
             organization_hosts: Vec::new(),
             organization_realms: Vec::new(),
             portal_settings: crate::portals::PortalSettings::default(),
@@ -2966,10 +2971,10 @@ mod tests {
         for (pairs, named) in cases {
             let shown = format!("{pairs:?}");
             let result = Config::from_vars(vars(pairs));
+            let got = format!("{:?}", result.as_ref().map(|_| ()));
             assert!(
                 matches!(&result, Err(ConfigError::Invalid { var, .. }) if *var == named),
-                "{shown}: {:?}",
-                result.as_ref().map(|_| ())
+                "{shown}: {got}"
             );
             let reason = result.err().map(|e| e.to_string()).unwrap_or_default();
             assert!(!reason.contains("test-secret"), "{reason}");
@@ -2984,6 +2989,7 @@ mod tests {
     #[test]
     fn the_well_formed_optional_values_are_read() {
         let runner_token = temp_file("runner-token", " from-file \n");
+        let tile_key = temp_file("tile-key", " tiles-fixture \n");
         let prices = temp_file(
             "prices",
             "currency: EUR\nperUsd: 0.5\nnodes: [{name: cpx42, monthly: 90}]\n",
@@ -3007,6 +3013,7 @@ mod tests {
             ("JC_BASEMAP_URL", "https://t/{z}/{x}/{y}.png"),
             ("JC_BASEMAP_ATTRIBUTION", "OSM"),
             ("JC_BASEMAP_CACHE_DIR", "/var/cache/tiles"),
+            ("JC_BASEMAP_KEY_FILE", &tile_key),
             ("JC_PORTAL_CKAN_ALLOW_HTTP", "true"),
             ("JC_PORTAL_DECISIONS_NEED_SECOND_FACTOR", "false"),
             (
@@ -3047,6 +3054,8 @@ mod tests {
         assert!(format!("{agents:?}").contains("namespace"));
         let shown = format!("{basemap:?}");
         assert!(shown.contains("OSM"), "{shown}");
+        assert_eq!(basemap.key.as_deref(), Some("tiles-fixture"));
+        assert!(!shown.contains("tiles-fixture"), "{shown}");
 
         let token = Config::from_vars(vars(owned(&[
             ("JC_PORTAL_PIPELINE_RUNNER_TOKEN", " inline "),
@@ -3056,7 +3065,7 @@ mod tests {
         .expect("parses");
         assert_eq!(token.pipeline_runner_token.as_deref(), Some("inline"));
         assert!(token.cost_prices.is_none(), "an empty table prices nothing");
-        for file in [runner_token, prices, empty_prices] {
+        for file in [runner_token, tile_key, prices, empty_prices] {
             std::fs::remove_file(file).expect("removed");
         }
     }
@@ -3121,6 +3130,14 @@ mod tests {
             vars("smartcity")("JC_PORTAL_OTHER"),
             None,
             "two variables only"
+        );
+        let unparsed = installation_organization(|name: &str| {
+            let hosts = name == "JC_PORTAL_ORGANIZATION_HOSTS";
+            Some(if hosts { "no equals sign" } else { "smartcity" }.to_owned())
+        });
+        assert!(
+            matches!(&unparsed, Err(ConfigError::Invalid { var, .. }) if *var == "JC_PORTAL_ORGANIZATION_HOSTS"),
+            "{unparsed:?}"
         );
         assert_eq!(installation_organization(|_| None).unwrap(), None);
         assert_eq!(installation_organization(vars(" ")).unwrap(), None);

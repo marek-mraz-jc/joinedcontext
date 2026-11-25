@@ -10,10 +10,12 @@
 //! functions it calls, with a lookup of the test's own rather than a process-wide variable
 //! another test would see.
 
+use joinedcontext_portal::auth::realms::RealmSetting;
 use joinedcontext_portal::auth::session::{now_unix, Identity, Session};
 use joinedcontext_portal::config::{Config, ConfigError};
 use joinedcontext_portal::forge::github_mirror::GithubMirror;
 use joinedcontext_portal::forge::ShakoClient;
+use joinedcontext_portal::organization_host::OrganizationHost;
 use joinedcontext_portal::state::AppState;
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -231,13 +233,14 @@ async fn no_database_still_starts_with_a_non_durable_agent_store() {
     assert!(!state.agents.is_durable());
 }
 
-/// A realm whose discovery and key set both answer, for the startups that need one to run.
-async fn live_realm() -> (MockServer, String) {
+/// A realm under `realm_path` whose discovery answers; its key set answers once and then
+/// `keys_after`, so the Portal's own warm-up after discovery meets that answer.
+async fn live_realm(realm_path: &str, keys_after: u16) -> (MockServer, String) {
     let server = MockServer::start().await;
-    let issuer = format!("{}{REALM_PATH}", server.uri());
+    let issuer = format!("{}{realm_path}", server.uri());
     Mock::given(method("GET"))
         .and(path(format!(
-            "{REALM_PATH}/.well-known/openid-configuration"
+            "{realm_path}/.well-known/openid-configuration"
         )))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
             "issuer": issuer,
@@ -250,27 +253,64 @@ async fn live_realm() -> (MockServer, String) {
         })))
         .mount(&server)
         .await;
+    let certs = format!("{realm_path}/protocol/openid-connect/certs");
     Mock::given(method("GET"))
-        .and(path(format!("{REALM_PATH}/protocol/openid-connect/certs")))
+        .and(path(certs.clone()))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+        .up_to_n_times(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(certs))
+        .respond_with(ResponseTemplate::new(keys_after).set_body_json(json!({ "keys": [] })))
         .mount(&server)
         .await;
     (server, issuer)
 }
 
-/// Every optional part of a deployment at once, outside a cluster: a realm with its admin
-/// client, the forge (from the host's variables), the gateway, the broker, the artifact store,
-/// the WASM database, Grafana, the pipeline runner, the namespaces and SOPS. `capture` and
-/// `wasm_host` flip the two settings whose absence is its own branch; `apps_db` and `store`
-/// are the WASM database URL and the artifact store endpoint, each well-formed or not.
-fn everything(
-    issuer: &str,
-    token_file: &std::path::Path,
-    (capture, wasm_host): (bool, bool),
-    (apps_db, store): (&'static str, &'static str),
-) -> Config {
+/// A ServiceAccount mount under the temp directory: a token and a namespace, and `ca` as its
+/// authority when given.
+fn mount(name: &str, ca: Option<&str>) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("t7816-sa-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("mount dir");
+    std::fs::write(dir.join("token"), "fixture").expect("token");
+    std::fs::write(dir.join("namespace"), "portal\n").expect("namespace");
+    if let Some(ca) = ca {
+        std::fs::write(dir.join("ca.crt"), ca).expect("ca");
+    }
+    dir
+}
+
+/// One startup's optional parts: the runner's capture listener, the WASM host's namespace,
+/// the WASM database URL and artifact store endpoint (each well-formed or not), the pipeline
+/// and App job namespaces, the ServiceAccount mount and the database.
+struct Setup {
+    capture: bool,
+    wasm_host: bool,
+    apps_db: &'static str,
+    store: &'static str,
+    namespaces: bool,
+    mount: Option<std::path::PathBuf>,
+    db: bool,
+}
+
+const APPS_DB: &str = "postgres://apps@127.0.0.1:1/apps";
+const STORE: &str = "http://store.test:9000/";
+
+/// Every optional part of a deployment at once: a realm with its admin client, the forge
+/// (from the host's variables), the gateway, the broker, the catalogue, the artifact store, the
+/// WASM database, Grafana, the pipeline runner, the namespaces, SOPS and an Organization realm,
+/// as `setup` picks them.
+fn everything(issuer: &str, token_file: &std::path::Path, setup: &Setup) -> Config {
     let issuer = issuer.to_owned();
     let token_file = token_file.display().to_string();
+    let (capture, wasm_host, apps_db, store, namespaces) = (
+        setup.capture,
+        setup.wasm_host,
+        setup.apps_db,
+        setup.store,
+        setup.namespaces,
+    );
     let mut config = Config::from_vars(|k| {
         let v = match k {
             "JC_OIDC_ISSUER" => issuer.as_str(),
@@ -289,8 +329,8 @@ fn everything(
             "JC_PORTAL_WASM_HOST_NAMESPACE" if wasm_host => "wasm",
             "JC_PORTAL_MQTT_NAMESPACE" => "mqtt",
             "JC_PORTAL_SOPS_AGE_KEY_FILE" => "/nonexistent/age.key",
-            "JC_PORTAL_PIPELINE_NAMESPACE" => "pipelines",
-            "JC_PORTAL_APP_IDENTITY_NAMESPACE" => "app-jobs",
+            "JC_PORTAL_PIPELINE_NAMESPACE" if namespaces => "pipelines",
+            "JC_PORTAL_APP_IDENTITY_NAMESPACE" if namespaces => "app-jobs",
             "JC_PORTAL_PIPELINE_RUNNER_URL" => "http://runner.{project}.svc:4195",
             "JC_PORTAL_PIPELINE_TEST_CAPTURE_URL" if capture => "http://portal.test:8081",
             "JC_PORTAL_GRAFANA_URL" => "http://grafana.test:3000",
@@ -300,13 +340,43 @@ fn everything(
             "JC_PORTAL_BROKER_URL" => "http://broker.test:8080",
             "JC_PORTAL_BROKER_ADMIN_TOKEN_FILE" => token_file.as_str(),
             "JC_PORTAL_MODEL_TOOLS_URL" => "http://tools.test:8000",
+            "JC_PORTAL_CKAN_URL" => "https://data.bb.example",
+            "JC_PORTAL_CKAN_API_URL" => "http://ckan.ckan.svc:5000",
+            "JC_AGENTS_NAMESPACE" => "agents",
+            "JC_AGENT_PROXY_BASE" => "http://proxy.test",
+            "JC_PORTAL_APP_TESTS_NAMESPACE" => "app-tests",
+            "JC_PORTAL_APP_TESTS_IMAGE" => {
+                return Some(format!("ghcr.io/x/node@sha256:{}", "a".repeat(64)))
+            }
             _ => return None,
         };
         Some(v.to_owned())
     })
     .expect("config");
     config.public_base_url = "https://portal.bb.example".parse().expect("url");
-    config.database_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL").ok();
+    config.database_url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|_| setup.db);
+    if let Some(dir) = &setup.mount {
+        config.service_account_dir = dir.clone();
+    }
+    config.organization_hosts = vec![OrganizationHost {
+        organization: "ba".into(),
+        base: "https://portal.ba.example".parse().expect("url"),
+    }];
+    config.organization_realms = vec![RealmSetting {
+        organization: "ba".into(),
+        issuer: "https://idm.ba.example/realms/ba".parse().expect("url"),
+        jwks_url: "http://127.0.0.1:9/realms/ba/protocol/openid-connect/certs"
+            .parse()
+            .expect("url"),
+    }];
+    forge(&mut config);
+    config
+}
+
+/// The forge's four variables, as the `jc` binary hands them over.
+fn forge(config: &mut Config) {
     for (key, value) in [
         ("JC_SHAKO_URL", "http://shako.test:3000"),
         ("JC_SHAKO_OWNER", "owner"),
@@ -315,30 +385,98 @@ fn everything(
     ] {
         config.host_vars.insert(key.into(), value.into());
     }
-    config
 }
 
 /// With a forge configured the Portal builds its reconciler and wires every step this process
-/// can reach outside a cluster: the sync driver, the views, the drift watch and the live hub's
-/// subscription writer. The steps that need the ServiceAccount mount say so and stay unwired.
+/// can reach: inside a cluster (a ServiceAccount mount) the cluster writers too, with a mount
+/// it cannot use or none at all it says so and leaves them out. An issuer that is no realm URL
+/// manages no realm clients, and a forge alone starts with every other step left out.
 #[tokio::test]
 async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
-    let (_server, issuer) = live_realm().await;
+    let (_server, issuer) = live_realm(REALM_PATH, 200).await;
+    let (_plain, plain_issuer) = live_realm("/idp", 500).await;
     let token = std::env::temp_dir().join(format!("t7816-broker-token-{}", std::process::id()));
     std::fs::write(&token, "fixture").expect("token file");
-    let apps_db = "postgres://apps@127.0.0.1:1/apps";
-    let store = "http://store.test:9000/";
-    for (switches, wasm) in [
-        ((true, true), (apps_db, store)),
-        ((false, false), ("no database URL", store)),
-        ((false, true), (apps_db, "no endpoint")),
-    ] {
-        let mut config = everything(&issuer, &token, switches, wasm);
-        // The last startup runs without a database, so the sync driver keeps its runs in memory.
-        let durable = config.database_url.is_some() && wasm.1 == store;
-        if !durable {
-            config.database_url = None;
+    let good = mount("good", None);
+    let bad = mount(
+        "bad",
+        Some("-----BEGIN CERTIFICATE-----\nnot base64 at all!\n-----END CERTIFICATE-----\n"),
+    );
+    let setups = [
+        (
+            &issuer,
+            Setup {
+                capture: true,
+                wasm_host: true,
+                apps_db: APPS_DB,
+                store: STORE,
+                namespaces: true,
+                mount: Some(good.clone()),
+                db: true,
+            },
+            None,
+        ),
+        (
+            &issuer,
+            Setup {
+                capture: false,
+                wasm_host: false,
+                apps_db: "no database URL",
+                store: STORE,
+                namespaces: true,
+                mount: Some(good.clone()),
+                db: true,
+            },
+            Some("Not_A_Name"),
+        ),
+        (
+            &issuer,
+            Setup {
+                capture: false,
+                wasm_host: true,
+                apps_db: APPS_DB,
+                store: "no endpoint",
+                namespaces: true,
+                mount: Some(bad.clone()),
+                db: false,
+            },
+            None,
+        ),
+        (
+            &issuer,
+            Setup {
+                capture: true,
+                wasm_host: true,
+                apps_db: APPS_DB,
+                store: STORE,
+                namespaces: false,
+                mount: None,
+                db: true,
+            },
+            None,
+        ),
+        (
+            &plain_issuer,
+            Setup {
+                capture: true,
+                wasm_host: true,
+                apps_db: APPS_DB,
+                store: STORE,
+                namespaces: true,
+                mount: None,
+                db: false,
+            },
+            None,
+        ),
+    ];
+    for (issuer, setup, dns01) in setups {
+        match dns01 {
+            // The issuer of the registry hosts' certificates is read from the environment.
+            Some(name) => std::env::set_var("JC_PORTAL_DNS01_ISSUER", name),
+            None => std::env::remove_var("JC_PORTAL_DNS01_ISSUER"),
         }
+        let config = everything(issuer, &token, &setup);
+        let durable = config.database_url.is_some();
         let state = AppState::from_config(config)
             .await
             .expect("the Portal starts");
@@ -347,19 +485,43 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
         assert!(state.sync.is_some(), "the SyncSource driver");
         assert!(state.views.is_some(), "the broker views");
         assert!(state.drift_watch.is_some(), "the drift watch");
-        assert!(state.people.is_some(), "the realm's people");
+        assert_eq!(
+            state.people.is_some(),
+            issuer.ends_with(REALM_PATH),
+            "the realm's people"
+        );
         assert!(
             state.github_mirror.is_none(),
             "no GitHub copy was configured"
         );
         assert_eq!(
             state.wasm_apps.is_some(),
-            wasm == (apps_db, store),
+            (setup.apps_db, setup.store) == (APPS_DB, STORE),
             "wasm Apps publish with both a database URL and a usable store"
         );
         assert_eq!(state.db.is_some(), durable);
+        assert_eq!(
+            state.kube.is_some(),
+            setup.mount.as_ref() == Some(&good),
+            "the builder's client"
+        );
+        if durable {
+            // The Organization drift check's first round runs at once.
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
     }
-    std::fs::remove_file(&token).expect("token file removed");
+    std::env::remove_var("JC_PORTAL_DNS01_ISSUER");
+
+    let mut alone = Config::for_tests();
+    forge(&mut alone);
+    let state = AppState::from_config(alone)
+        .await
+        .expect("the Portal starts");
+    assert!(state.syncer.is_some() && state.views.is_none() && state.drift_watch.is_none());
+    for path in [token, good, bad] {
+        let _ = std::fs::remove_dir_all(&path);
+        let _ = std::fs::remove_file(&path);
+    }
 }
 
 fn session(subject: &str, issued_at: i64) -> Session {

@@ -1056,9 +1056,6 @@ fn compiled_text(panel: &BoardPanel) -> Value {
 }
 
 fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
-    if panel.kind == PanelKind::Text {
-        return compiled_text(panel);
-    }
     let reference = json!({ "type": PLUGIN, "uid": source.datasource });
     let mut target = json!({
         "refId": "A",
@@ -1187,7 +1184,8 @@ fn compiled_panel(panel: &BoardPanel, source: &Source) -> Value {
             "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
             "tooltip": { "mode": "single", "sort": "none" },
         }),
-        PanelKind::Text => unreachable!("a text panel is compiled by compiled_text"),
+        // A text panel reads nothing: the query built above is dropped with the rest.
+        PanelKind::Text => return compiled_text(panel),
     };
     let mut out = json!({
         "id": panel.id,
@@ -2300,6 +2298,37 @@ mod tests {
             let refusal = check_shape(&board).expect_err(field);
             assert_eq!(refusal.field, field, "{refusal:?}");
         }
+    }
+
+    /// T-7816: the corners of compiling: a variable without a label is titled by its name and
+    /// without All starts at its first value, a description is kept on text and data panels, a
+    /// table that reads `name` reads it once, and a table's thresholds colour no value.
+    #[test]
+    fn a_boards_corners_compile_as_grafana_reads_them() {
+        let mut board = board();
+        board.variables[0].label = " ".into();
+        board.variables[0].include_all = false;
+        board.panels[7].description = " About the readings ".into();
+        board.panels[2].description = "Every station".into();
+        board.panels[2].attribute = "name".into();
+        board.panels[2].thresholds = board.panels[0].thresholds.clone();
+        let values = vec![vec!["Kallio".to_owned(), "Mannerheimintie".to_owned()]];
+        let file = compile("jcd-0123456789abcdef", &board, &sources(&board), &values);
+        let variable = &file["templating"]["list"][0];
+        assert_eq!(variable["label"], "station");
+        assert_eq!(variable["current"]["value"], json!(["Kallio"]));
+        assert_eq!(file["panels"][7]["description"], "About the readings");
+        let table = &file["panels"][2];
+        assert_eq!(table["description"], "Every station");
+        assert_eq!(table["targets"][0]["attributes"], json!(["name"]));
+        assert!(
+            table["fieldConfig"]["defaults"].get("color").is_none(),
+            "{table}"
+        );
+        assert!(
+            file["panels"][7].get("targets").is_none(),
+            "a text panel reads nothing"
+        );
     }
 
     /// T-7816: a filter's value against its attribute's kind, and each kind's words.
