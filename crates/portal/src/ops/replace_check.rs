@@ -182,10 +182,15 @@ mod tests {
     use wiremock::matchers::{method, path_regex};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// The broker token file, written once: a rewrite truncates it first, and a test reading it in
+    /// parallel then found it empty ("the broker's admin token is not readable").
     fn token_file() -> std::path::PathBuf {
-        let file = std::env::temp_dir().join(format!("replace-check-{}", std::process::id()));
-        std::fs::write(&file, "t").expect("write the token");
-        file
+        static FILE: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+            let file = std::env::temp_dir().join(format!("replace-check-{}", std::process::id()));
+            std::fs::write(&file, "t").expect("write the token");
+            file
+        });
+        FILE.clone()
     }
 
     /// A Portal that writes broker views, counts on `broker` (none: no address), and holds the
