@@ -935,10 +935,47 @@ mod tests {
         server
     }
 
+    /// T-7817: a pipeline test names a pipeline or a draft, a sample to infer from is base64, and
+    /// a search names something.
+    #[tokio::test]
+    async fn an_empty_test_search_or_sample_is_refused_at_its_field() {
+        let test = super::super::find("jc_pipeline_test").expect("registered");
+        let refused = (test.validate)(&json!({ "sample": { "text": "{}" } }));
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/pipeline"),
+            "{refused:?}"
+        );
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let caller = super::super::testkit::admin(&state);
+        let infer = super::super::find("jc_model_infer").expect("registered");
+        let refused = (infer.run)(
+            &caller,
+            &state,
+            "helsinki",
+            json!({ "content": "not base64!" }),
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == "/content"),
+            "{refused:?}"
+        );
+        let search = catalog_search(
+            &caller,
+            &state,
+            "helsinki",
+            parse_input(json!({ "q": "  " })).expect("input"),
+        )
+        .await;
+        assert!(
+            matches!(&search, Err(OpError::Api(ApiError::BadRequest(_)))),
+            "{search:?}"
+        );
+    }
+
     fn value_of(answer: &Value) -> f64 {
-        answer["currentValue"]["value"]
-            .as_f64()
-            .unwrap_or_else(|| panic!("no value in {answer}"))
+        let value = answer["currentValue"]["value"].as_f64();
+        assert!(value.is_some(), "no value in {answer}");
+        value.unwrap_or_default()
     }
 
     /// The value is the direct aggregation over every entity, also when the gateway answers
@@ -1053,16 +1090,12 @@ mod tests {
     #[test]
     fn a_fold_over_no_number_is_refused_at_rows_not_a_zero() {
         for rows in [vec![], vec![json!({"id": "c1", "count": "n/a"})]] {
-            match kpi_value(&rows, &params(kpi::Agg::Sum)) {
-                Err(OpError::InvalidInput { path, message }) => {
-                    assert_eq!(path, "/rows");
-                    assert!(
-                        message.contains("BikeCounter") && message.contains("count"),
-                        "{message}"
-                    );
-                }
-                other => panic!("expected a refusal, got {other:?}"),
-            }
+            let refused = kpi_value(&rows, &params(kpi::Agg::Sum));
+            assert!(
+                matches!(&refused, Err(OpError::InvalidInput { path, message })
+                    if path == "/rows" && message.contains("BikeCounter") && message.contains("count")),
+                "{refused:?}"
+            );
         }
     }
 
@@ -1094,17 +1127,13 @@ mod tests {
             ("http://gitea/a.json", "inside the cluster"),
             ("http://127.0.0.1:9/a.json", ""),
         ] {
-            match infer_from_url(&admin, &state, "helsinki", None, url).await {
-                Err(OpError::InvalidInput { path, message }) => {
-                    assert_eq!(path, "/url", "{url}");
-                    assert!(message.contains(says), "{url}: {message}");
-                    assert!(
-                        !message.contains("s3cret-pw") && !message.contains("k-123456"),
-                        "{message}"
-                    );
-                }
-                other => panic!("{url}: a 422, got {other:?}"),
-            }
+            let refused = infer_from_url(&admin, &state, "helsinki", None, url).await;
+            assert!(
+                matches!(&refused, Err(OpError::InvalidInput { path, message })
+                    if path == "/url" && message.contains(says)
+                        && !message.contains("s3cret-pw") && !message.contains("k-123456")),
+                "{url}: {refused:?}"
+            );
         }
         let stranger = crate::ops::testkit::person("mallory", &[]);
         match infer_from_url(

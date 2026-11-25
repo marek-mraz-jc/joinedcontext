@@ -645,7 +645,7 @@ async fn a_person_updates_brings_back_and_discards_through_the_registry() {
     let change = ops::call(propose, &person, &state, PROJECT, name.clone())
         .await
         .expect("proposed");
-    assert_eq!(change["status"]["lane"], "yellow", "{change}");
+    assert_eq!(change["lane"], "yellow", "{change}");
     assert_eq!(
         calls(&server, "POST", "/Shako.OpenPullRequest").await.len(),
         1

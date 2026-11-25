@@ -528,6 +528,58 @@ mod tests {
     // `workspaces.rs:223` before a preview exists, which is what keeps that true.
     // ---------------------------------------------------------------------------------------------
 
+    /// T-7817: the files a preview serves leave out the mapping and the encrypted secrets, and
+    /// a root that is not there serves nothing.
+    #[test]
+    fn a_preview_serves_the_manifests_and_never_a_mapping_or_a_secret() {
+        let root = std::env::temp_dir().join(format!("jc-preview-files-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("projects/ovzdusie")).expect("dirs");
+        for (path, text) in [
+            ("org.yaml", "kind: Organization"),
+            ("projects/ovzdusie/endpoint.yaml", "kind: Endpoint"),
+            ("projects/ovzdusie/bento.yaml", "input: {}"),
+            ("projects/ovzdusie/keys.enc.yaml", "sops: {}"),
+        ] {
+            std::fs::write(root.join(path), text).expect("written");
+        }
+        std::fs::write(root.join("projects/binary.bin"), [0xff, 0xfe]).expect("written");
+        let files = files_under(&root);
+        assert_eq!(
+            files.keys().cloned().collect::<Vec<_>>(),
+            ["org.yaml", "projects/ovzdusie/endpoint.yaml"],
+            "not UTF-8 is no manifest either"
+        );
+        std::fs::remove_dir_all(&root).expect("cleaned");
+        assert!(files_under(&root).is_empty());
+    }
+
+    /// T-7817: a render map whose lock a panicking thread poisoned still holds, hands back and
+    /// forgets renders.
+    #[test]
+    fn a_poisoned_render_map_still_works() {
+        let renders = Renders::default();
+        let render = Arc::new(Render {
+            files: BTreeMap::new(),
+            outcome: Err("refused".into()),
+        });
+        let poisoned = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = renders.0.lock().expect("lock");
+                std::panic::panic_any("a panic while holding the renders");
+            })
+            .join()
+        });
+        assert!(poisoned.is_err() && renders.0.is_poisoned());
+        renders.put("air-v2", "head1".into(), Arc::clone(&render));
+        assert!(renders.get("air-v2", "head1").is_some());
+        assert!(
+            renders.get("air-v2", "head2").is_none(),
+            "another head is rendered again"
+        );
+        renders.forget("air-v2");
+        assert!(renders.get("air-v2", "head1").is_none());
+    }
+
     #[test]
     fn the_prefix_is_the_workspace_name_between_two_fences() {
         for name in [

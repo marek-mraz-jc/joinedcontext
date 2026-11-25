@@ -557,9 +557,8 @@ mod tests {
 
     #[test]
     fn a_wfs_listing_cut_by_the_byte_cap_keeps_the_whole_feature_types_and_says_it_is_cut() {
-        let Value::String(text) = recorded("wfs/discover.xml") else {
-            panic!("xml")
-        };
+        #[rustfmt::skip]
+        let Value::String(text) = recorded("wfs/discover.xml") else { panic!("xml") };
         // Cut inside the seventh feature type, as the runner's byte cap cuts a long listing.
         let seventh = text
             .match_indices("</FeatureType>")
@@ -624,6 +623,55 @@ mod tests {
             choices(HttpPresetKind::Ckan, &json!({ "result": names }), true).expect("choices");
         assert!(cut);
         assert_eq!(found.len(), MAX_CHOICES);
+    }
+
+    /// T-7817: each kind fills its own form field, a read that answered lists its choices, and a
+    /// WFS answer without feature types, a nameless title or a self-closed name still reads.
+    #[test]
+    fn each_kind_names_its_field_and_a_read_that_answered_lists_choices() {
+        let fields: Vec<&str> = [
+            HttpPresetKind::Ckan,
+            HttpPresetKind::ArcgisFeature,
+            HttpPresetKind::Odata,
+            HttpPresetKind::Wfs,
+            HttpPresetKind::OgcFeatures,
+            HttpPresetKind::SensorThings,
+        ]
+        .into_iter()
+        .map(field_of)
+        .collect();
+        assert_eq!(
+            fields,
+            [
+                "organization",
+                "layer",
+                "entitySet",
+                "typeNames",
+                "collection",
+                "thing"
+            ]
+        );
+        let url = Url::parse("https://data.example/api/3/action/organization_list").expect("url");
+        let mut trace = TestTrace::default();
+        trace.input.sample = Some(json!({ "result": ["parks", 7, true] }));
+        trace.mapping = vec![json!({ "bytes": 40 })];
+        let found = discovery_of(HttpPresetKind::Ckan, &url, trace);
+        assert_eq!(found.skipped, None, "{found:?}");
+        assert_eq!(
+            found.choices,
+            [choice("parks", "parks"), choice("7", "7")],
+            "a flag is no name"
+        );
+        assert!(!found.truncated);
+        let words = choices(HttpPresetKind::Wfs, &json!("<WFS_Capabilities/>"), true)
+            .expect_err("no types");
+        assert!(words.contains("lists no FeatureType"), "{words}");
+        let xml = json!("<FeatureType><Name/><Name>a:parks</Name><Title> </Title></FeatureType>");
+        let (found, cut) = choices(HttpPresetKind::Wfs, &xml, true).expect("one type");
+        assert_eq!((found, cut), (vec![choice("a:parks", "a:parks")], false));
+        let tool = super::super::find("jc_datasource_discover").expect("registered");
+        assert!((tool.validate)(&json!({ "kind": "ckan", "url": "https://data.example" })).is_ok());
+        assert!((tool.validate)(&json!({ "kind": "gopher", "url": "x" })).is_err());
     }
 
     #[test]

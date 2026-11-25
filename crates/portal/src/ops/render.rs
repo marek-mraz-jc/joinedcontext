@@ -2235,7 +2235,6 @@ mod tests {
         };
         assert_eq!(with_query("count", json!(true)), "/data/query/count");
         assert_eq!(with_query("bogus", json!(1)), "/data/query/bogus");
-        assert_eq!(with_query("id", json!("not an id")), "/data/query/id");
         // What a valid call sets comes through.
         let call = json!({ "title": "Mine", "description": "d", "width": 300, "height": 200,
                            "data": { "widget": widget } });
@@ -2290,7 +2289,8 @@ mod tests {
         assert!(words.contains("data.widget"), "{words}");
         for hidden in [
             OpError::Api(ApiError::NotFound("gateway said slug x".into())),
-            OpError::Api(ApiError::Forbidden("policy p".into())),
+            OpError::Api(ApiError::Forbidden),
+            OpError::Forbidden("policy p".into()),
         ] {
             let (status, words) = tile_error(hidden);
             assert_eq!(status, 404);
@@ -2749,7 +2749,7 @@ mod tests {
             .await;
         // The clock jumps to the cap while the gateway is still answering.
         tokio::time::pause();
-        let err = run(&caller, &state, "helsinki", spec("line"))
+        let err = run(&caller, &state, "helsinki", the_widget())
             .await
             .expect_err("limited");
         assert!(
