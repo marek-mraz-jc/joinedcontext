@@ -3088,7 +3088,7 @@ mod tests {
             "status": "published", "createdBy": "demo.steward@hel.fi",
             "createdAt": "2026-09-23T05:00:00Z", "expiresAt": "2026-09-23T05:20:00Z",
         }))
-        .unwrap_or_else(|e| panic!("run fixture: {e}"));
+        .expect("run fixture");
         run.data_needs = data_needs;
         run.app_class = class.to_owned();
         app_manifest(
@@ -3121,7 +3121,7 @@ mod tests {
             serde_json::json!({ "sql": { "migrations": "migrations", "quotaMiB": 100 } })
         );
         let checked = jc_core::registry::validate_yaml("App", &manifest.to_string())
-            .unwrap_or_else(|| panic!("App has a jc-core type"));
+            .expect("App has a jc-core type");
         assert!(checked.is_ok(), "{checked:?}");
         let ui = published_as("ui", serde_json::json!([need(&[])]));
         assert!(ui["spec"].get("storage").is_none(), "{ui}");
@@ -3140,7 +3140,7 @@ mod tests {
             serde_json::json!([{ "name": "steward" }, { "name": "editor" }])
         );
         let checked = jc_core::registry::validate_yaml("App", &manifest.to_string())
-            .unwrap_or_else(|| panic!("App has a jc-core type"));
+            .expect("App has a jc-core type");
         assert!(checked.is_ok(), "{checked:?}");
     }
 
