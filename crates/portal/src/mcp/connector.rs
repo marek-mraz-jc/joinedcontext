@@ -1531,7 +1531,8 @@ mod tests {
         let (_, _, unpaired) =
             judged(&state, &connector, ana(), rpc("tools/list", json!({}))).await;
         assert!(
-            !names(&unpaired).contains(&"jc_ui_navigate".to_owned()),
+            // ana reads nothing and no tab is paired: no tool at all, the UI tools included.
+            names(&unpaired).is_empty(),
             "{unpaired}"
         );
         let call = rpc(
