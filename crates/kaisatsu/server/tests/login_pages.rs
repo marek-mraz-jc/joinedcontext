@@ -701,6 +701,304 @@ async fn action_links_without_a_client_unknown_actions_and_forged_keys() {
     assert!(!html.contains("account has been updated"), "{html}");
 }
 
+#[tokio::test]
+async fn a_verify_email_step_for_an_address_already_verified_or_missing_sends_nothing_and_passes() {
+    let (app, store) = app().await;
+    let mut member = user(&store, MEMBER).await;
+    member.email = None;
+    member.email_verified = true;
+    member.required_actions = vec!["VERIFY_EMAIL".into()];
+    store.update_user(member.clone()).await.unwrap();
+    let a = start(&app, "").await;
+    let (st, h, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(html.contains("verify-email"), "{html}");
+    assert!(!is_code(st, &h));
+    // No address: no mail is queued.
+    let queued = store.list_outbox_rows("dev", None).await.unwrap();
+    assert!(!queued.iter().any(|r| r.user_id == member.id), "{queued:?}");
+    // Already verified (by the link in another tab): the step passes and the action is done.
+    let (st, h, html) = a.post(&app, &[("email_code", "")]).await;
+    assert!(
+        is_code(st, &h) || page_id(&html) == "org-choice",
+        "{st} {html}"
+    );
+    let after = user(&store, MEMBER).await;
+    assert!(
+        after.required_actions.is_empty(),
+        "{:?}",
+        after.required_actions
+    );
+}
+
+#[tokio::test]
+async fn a_code_step_whose_person_was_deleted_names_nobody() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let (_, _, html) = a.password(&app, STEWARD, STEWARD_PW).await;
+    assert!(html.contains("name=\"otp\""), "{html}");
+    let steward = user(&store, STEWARD).await;
+    store.delete_user("dev", None, &steward.id).await.unwrap();
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert!(!st.is_server_error(), "{st} {html}");
+    assert!(!html.contains(STEWARD), "{html}");
+}
+
+/// Puts the sign-in at `next`, as an earlier step would have, so a test can reach a step the
+/// forms alone never store (the password step is submitted together with the name).
+async fn put_state(
+    store: &MemoryStore,
+    a: &Attempt,
+    next: &kaisatsu_login::LoginState,
+    user: Option<&str>,
+) {
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.step_state_json = serde_json::to_string(next).unwrap();
+    if let Some(u) = user {
+        s.user_id = Some(u.to_owned());
+    }
+    store.put_auth_session(s).await.unwrap();
+}
+
+#[tokio::test]
+async fn a_stored_password_step_switches_to_a_passkey_for_the_same_person() {
+    let (app, store) = app().await;
+    let m = user(&store, MEMBER).await;
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::Password {
+            user_id: m.id.clone(),
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, html) = a.post(&app, &[("switch_to", "passkey")]).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    let s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<kaisatsu_login::LoginState>(&s.step_state_json).unwrap(),
+        kaisatsu_login::LoginState::Passkey {
+            user_id: Some(m.id.clone())
+        }
+    );
+    // An assertion the browser garbled is refused at the passkey step, not signed on.
+    let (st, _, _) = a.post(&app, &[("webauthn_assertion_response", "{}")]).await;
+    assert!(st.is_client_error(), "{st}");
+}
+
+#[tokio::test]
+async fn a_verified_upstream_sign_in_of_a_disabled_person_is_refused() {
+    let (app, store) = app().await;
+    let mut m = user(&store, MEMBER).await;
+    m.enabled = false;
+    store.update_user(m.clone()).await.unwrap();
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::UpstreamIdp {
+            idp_alias: "up".into(),
+            assertion_verified: true,
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, _) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn passkey_enrolment_in_a_realm_without_a_display_name_names_it_by_its_id() {
+    let (app, store) = app().await;
+    let mut realm = store.get_realm("dev").await.unwrap().unwrap();
+    realm.display_name = String::new();
+    store.upsert_realm(realm).await.unwrap();
+    let m = user(&store, MEMBER).await;
+    let a = start(&app, "").await;
+    put_state(
+        &store,
+        &a,
+        &kaisatsu_login::LoginState::RegisterWebAuthn {
+            user_id: m.id.clone(),
+            first_factor_passed: true,
+            second_factor_passed: false,
+        },
+        Some(&m.id),
+    )
+    .await;
+    let (st, _, html) = get_with_cookie(&app, &a.url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(extract_hidden_input(&html, "webauthn_rp_name"), "dev");
+}
+
+#[tokio::test]
+async fn a_sign_in_without_a_client_names_no_app() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.client_id = String::new();
+    store.put_auth_session(s).await.unwrap();
+    let url = a.url.replace("client_id=edge", "client_id=");
+    let (st, _, html) = get_with_cookie(&app, &url, None, Some(&a.cookie)).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "login");
+    assert!(!html.contains("edge"), "{html}");
+}
+
+/// A new password by link without "sign out other devices" keeps the person's sessions.
+#[tokio::test]
+async fn a_password_set_by_link_without_signing_out_keeps_other_sessions() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let (st, h, _) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert!(is_code(st, &h));
+    let member = user(&store, MEMBER).await;
+    let sessions = store
+        .list_user_sso_sessions("dev", &member.id)
+        .await
+        .unwrap();
+    assert!(!sessions.is_empty());
+    let link = action_link(&store, &["UPDATE_PASSWORD"], &member.id).await;
+    let (st, h, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "action-token-form");
+    let cookie = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let (st, _, html) = post_form(
+        &app,
+        ACTION,
+        &[
+            ("csrf_token", &extract_hidden_input(&html, "csrf_token")),
+            ("session_code", &extract_hidden_input(&html, "session_code")),
+            ("new_password", "KeptSessionsPass321!"),
+        ],
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "account-updated");
+    assert_eq!(
+        store
+            .list_user_sso_sessions("dev", &member.id)
+            .await
+            .unwrap()
+            .len(),
+        sessions.len()
+    );
+    let b = start(&app, "").await;
+    let (st, h, _) = b.password(&app, MEMBER, "KeptSessionsPass321!").await;
+    assert!(is_code(st, &h), "the new password signs in");
+}
+
+/// A link asking only for an authenticator app enrols it and leaves the password as it was.
+#[tokio::test]
+async fn an_authenticator_link_alone_enrols_the_app_and_keeps_the_password() {
+    let (app, store) = app().await;
+    let member = user(&store, MEMBER).await;
+    let link = action_link(&store, &["CONFIGURE_TOTP"], &member.id).await;
+    let (st, h, html) = open_action_link(&app, &link).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "action-token-form");
+    assert!(!html.contains("name=\"new_password\""), "{html}");
+    let cookie = h[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let session = extract_hidden_input(&html, "session_code");
+    let opened = store
+        .get_auth_session_by_id("dev", &session)
+        .await
+        .unwrap()
+        .unwrap();
+    // An action session always names the link's person (the form's account label needs it).
+    assert_eq!(opened.user_id.as_deref(), Some(member.id.as_str()));
+    let secret = opened
+        .pending_totp_secret
+        .expect("the form generated a secret");
+    let realm = store.get_realm("dev").await.unwrap().unwrap();
+    let cred = CredentialRecord {
+        secret_data: serde_json::json!({ "value": secret }).to_string(),
+        credential_data: serde_json::json!({
+            "digits": realm.otp_policy_digits,
+            "period": realm.otp_policy_period,
+            "algorithm": realm.otp_policy_algorithm,
+            "secretEncoding": "BASE32",
+        })
+        .to_string(),
+        ..Default::default()
+    };
+    let code =
+        generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
+            .unwrap();
+    let (st, _, html) = post_form(
+        &app,
+        ACTION,
+        &[
+            ("csrf_token", &extract_hidden_input(&html, "csrf_token")),
+            ("session_code", &session),
+            ("otp", &code),
+        ],
+        Some(&cookie),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert_eq!(page_id(&html), "account-updated");
+    assert!(
+        store
+            .list_credentials("dev", &member.id)
+            .await
+            .unwrap()
+            .iter()
+            .any(|c| c.credential_type == "otp")
+    );
+    let a = start(&app, "").await;
+    let (st, _, html) = a.password(&app, MEMBER, MEMBER_PW).await;
+    assert_eq!(st, StatusCode::OK, "{html}");
+    assert!(
+        html.contains("name=\"otp\""),
+        "the old password still works, now with the app"
+    );
+}
+
+#[tokio::test]
+async fn a_passkey_assertion_from_the_name_step_is_checked_for_anyone() {
+    let (app, store) = app().await;
+    let a = start(&app, "").await;
+    let mut s = store
+        .get_auth_session_by_id("dev", &a.session)
+        .await
+        .unwrap()
+        .unwrap();
+    s.webauthn_challenge = Some("conditional-ui-challenge".into());
+    store.put_auth_session(s).await.unwrap();
+    // A conditional-UI assertion names no person in advance; a garbled one signs nobody on.
+    let (st, h, _) = a.post(&app, &[("webauthn_assertion_response", "{}")]).await;
+    assert!(st.is_client_error(), "{st}");
+    assert!(!is_code(st, &h));
+}
+
 fn extract_input_value(html: &str, name: &str) -> String {
     let marker = format!("name=\"{name}\"");
     let i = html.find(&marker).expect("input");
@@ -763,7 +1061,10 @@ async fn step_up_enrols_a_totp_credential() {
     let code =
         generate_totp_code_for_credential(&cred, jc_time::TimestampTz::now().as_second() as u64)
             .unwrap();
-    let (st, h, _) = a.post(&app, &[("otp", &code)]).await;
+    // Enrolling with "sign out other devices" ends the person's other sessions too.
+    let (st, h, _) = a
+        .post(&app, &[("otp", &code), ("logout-sessions", "on")])
+        .await;
     assert!(is_code(st, &h));
     let m = user(&store, MEMBER).await;
     assert!(
