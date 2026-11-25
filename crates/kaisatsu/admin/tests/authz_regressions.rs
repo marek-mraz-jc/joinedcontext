@@ -1065,6 +1065,29 @@ async fn a_people_manager_cannot_change_an_organization_admin() {
 
 /// Through SCIM an Organization admin sees another Organization's groups and people as missing,
 /// and the groups it creates or renames sit under its own Organization.
+/// A people manager registers no passkey for another person: only the person or a realm
+/// admin does, and the refusal reads as an unknown person.
+#[tokio::test]
+async fn a_people_manager_registers_no_passkey_for_another_person() {
+    let f = Fixture::new().await;
+    let manager = f
+        .token(
+            "dev",
+            "plain-1",
+            json!({ "realm_access": { "roles": ["manage-users"] } }),
+        )
+        .await;
+    let st = f
+        .send(
+            Method::POST,
+            "/api/v1/realms/dev/odata/People('hel-person')/RegisterPasskey",
+            &manager,
+            Some(json!({ "credential": {} })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
 /// A reader of people and groups (`view-users`, `query-groups`) changes neither through SCIM:
 /// each write answers 404, as for a record it cannot see, and nothing changes; without
 /// `query-groups` it cannot read a group either.
