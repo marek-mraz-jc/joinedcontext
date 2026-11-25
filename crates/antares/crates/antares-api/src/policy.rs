@@ -2128,10 +2128,8 @@ pub async fn run_policy_contract(engine: &dyn PolicyEngine) {
     // The engine answers, and the answer is its own: a deny carrying one of
     // the seam's own reasons means it timed out or panicked instead.
     for clause in ["5.6.1", "5.7.2", "5.8.1"] {
-        // `decide` answers a condition on anything but a write by id (none
-        // of these clauses is one, `WRITE_BY_ID`) as a deny
         match decide(engine, &subject, &Operation::new(clause)).await {
-            Decision::Allow | Decision::AllowIf(_) => {}
+            Decision::Allow => {}
             Decision::Deny(why) => assert!(
                 why != ENGINE_TIMED_OUT && why != ENGINE_FAILED,
                 "{name}: {clause} was denied by the seam, not by the engine: {why}"
@@ -2147,6 +2145,11 @@ pub async fn run_policy_contract(engine: &dyn PolicyEngine) {
                     );
                 }
             }
+            // `decide` answers a condition on anything but a write by id as
+            // a deny, so reaching here is the seam's fault, not the engine's.
+            // A contract harness (test-kit) fails by panicking, as asserts do.
+            #[allow(clippy::panic)]
+            Decision::AllowIf(_) => panic!("{name}: a condition on {clause} passed the seam"),
         }
     }
 
