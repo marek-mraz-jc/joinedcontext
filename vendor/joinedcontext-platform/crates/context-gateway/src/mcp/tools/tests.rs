@@ -131,6 +131,23 @@ fn bounded(name: &str, change: Value) -> Result<Map<String, Value>, String> {
     anonymous_bounds(name, &mut arguments).map(|()| arguments)
 }
 
+#[test]
+fn an_anonymous_history_names_its_type_or_id_in_any_shape_but_null() {
+    let with = |kind: Value, id: Value| {
+        let mut arguments = day();
+        arguments.insert("type".into(), kind);
+        arguments.insert("id".into(), id);
+        anonymous_bounds("retrieve_temporal", &mut arguments)
+    };
+    assert!(
+        with(Value::Null, json!(5)).is_ok(),
+        "an id of another shape still names one"
+    );
+    let refused = with(Value::Null, json!("")).expect_err("neither named");
+    assert!(refused.contains("names `type` or `id`"), "{refused}");
+    assert!(with(json!([]), Value::Null).is_err());
+}
+
 /// T-7253: the anonymous window reads its instants as the chrono build did and measures them
 /// across the DST nights of Bratislava and Helsinki: over 31 days is refused, over a day is
 /// averaged (no `lastN` added), a day or less keeps the newest instances. Verdicts pasted from

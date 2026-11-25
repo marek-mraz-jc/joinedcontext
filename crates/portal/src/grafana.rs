@@ -1438,4 +1438,569 @@ mod tests {
             .collect();
         assert_eq!(posted, ["/api/datasources", "/api/dashboards/db"]);
     }
+
+    // -----------------------------------------------------------------------------------------
+    // T-7823 coverage: a Grafana that is away, that refuses, that answers oddly, and the loops.
+
+    fn config_at(url: &str) -> GrafanaConfig {
+        GrafanaConfig {
+            url: url.to_owned(),
+            public_url: "https://dev.example/grafana".into(),
+            user: "grafana_admin".into(),
+            password: "unused".into(),
+        }
+    }
+
+    /// An address nothing listens on: every call to it is refused at once.
+    const DEAD: &str = "http://127.0.0.1:1";
+
+    fn unavailable<T: std::fmt::Debug>(answer: Result<T, ApiError>) -> bool {
+        matches!(answer, Err(ApiError::Unavailable(_)))
+    }
+
+    fn dead_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool")
+    }
+
+    fn unique() -> String {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_nanos() as u64);
+        format!(
+            "{nanos:016x}{:06x}{:04x}",
+            std::process::id() & 0xff_ffff,
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) & 0xffff
+        )
+    }
+
+    fn project_manifest(name: &str, organization: &str) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Project".into(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec: json!({ "organizationRef": organization }),
+            status: None,
+        }
+    }
+
+    /// A server that reads one request per connection and answers the n-th with the n-th entry of
+    /// `script`; `None`, and every connection past the script, hangs up without an answer.
+    async fn scripted(script: Vec<Option<String>>) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("its address");
+        tokio::spawn(async move {
+            let mut script = script.into_iter();
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+                if let Some(Some(reply)) = script.next() {
+                    let _ =
+                        tokio::io::AsyncWriteExt::write_all(&mut socket, reply.as_bytes()).await;
+                }
+            }
+        });
+        format!("http://{address}")
+    }
+
+    fn reply(body: &str) -> Option<String> {
+        Some(format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len()
+        ))
+    }
+
+    /// Headers that promise 100 bytes and a body that stops after seven.
+    fn cut_short() -> Option<String> {
+        Some(
+            "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\nconnection: close\r\n\r\npartial"
+                .to_owned(),
+        )
+    }
+
+    async fn saw(server: &wiremock::MockServer, wanted: &str) -> bool {
+        for _ in 0..300 {
+            let seen = server.received_requests().await.unwrap_or_default();
+            if seen.iter().any(|request| request.url.path() == wanted) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn a_grafana_that_is_away_is_unavailable_on_every_call() {
+        let config = config_at(DEAD);
+        let client = Client::new(&config);
+        let source = Source {
+            name: "air",
+            slug: "airslug",
+            public: true,
+        };
+        let row = row(Kind::Stat);
+        assert!(unavailable(client.organization("doprava").await));
+        assert!(unavailable(client.stored_organization("doprava").await));
+        assert!(unavailable(client.datasources(7).await));
+        assert!(unavailable(
+            client
+                .create_public_datasource(7, &source, "http://gw:8080")
+                .await
+        ));
+        assert!(unavailable(
+            client
+                .save(7, &dashboard_of(&row, "air", true), "doprava")
+                .await
+        ));
+        assert!(unavailable(client.holds(7, "pv-ab12").await));
+        assert!(unavailable(client.remove(7, "pv-ab12").await));
+        assert!(unavailable(
+            client
+                .datasource_for(7, &source, Some("http://gw:8080"))
+                .await
+        ));
+        assert!(unavailable(client.provision("doprava").await));
+        assert!(unavailable(client.all_datasources(7).await));
+        assert!(unavailable(client.dashboards(7).await));
+        assert!(unavailable(client.dashboard(7, "pv-ab12").await));
+        assert!(unavailable(client.panel(7, "pv-ab12", 1, &[], None).await));
+        assert!(unavailable(
+            client
+                .query(7, &[], ("now-1h", "now"), &Default::default(), None)
+                .await
+        ));
+        assert!(unavailable(
+            client.variable_values(7, "ds", "label_values(x)").await
+        ));
+        assert!(!client.derives_organizations().await);
+    }
+
+    #[tokio::test]
+    async fn a_grafana_that_answers_500_is_unavailable_and_a_panel_says_why() {
+        let server = server().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let client = Client::new(&config);
+        let source = Source {
+            name: "air",
+            slug: "airslug",
+            public: true,
+        };
+        let row = row(Kind::Stat);
+        assert!(unavailable(client.organization("doprava").await));
+        assert!(unavailable(client.stored_organization("doprava").await));
+        assert!(unavailable(client.datasources(7).await));
+        assert!(unavailable(
+            client
+                .create_public_datasource(7, &source, "http://gw:8080")
+                .await
+        ));
+        assert!(unavailable(
+            client
+                .save(7, &dashboard_of(&row, "air", true), "doprava")
+                .await
+        ));
+        assert!(unavailable(client.holds(7, "pv-ab12").await));
+        assert!(unavailable(client.remove(7, "pv-ab12").await));
+        assert!(unavailable(
+            client
+                .datasource_for(7, &source, Some("http://gw:8080"))
+                .await
+        ));
+        assert!(unavailable(client.provision("doprava").await));
+        assert!(unavailable(client.all_datasources(7).await));
+        assert!(unavailable(client.dashboards(7).await));
+        assert!(unavailable(client.dashboard(7, "pv-ab12").await));
+        assert!(unavailable(
+            client.variable_values(7, "ds", "label_values(x)").await
+        ));
+        assert!(!client.derives_organizations().await);
+        let panel = client
+            .panel(7, "pv-ab12", 1, &[], None)
+            .await
+            .expect("a refusal is the panel's state");
+        assert!(
+            panel["error"]
+                .as_str()
+                .is_some_and(|reason| reason.starts_with("the panel's datasource did not answer")),
+            "{panel}"
+        );
+        let preview = client
+            .query(7, &[], ("now-1h", "now"), &Default::default(), None)
+            .await
+            .expect("a refusal is the preview's state");
+        assert!(preview["error"].is_string(), "{preview}");
+    }
+
+    #[tokio::test]
+    async fn an_answer_cut_short_is_unavailable_for_a_panel_and_a_preview() {
+        let url = scripted(vec![cut_short(), cut_short()]).await;
+        let config = config_at(&url);
+        let client = Client::new(&config);
+        assert!(unavailable(client.panel(7, "pv-ab12", 1, &[], None).await));
+        assert!(unavailable(
+            client
+                .query(7, &[], ("now-1h", "now"), &Default::default(), Some("jwt"))
+                .await
+        ));
+    }
+
+    #[tokio::test]
+    async fn an_organization_without_an_id_or_with_a_body_that_is_no_json_is_unavailable() {
+        let server = server().await;
+        answer_with(&server, "GET", "/api/orgs/name/noid", json!({})).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/nojson"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let client = Client::new(&config);
+        assert!(unavailable(client.organization("noid").await));
+        assert!(unavailable(client.organization("nojson").await));
+        assert!(unavailable(client.stored_organization("nojson").await));
+    }
+
+    #[tokio::test]
+    async fn the_dashboard_a_grafana_holds_is_found_and_a_missing_one_is_not() {
+        let server = server().await;
+        answer_with(&server, "GET", "/api/dashboards/uid/there", json!({})).await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/uid/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        answer_with(&server, "DELETE", "/api/dashboards/uid/there", json!({})).await;
+        Mock::given(method("DELETE"))
+            .and(path("/api/dashboards/uid/gone"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let client = Client::new(&config);
+        assert!(client.holds(7, "there").await.expect("an answer"));
+        assert!(!client.holds(7, "gone").await.expect("an answer"));
+        client.remove(7, "there").await.expect("removed");
+        client
+            .remove(7, "gone")
+            .await
+            .expect("already gone is fine");
+    }
+
+    #[tokio::test]
+    async fn only_a_daiya_that_answers_health_with_its_commit_derives_organizations() {
+        let server = server().await;
+        answer_with(&server, "GET", "/api/health", json!({ "commit": "daiya" })).await;
+        let config = config(&server);
+        assert!(Client::new(&config).derives_organizations().await);
+        let other = self::server().await;
+        Mock::given(method("GET"))
+            .and(path("/api/health"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&other)
+            .await;
+        let config = self::config(&other);
+        assert!(!Client::new(&config).derives_organizations().await);
+    }
+
+    #[tokio::test]
+    async fn an_organization_made_by_a_racing_pass_is_found_after_the_conflict() {
+        let server = server().await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 5 })).await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+        answer_with(&server, "POST", "/api/folders", json!({})).await;
+        let config = config(&server);
+        assert_eq!(
+            Client::new(&config)
+                .provision("doprava")
+                .await
+                .expect("found"),
+            5
+        );
+    }
+
+    #[tokio::test]
+    async fn a_conflict_over_an_organization_nobody_holds_is_unavailable() {
+        let server = server().await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(409))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        assert!(unavailable(Client::new(&config).provision("doprava").await));
+    }
+
+    #[tokio::test]
+    async fn a_made_organization_is_read_from_its_org_id_or_its_id_and_never_from_nothing() {
+        for (made, expected) in [
+            (json!({ "orgId": 9 }), Some(9)),
+            (json!({ "id": 8 }), Some(8)),
+            (json!({ "message": "created" }), None),
+        ] {
+            let server = server().await;
+            Mock::given(method("GET"))
+                .and(path("/api/orgs/name/doprava"))
+                .respond_with(ResponseTemplate::new(404))
+                .mount(&server)
+                .await;
+            answer_with(&server, "POST", "/api/orgs", made).await;
+            answer_with(&server, "POST", "/api/folders", json!({})).await;
+            let config = config(&server);
+            let org = Client::new(&config).provision("doprava").await;
+            match expected {
+                Some(id) => assert_eq!(org.expect("made"), id),
+                None => assert!(unavailable(org)),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn an_organization_that_cannot_be_made_or_a_folder_that_cannot_be_made_is_unavailable() {
+        let server = server().await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        assert!(unavailable(Client::new(&config).provision("doprava").await));
+
+        let folder = self::server().await;
+        answer_with(&folder, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
+        Mock::given(method("POST"))
+            .and(path("/api/folders"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&folder)
+            .await;
+        let config = self::config(&folder);
+        assert!(unavailable(Client::new(&config).provision("doprava").await));
+    }
+
+    #[tokio::test]
+    async fn a_folder_request_that_gets_no_answer_is_unavailable() {
+        let url = scripted(vec![reply(r#"{"id":4}"#)]).await;
+        let config = config_at(&url);
+        assert!(unavailable(Client::new(&config).provision("doprava").await));
+    }
+
+    #[tokio::test]
+    async fn a_variable_offers_the_strings_its_datasource_answers_in_any_of_three_shapes() {
+        let server = server().await;
+        let route = "/api/datasources/uid/ds/resources/variable";
+        Mock::given(method("GET"))
+            .and(path(route))
+            .and(wiremock::matchers::query_param("query", "label_values(x)"))
+            .and(wiremock::matchers::header(READ_AS_HEADER, READ_AS_PUBLIC))
+            .and(wiremock::matchers::header("X-Grafana-Org-Id", "7"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "status": "success", "data": ["a", 3, "b"] })),
+            )
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        let client = Client::new(&config);
+        assert_eq!(
+            client
+                .variable_values(7, "ds", "label_values(x)")
+                .await
+                .expect("values"),
+            ["a", "b"]
+        );
+        for (answer, expected) in [
+            (json!({ "data": { "data": ["x"] } }), vec!["x"]),
+            (json!(["y", null]), vec!["y"]),
+            (json!({ "data": "nothing" }), vec![]),
+            (json!({}), vec![]),
+        ] {
+            let other = self::server().await;
+            answer_with(&other, "GET", route, answer).await;
+            let config = self::config(&other);
+            assert_eq!(
+                Client::new(&config)
+                    .variable_values(7, "ds", "q")
+                    .await
+                    .expect("values"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn the_projects_are_the_manifests_and_the_namespaces_without_the_organizations_own() {
+        let state = project_state();
+        state.mirror.upsert(project_manifest("helsinki", "hel"));
+        state.mirror.upsert(project_manifest("doprava", "hel"));
+        state.mirror.upsert(project_manifest("Not_A_Name", "hel"));
+        assert_eq!(projects(&state), ["doprava", "helsinki"]);
+        let empty = AppState::new(crate::config::Config::for_tests(), None);
+        assert!(projects(&empty).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_project_that_already_has_its_organization_is_left_alone() {
+        let server = server().await;
+        daiya_health(&server).await;
+        answer_with(&server, "GET", "/api/orgs/name/doprava", json!({ "id": 4 })).await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert!(posted(&requests).is_empty(), "{:?}", posted(&requests));
+    }
+
+    #[tokio::test]
+    async fn an_organization_that_cannot_be_made_stops_the_pass() {
+        let server = server().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/orgs"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let config = config(&server);
+        provision_projects(&project_state(), &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(
+            posted(&requests),
+            ["/api/orgs"],
+            "no folder after the refusal"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_made_organization_is_followed_by_a_sweep_that_stops_at_a_database_that_is_away() {
+        let server = server().await;
+        daiya_health(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/orgs/name/doprava"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        answer_with(&server, "POST", "/api/orgs", json!({ "orgId": 9 })).await;
+        answer_with(&server, "POST", "/api/folders", json!({})).await;
+        let mut state = project_state();
+        state.db = Some(dead_pool());
+        state
+            .mirror
+            .upsert(project_manifest("doprava", "somewhere"));
+        let config = config(&server);
+        provision_projects(&state, &Client::new(&config)).await;
+        let requests = server.received_requests().await.expect("recorded");
+        assert_eq!(posted(&requests), ["/api/orgs", "/api/folders"]);
+    }
+
+    #[tokio::test]
+    async fn the_provisioning_loop_asks_daiya_on_its_first_tick() {
+        let server = server().await;
+        daiya_health(&server).await;
+        let mut settings = crate::config::Config::for_tests();
+        settings.grafana = Some(config(&server));
+        spawn_provisioning(AppState::new(settings, None));
+        assert!(saw(&server, "/api/health").await, "the loop never ticked");
+    }
+
+    #[tokio::test]
+    async fn without_a_database_or_grafana_no_periodic_sweep_starts() {
+        let server = server().await;
+        let mut settings = crate::config::Config::for_tests();
+        settings.grafana = Some(config(&server));
+        spawn_periodic(AppState::new(settings, None));
+        spawn_periodic(AppState::new(crate::config::Config::for_tests(), None));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_periodic_sweep_puts_a_lost_dashboard_back_on_its_first_tick() {
+        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let pool = crate::db::connect(&url).await.expect("migrate");
+        let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ($1, $1 || '.example', 'active', 'test')",
+        )
+        .bind(&organization)
+        .execute(&pool)
+        .await
+        .expect("an Organization of the registry");
+        let server = server().await;
+        let mut settings = crate::config::Config::for_tests();
+        settings.grafana = Some(config(&server));
+        let mut state = AppState::new(settings, None);
+        state.db = Some(pool.clone());
+        state
+            .mirror
+            .upsert(project_manifest(&project, &organization));
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta::new("air", &project),
+            spec: json!({ "contextSpaceRef": "air", "slug": "airslug", "audience": "private" }),
+            status: None,
+        });
+        let key = crate::project_ids::key_of(&pool, &state.mirror, &project)
+            .await
+            .expect("a key")
+            .expect("placed");
+        insert(
+            &pool,
+            key,
+            &Visualization {
+                project: project.clone(),
+                id: new_id(),
+                ..row(Kind::Stat)
+            },
+        )
+        .await
+        .expect("kept");
+        spawn_periodic(state);
+        assert!(
+            saw(&server, &format!("/api/orgs/name/{project}")).await,
+            "the sweep never looked for the organization"
+        );
+    }
 }

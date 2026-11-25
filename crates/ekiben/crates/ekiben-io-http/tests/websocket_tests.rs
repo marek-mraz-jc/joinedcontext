@@ -347,6 +347,21 @@ async fn a_silent_server_times_the_handshake_out() {
 }
 
 #[tokio::test]
+async fn a_url_too_long_for_an_http_request_line_is_a_config_error() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (reg, ctx, _stop) = context(true, Environment::new());
+    let long = format!("ws://{addr}/{}", "a".repeat(70_000));
+    let mut input = build(json!({ "url": long }), &ctx, &reg);
+    let err = input.connect(&ctx).await.expect_err("too long");
+    assert!(
+        err.to_string().contains("websocket.url is not a valid URI"),
+        "{err}"
+    );
+    drop(listener);
+}
+
+#[tokio::test]
 async fn loopback_is_refused_unless_the_organization_allows_private_ips() {
     let (url, mut conns) = ws_server().await;
     let (reg, ctx, _stop) = context(false, Environment::new());

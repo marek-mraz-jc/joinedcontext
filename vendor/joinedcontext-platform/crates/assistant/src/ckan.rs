@@ -271,8 +271,9 @@ async fn search_page(
     )
     .await
     {
-        FetchOutcome::Success { status, body, .. } if status.is_success() => body,
-        FetchOutcome::Success { status, .. } | FetchOutcome::Status(status) => {
+        // fetch_url answers Success for a 2xx alone.
+        FetchOutcome::Success { body, .. } => body,
+        FetchOutcome::Status(status) => {
             return Err(Error::Crawl(format!(
                 "the catalogue answered {status} to {url}"
             )))
@@ -572,6 +573,32 @@ mod tests {
         }))
         .expect("a dataset");
         assert_eq!(connect_html(&plain), None, "no interface, no how-to page");
+    }
+
+    #[test]
+    fn a_resource_without_a_format_or_a_repeated_address_and_a_dataset_without_resources() {
+        let dataset: Dataset = serde_json::from_value(serde_json::json!({
+            "name": "air",
+            "title": "Air",
+            "resources": [
+                {"name": "API", "url": "https://gw.example/api/endpoint/air/ngsi-ld/v1/",
+                 "description": "Read https://gw.example/api/endpoint/air/ngsi-ld/v1/ or https://gw.example/api/endpoint/air/ngsi-ld/v1/."},
+                {"name": "File", "url": "https://files.example/air.csv"}
+            ]
+        }))
+        .expect("a dataset");
+        let html = dataset_html(&dataset);
+        assert!(
+            html.contains("<li>API (https://gw.example/api/endpoint/air/ngsi-ld/v1/)</li>"),
+            "the address once, no format: {html}"
+        );
+        assert!(html.contains("<li>File</li>"), "{html}");
+        let page = connect_html(&dataset).expect("a how-to page");
+        assert!(page.contains("<h2>API</h2>"), "{page}");
+        let bare: Dataset =
+            serde_json::from_value(serde_json::json!({"name": "bare", "title": "Bare"}))
+                .expect("a dataset");
+        assert!(!dataset_html(&bare).contains("Resources"));
     }
 
     #[test]

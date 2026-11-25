@@ -570,7 +570,32 @@ mod tests {
                         .is_some_and(|u| u.ends_with(suffix))
                 })
             })
-            .unwrap_or_else(|| panic!("no distribution at {suffix}"))
+            .expect("a distribution at the suffix")
+    }
+
+    /// Each schema artifact's media type, bare or as an IANA IRI, names its EU file type; an
+    /// unknown one names none.
+    #[cfg(feature = "dcat-ap-sk")]
+    #[test]
+    fn file_types_of_the_schema_artifacts() {
+        for (media, code) in [
+            ("text/turtle", "RDF_TURTLE"),
+            ("application/ld+json", "JSON_LD"),
+            ("application/json", "JSON"),
+            ("application/schema+json", "JSON"),
+            ("application/geo+json", "GEOJSON"),
+            ("text/yaml", "YAML"),
+            ("application/yaml", "YAML"),
+            ("text/markdown", "MARKDOWN"),
+            (
+                "http://www.iana.org/assignments/media-types/text/csv",
+                "CSV",
+            ),
+        ] {
+            assert_eq!(file_type_of(media), Some(code), "{media}");
+        }
+        assert_eq!(file_type_of("image/png"), None);
+        assert_eq!(file_type_of(""), None);
     }
 
     #[cfg(feature = "dcat-ap-sk")]

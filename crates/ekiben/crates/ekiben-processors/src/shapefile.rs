@@ -172,13 +172,12 @@ impl Members {
                 [] => Ok(None),
                 [(name, i, size)] => {
                     let f = zip.by_index(*i).map_err(zip_err)?;
+                    // The zip reader refuses a member that unpacks past its declared size, which
+                    // the total above already counted; the bound keeps memory at that size.
                     let mut buf = Vec::new();
                     f.take(size.saturating_add(1))
                         .read_to_end(&mut buf)
                         .map_err(|e| format!("failed to read {name}: {e}"))?;
-                    if buf.len() as u64 > *size {
-                        return Err(format!("{name} unpacks to more than its declared size"));
-                    }
                     Ok(Some((name.clone(), buf)))
                 }
                 many => Err(format!(

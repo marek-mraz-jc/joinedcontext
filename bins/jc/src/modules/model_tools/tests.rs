@@ -455,21 +455,34 @@ fn duplicate_keys_and_tags_are_refused_as_python_does() {
 
 /// Parity run over a directory of LinkML files (evidence/jc-model-tools): writes each file's
 /// answer beside it as `<file>.json`. `MT_PARITY_IN=<seeds> MT_PARITY_OUT=<dir> cargo test -p jc
-/// --lib model_tools::tests::parity -- --ignored`.
+/// --lib model_tools::tests::parity`; without both variables it runs on a seed of its own.
 #[test]
-#[ignore = "parity harness, run by hand"]
 #[allow(clippy::disallowed_methods)] // A hand-run harness reads its directories, as the database tests do.
 fn parity() {
-    let (Ok(input), Ok(output)) = (
+    let own = std::env::temp_dir().join(format!("jc-mt-parity-{}", std::process::id()));
+    let (input, output) = match (
         std::env::var("MT_PARITY_IN"),
         std::env::var("MT_PARITY_OUT"),
-    ) else {
-        return;
+    ) {
+        (Ok(input), Ok(output)) => (
+            std::path::PathBuf::from(input),
+            std::path::PathBuf::from(output),
+        ),
+        _ => {
+            std::fs::create_dir_all(own.join("in/nested")).expect("seed dir");
+            std::fs::write(
+                own.join("in/nested/m.linkml.yaml"),
+                "id: https://x.example/m\nname: m\n",
+            )
+            .expect("seed");
+            std::fs::write(own.join("in/readme.txt"), "not a model").expect("other file");
+            (own.join("in"), own.join("out"))
+        }
     };
-    let mut stack = vec![std::path::PathBuf::from(&input)];
+    let mut stack = vec![input.clone()];
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap() {
-            let path = entry.unwrap().path();
+        for entry in std::fs::read_dir(&dir).expect("read dir") {
+            let path = entry.expect("entry").path();
             if path.is_dir() {
                 stack.push(path);
                 continue;
@@ -477,13 +490,30 @@ fn parity() {
             if !path.to_string_lossy().ends_with(".linkml.yaml") {
                 continue;
             }
-            let rel = path.strip_prefix(&input).unwrap();
-            let (_, out) = generate(&source(&std::fs::read_to_string(&path).unwrap()));
-            let dst = std::path::Path::new(&output).join(format!("{}.json", rel.display()));
-            std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
-            std::fs::write(&dst, serde_json::to_string_pretty(&out).unwrap()).unwrap();
+            let rel = path.strip_prefix(&input).expect("under the input");
+            let (_, out) = generate(&source(&std::fs::read_to_string(&path).expect("model")));
+            let dst = output.join(format!("{}.json", rel.display()));
+            std::fs::create_dir_all(dst.parent().expect("parent")).expect("out dir");
+            std::fs::write(&dst, serde_json::to_string_pretty(&out).expect("json")).expect("write");
         }
     }
+    if own.exists() {
+        let written =
+            std::fs::read_to_string(own.join("out/nested/m.linkml.yaml.json")).expect("answer");
+        assert!(written.starts_with('{'), "{written}");
+        assert!(!own.join("out/readme.txt.json").exists());
+        std::fs::remove_dir_all(&own).expect("clean");
+    }
+}
+
+/// A double-quoted YAML string with an escape reaches the parser as an owned string.
+#[test]
+fn an_escaped_string_reads_as_text() {
+    let mut used = 0;
+    let v =
+        schema::parse_yaml("name: \"tab\\there\"\nnone: ~\n", LIMITS, &mut used).expect("parsed");
+    assert_eq!(v["name"], "tab\there");
+    assert!(v["none"].is_null());
 }
 
 /// A model with every NGSI-LD kind, a type chain, units, an enum with meanings, an inline

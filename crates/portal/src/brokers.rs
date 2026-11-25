@@ -345,4 +345,12 @@ mod tests {
         mirror.upsert(envelope("ContextSpace", "city", "cars", json!({})));
         assert!(check_endpoint(&mirror, "city", "Endpoint", &endpoint(json!({}))).is_ok());
     }
+
+    #[test]
+    fn an_endpoint_spec_that_does_not_parse_is_left_to_its_own_check() {
+        let mirror = Mirror::new();
+        let odd = json!({ "contextSpaceRef": 5 });
+        assert!(check_endpoint(&mirror, "city", "Endpoint", &odd).is_ok());
+        assert!(check_endpoint(&mirror, "city", "Endpoint", &json!("text")).is_ok());
+    }
 }

@@ -126,13 +126,11 @@ impl Embedder {
             Engine::Local(e) => e.query_timed(text).await.map_err(model),
             Engine::Remote(r) => {
                 let began = Instant::now();
-                let mut vectors = r
+                let vectors = r
                     .embed(Kind::Query, &[text.to_owned()])
                     .await
                     .map_err(model)?;
-                let vector = vectors
-                    .pop()
-                    .ok_or_else(|| Error::Model("the embedder answered no vector".into()))?;
+                let vector = only(vectors)?;
                 Ok((
                     vector,
                     Took {
@@ -142,6 +140,15 @@ impl Embedder {
                 ))
             }
         }
+    }
+}
+
+/// The one vector of a one-text request. The client checks the service answered a vector per
+/// text, so an empty answer is an error, never a missing passage.
+fn only(mut vectors: Vec<Vec<f32>>) -> Result<Vec<f32>, Error> {
+    match vectors.pop() {
+        Some(vector) if vectors.is_empty() => Ok(vector),
+        _ => Err(Error::Model("the embedder answered no vector".into())),
     }
 }
 
@@ -170,12 +177,7 @@ async fn vectors(
     let mut each = Vec::with_capacity(sent.len());
     for text in sent {
         match embedder.passages(std::slice::from_ref(&text)).await {
-            Ok(mut vector) => each.push(
-                vector
-                    .pop()
-                    .ok_or_else(|| Error::Model("the embedder answered no vector".into()))
-                    .map(Ok)?,
-            ),
+            Ok(vector) => each.push(Ok(only(vector)?)),
             Err(Error::TooLarge(why)) => each.push(Err(why)),
             Err(err) => return Err(err),
         }
@@ -319,5 +321,14 @@ mod tests {
         let ftp = ("JC_ASSISTANT_EMBEDDER_URL", "ftp://embedder.test");
         assert!(Embedder::from_lookup(&lookup(&[ftp, token, secret]), 1).is_err());
         std::fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn a_one_text_request_takes_exactly_one_vector() {
+        assert_eq!(only(vec![vec![0.5]]).expect("one"), vec![0.5]);
+        for wrong in [Vec::new(), vec![vec![0.5], vec![0.25]]] {
+            let err = only(wrong).expect_err("refused");
+            assert!(err.to_string().contains("no vector"), "{err}");
+        }
     }
 }

@@ -1,0 +1,1 @@
+{"name":"doprava-in-claude","segments":["data-read"],"scope":[{"project":"doprava","access":"read"}],"expiresAt":"2026-12-01T00:00:00Z","allowedClients":["mcp-local"]}

@@ -82,6 +82,18 @@ bin = [
   { name = "mcp_resource_path", path = "fuzz_targets/mcp_resource_path.rs", test = false, doc = false, bench = false },
   { name = "mcp_call_result", path = "fuzz_targets/mcp_call_result.rs", test = false, doc = false, bench = false },
   { name = "mcp_connector_defaults", path = "fuzz_targets/mcp_connector_defaults.rs", test = false, doc = false, bench = false },
+  { name = "activity_cursor", path = "fuzz_targets/activity_cursor.rs", test = false, doc = false, bench = false },
+  { name = "alerts_subscription", path = "fuzz_targets/alerts_subscription.rs", test = false, doc = false, bench = false },
+  { name = "connectors_new", path = "fuzz_targets/connectors_new.rs", test = false, doc = false, bench = false },
+  { name = "domain_did_document", path = "fuzz_targets/domain_did_document.rs", test = false, doc = false, bench = false },
+  { name = "endpoint_usage_post", path = "fuzz_targets/endpoint_usage_post.rs", test = false, doc = false, bench = false },
+  { name = "erasure_subject_model", path = "fuzz_targets/erasure_subject_model.rs", test = false, doc = false, bench = false },
+  { name = "mqtt_capture_topics", path = "fuzz_targets/mqtt_capture_topics.rs", test = false, doc = false, bench = false },
+  { name = "people_kcuser", path = "fuzz_targets/people_kcuser.rs", test = false, doc = false, bench = false },
+  { name = "pipeline_log_run_name", path = "fuzz_targets/pipeline_log_run_name.rs", test = false, doc = false, bench = false },
+  { name = "pipeline_source_deletes_marks", path = "fuzz_targets/pipeline_source_deletes_marks.rs", test = false, doc = false, bench = false },
+  { name = "portals_profiles", path = "fuzz_targets/portals_profiles.rs", test = false, doc = false, bench = false },
+  { name = "secret_files_path", path = "fuzz_targets/secret_files_path.rs", test = false, doc = false, bench = false },
   { name = "discover_choices", path = "fuzz_targets/discover_choices.rs", test = false, doc = false, bench = false },
 ]
 

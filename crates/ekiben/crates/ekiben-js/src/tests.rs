@@ -50,6 +50,19 @@ fn flag(p: &Part) -> String {
 }
 
 #[tokio::test]
+async fn json_serde_json_refuses_leaves_the_message_and_its_metadata_as_they_were() {
+    // JSON.stringify writes a lone surrogate as `\ud800`, which serde_json does not decode.
+    let out = run(
+        r#"bento.v0_msg_set_structured("\uD800"); bento.v0_msg_set_meta("k", "\uD800");"#,
+        vec![Part::from_str(r#"{"a":1}"#)],
+    )
+    .await;
+    assert_eq!(flag(&out[0]), "");
+    assert_eq!(text(&out[0]), r#"{"a":1}"#);
+    assert!(out[0].meta_get("k").is_none());
+}
+
+#[tokio::test]
 async fn structured_and_string_round_trips() {
     let out = run(
         r#"const t = bento.v0_msg_as_structured(); t.b = t.a * 2; bento.v0_msg_set_structured(t);"#,

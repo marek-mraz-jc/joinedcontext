@@ -543,15 +543,16 @@ mod tests {
             .await
             .expect("a port");
         let source = format!("http://{}", listener.local_addr().expect("an address"));
-        tokio::spawn(async move {
+        let (finish, finished) = tokio::sync::oneshot::channel::<()>();
+        let export = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("the export");
             let mut request = [0u8; 4096];
             let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
             let _ = socket
                 .write_all(b"HTTP/1.1 200 OK\r\ntransfer-encoding: chunked\r\n\r\n3\r\n{}\n\r\n")
                 .await;
-            // and then nothing more, with the connection open
-            tokio::time::sleep(Duration::from_secs(60)).await;
+            // and then nothing more, with the connection open, until the test has its answer
+            let _ = finished.await;
             drop(socket);
         });
         let target = MockServer::start().await;
@@ -570,6 +571,8 @@ mod tests {
             .await
             .expect("the copy ends instead of waiting for the broker forever");
         assert!(copied.is_err(), "{copied:?}");
+        finish.send(()).expect("the export task waits");
+        export.await.expect("the export task ends");
     }
 
     #[tokio::test]
@@ -612,5 +615,59 @@ mod tests {
             Some(vec!["http://127.0.0.1:9".parse().expect("url")])
         );
         assert_eq!(pods_of("not a url").await, None);
+    }
+
+    #[test]
+    fn the_hold_is_dropped_with_its_annotations_when_it_was_the_only_one() {
+        let mut only: serde_norway::Mapping = serde_norway::from_str(
+            "metadata:\n  annotations:\n    joinedcontext.com/moving-to: other\nspec: {}\n",
+        )
+        .expect("a manifest");
+        release(&mut only);
+        let kept = serde_norway::to_string(&only).expect("yaml");
+        assert!(!kept.contains("annotations"), "{kept}");
+        let mut beside: serde_norway::Mapping = serde_norway::from_str(
+            "metadata:\n  annotations:\n    joinedcontext.com/moving-to: other\n    a: b\n",
+        )
+        .expect("a manifest");
+        release(&mut beside);
+        let kept = serde_norway::to_string(&beside).expect("yaml");
+        assert!(
+            kept.contains("a: b") && !kept.contains("moving-to"),
+            "{kept}"
+        );
+    }
+
+    #[test]
+    fn a_member_that_is_no_mapping_is_replaced_by_one() {
+        let mut manifest: serde_norway::Mapping =
+            serde_norway::from_str("metadata: text\n").expect("a manifest");
+        annotations(&mut manifest).insert("k".into(), "v".into());
+        let kept = serde_norway::to_string(&manifest).expect("yaml");
+        assert!(
+            kept.contains("annotations") && kept.contains("k: v"),
+            "{kept}"
+        );
+        spec(&mut manifest).insert("brokerRef".into(), "b".into());
+        assert!(serde_norway::to_string(&manifest)
+            .expect("yaml")
+            .contains("brokerRef: b"));
+    }
+
+    #[test]
+    fn a_poisoned_job_table_is_still_read_and_written() {
+        let moves = Moves::default();
+        std::thread::scope(|scope| {
+            let joined = scope
+                .spawn(|| {
+                    let _held = moves.jobs.lock().expect("the table");
+                    std::panic::resume_unwind(Box::new("poisoning the table on purpose"));
+                })
+                .join();
+            assert!(joined.is_err());
+        });
+        assert!(moves.get("p/air").is_none());
+        moves.set("p/air", |job| job.reason = Some("never called".into()));
+        assert!(moves.get("p/air").is_none());
     }
 }

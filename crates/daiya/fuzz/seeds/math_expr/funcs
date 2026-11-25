@@ -1,0 +1,1 @@
+round(abs($A) + ${B} * 2) > 1 && !is_null($N)

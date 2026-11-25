@@ -381,9 +381,8 @@ async fn serve(
                 deployment.per_minute
             ),
         );
-        if let Ok(value) = HeaderValue::from_str(&wait.to_string()) {
-            resp.headers_mut().insert(header::RETRY_AFTER, value);
-        }
+        resp.headers_mut()
+            .insert(header::RETRY_AFTER, HeaderValue::from(wait));
         return resp;
     }
     let kind = request.kind;
@@ -391,12 +390,8 @@ async fn serve(
         Ok(vectors) => {
             metrics::counter!("embedder_texts_total", "deployment" => name.to_owned(), "kind" => kind.as_str())
                 .increment(u64::from(count));
-            tracing::info!(
-                deployment = name,
-                kind = kind.as_str(),
-                texts = count,
-                "embedded"
-            );
+            let kind = kind.as_str();
+            tracing::info!(deployment = name, kind, texts = count, "embedded");
             axum::Json(EmbedAnswer {
                 model: MODEL.to_owned(),
                 model_sha256: MODEL_SHA256.to_owned(),

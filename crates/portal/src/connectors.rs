@@ -2913,6 +2913,11 @@ pub(crate) mod tests {
         crate::ops::find(name).expect("registered")
     }
 
+    /// The space of no object: where a call's object sits in no Context Space.
+    fn nowhere(_kind: &str, _name: &str) -> Option<String> {
+        None
+    }
+
     fn item(project: &str, endpoint: Option<&str>) -> ScopeItem {
         ScopeItem {
             project: project.into(),
@@ -3167,9 +3172,7 @@ pub(crate) mod tests {
         for tool in STEPS {
             assert!(!other.lists(op(tool), "doprava"), "{tool}");
             assert!(other
-                .admits(op(tool), "doprava", &json!({ "sample": text }), &|_, _| {
-                    None
-                })
+                .admits(op(tool), "doprava", &json!({ "sample": text }), &nowhere)
                 .is_err());
             assert!(other
                 .admits(
@@ -3654,9 +3657,7 @@ pub(crate) mod tests {
         let get = op("jc_resource_get");
         let list = op("jc_resource_list");
         assert_eq!(
-            whole.admits(list, "doprava", &json!({ "kind": "Endpoint" }), &|_, _| {
-                None
-            }),
+            whole.admits(list, "doprava", &json!({ "kind": "Endpoint" }), &nowhere),
             Ok(())
         );
         let err = whole
@@ -3689,9 +3690,7 @@ pub(crate) mod tests {
         // A list cannot be held to the named Endpoints, so a narrowed project refuses it and
         // tools/list does not offer it.
         assert!(narrow
-            .admits(list, "doprava", &json!({ "kind": "Endpoint" }), &|_, _| {
-                None
-            })
+            .admits(list, "doprava", &json!({ "kind": "Endpoint" }), &nowhere)
             .is_err());
         assert!(!narrow.lists(list, "doprava"));
         assert!(narrow.lists(get, "doprava"));
@@ -3787,19 +3786,23 @@ pub(crate) mod tests {
             now
         )
         .is_ok());
-        let denied =
-            |n: NewConnector, field: &str| match validate(&n, &Ceiling::of_policies(vec![]), now) {
-                Err(ApiError::Denied(why)) => assert!(why.starts_with(field), "{why}"),
-                other => panic!("{field}: {other:?}"),
-            };
+        let denied = |n: NewConnector, field: &str| {
+            let err = validate(&n, &Ceiling::of_policies(vec![]), now).expect_err(field);
+            assert!(
+                matches!(&err, ApiError::Denied(why) if why.starts_with(field)),
+                "{field}: {err:?}"
+            );
+        };
         denied(new(&["pipeline"], false, 1), "segments[0]");
         denied(new(&["data-read"], true, 1), "writes");
         denied(new(&["data-read"], false, 31), "expiresAt");
-        let invalid =
-            |n: NewConnector, field: &str| match validate(&n, &Ceiling::of_policies(vec![]), now) {
-                Err(ApiError::Invalid { errors, .. }) => assert_eq!(errors, vec![field.to_owned()]),
-                other => panic!("{field}: {other:?}"),
-            };
+        let invalid = |n: NewConnector, field: &str| {
+            let err = validate(&n, &Ceiling::of_policies(vec![]), now).expect_err(field);
+            assert!(
+                matches!(&err, ApiError::Invalid { errors, .. } if *errors == vec![field.to_owned()]),
+                "{field}: {err:?}"
+            );
+        };
         invalid(new(&["everything"], false, 1), "segments[0]");
         invalid(new(&[], false, 1), "segments");
         invalid(new(&["data-read"], false, -1), "expiresAt");
@@ -3826,12 +3829,12 @@ pub(crate) mod tests {
         let now = TimestampTz::now();
         let mut ticked = new(&["data-read"], false, 1);
         ticked.scope[0].personal_data = true;
-        match validate(&ticked, &Ceiling::of_policies(Vec::new()), now) {
-            Err(ApiError::Denied(why)) => {
-                assert!(why.starts_with("scope[0].personalData"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let refused = validate(&ticked, &Ceiling::of_policies(Vec::new()), now)
+            .expect_err("the default ceiling keeps personal data out");
+        assert!(
+            matches!(&refused, ApiError::Denied(why) if why.starts_with("scope[0].personalData")),
+            "{refused:?}"
+        );
         let allows = Ceiling {
             personal_data: true,
             ..Ceiling::of_policies(Vec::new())
@@ -4091,12 +4094,13 @@ pub(crate) mod tests {
             validate(&ask(&["pipeline"], Some("counters"), 89), &ceiling, now)
                 .is_ok_and(|above| above.is_empty())
         );
-        let refused = |n: NewConnector, field: &str| match validate(&n, &ceiling, now) {
-            Err(ApiError::Denied(why)) => {
-                assert!(why.starts_with(field), "{why}");
-                assert!(why.contains("analysts-doprava"), "{why}");
-            }
-            other => panic!("{field}: {other:?}"),
+        let refused = |n: NewConnector, field: &str| {
+            let err = validate(&n, &ceiling, now).expect_err(field);
+            assert!(
+                matches!(&err, ApiError::Denied(why)
+                    if why.starts_with(field) && why.contains("analysts-doprava")),
+                "{field}: {err:?}"
+            );
         };
         refused(ask(&["access"], Some("counters"), 1), "segments[0]");
         refused(ask(&["data-read"], None, 1), "scope[0].endpoint");
@@ -4146,10 +4150,12 @@ pub(crate) mod tests {
             "{}",
             nothing.named()
         );
-        match validate(&new(&["data-read"], false, 1), &nothing, now) {
-            Err(ApiError::Denied(why)) => assert!(why.starts_with("segments[0]"), "{why}"),
-            other => panic!("{other:?}"),
-        }
+        let refused = validate(&new(&["data-read"], false, 1), &nothing, now)
+            .expect_err("a broken policy allows nothing");
+        assert!(
+            matches!(&refused, ApiError::Denied(why) if why.starts_with("segments[0]")),
+            "{refused:?}"
+        );
     }
 
     #[test]
@@ -4337,10 +4343,7 @@ pub(crate) mod tests {
         renewed.granted_at = TimestampTz::now();
         renewed.expires_at = renewed.granted_at + jiff::SignedDuration::from_hours(24 * 89);
         assert!(ceiling.door(&renewed, CLAUDE, TimestampTz::now()).is_ok());
-        assert!(!ceiling
-            .narrowing(&renewed)
-            .iter()
-            .any(|mark| mark.starts_with("expiry")));
+        assert!(ceiling.narrowing(&renewed).is_empty());
     }
 
     /// T-7541 (S1-14): `autonomous` is the policy's to allow, as `writes` is.
@@ -4357,11 +4360,12 @@ pub(crate) mod tests {
         let mut ask = new(&["context"], true, 1);
         assert!(validate(&ask, &ceiling, TimestampTz::now()).is_ok());
         ask.autonomous = true;
-        match validate(&ask, &ceiling, TimestampTz::now()) {
-            Err(ApiError::Denied(why)) => assert!(why.starts_with("autonomous:"), "{why}"),
-            Err(err) => panic!("not a 403: {err:?}"),
-            Ok(above) => panic!("autonomous passed the ceiling: {above:?}"),
-        }
+        let refused = validate(&ask, &ceiling, TimestampTz::now())
+            .expect_err("autonomous passed the ceiling");
+        assert!(
+            matches!(&refused, ApiError::Denied(why) if why.starts_with("autonomous:")),
+            "not a 403 on autonomous: {refused:?}"
+        );
         let allowing = |projects: &[&str]| {
             Ceiling::of_policies(vec![(
                 "stewards".into(),
@@ -4380,10 +4384,7 @@ pub(crate) mod tests {
         let mut held = connector(&["context"], vec![item("doprava", None)]);
         held.writes = true;
         held.autonomous = true;
-        assert!(!allowed
-            .narrowing(&held)
-            .iter()
-            .any(|m| m.starts_with("autonomous")));
+        assert!(allowed.narrowing(&held).is_empty());
         assert!(ceiling
             .narrowing(&held)
             .contains(&"autonomous in project doprava".to_owned()));
@@ -4666,11 +4667,13 @@ pub(crate) mod tests {
     fn a_kinds_list_is_checked_and_held_to_the_ceiling() {
         use ConnectorVerb::{Create, Delete, Edit, Read, Run};
         let now = TimestampTz::now();
-        let invalid =
-            |n: NewConnector, field: &str| match validate(&n, &Ceiling::of_policies(vec![]), now) {
-                Err(ApiError::Invalid { errors, .. }) => assert_eq!(errors, vec![field.to_owned()]),
-                other => panic!("{field}: {other:?}"),
-            };
+        let invalid = |n: NewConnector, field: &str| {
+            let err = validate(&n, &Ceiling::of_policies(vec![]), now).expect_err(field);
+            assert!(
+                matches!(&err, ApiError::Invalid { errors, .. } if *errors == vec![field.to_owned()]),
+                "{field}: {err:?}"
+            );
+        };
         let mut bad = new(&["data-read"], false, 1);
         bad.kinds = Some(vec![grant("Pipeline", &[Read])]);
         invalid(bad, "kinds[0].kind");
@@ -4697,13 +4700,12 @@ pub(crate) mod tests {
         ask.kinds = Some(vec![grant("Endpoint", &[Read, Create])]);
         assert!(matches!(validate(&ask, &ceiling, now), Ok(above) if above.is_empty()));
         ask.kinds = Some(vec![grant("Endpoint", &[Read, Edit])]);
-        match validate(&ask, &ceiling, now) {
-            Err(ApiError::Denied(why)) => {
-                assert!(why.starts_with("kinds[0].verbs"), "{why}");
-                assert!(why.contains("edit Endpoint"), "{why}");
-            }
-            other => panic!("expected a ceiling refusal, got {other:?}"),
-        }
+        let refused = validate(&ask, &ceiling, now).expect_err("a ceiling refusal");
+        assert!(
+            matches!(&refused, ApiError::Denied(why)
+                if why.starts_with("kinds[0].verbs") && why.contains("edit Endpoint")),
+            "{refused:?}"
+        );
         assert!(ceiling.allows_verb(Some("doprava"), "Endpoint", Create));
         assert!(!ceiling.allows_verb(Some("doprava"), "Endpoint", Edit));
         assert!(!ceiling.allows_verb(Some("other"), "Endpoint", Create));
@@ -4791,5 +4793,453 @@ pub(crate) mod tests {
         assert!(!above(&ask, &ceiling, now)
             .iter()
             .any(|(_, f, _)| f == "kinds"));
+    }
+
+    // --- coverage: the branches the scenarios above leave out ---------------------------------
+
+    fn listed_policy() -> DelegationPolicySpec {
+        let mut policy = default_policy();
+        policy.projects = vec!["doprava".into()];
+        policy.segments = Some(vec![Segment::Context]);
+        policy.above_ceiling = AboveCeiling::Queue;
+        policy
+    }
+
+    fn approved_with(over: Vec<Over>) -> Connector {
+        let mut approved = connector(&["context"], vec![item("doprava", None)]);
+        approved.approval = Some(Approval {
+            by: "sub-admin".into(),
+            at: TimestampTz::now(),
+        });
+        approved.over = over;
+        approved
+    }
+
+    #[test]
+    fn propose_stands_for_create_edit_and_delete_and_any_other_verb_for_itself() {
+        use ConnectorVerb::{Create, Delete, Edit, Propose, Read, Run};
+        assert_eq!(each_verb(Propose), vec![Create, Edit, Delete]);
+        for verb in [Read, Create, Edit, Delete, Run] {
+            assert_eq!(each_verb(verb), vec![verb]);
+        }
+    }
+
+    #[test]
+    fn an_approved_value_that_changes_nothing_leaves_the_policy_as_it_was() {
+        let policy = listed_policy();
+        for over in [
+            Over::Segment("bogus".into()),
+            Over::Segment("context".into()),
+            Over::Project("doprava".into()),
+            Over::Client("claude".into()),
+            Over::Endpoint {
+                project: "doprava".into(),
+                endpoint: None,
+            },
+            Over::Autonomous("doprava".into()),
+            Over::Until(1),
+            Over::Verb {
+                kind: "Endpoint".into(),
+                verb: ConnectorVerb::Edit,
+            },
+        ] {
+            let mut widened = policy.clone();
+            widen(&mut widened, &over);
+            assert_eq!(widened, policy, "{over:?}");
+        }
+    }
+
+    #[test]
+    fn an_approved_client_joins_a_list_and_any_client_drops_it() {
+        let mut policy = listed_policy();
+        policy.allowed_clients = Some(vec!["claude".into()]);
+        widen(&mut policy, &Over::Client("chatgpt".into()));
+        assert_eq!(
+            policy.allowed_clients,
+            Some(vec!["claude".to_owned(), "chatgpt".to_owned()])
+        );
+        widen(&mut policy, &Over::AnyClient);
+        assert_eq!(policy.allowed_clients, None);
+    }
+
+    #[test]
+    fn a_policy_that_does_not_parse_binds_nobody() {
+        let (mirror, jana) = analysts("refuse");
+        mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "DelegationPolicy".into(),
+            metadata: crate::resource::ObjectMeta::new("garbled", ORG_NAMESPACE),
+            spec: json!({ "subjects": "jana", "projects": 7, "nonsense": true }),
+            status: None,
+        });
+        let named = Ceiling::of(&mirror, &jana).named();
+        assert!(named.contains("analysts-doprava"), "{named}");
+        assert!(!named.contains("garbled"), "{named}");
+    }
+
+    #[test]
+    fn a_policy_repeated_for_an_approved_endpoint_is_cited_once() {
+        let policy = listed_policy();
+        let twice = Ceiling::of_policies(vec![
+            ("listed".into(), policy.clone()),
+            ("listed".into(), policy.clone()),
+            ("other".into(), policy),
+        ]);
+        assert_eq!(twice.named(), "DelegationPolicy listed, other");
+    }
+
+    #[test]
+    fn what_the_ceiling_takes_from_a_connector_is_told_mark_by_mark() {
+        let mut policy = default_policy();
+        policy.allowed_clients = Some(vec!["claude".into()]);
+        let ceiling = Ceiling::of_policies(vec![("tight".into(), policy)]);
+        let mut wide = connector(&["data-read"], vec![item("doprava", None)]);
+        assert!(ceiling.narrowing(&wide).is_empty());
+        wide.writes = true;
+        wide.expires_at = wide.granted_at + jiff::SignedDuration::from_hours(24 * 400);
+        wide.allowed_clients = vec!["claude".into(), "other".into()];
+        assert_eq!(
+            ceiling.narrowing(&wide),
+            vec![
+                "writes".to_owned(),
+                "expiry: at most 30 days".to_owned(),
+                "client other".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn an_approval_stands_for_a_request_no_wider_than_the_one_judged() {
+        use ConnectorVerb::{Create, Edit, Propose};
+        let mut ask = new(&["data-read"], false, 1);
+        let mut held = approved_with(vec![Over::Writes]);
+        held.segments = ask.segments.clone();
+        held.expires_at = ask.expires_at + jiff::SignedDuration::from_hours(1);
+        let above = Above {
+            values: vec![Over::Writes],
+            lines: vec!["writes".into()],
+        };
+        assert!(held.approval_covers(&ask, &above));
+        // No kinds list held: every change is held, so any list asked is no wider.
+        ask.kinds = Some(vec![grant("Endpoint", &[Propose])]);
+        assert!(held.approval_covers(&ask, &above));
+        // A list held: a verb it leaves out, also spelled as `propose`, is wider.
+        held.kinds = Some(vec![grant("Endpoint", &[ConnectorVerb::Read, Create])]);
+        ask.kinds = Some(vec![grant("Endpoint", &[Create])]);
+        assert!(held.approval_covers(&ask, &above));
+        ask.kinds = Some(vec![grant("Endpoint", &[Edit])]);
+        assert!(!held.approval_covers(&ask, &above));
+        ask.kinds = Some(vec![grant("Endpoint", &[Propose])]);
+        assert!(!held.approval_covers(&ask, &above));
+        ask.kinds = None;
+        assert!(
+            !held.approval_covers(&ask, &above),
+            "no list asks every change"
+        );
+        // Clients: a held list covers the clients it names and not an open list.
+        held.kinds = None;
+        held.allowed_clients = vec!["claude".into()];
+        ask.allowed_clients = vec!["claude".into()];
+        assert!(held.approval_covers(&ask, &above));
+        ask.allowed_clients = vec!["claude".into(), "other".into()];
+        assert!(!held.approval_covers(&ask, &above));
+        ask.allowed_clients = vec![];
+        assert!(!held.approval_covers(&ask, &above));
+        // Nothing asked above the ceiling is nothing to cover.
+        ask.allowed_clients = vec!["claude".into()];
+        assert!(!held.approval_covers(&ask, &Above::default()));
+    }
+
+    #[test]
+    fn a_kind_with_no_verb_ticked_names_none() {
+        let mut c = connector(&["context"], vec![item("doprava", None)]);
+        c.kinds = Some(vec![grant("Endpoint", &[])]);
+        let err = c
+            .may_verb("Endpoint", "counters", ConnectorVerb::Edit)
+            .expect_err("no verb");
+        assert!(err.contains("its verbs on Endpoint are none"), "{err}");
+    }
+
+    #[test]
+    fn a_project_named_by_two_items_is_listed_once() {
+        let c = connector(
+            &["context"],
+            vec![
+                item("doprava", Some("a")),
+                item("doprava", Some("b")),
+                item("skoly", None),
+            ],
+        );
+        assert_eq!(c.projects(), vec!["doprava", "skoly"]);
+        assert_eq!(c.endpoints_named("doprava"), Some(vec!["a", "b"]));
+        assert_eq!(c.endpoints_named("skoly"), None);
+        assert_eq!(c.endpoints_named("none"), None);
+    }
+
+    #[test]
+    fn an_authoring_step_whose_draft_lacks_its_kind_or_name_is_refused() {
+        let c = connector(&["pipeline"], vec![item("doprava", Some("counters"))]);
+        for draft in [
+            json!({ "kind": "Pipeline" }),
+            json!({ "name": "p" }),
+            json!({}),
+            json!({ "kind": 3, "name": "p" }),
+        ] {
+            let err = c
+                .admits(
+                    op(STEPS[0]),
+                    "doprava",
+                    &json!({ "draft": draft }),
+                    &nowhere,
+                )
+                .expect_err("a draft without both");
+            assert!(err.contains("give both"), "{draft}: {err}");
+        }
+    }
+
+    #[test]
+    fn a_write_that_names_no_object_is_asked_for_its_name() {
+        let mut c = connector(&["operate", "context"], vec![item("doprava", None)]);
+        c.writes = true;
+        c.scope[0].access = ItemAccess::Write;
+        for (tool, noun) in [
+            (RUN, "pipeline"),
+            (PAUSE, "SyncSource"),
+            (DATA_WRITE, "endpoint"),
+        ] {
+            for args in [json!({}), json!({ "name": 7, "endpoint": null })] {
+                let err = c
+                    .admits(op(tool), "doprava", &args, &nowhere)
+                    .expect_err("no name");
+                assert_eq!(err, format!("{tool} names the {noun}: name it"), "{args}");
+            }
+        }
+        let err = c
+            .admits(op(BUILD), "doprava", &json!({}), &nowhere)
+            .expect_err("no App named");
+        assert!(err.contains("appName"), "{err}");
+    }
+
+    #[test]
+    fn a_run_and_a_pause_need_their_verb_where_a_policy_lists_kinds() {
+        use ConnectorVerb::{Edit, Read, Run};
+        let mut c = connector(&["operate"], vec![item("doprava", None)]);
+        c.writes = true;
+        let run_args = json!({ "name": "counters-in" });
+        let pause_args = json!({ "name": "regional", "paused": true });
+        let under = |pipeline: &[ConnectorVerb], source: &[ConnectorVerb]| {
+            let mut policy = default_policy();
+            policy.projects = vec!["doprava".into()];
+            policy.segments = Some(vec![Segment::Operate]);
+            policy.writes = true;
+            policy.kinds = Some(vec![
+                KindVerbs {
+                    kind: "Pipeline".into(),
+                    verbs: pipeline.to_vec(),
+                },
+                KindVerbs {
+                    kind: "SyncSource".into(),
+                    verbs: source.to_vec(),
+                },
+            ]);
+            Ceiling::of_policies(vec![("ops".into(), policy)])
+        };
+        let both = under(&[Read, Run], &[Read, Edit]);
+        assert_eq!(both.admits(&c, op(RUN), "doprava", &run_args), Ok(()));
+        assert_eq!(both.admits(&c, op(PAUSE), "doprava", &pause_args), Ok(()));
+        let neither = under(&[Read], &[Read]);
+        assert!(neither.admits(&c, op(RUN), "doprava", &run_args).is_err());
+        assert!(neither
+            .admits(&c, op(PAUSE), "doprava", &pause_args)
+            .is_err());
+        // A policy with no kinds list withholds neither.
+        let mut open = default_policy();
+        open.projects = vec!["doprava".into()];
+        open.segments = Some(vec![Segment::Operate]);
+        open.writes = true;
+        let open = Ceiling::of_policies(vec![("open".into(), open)]);
+        assert_eq!(open.admits(&c, op(RUN), "doprava", &run_args), Ok(()));
+        assert_eq!(open.admits(&c, op(PAUSE), "doprava", &pause_args), Ok(()));
+    }
+
+    #[test]
+    fn an_approved_endpoint_of_a_policy_without_an_endpoint_list_changes_nothing() {
+        let ceiling = Ceiling::of_policies(vec![("open".into(), listed_policy())]);
+        let approved = approved_with(vec![Over::Endpoint {
+            project: "doprava".into(),
+            endpoint: Some("parking".into()),
+        }]);
+        let widened = ceiling.with_approved(&approved);
+        assert_eq!(widened.policies.len(), 1);
+        assert!(widened.allows_endpoint("doprava", Some("parking")));
+    }
+
+    #[test]
+    fn approved_endpoints_of_one_project_combine_and_other_approvals_pass_by() {
+        let mut policy = listed_policy();
+        policy.endpoints = Some(vec!["counters".into()]);
+        let ceiling = Ceiling::of_policies(vec![("listed".into(), policy)]);
+        let endpoint = |project: &str, name: Option<&str>| Over::Endpoint {
+            project: project.into(),
+            endpoint: name.map(str::to_owned),
+        };
+        // `*` after a named one, a named one after `*`, an approval of another field between,
+        // and an Endpoint of a project the policy does not reach.
+        let approved = approved_with(vec![
+            endpoint("doprava", Some("parking")),
+            Over::Writes,
+            endpoint("doprava", Some("*")),
+            endpoint("doprava", Some("bikes")),
+            endpoint("skoly", Some("canteen")),
+        ]);
+        let widened = ceiling.with_approved(&approved);
+        assert!(widened.allows_endpoint("doprava", Some("anything")));
+        assert!(widened.allows_endpoint("doprava", None));
+        assert!(!widened.allows_endpoint("skoly", Some("canteen")));
+        assert!(widened.writes());
+    }
+
+    #[test]
+    fn a_name_that_is_no_project_or_no_name_is_refused_in_the_scope() {
+        let now = TimestampTz::now();
+        let invalid = |n: NewConnector, field: &str| {
+            let err = validate(&n, &Ceiling::of_policies(vec![]), now).expect_err(field);
+            assert!(
+                matches!(&err, ApiError::Invalid { errors, .. } if *errors == vec![field.to_owned()]),
+                "{field}: {err:?}"
+            );
+        };
+        let mut bad = new(&["data-read"], false, 1);
+        bad.scope[0].project = "Not A Project".into();
+        invalid(bad, "scope[0].project");
+        for (field, set) in [
+            ("scope[0].space", 0),
+            ("scope[0].endpoint", 1),
+            ("scope[0].pipeline", 2),
+        ] {
+            let mut bad = new(&["data-read"], false, 1);
+            let name = Some("Bad Name".to_owned());
+            match set {
+                0 => bad.scope[0].space = name,
+                1 => bad.scope[0].endpoint = name,
+                _ => bad.scope[0].pipeline = name,
+            }
+            invalid(bad, field);
+        }
+        let mut fine = new(&["data-read"], false, 1);
+        fine.scope[0].endpoint = Some("*".into());
+        assert!(validate(&fine, &Ceiling::of_policies(vec![]), now).is_ok());
+    }
+
+    #[test]
+    fn more_than_ten_clients_are_refused_and_ten_are_not() {
+        let now = TimestampTz::now();
+        let mut ask = new(&["data-read"], false, 1);
+        ask.allowed_clients = (0..MAX_CLIENTS).map(|n| format!("client-{n}")).collect();
+        assert!(validate(&ask, &Ceiling::of_policies(vec![]), now).is_ok());
+        ask.allowed_clients.push("client-last".into());
+        let err = validate(&ask, &Ceiling::of_policies(vec![]), now).expect_err("too many");
+        assert!(
+            matches!(&err, ApiError::Invalid { errors, .. } if *errors == vec!["allowedClients".to_owned()]),
+            "{err:?}"
+        );
+    }
+
+    // The memory arm.
+
+    fn call_at(at: TimestampTz, verdict: &str) -> Call {
+        Call {
+            at,
+            subject: "jana".into(),
+            client: None,
+            tool: "tools/list".into(),
+            target: None,
+            verdict: verdict.into(),
+            duration_ms: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_allowed_call_of_a_connector_nobody_holds_is_kept_and_marks_none() {
+        let store = ConnectorStore::new(None, None);
+        let trail = Trail::new(Some("ghost".into()), None);
+        store
+            .keep(&trail, call_at(TimestampTz::now(), "allowed"))
+            .await
+            .expect("kept");
+        assert_eq!(store.calls("ghost").await.expect("calls").len(), 1);
+        assert!(store
+            .get("ghost", "https://portal.test")
+            .await
+            .expect("get")
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn the_memory_audit_drops_what_is_older_than_the_retention() {
+        let store = ConnectorStore::new(None, None);
+        let now = TimestampTz::now();
+        let old = now - jiff::SignedDuration::from_hours(24 * 500);
+        store
+            .record("c", call_at(old, "allowed"))
+            .await
+            .expect("kept");
+        store
+            .record("c", call_at(now, "allowed"))
+            .await
+            .expect("kept");
+        assert_eq!(store.trim_audit(now, 400).await.expect("trim"), 1);
+        assert_eq!(store.trim_audit(now, 400).await.expect("trim"), 0);
+        let left = store.calls("c").await.expect("calls");
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].at, now);
+        let after = now + jiff::SignedDuration::from_secs(1);
+        assert_eq!(store.trim_audit(after, 0).await.expect("trim all"), 1);
+    }
+
+    #[tokio::test]
+    async fn the_audit_is_trimmed_once_an_hour_by_each_process() {
+        let store = ConnectorStore::new(None, None);
+        let now = TimestampTz::now();
+        assert_eq!(
+            store.trim_audit_if_due(now, 400).await.expect("due").ok(),
+            Some(0)
+        );
+        assert!(store.trim_audit_if_due(now, 400).await.is_none());
+        let later = now + jiff::SignedDuration::from_mins(59);
+        assert!(store.trim_audit_if_due(later, 400).await.is_none());
+        let next = now + jiff::SignedDuration::from_mins(crate::activity::TRIM_EVERY_MINUTES);
+        assert!(store.trim_audit_if_due(next, 400).await.is_some());
+    }
+
+    #[tokio::test]
+    async fn a_poisoned_trim_clock_still_lets_the_audit_trim() {
+        let store = std::sync::Arc::new(ConnectorStore::new(None, None));
+        let holder = std::sync::Arc::clone(&store);
+        let poisoned = std::thread::spawn(move || {
+            let _held = holder.trimmed_at.lock().expect("the clock");
+            std::panic::panic_any("poisoning the clock on purpose");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        assert!(store.trimmed_at.is_poisoned());
+        assert!(store
+            .trim_audit_if_due(TimestampTz::now(), 400)
+            .await
+            .is_some());
+    }
+
+    #[test]
+    fn a_poisoned_memory_store_still_answers() {
+        let rows = std::sync::Arc::new(Mutex::<Held>::default());
+        let holder = std::sync::Arc::clone(&rows);
+        let poisoned = std::thread::spawn(move || {
+            let _held = holder.lock().expect("the rows");
+            std::panic::panic_any("poisoning the rows on purpose");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        let held = ConnectorStore::memory(&rows);
+        assert!(held.0.is_empty() && held.1.is_empty());
     }
 }

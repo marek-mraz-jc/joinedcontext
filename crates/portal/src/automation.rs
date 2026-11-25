@@ -189,4 +189,38 @@ mod tests {
         }
         assert!(!names(&who, "bbsk-owner"));
     }
+
+    fn dead_state() -> AppState {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        AppState::new(crate::config::Config::for_tests(), None).with_db(pool)
+    }
+
+    #[tokio::test]
+    async fn a_dead_database_answers_unavailable_for_the_marked_logins() {
+        let err = marked(&dead_state(), Some("bbsk"))
+            .await
+            .expect_err("no database answers");
+        assert!(matches!(err, ApiError::Unavailable(m) if m.contains("automation logins")));
+    }
+
+    #[tokio::test]
+    async fn a_dead_database_refuses_an_approver_rather_than_letting_it_through() {
+        let who = Identity {
+            subject: "s".into(),
+            username: "u".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            client: None,
+            second_factor: false,
+        };
+        let err = refuse_approver(&dead_state(), &who, "a change")
+            .await
+            .expect_err("the store cannot answer");
+        assert!(matches!(err, ApiError::Unavailable(_)));
+    }
 }

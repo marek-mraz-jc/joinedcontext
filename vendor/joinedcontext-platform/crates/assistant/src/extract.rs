@@ -105,7 +105,7 @@ static EMPTY_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new
         r"(?is)<h[1-6]\b[^>]*>(?:\s|&nbsp;|&#160;|&#xa0;|<[^>]*>)*</h[1-6]\s*>",
         r"|<p\b[^>]*>(?:\s|&nbsp;|&#160;|&#xa0;|</?(?:strong|b|em|i|u|span|br|a)\b[^>]*>)*</p\s*>",
     ))
-    .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+    .expect("the pattern is fixed")
 });
 
 /// A page's navigation and footer: menus, share bars and the address block repeated on every
@@ -114,19 +114,17 @@ static EMPTY_BLOCK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new
 // ponytail: a regex over the HTML, not a parse; a nested `<nav>` leaves its outer tail behind.
 static CHROME: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"(?is)<nav\b.*?</nav\s*>|<footer\b.*?</footer\s*>")
-        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+        .expect("the pattern is fixed")
 });
 
 /// A Markdown image, `![alt](src)`: its alt text is an icon's name more often than content.
 static IMAGE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"!\[[^\]]*\]\([^)]*\)")
-        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+    regex::Regex::new(r"!\[[^\]]*\]\([^)]*\)").expect("the pattern is fixed")
 });
 
 /// A Markdown link, `[text](href)`, read as its text.
 static LINK: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)")
-        .unwrap_or_else(|err| unreachable!("the pattern is fixed: {err}"))
+    regex::Regex::new(r"\[([^\]]*)\]\([^)]*\)").expect("the pattern is fixed")
 });
 
 /// The fewest characters of prose a passage of a page keeps to be stored when the page has a

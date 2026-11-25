@@ -234,3 +234,8 @@ fn the_source_reader_knows_a_read_from_a_mention() {
     assert!(!is_secret("JC_BASEMAP_KEY_FILE"), "a path is not the value");
     assert_eq!(without_tests("a\n#[cfg(test)]\nb"), "a\n");
 }
+
+#[test]
+fn a_directory_that_cannot_be_read_holds_no_sources() {
+    assert!(sources(Path::new("/nonexistent-portal-sources-dir")).is_empty());
+}
