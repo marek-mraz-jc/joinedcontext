@@ -565,6 +565,117 @@ async fn a_failed_export_leaves_everything_in_place() {
     );
 }
 
+/// A store that answers `failing` (method, and whether the request is a copy) with 500 and the
+/// rest as [`store_with_one_file`] does with 200.
+async fn store_failing(shard: u32, id: &str, failing: (&'static str, bool)) -> wiremock::MockServer {
+    use wiremock::{Mock, ResponseTemplate};
+    let store = store_with_one_file(shard, id, 200).await;
+    let (verb, copy) = failing;
+    let copies = move |r: &wiremock::Request| {
+        r.method.as_str() == verb && r.headers.contains_key("x-amz-copy-source") == copy
+    };
+    Mock::given(copies)
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&store)
+        .await;
+    store
+}
+
+/// AP-150: a listing or a copy of the App's files that fails stops the retire before anything
+/// is dropped; a delete that fails after the export names it, with the schema already gone.
+#[tokio::test]
+async fn a_retire_whose_files_fail_names_the_step_and_drops_only_after_the_export() {
+    for (test, failing, why, left) in [
+        ("nolist", ("GET", false), "the App's files could not be listed", 1),
+        ("nocopy", ("PUT", true), "the App's files could not be exported", 1),
+        (
+            "nodelete",
+            ("DELETE", false),
+            "the App's files were exported and could not all be deleted",
+            0,
+        ),
+    ] {
+        let w = world(test).await;
+        let project = w.project(&format!("p-{test}"));
+        let (id, shard) = published(&w, &project, "notes").await;
+        let store = if failing.0 == "GET" {
+            store_with_one_file_unlisted(shard, &id).await
+        } else {
+            store_failing(shard, &id, failing).await
+        };
+        let wasm = wasm_apps(&w, &store);
+
+        let err = wasm
+            .retire(&project, "notes", "20261008T120000Z")
+            .await
+            .unwrap_err();
+        assert!(err.starts_with(why), "{test}: {err}");
+        assert_eq!(schema_left(&w, &id).await, left, "{test}");
+    }
+}
+
+/// A store whose listing fails and whose every other answer is 200.
+async fn store_with_one_file_unlisted(shard: u32, id: &str) -> wiremock::MockServer {
+    use wiremock::matchers::{method, query_param};
+    use wiremock::{Mock, ResponseTemplate};
+    let store = store_with_one_file(shard, id, 200).await;
+    Mock::given(method("GET"))
+        .and(query_param("list-type", "2"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&store)
+        .await;
+    store
+}
+
+/// A bundle holding `component` at `.jc/component.wasm`.
+fn bundle_of(component: &[u8]) -> Vec<u8> {
+    let mut tar = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_size(component.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    tar.append_data(&mut header, ".jc/component.wasm", component)
+        .expect("entry");
+    let raw = tar.into_inner().expect("tar");
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+    std::io::Write::write_all(&mut gz, &raw).expect("gz");
+    gz.finish().expect("gz")
+}
+
+/// AP-149, AP-151: a publish whose component the store refuses places nothing; one the apps
+/// database cannot place (no shard) stores the component and places nothing either.
+#[tokio::test]
+async fn a_publish_the_store_or_the_database_refuses_places_nothing() {
+    const COMPONENT: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, 0x42];
+    let bundle = bundle_of(COMPONENT);
+
+    let w = world("nostore").await;
+    let project = w.project("p-nostore");
+    let store = store_with_one_file(0, "none", 500).await;
+    let why = wasm_apps(&w, &store)
+        .publish(&project, "notes", &bundle, &[])
+        .await
+        .unwrap_err();
+    assert!(
+        why.starts_with("the component could not be stored: "),
+        "{why}"
+    );
+    let id = app_id(&project, "notes");
+    assert_eq!(w.db.shard_of(&id).await.expect("shard"), None);
+
+    let w = world_of("noshard", 0).await;
+    let project = w.project("p-noshard");
+    let store = store_with_one_file(0, "none", 200).await;
+    let published = wasm_apps(&w, &store)
+        .publish(&project, "notes", &bundle, &[])
+        .await;
+    assert!(published.is_err(), "no shard places nothing");
+    let id = app_id(&project, "notes");
+    assert_eq!(w.db.shard_of(&id).await.expect("shard"), None);
+}
+
 /// A retired `wasm` App of `project`, as the repository holds it.
 fn retired_wasm(project: &str) -> jcctl::loader::RawManifest {
     serde_json::from_value(serde_json::json!({

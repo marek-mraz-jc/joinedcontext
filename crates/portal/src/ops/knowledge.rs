@@ -225,10 +225,11 @@ mod tests {
             (json!({ "source": "web", "q": "x", "limit": 0 }), "/limit"),
             (json!({ "source": "web", "q": "x", "limit": 11 }), "/limit"),
         ] {
-            match validate_search(&input) {
-                Err(OpError::InvalidInput { path: at, .. }) => assert_eq!(at, path, "{input}"),
-                other => panic!("{input}: {other:?}"),
-            }
+            let answer = validate_search(&input);
+            assert!(
+                matches!(&answer, Err(OpError::InvalidInput { path: at, .. }) if *at == *path),
+                "{answer:?}"
+            );
         }
         assert!(validate_search(&json!({ "q": "x" })).is_err());
         assert!(validate_search(&json!({ "source": "web", "q": "x", "url": "http://a" })).is_err());
@@ -319,29 +320,25 @@ mod tests {
     #[tokio::test]
     async fn an_unknown_source_says_how_to_list_and_a_stranger_finds_nothing() {
         let state = world();
-        match status_of(&admin(&state), &state, json!({ "source": "intranet" })).await {
-            Err(OpError::Api(ApiError::NotFound(why))) => {
-                assert!(why.contains("'intranet'"), "{why}");
-                assert!(why.contains("without source lists them"), "{why}");
-            }
-            other => panic!("a 404, got {other:?}"),
-        }
+        let answer = status_of(&admin(&state), &state, json!({ "source": "intranet" })).await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::NotFound(why))) if why.contains("'intranet'") && why.contains("without source lists them")),
+            "{answer:?}"
+        );
         let stranger = caller(person("mallory", &[]), Via::Mcp);
-        match status_of(&stranger, &state, json!({})).await {
-            Err(OpError::Api(ApiError::NotFound(why))) => {
-                assert_eq!(why, "project 'helsinki' not found")
-            }
-            other => panic!("a 404, got {other:?}"),
-        }
+        let answer = status_of(&stranger, &state, json!({})).await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::NotFound(why))) if *why == "project 'helsinki' not found"),
+            "{answer:?}"
+        );
         // Reading the project is not reading its sources: the route answers the same 404.
         grant(&state, "viewers", "helsinki", &["Project"], &["read"]);
         let viewer = caller(person("viktor", &["viewers"]), Via::Mcp);
-        match status_of(&viewer, &state, json!({ "source": "web" })).await {
-            Err(OpError::Api(ApiError::NotFound(why))) => {
-                assert_eq!(why, "project 'helsinki' not found")
-            }
-            other => panic!("a 404, got {other:?}"),
-        }
+        let answer = status_of(&viewer, &state, json!({ "source": "web" })).await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::NotFound(why))) if *why == "project 'helsinki' not found"),
+            "{answer:?}"
+        );
     }
 
     /// A search asks the assistant: with none configured the answer names the setting to set,
@@ -351,43 +348,41 @@ mod tests {
         let state = world();
         let op = find("jc_knowledge_search").expect("listed");
         let admin = admin(&state);
-        match call(
+        let answer = call(
             op,
             &admin,
             &state,
             "helsinki",
             json!({ "source": "web", "q": " parking " }),
         )
-        .await
-        {
-            Err(OpError::Api(ApiError::Unavailable(why))) => {
-                assert!(why.contains("JC_PORTAL_KNOWLEDGE_URL"), "{why}")
-            }
-            other => panic!("a 503, got {other:?}"),
-        }
-        match call(
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unavailable(why))) if why.contains("JC_PORTAL_KNOWLEDGE_URL")),
+            "{answer:?}"
+        );
+        let answer = call(
             op,
             &admin,
             &state,
             "helsinki",
             json!({ "source": "web", "q": "   " }),
         )
-        .await
-        {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/q"),
-            other => panic!("a 422, got {other:?}"),
-        }
-        match (op.run)(
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/q"),
+            "{answer:?}"
+        );
+        let answer = (op.run)(
             &admin,
             &state,
             "helsinki",
             json!({ "source": "web", "q": "" }),
         )
-        .await
-        {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/q"),
-            other => panic!("the body judges its input too, got {other:?}"),
-        }
+        .await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/q"),
+            "{answer:?}"
+        );
     }
 
     #[test]

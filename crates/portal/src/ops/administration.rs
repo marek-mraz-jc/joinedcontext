@@ -544,10 +544,11 @@ mod tests {
         );
         let input: OrganizationInput =
             parse_input(json!({ "aspect": "setup", "limit": 5 })).expect("parses");
-        match read(&caller, &state, input).await {
-            Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/limit"),
-            other => panic!("{other:?}"),
-        }
+        let answer = read(&caller, &state, input).await;
+        assert!(
+            matches!(&answer, Err(OpError::InvalidInput { path, .. }) if *path == "/limit"),
+            "{answer:?}"
+        );
     }
 
     /// T-7098: each aspect takes its own members and needs the ones it cannot go without.

@@ -2484,32 +2484,21 @@ mod tests {
     #[test]
     fn a_revert_is_refused_when_main_moved_or_outside_files_or_nothing_is_left() {
         let one = [create("Endpoint", "air")];
-        match revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one) {
-            Err(OpError::Api(ApiError::Conflict(why))) => {
-                assert!(
-                    why.starts_with("main changed projects/p/a.yaml since change 'c1'"),
-                    "{why}"
-                );
-                assert!(why.contains(PLAN), "{why}");
-            }
-            other => panic!("a 409, got {other:?}"),
-        }
-        match revertible("c1", &[], vec!["README.md".into()], &one) {
-            Err(OpError::Api(ApiError::Unprocessable { detail, errors })) => {
-                assert!(
-                    detail.contains("touched files a plan cannot write"),
-                    "{detail}"
-                );
-                assert_eq!(errors, ["README.md"]);
-            }
-            other => panic!("a 422, got {other:?}"),
-        }
-        match revertible("c1", &[], Vec::new(), &[]) {
-            Err(OpError::Api(ApiError::Conflict(why))) => {
-                assert_eq!(why, "change 'c1' left nothing to revert")
-            }
-            other => panic!("a 409, got {other:?}"),
-        }
+        let answer = revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if why.starts_with("main changed projects/p/a.yaml since change 'c1'") && why.contains(PLAN)),
+            "{answer:?}"
+        );
+        let answer = revertible("c1", &[], vec!["README.md".into()], &one);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unprocessable { detail, errors })) if detail.contains("touched files a plan cannot write") && *errors == ["README.md"]),
+            "{answer:?}"
+        );
+        let answer = revertible("c1", &[], Vec::new(), &[]);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if *why == "change 'c1' left nothing to revert"),
+            "{answer:?}"
+        );
         assert!(revertible("c1", &[], Vec::new(), &one).is_ok());
     }
 
@@ -2585,33 +2574,24 @@ mod tests {
     #[tokio::test]
     async fn a_change_that_is_not_a_merged_portal_change_is_refused() {
         for (row, status) in [(json!({}), 404), (json!({ "Head": "feature/x" }), 200)] {
-            match merged_of(row, status).await {
-                Err(OpError::Api(ApiError::NotFound(why))) => {
-                    assert_eq!(why, "change 'c7' not found in project 'doprava'")
-                }
-                other => panic!("a 404, got {other:?}"),
-            }
+            let answer = merged_of(row, status).await;
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::NotFound(why))) if *why == "change 'c7' not found in project 'doprava'"),
+                "{answer:?}"
+            );
         }
         for row in [json!({ "Merged": false }), json!({ "MergeBase": "" })] {
-            match merged_of(row, 200).await {
-                Err(OpError::Api(ApiError::Conflict(why))) => {
-                    assert!(
-                        why.contains("is not merged") && why.contains("reject it"),
-                        "{why}"
-                    )
-                }
-                other => panic!("a 409, got {other:?}"),
-            }
+            let answer = merged_of(row, 200).await;
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if why.contains("is not merged") && why.contains("reject it")),
+                "{answer:?}"
+            );
         }
-        match merged_of(json!({}), 500).await {
-            Err(OpError::Api(ApiError::Unavailable(why))) => {
-                assert!(
-                    why.starts_with("The Git repository did not answer"),
-                    "{why}"
-                )
-            }
-            other => panic!("the forge's outage, got {other:?}"),
-        }
+        let answer = merged_of(json!({}), 500).await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unavailable(why))) if why.starts_with("The Git repository did not answer")),
+            "{answer:?}"
+        );
     }
 
     async fn empty_forge(open: Option<String>) -> wiremock::MockServer {

@@ -713,6 +713,266 @@ async fn a_client_whose_account_lost_its_workload_is_deleted() {
     assert_eq!(outcomes[0].error, None);
 }
 
+/// The air adapter bound to `env-dept/adapter` with its one Endpoint: the account every
+/// refusal test below converges.
+fn bound_air() -> Mirror {
+    mirror_with(vec![
+        account(
+            "helsinki",
+            "air-adapter",
+            Some(("env-dept", "adapter")),
+            "space-writer",
+        ),
+        endpoint("helsinki", "air-all", "air", SLUG),
+    ])
+}
+
+/// The air adapter after it lost its workload: its managed client is stale.
+fn unbound_air() -> Mirror {
+    mirror_with(vec![account(
+        "helsinki",
+        "air-adapter",
+        None,
+        "space-writer",
+    )])
+}
+
+/// The one error of a converge of [`bound_air`], or "" when it converged.
+async fn air_error(keycloak: &MockServer) -> String {
+    let outcomes = sync(keycloak).converge(&bound_air(), &Bentos::new()).await;
+    outcomes
+        .iter()
+        .find(|o| o.app == "helsinki/air-adapter")
+        .and_then(|o| o.error.clone())
+        .unwrap_or_default()
+}
+
+/// A realm whose listing fails converges nothing and says so once, under `*`.
+#[tokio::test]
+async fn a_realm_whose_listing_fails_converges_nothing_and_says_so() {
+    let keycloak = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/bb/protocol/openid-connect/token"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+        )
+        .mount(&keycloak)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = sync(&keycloak).converge(&bound_air(), &Bentos::new()).await;
+
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(outcomes[0].app, "*");
+    let error = outcomes[0].error.as_deref().unwrap_or_default();
+    assert!(
+        error.starts_with("listing the workload clients: GET"),
+        "{error}"
+    );
+    assert!(error.ends_with("500 Internal Server Error"), "{error}");
+    assert!(wrote(&keycloak).await.is_empty());
+}
+
+/// A managed client the realm answers without its `id` is reported and never written.
+#[tokio::test]
+async fn a_held_client_without_an_id_is_reported_and_never_written() {
+    let mut client = managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter");
+    client.as_object_mut().expect("an object").remove("id");
+    let keycloak = realm(json!([])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([client])).await;
+
+    let error = air_error(&keycloak).await;
+
+    assert_eq!(
+        error,
+        "the realm answered helsinki-air-adapter without an id"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+}
+
+/// A console change the realm refuses to take back is the account's error, and nothing after
+/// the refused write runs.
+#[tokio::test]
+async fn a_refused_write_back_of_a_console_change_is_the_accounts_error() {
+    let mut edited = managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter");
+    edited["clientAuthenticatorType"] = json!("client-secret");
+    let keycloak = realm(json!([edited.clone()])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([edited])).await;
+    Mock::given(method("PUT"))
+        .and(path(format!("{REALM}/clients/uuid-air")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+
+    let error = air_error(&keycloak).await;
+
+    assert_eq!(
+        error, "PUT /clients/uuid-air: 500 Internal Server Error",
+        "the error names the path and status, never a body"
+    );
+    assert_eq!(
+        wrote(&keycloak).await,
+        vec![format!("PUT {REALM}/clients/uuid-air")]
+    );
+}
+
+/// The four ways a new client fails after the lookup: the realm refuses the creation, answers
+/// the created client without an id, cannot find it again, or fails the second lookup.
+#[tokio::test]
+async fn a_new_client_the_realm_refuses_or_loses_is_the_accounts_error() {
+    // Refused: nothing answers POST /clients.
+    let keycloak = realm(json!([])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([])).await;
+    assert_eq!(air_error(&keycloak).await, "POST /clients: 404 Not Found");
+
+    for (second, want) in [
+        (
+            ResponseTemplate::new(200)
+                .set_body_json(json!([{ "clientId": "helsinki-air-adapter" }])),
+            "the realm answered helsinki-air-adapter without an id".to_owned(),
+        ),
+        (
+            ResponseTemplate::new(200).set_body_json(json!([])),
+            "helsinki-air-adapter was created and cannot be read back".to_owned(),
+        ),
+        (
+            ResponseTemplate::new(503),
+            "GET /clients: 503 Service Unavailable".to_owned(),
+        ),
+    ] {
+        let keycloak = realm(json!([])).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "helsinki-air-adapter"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&keycloak)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REALM}/clients")))
+            .and(query_param("clientId", "helsinki-air-adapter"))
+            .respond_with(second)
+            .with_priority(2)
+            .mount(&keycloak)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REALM}/clients")))
+            .respond_with(ResponseTemplate::new(201))
+            .mount(&keycloak)
+            .await;
+
+        assert_eq!(air_error(&keycloak).await, want);
+        assert_eq!(
+            wrote(&keycloak).await,
+            vec![format!("POST {REALM}/clients")]
+        );
+    }
+}
+
+/// A client whose scopes cannot be read, or whose realm lacks the `basic` scope it must carry,
+/// and one whose mappers cannot be read: each is the account's error naming the client.
+#[tokio::test]
+async fn a_client_whose_scopes_or_mappers_fail_is_the_accounts_error() {
+    let client = managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter");
+
+    let keycloak = realm(json!([client.clone()])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([client.clone()])).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-air/default-client-scopes"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+    assert_eq!(
+        air_error(&keycloak).await,
+        "client scopes of helsinki-air-adapter: GET /clients/uuid-air/default-client-scopes: \
+         500 Internal Server Error"
+    );
+
+    let keycloak = realm(json!([client.clone()])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([client.clone()])).await;
+    client_scopes(&keycloak, "uuid-air", json!([]), json!([])).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/client-scopes")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!([{ "id": "s-x", "name": "profile" }])),
+        )
+        .mount(&keycloak)
+        .await;
+    assert_eq!(
+        air_error(&keycloak).await,
+        "client scopes of helsinki-air-adapter: the realm has no client scope basic, so the \
+         account's tokens carry no sub"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+
+    let keycloak = realm(json!([client.clone()])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([client])).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-air/protocol-mappers/models"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&keycloak)
+        .await;
+    let error = air_error(&keycloak).await;
+    assert!(
+        error.starts_with("audiences of helsinki-air-adapter: "),
+        "{error}"
+    );
+    assert!(error.contains("500"), "{error}");
+}
+
+/// A managed client of a gone account that the realm cannot delete, or lists without an id,
+/// stays and is reported.
+#[tokio::test]
+async fn a_stale_client_the_realm_cannot_delete_is_reported() {
+    let keycloak = realm(json!([managed_client(
+        "uuid-air",
+        "helsinki",
+        "air-adapter",
+        "env-dept",
+        "adapter"
+    )]))
+    .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{REALM}/clients/uuid-air")))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+    let outcomes = sync(&keycloak)
+        .converge(&unbound_air(), &Bentos::new())
+        .await;
+    assert_eq!(outcomes.len(), 1, "{outcomes:?}");
+    assert_eq!(
+        outcomes[0].error.as_deref(),
+        Some("DELETE /clients/uuid-air: 500 Internal Server Error")
+    );
+
+    let mut nameless = managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter");
+    nameless.as_object_mut().expect("an object").remove("id");
+    let keycloak = realm(json!([nameless])).await;
+    let outcomes = sync(&keycloak)
+        .converge(&unbound_air(), &Bentos::new())
+        .await;
+    assert_eq!(
+        outcomes[0].error.as_deref(),
+        Some("the realm listed a client without an id"),
+        "{outcomes:?}"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+}
+
 /// The last account dropped from a loaded source: its client goes (a revocation), while before
 /// the source has loaded once (Mirror::hold_removals) it stays and is reported.
 #[tokio::test]
@@ -1994,6 +2254,93 @@ async fn an_unmarked_imported_pipelines_client_is_left_alone_and_the_error_names
         "{outcomes:?}"
     );
     assert!(wrote(&keycloak).await.is_empty());
+}
+
+/// T-6972 refusals: an imported client answered without an id, one whose mappers cannot be
+/// read and one whose new audience the realm refuses each leave the client as imported and name
+/// what failed.
+#[tokio::test]
+async fn an_imported_client_the_realm_fails_on_keeps_its_audiences_and_says_why() {
+    const DOOR: &str = "d4wq6xm2tb7nc3vk5rzh2jyfa6";
+    let mirror = mirror_with(vec![
+        external(
+            "helsinki",
+            "pipelines",
+            json!([{ "kind": "oauth-client", "name": "main" }]),
+        ),
+        endpoint("helsinki", "helsinki-all", "air", SLUG),
+        endpoint("helsinki", "helsinki-all-write", "air", DOOR),
+    ]);
+    let imported = || {
+        let mut imported = desired_external("helsinki", "pipelines", &ClientCredential::Secret);
+        imported["id"] = json!("uuid-imported");
+        imported["attributes"] = json!({ "audiences-managed-by": "joinedcontext" });
+        imported
+    };
+    let error_of = |outcomes: Vec<joinedcontext_portal::reconciler::app_clients::ClientOutcome>| {
+        outcomes
+            .into_iter()
+            .find(|o| o.app == "helsinki/pipelines")
+            .and_then(|o| o.error)
+            .unwrap_or_default()
+    };
+
+    let keycloak = realm(json!([])).await;
+    let mut nameless = imported();
+    nameless.as_object_mut().expect("an object").remove("id");
+    client_lookup(&keycloak, "helsinki-pipelines", json!([nameless])).await;
+    let outcomes = sync(&keycloak)
+        .with_host_runner(true)
+        .converge(&mirror, &Bentos::new())
+        .await;
+    assert_eq!(
+        error_of(outcomes),
+        "the realm answered an imported pipeline client without an id"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+
+    let keycloak = realm(json!([])).await;
+    client_lookup(&keycloak, "helsinki-pipelines", json!([imported()])).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-imported/protocol-mappers/models"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&keycloak)
+        .await;
+    let outcomes = sync(&keycloak)
+        .with_host_runner(true)
+        .converge(&mirror, &Bentos::new())
+        .await;
+    assert_eq!(
+        error_of(outcomes),
+        "audiences of the imported client: GET /clients/uuid-imported/protocol-mappers/models: \
+         500 Internal Server Error"
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+
+    let keycloak = realm(json!([])).await;
+    client_lookup(&keycloak, "helsinki-pipelines", json!([imported()])).await;
+    mappers(&keycloak, "uuid-imported", json!([audience_mapper(SLUG)])).await;
+    Mock::given(method("POST"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-imported/protocol-mappers/models"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&keycloak)
+        .await;
+    let outcomes = sync(&keycloak)
+        .with_host_runner(true)
+        .converge(&mirror, &Bentos::new())
+        .await;
+    assert_eq!(
+        error_of(outcomes),
+        format!(
+            "audience {DOOR} of the imported client: POST \
+             /clients/uuid-imported/protocol-mappers/models: 500 Internal Server Error"
+        )
+    );
 }
 
 /// T-6832: a deleted project's pipeline client goes with it, its tokens revoked by the wave's
