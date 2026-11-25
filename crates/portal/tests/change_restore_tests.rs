@@ -655,3 +655,24 @@ async fn a_change_that_only_removed_files_wrote_no_manifest() {
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["items"], json!([]), "{body}");
 }
+
+/// T-7827: a change that modified only a native file has no manifest to undo, and a file its last
+/// commit no longer holds is left out of its manifests.
+#[tokio::test]
+async fn a_change_that_modified_only_a_native_file_has_no_manifest_to_undo_or_list() {
+    let (shako, state) = world().await;
+    change(
+        &shako,
+        15,
+        pull(15, "portal/update-pipeline-air-ingest-0a1b2c3d", true),
+        json!([{ "Filename": NATIVE, "Status": "modified" }]),
+    )
+    .await;
+    let (status, body) = undo(&state, "restorer", "chg-0000000f").await;
+    assert_eq!(status, 409, "{body}");
+    assert!(detail(&body).contains("modified no manifest"), "{body}");
+    let (status, body) = manifests(&state, "restorer", "chg-0000000f").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["items"], json!([]), "{body}");
+    assert!(writes(&shako).await.is_empty(), "nothing is written");
+}
