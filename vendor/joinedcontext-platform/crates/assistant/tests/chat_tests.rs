@@ -893,7 +893,11 @@ async fn a_superlative_shows_its_entity_and_a_count_no_page_of_the_register() {
 #[tokio::test]
 async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
     let mut d = deployment(Channel::Public, 50_000, 10);
-    d.spec.connectors[0].tools = vec!["query_entities".into(), "query_temporal".into()];
+    d.spec.connectors[0].tools = vec![
+        "list_types".into(),
+        "query_entities".into(),
+        "query_temporal".into(),
+    ];
     let w = world("chatsplit", d).await;
     let mcp = || Mock::given(method("POST")).and(path(format!("/api/endpoint/{SLUG}/mcp")));
     let said = |text: Value| {
@@ -903,6 +907,7 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
     };
     mcp().and(body_string_contains("tools/list"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": [
+            {"name": "list_types", "description": "Lists the entity types.", "inputSchema": {"type": "object"}},
             {"name": "query_entities", "description": "Reads entities.", "inputSchema": {"type": "object", "properties": {
                 "type": {"type": "array", "items": {"type": "string"}, "minItems": 1},
                 "id": {"type": "array", "items": {"type": "string"}},
@@ -915,6 +920,12 @@ async fn a_split_count_reads_every_page_and_a_history_names_its_places() {
                 "timerel": {"type": "string"}, "timeAt": {"type": "string"}}}}
         ]}})))
         .with_priority(1).mount(&w.gateway).await;
+    mcp()
+        .and(body_string_contains("\"list_types\""))
+        .respond_with(said(json!({"entityTypes": {"id": "urn:ngsi-ld:EntityTypeList:1", "type": "EntityTypeList", "typeList": ["Bridge"]}})))
+        .with_priority(1)
+        .mount(&w.gateway)
+        .await;
     let bridge = |name: &str, manager: &str| json!({"id": format!("urn:ngsi-ld:Bridge:{name}"), "type": "Bridge", "name": name, "managerName": manager});
     // The split's pages: the first names a cursor, the second is the last.
     mcp()

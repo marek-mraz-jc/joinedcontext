@@ -235,16 +235,21 @@ pub async fn embed_missing(
             };
             literal.insert(text, entry);
         }
-        for (id, text) in ids.iter().zip(&texts) {
-            match literal.get(text) {
-                Some(Ok(vector)) => {
+        // Every text is in `literal`: the project's own vector or a fresh one.
+        let entries = ids
+            .iter()
+            .zip(&texts)
+            .filter_map(|(id, text)| Some((id, text, literal.get(text)?)));
+        for (id, text, entry) in entries {
+            match entry {
+                Ok(vector) => {
                     sqlx::query("UPDATE chunks SET embedding = $2::vector WHERE id = $1")
                         .bind(id)
                         .bind(vector)
                         .execute(&mut *tx)
                         .await?;
                 }
-                Some(Err(why)) => {
+                Err(why) => {
                     // Its length and id, never its text.
                     tracing::warn!(project, chunk = id, bytes = text.len(), %why, "passage refused by the embedder, not sent again");
                     sqlx::query("UPDATE chunks SET embed_error = $2 WHERE id = $1")
@@ -253,7 +258,6 @@ pub async fn embed_missing(
                         .execute(&mut *tx)
                         .await?;
                 }
-                None => {}
             }
         }
         tx.commit().await?;

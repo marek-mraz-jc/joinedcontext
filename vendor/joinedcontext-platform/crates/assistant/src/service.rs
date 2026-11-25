@@ -132,22 +132,28 @@ pub struct ChatConfig {
 
 /// A service address: scheme and authority only, returned without its last `/`.
 pub fn base(value: &str) -> Result<String, Problem> {
+    checked(value)?;
+    Ok(value.trim_end_matches('/').to_owned())
+}
+
+/// `value` parsed, when it is scheme and authority only (its path `/`).
+fn checked(value: &str) -> Result<url::Url, Problem> {
     let parsed = url::Url::parse(value).map_err(|err| Problem::NotAUrl(err.to_string()))?;
     if parsed.path() != "/" || parsed.query().is_some() {
         return Err(Problem::NotSchemeAndAuthority);
     }
-    Ok(value.trim_end_matches('/').to_owned())
+    Ok(parsed)
 }
 
 /// The public Endpoint origin as the base a `catalogue` page's Endpoint links join onto.
 pub fn endpoint_base(value: &str) -> Result<url::Url, Problem> {
-    url::Url::parse(&format!("{}/", base(value)?)).map_err(|e| Problem::NotAUrl(e.to_string()))
+    checked(value)
 }
 
 /// The chart renderer `https://embed.{domain}` (T-4657): a host that is not `embed.` (or the old `viz.`) of a domain
 /// would leave the maps without their basemap's domain.
 pub fn viz_url(value: &str) -> Result<url::Url, Problem> {
-    let url = url::Url::parse(&base(value)?).map_err(|e| Problem::NotAUrl(e.to_string()))?;
+    let url = checked(value)?;
     match (url.scheme(), crate::chat::viz::domain(&url)) {
         ("https", Some(_)) => Ok(url),
         _ => Err(Problem::NotViz),
@@ -309,6 +315,36 @@ mod tests {
             viz_url: Some("https://viz.dev.city.test".into()),
             reach: None,
         }
+    }
+
+    /// Each setting names its own field; an Endpoint base and a chart renderer are the parsed
+    /// origin with its one `/`.
+    #[test]
+    fn each_setting_names_its_field_and_a_base_parses_once() {
+        let fields = [
+            Setting::GatewayUrl,
+            Setting::ProxyUrl,
+            Setting::FunctionsUrl,
+            Setting::EndpointUrl,
+            Setting::PortalUrl,
+            Setting::VizUrl,
+            Setting::Reach,
+        ]
+        .map(Setting::field);
+        assert_eq!(
+            fields,
+            ["gateway_url", "proxy_url", "functions_url", "endpoint_url", "portal_url", "viz_url", "reach"]
+        );
+        let endpoint = endpoint_base("https://Data.City.test/").expect("an origin");
+        assert_eq!(endpoint.as_str(), "https://data.city.test/");
+        assert_eq!(
+            endpoint_base("https://data.city.test/x"),
+            Err(Problem::NotSchemeAndAuthority)
+        );
+        assert_eq!(
+            viz_url("https://embed.dev.city.test").map(|u| u.to_string()),
+            Ok("https://embed.dev.city.test/".to_owned())
+        );
     }
 
     #[test]
