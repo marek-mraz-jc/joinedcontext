@@ -110,6 +110,8 @@ pub mod telemetry;
 pub mod temporal_audit;
 #[cfg(test)]
 mod test_log;
+#[cfg(test)]
+mod test_db;
 pub mod tools;
 
 /// Name reported by `/api/v1/health` and the process banner.
