@@ -213,6 +213,11 @@ struct Inner {
     contexts: BTreeMap<String, Value>,
 }
 
+/// The text of a redb error, as the boot and the shadow report it.
+fn text(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
 impl Store {
     /// Open (or create) the `file`-mode store: redb at `dir/antares.redb`,
     /// format-checked, in-memory maps rebuilt from the file.
@@ -233,12 +238,9 @@ impl Store {
         // Format marker. Absent marker + existing data = a file this
         // binary cannot vouch for; refuse rather than guess.
         let stored_format = {
-            let rt = db.begin_read().map_err(|e| e.to_string())?;
+            let rt = db.begin_read().map_err(text)?;
             match rt.open_table(T_META) {
-                Ok(t) => t
-                    .get("format")
-                    .map_err(|e| e.to_string())?
-                    .map(|v| v.value().to_owned()),
+                Ok(t) => t.get("format").map_err(text)?.map(|v| v.value().to_owned()),
                 Err(::redb::TableError::TableDoesNotExist(_)) => None,
                 Err(e) => return Err(e.to_string()),
             }
@@ -252,7 +254,7 @@ impl Store {
                 ));
             }
             None => {
-                let rt = db.begin_read().map_err(|e| e.to_string())?;
+                let rt = db.begin_read().map_err(text)?;
                 for kind in ALL_KINDS {
                     // Absent = nothing stored under that kind. Any other
                     // error is a table this binary cannot read, and reading
@@ -263,28 +265,26 @@ impl Store {
                         Err(::redb::TableError::TableDoesNotExist(_)) => continue,
                         Err(e) => return Err(e.to_string()),
                     };
-                    if t.len().map_err(|e| e.to_string())? > 0 {
+                    if t.len().map_err(text)? > 0 {
                         return Err(format!(
                             "data file {label} holds data but no format marker — refusing to start"
                         ));
                     }
                 }
                 drop(rt);
-                let mut tx = db.begin_write().map_err(|e| e.to_string())?;
-                tx.set_durability(Durability::Immediate)
-                    .map_err(|e| e.to_string())?;
+                let mut tx = db.begin_write().map_err(text)?;
+                tx.set_durability(Durability::Immediate).map_err(text)?;
                 {
-                    let mut t = tx.open_table(T_META).map_err(|e| e.to_string())?;
-                    t.insert("format", FORMAT_VERSION)
-                        .map_err(|e| e.to_string())?;
+                    let mut t = tx.open_table(T_META).map_err(text)?;
+                    t.insert("format", FORMAT_VERSION).map_err(text)?;
                 }
-                tx.commit().map_err(|e| e.to_string())?;
+                tx.commit().map_err(text)?;
             }
         }
 
         // Boot rebuild — scan every table into the in-memory maps.
         let mut inner = Inner::default();
-        let rt = db.begin_read().map_err(|e| e.to_string())?;
+        let rt = db.begin_read().map_err(text)?;
         for kind in ALL_KINDS {
             let table = match rt.open_table(table_for(kind)) {
                 Ok(t) => t,
@@ -303,8 +303,8 @@ impl Store {
                 Kind::DeadLetter => &mut inner.dead_letters,
                 Kind::View => &mut inner.views,
             };
-            for row in ::redb::ReadableTable::iter(&table).map_err(|e| e.to_string())? {
-                let (k, v) = row.map_err(|e| e.to_string())?;
+            for row in ::redb::ReadableTable::iter(&table).map_err(text)? {
+                let (k, v) = row.map_err(text)?;
                 let (tenant, id) = split_key(k.value())
                     .ok_or_else(|| format!("undecodable key in table {kind:?}"))?;
                 let doc: Value = serde_json::from_slice(v.value())
@@ -322,8 +322,8 @@ impl Store {
             Err(e) => return Err(e.to_string()),
         };
         if let Some(t) = contexts {
-            for row in ::redb::ReadableTable::iter(&t).map_err(|e| e.to_string())? {
-                let (k, v) = row.map_err(|e| e.to_string())?;
+            for row in ::redb::ReadableTable::iter(&t).map_err(text)? {
+                let (k, v) = row.map_err(text)?;
                 let id = String::from_utf8(k.value().to_vec())
                     .map_err(|e| format!("undecodable context id: {e}"))?;
                 let doc: Value = serde_json::from_slice(v.value())
