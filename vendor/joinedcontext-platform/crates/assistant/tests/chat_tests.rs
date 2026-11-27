@@ -5749,9 +5749,19 @@ async fn the_tenth_tool_call_is_the_last_and_the_answer_comes_from_what_was_read
     );
     // 1 (the router's) + 4 + 3 new + 1: the repeat was not sent, the eleventh call not either.
     assert_eq!(tool_calls_of(&w.gateway, "query_entities").await.len(), 9);
-    // The judge runs beside the loop and can reach the proxy after `answer` (ci 45540034516).
+    // The judge runs beside the loop and can reach the proxy after `answer` (ci 45540034516),
+    // and only when the first search beats the router: a router that answers first turns the
+    // judgement off (`judging`), so it is sent at most once (ci 46006879955, 46007862034).
     let calls = model_calls_settled(&w.proxy, 6).await;
-    assert_eq!(calls.len(), 6, "router, judge and four loop calls");
+    assert_eq!(
+        calls_of(&calls, Some(ROUTER)).len(),
+        1,
+        "one router call: {calls:?}"
+    );
+    assert!(
+        calls_of(&calls, Some(JUDGE)).len() <= 1,
+        "at most one judgement: {calls:?}"
+    );
     // The loop's own calls, wherever the judge's landed among them.
     let looped = calls_of(&calls, None);
     assert_eq!(looped.len(), 4, "four loop calls");
