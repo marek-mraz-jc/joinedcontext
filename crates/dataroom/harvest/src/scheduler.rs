@@ -225,14 +225,22 @@ impl HarvestScheduler {
     /// source ([`Self::run_all`]).
     /// ponytail: one run per source per start; a crash loop harvests each time it starts.
     pub fn spawn(self) -> tokio::task::JoinHandle<()> {
+        self.spawn_with_clock(TimestampTz::now)
+    }
+
+    /// [`Self::spawn`] reading the time from `now` (a test steps it a minute at a time).
+    pub fn spawn_with_clock<C>(self, now: C) -> tokio::task::JoinHandle<()>
+    where
+        C: Fn() -> TimestampTz + Send + 'static,
+    {
         let me = Arc::new(self);
         tokio::spawn(async move {
             let mut first = true;
             let mut last = None;
             loop {
-                let into_minute = u64::from(TimestampTz::now().utc().second().unsigned_abs());
+                let into_minute = u64::from(now().utc().second().unsigned_abs());
                 tokio::time::sleep(Duration::from_secs(60 - into_minute)).await;
-                let (me, minute) = (me.clone(), TimestampTz::now());
+                let (me, minute) = (me.clone(), now());
                 if !new_minute(&mut last, minute) {
                     continue;
                 }
