@@ -115,6 +115,28 @@ describe("what is always written", () => {
     expect(document.title).toBe("Brno Context");
   });
 
+  it("the_favicon_link_points_at_the_portal_icon_only_when_the_brand_has_one", () => {
+    const link = document.createElement("link");
+    link.rel = "shortcut icon";
+    link.href = "/favicon.svg";
+    document.head.append(link);
+    try {
+      apply({ favicon: "" });
+      expect(link.getAttribute("href")).toBe("/favicon.svg");
+      apply({ favicon: "data:image/png;base64,AA==" });
+      // The icon is served by the Portal; the brand's own value never becomes the address.
+      expect(link.getAttribute("href")).toBe("/api/v1/branding/favicon");
+    } finally {
+      link.remove();
+    }
+  });
+
+  it("a_brand_with_a_favicon_and_a_page_without_an_icon_link_changes_nothing", () => {
+    document.head.querySelectorAll("link[rel~='icon']").forEach((one) => one.remove());
+    expect(() => apply({ favicon: "data:image/png;base64,AA==" })).not.toThrow();
+    expect(document.head.querySelector("link[rel~='icon']")).toBeNull();
+  });
+
   it("a_branding_with_nothing_in_it_leaves_every_token_at_its_default", () => {
     const style = apply({});
     for (const token of [

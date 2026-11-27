@@ -3,8 +3,9 @@ import { useFormRoute, useOpenFromAddress } from "../../components/forms/FormRou
 import { RecordLink } from "../../components/RecordLink";
 import { endpointView } from "../../components/ui/safeHref";
 export { endpointView };
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -62,11 +63,32 @@ export interface DataSourceEnvelope {
   spec: Record<string, unknown>;
 }
 
+/** Whether two secret references name the same key of the same secret under the same variable. */
+function sameRef(held: SecretRefValue | undefined, next: SecretRefValue): boolean {
+  return held !== undefined && held.name === next.name && held.key === next.key && held.envVar === next.envVar;
+}
+
+/** The runner input with its YAML fields read; one that does not parse throws, or stays text when `asTyped`. */
+function parsedOrTyped(input: Record<string, unknown>, yamlPaths: Set<string>, asTyped: boolean): unknown {
+  try {
+    return parseYamlStrings(input, yamlPaths);
+  } catch (err) {
+    if (asTyped && err instanceof YamlFieldError) return input;
+    throw err;
+  }
+}
+
+/**
+ * The manifest a form describes. `asTyped` keeps a runner field whose YAML does not parse as the
+ * text typed, for the draft and the YAML view while the person is still typing; the check and the
+ * proposal read it strictly and refuse it, naming the field.
+ */
 export function toEnvelope(
   project: string,
   type: DataSourceType,
   form: DataSourceForm,
-  inputDef?: CatalogInput
+  inputDef?: CatalogInput,
+  asTyped = false
 ): DataSourceEnvelope {
   if (isTypedDataSource(type)) {
     const { name, title, ...connection } = form;
@@ -90,7 +112,7 @@ export function toEnvelope(
       : { ...connection };
   delete rawInput.input;
 
-  const parsedInput = parseYamlStrings(rawInput, yamlPathsOf(inputDef));
+  const parsedInput = parsedOrTyped(rawInput, yamlPathsOf(inputDef), asTyped);
   const cleanedInput = prune(parsedInput) as Record<string, unknown>;
 
   const usedEnvVars = new Set<string>();
@@ -337,9 +359,11 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
   // Bento's summaries link their client libraries in markdown; the form shows the words (T-7093).
   const selectedSummary = runnerCatalogInput ? runnerFieldHelp(runnerCatalogInput.summary) : undefined;
 
-  const handleSecretRef = (envVar: string, ref: SecretRefValue) => {
-    setCollectedSecrets((prev) => ({ ...prev, [envVar]: ref }));
-  };
+  // Stable, and a reference already held changes nothing: the picker calls this from an effect
+  // that runs again whenever it changes, so a new function or a new map each time looped for ever.
+  const handleSecretRef = useCallback((envVar: string, ref: SecretRefValue) => {
+    setCollectedSecrets((prev) => (sameRef(prev[envVar], ref) ? prev : { ...prev, [envVar]: ref }));
+  }, []);
 
   const validateForm = (form: DataSourceForm): boolean => {
     try {
@@ -596,7 +620,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
     {
       key: "actions",
       label: t("datasources.edit"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       // Edit in the open, the rest in the row's menu (T-2287).
@@ -716,6 +740,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
             // With the runner's field tree, as the check and the proposal build it: without it a
             // map typed on one line (`Accept: text/csv`) stayed a string in the draft and the YAML
             // view, and the draft is what a proposal carries (T-3088).
+            // Drawn on every keystroke: a YAML field half typed stays text here, never a crash.
             toManifest: (form) =>
               toEnvelope(
                 project,
@@ -725,6 +750,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
                   secrets: Object.values(collectedSecrets),
                 },
                 runnerCatalogInput,
+                true,
               ),
             // A draft or YAML read back declares its own type, and the form follows it: a
             // `?draft=` of an HTTP source must not open in the page's first type's form.

@@ -9,8 +9,10 @@ import {
   Outlet,
   redirect,
   useChildMatches,
+  useParams,
   useRouteContext,
   useNavigate,
+  useSearch,
 } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 import { lastProject, usePreferredProject, useProjects } from "./api/projects";
@@ -20,7 +22,7 @@ import { PublicFrame } from "./components/layout/PublicFrame";
 import { MemberFrame } from "./components/layout/MemberFrame";
 import { isHiddenSection } from "./components/layout/navigation";
 import { useHiddenSections } from "./branding";
-import { Alert, EmptyState, PageFailed, PageLoading } from "./components/ui";
+import { Alert, PageFailed, PageLoading } from "./components/ui";
 import { ChunkFailed, ErrorPage, errorReference, isChunkLoadError } from "./components/ErrorBoundary";
 import { NotFoundState } from "./components/NotFoundState";
 import { LoginPage } from "./routes/LoginPage";
@@ -139,8 +141,8 @@ function Bare({ children }: { children: React.ReactNode }): React.JSX.Element {
 }
 
 /**
- * What a route without a `$project` shows while the project list is on its way, when the read
- * fails, and when the repository holds none (PF-05).
+ * What a route without a `$project` shows while the project list is on its way and when the read
+ * fails (PF-05); a list that was read never comes here, each caller draws its own page for it.
  *
  * The three were two: a list that came back 403, or did not come back at all, is not a pending
  * list, so it fell through to "the repository holds no project" — the Portal telling somebody
@@ -150,7 +152,7 @@ function Bare({ children }: { children: React.ReactNode }): React.JSX.Element {
 function NoProject({
   projects,
 }: {
-  projects: Pick<ReturnType<typeof useProjects>, "isPending" | "isError" | "error" | "errorUpdateCount" | "refetch">;
+  projects: Pick<ReturnType<typeof useProjects>, "isPending" | "error" | "errorUpdateCount" | "refetch">;
 }): React.JSX.Element {
   const { t } = useTranslation();
   // When the list failed, the project last worked in keeps the shell: the navigation, the
@@ -174,30 +176,20 @@ function NoProject({
       </Bare>
     );
   }
-  if (projects.isError) {
-    const failed = (
-      <PageFailed
-        error={projects.error}
-        onRetry={() => {
-          void projects.refetch();
-        }}
-      />
-    );
-    return last ? (
-      <Shell project={last}>{failed}</Shell>
-    ) : (
-      <Bare>
-        <div className="w-full max-w-lg">{failed}</div>
-      </Bare>
-    );
-  }
-  return (
+  // Every caller draws its page once the list is read, so what is left is a failed read.
+  const failed = (
+    <PageFailed
+      error={projects.error}
+      onRetry={() => {
+        void projects.refetch();
+      }}
+    />
+  );
+  return last ? (
+    <Shell project={last}>{failed}</Shell>
+  ) : (
     <Bare>
-      <EmptyState
-        icon="spaces"
-        title={t("projects.empty.title")}
-        description={t("projects.empty.description")}
-      />
+      <div className="w-full max-w-lg">{failed}</div>
     </Bare>
   );
 }
@@ -845,11 +837,7 @@ const projectSettingsTabRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/projects/$project/settings/$tab",
   validateSearch: settingsSearch,
-  component: function ProjectSettingsTabRoute() {
-    const { project, tab } = projectSettingsTabRoute.useParams();
-    const { endpoint } = projectSettingsTabRoute.useSearch();
-    return <ProjectSettingsView project={project} tab={tab} form={null} endpoint={endpoint} />;
-  },
+  component: ProjectSettingsRoute,
 });
 
 /** A tab's form as a page of its own: `…/new`, `…/{name}/edit` (T-2474, UI-27). */
@@ -857,18 +845,24 @@ const projectSettingsFormRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/projects/$project/settings/$tab/$",
   validateSearch: settingsSearch,
-  component: function ProjectSettingsFormRoute() {
-    const { project, tab, _splat: rest = "" } = projectSettingsFormRoute.useParams();
-    const { endpoint } = projectSettingsFormRoute.useSearch();
-    // The splat matches an empty rest too, and the router may pick it for the tab's own address.
-    const form = formOfRest(rest);
-    return rest === "" || form !== null ? (
-      <ProjectSettingsView project={project} tab={tab} form={form} endpoint={endpoint} />
-    ) : (
-      <NotFound />
-    );
-  },
+  component: ProjectSettingsRoute,
 });
+
+/**
+ * A settings tab or one of its forms. The splat route matches an empty rest too and the router
+ * picks it for the tab's own address, so both routes draw this one component; links still name
+ * the tab route.
+ */
+function ProjectSettingsRoute(): React.JSX.Element {
+  const { project, tab, _splat: rest = "" } = useParams({ strict: false }) as { project: string; tab: string; _splat?: string };
+  const { endpoint } = useSearch({ strict: false }) as { endpoint?: string };
+  const form = formOfRest(rest);
+  return rest === "" || form !== null ? (
+    <ProjectSettingsView project={project} tab={tab} form={form} endpoint={endpoint} />
+  ) : (
+    <NotFound />
+  );
+}
 
 /** `/organization` opens on its first tab (Architecture/09 §14.1). */
 const organizationRoute = createRoute({
@@ -939,33 +933,33 @@ function OrganizationView({ tab, form }: { tab: string; form: FormTarget | null 
 const organizationTabRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/organization/$tab",
-  component: function OrganizationTabRoute() {
-    const { tab } = organizationTabRoute.useParams();
-    return <OrganizationView tab={tab} form={null} />;
-  },
+  component: OrganizationRoute,
 });
 
 /** A tab's form as a page of its own: `…/new`, `…/{name}/edit` (T-2474, UI-27). */
 const organizationFormRoute = createRoute({
   getParentRoute: () => protectedRoute,
   path: "/organization/$tab/$",
-  component: function OrganizationFormRoute() {
-    const { tab, _splat: rest = "" } = organizationFormRoute.useParams();
-    const group = tab === "groups" ? groupOfRest(rest) : null;
-    if (group !== null) {
-      return <OrganizationGroupView name={group} />;
-    }
-    const person = tab === "people" ? groupOfRest(rest) : null;
-    if (person !== null) {
-      return <OrganizationPersonView id={person} />;
-    }
-    if (tab === "agents" && rest !== "") {
-      return <OrganizationAgentView path={rest} />;
-    }
-    const form = formOfRest(rest);
-    return rest === "" || form !== null ? <OrganizationView tab={tab} form={form} /> : <NotFound />;
-  },
+  component: OrganizationRoute,
 });
+
+/** An Organization tab, one of its forms or one record; as in settings, both routes draw it. */
+function OrganizationRoute(): React.JSX.Element {
+  const { tab, _splat: rest = "" } = useParams({ strict: false }) as { tab: string; _splat?: string };
+  const group = tab === "groups" ? groupOfRest(rest) : null;
+  if (group !== null) {
+    return <OrganizationGroupView name={group} />;
+  }
+  const person = tab === "people" ? groupOfRest(rest) : null;
+  if (person !== null) {
+    return <OrganizationPersonView id={person} />;
+  }
+  if (tab === "agents" && rest !== "") {
+    return <OrganizationAgentView path={rest} />;
+  }
+  const form = formOfRest(rest);
+  return rest === "" || form !== null ? <OrganizationView tab={tab} form={form} /> : <NotFound />;
+}
 
 /**
  * The Portals area (ODP-15, T-6875): an Organization's open data portals, with its own route tree
@@ -1613,29 +1607,23 @@ function DetailPage({
   );
 }
 
-/** Rendered by the section: the children only name which of its views the address asks for. */
-function Nothing(): null {
-  return null;
-}
-
+// The section's child routes draw nothing of their own: they only name which of its views the
+// address asks for, and the section reads them through useChildMatches.
 const sectionIndexRoute = createRoute({
   getParentRoute: () => sectionRoute,
   path: "/",
-  component: Nothing,
 });
 
 /** A kind's create form, at `/projects/{project}/{plural}/new` (T-2474). */
 const sectionNewRoute = createRoute({
   getParentRoute: () => sectionRoute,
   path: "new",
-  component: Nothing,
 });
 
 /** One resource's edit form, at `/projects/{project}/{plural}/{name}/edit` (T-2474). */
 const sectionEditRoute = createRoute({
   getParentRoute: () => sectionRoute,
   path: "$name/edit",
-  component: Nothing,
 });
 
 /**
@@ -1656,7 +1644,6 @@ const sectionDetailRoute = createRoute({
       throw notFound({ routeId: rootRoute.id });
     }
   },
-  component: Nothing,
 });
 
 /** A published App inside the Portal, at `/projects/{project}/apps/{name}/open` (AP-122). */
@@ -1668,7 +1655,6 @@ const sectionOpenRoute = createRoute({
       throw notFound({ routeId: rootRoute.id });
     }
   },
-  component: Nothing,
 });
 
 /**

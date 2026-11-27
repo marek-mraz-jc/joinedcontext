@@ -108,12 +108,13 @@ export function ApprovalDetailPage({
       query.state.data?.status.phase === "Deploying" ? 5_000 : false,
   });
 
-  const proposal = detailQuery.data;
+  // Read before the guards below, so still optional: the phase banner and the standing need it.
+  const read = detailQuery.data;
 
   // What the approval did, said once the phase moves while the page is open (T-1386): the page
   // polls through Deploying, so the move to Applied is seen here too.
   const [banner, setBanner] = useState<"deploying" | "live" | null>(null);
-  const phase = proposal?.status.phase;
+  const phase = read?.status.phase;
   const [seenPhase, setSeenPhase] = useState(phase);
   if (phase !== seenPhase) {
     setSeenPhase(phase);
@@ -121,15 +122,15 @@ export function ApprovalDetailPage({
     else if (seenPhase !== undefined && phase === "Applied") setBanner("live");
   }
 
-  const isRedLane = proposal?.status.lane === "red";
-  const expectedName = proposal ? expectedNameOf(proposal) : "";
+  const isRedLane = read?.status.lane === "red";
+  const expectedName = read ? expectedNameOf(read) : "";
   const confirmMatches = !isRedLane || confirmInput.trim() === expectedName;
 
   // Approve on the change's kind, and on someone else's change unless the caller administers
   // that kind (PF-50, PF-58); the API checks the same.
   const approvalMode = useApprovalMode({ project });
-  const standing = proposal
-    ? approvalStanding(permissions, identity?.email ?? undefined, proposal, approvalMode.data?.singlePerson === true)
+  const standing = read
+    ? approvalStanding(permissions, identity?.email ?? undefined, read, approvalMode.data?.singlePerson === true)
     : { block: null, ownAsAdministrator: false };
   const decision = useDecision(project, id);
   const disabledReason = standing.block
@@ -168,11 +169,8 @@ export function ApprovalDetailPage({
     );
   }
 
-  // `proposal` was read before the guards above, so TypeScript still has it as optional here.
-  // A settled, non-error query always carries data; this is the check that says so.
-  if (!proposal) {
-    return <ChangeSkeleton label={t("app.loading")} />;
-  }
+  // Past the pending and failed reads the query itself says the change is there.
+  const proposal = detailQuery.data;
 
   const isMutating = approveMutation.isPending || rejectMutation.isPending;
   const isPendingApproval = proposal.status.phase === "PendingApproval";

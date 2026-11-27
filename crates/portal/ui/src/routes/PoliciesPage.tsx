@@ -19,6 +19,7 @@ import { ChangeNotice } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
 import { AdminGrid } from "../components/grid/AdminGrid";
+import { noText } from "../components/grid/noText";
 import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { hasPolicyRules, POLICY_RULE_MEMBERS, policySchema, policyUiSchema } from "../schemas/kinds";
@@ -298,7 +299,7 @@ export function PoliciesPage({ project, edit }: { project: string; edit?: string
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (policy) => {

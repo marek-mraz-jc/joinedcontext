@@ -166,8 +166,11 @@ const localId = (expression: string) => `${expression}.string().re_replace_all("
 /** The time format of an attribute the `date` transform writes. */
 const timeLayout = (attribute: Attribute) => (attribute.format === "date" ? "2006-01-02" : "2006-01-02T15:04:05Z");
 
+/** A transform that rewrites the value; `default` is the fallback around them all, not one of them. */
+type Rewrite = Exclude<Transform, { op: "default" }>;
+
 /** One transform applied to `expression`. */
-function transformed(expression: string, transform: Transform, attribute: Attribute): string {
+function transformed(expression: string, transform: Rewrite, attribute: Attribute): string {
   switch (transform.op) {
     case "trim":
       return `${expression}.string().trim()`;
@@ -183,8 +186,6 @@ function transformed(expression: string, transform: Transform, attribute: Attrib
       const cases = Object.entries(transform.table).map(([from, to]) => `${JSON.stringify(from)} => ${JSON.stringify(to)}`);
       return cases.length === 0 ? expression : `match ${expression}.string() { ${[...cases, "_ => this"].join(", ")} }`;
     }
-    case "default":
-      return expression;
   }
 }
 
@@ -217,7 +218,7 @@ const toWgs84 = (expression: string, crs: string | undefined) =>
 function valueOf(source: Source, attribute: Attribute, space: string): string {
   if ("field" in source) {
     const path = fieldPath(source.field);
-    const steps = (source.transforms ?? []).filter((transform) => transform.op !== "default");
+    const steps = (source.transforms ?? []).filter((transform): transform is Rewrite => transform.op !== "default");
     const fallback = source.transforms?.find((transform) => transform.op === "default");
     if (steps.length === 0 && !fallback) {
       const read = coerced(path, attribute);

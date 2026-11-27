@@ -13,6 +13,7 @@ import { ChangeNotice } from "../components/ChangeNotice";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import { ResourceFormDialog } from "../components/ResourceFormDialog";
 import { AdminGrid } from "../components/grid/AdminGrid";
+import { noText } from "../components/grid/noText";
 import type { DataColumn } from "../components/grid/AdminGrid";
 import { ResourceRowActions } from "../components/ResourceRowActions";
 import { REGISTRATION_TARGETS, registrationSchema, registrationUiSchema } from "../schemas/kinds";
@@ -292,7 +293,7 @@ export function RegistrationsPage({ project, edit }: { project: string; edit?: s
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (registration) => {

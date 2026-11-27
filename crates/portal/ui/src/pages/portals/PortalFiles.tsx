@@ -213,7 +213,7 @@ export function PortalFilesTab({ name, spec }: { name: string; spec: PortalSpec 
         searchLabel={t("grid.searchIn", { list: t("portals.files.caption") })}
         rows={items}
         rowKey={(f) => f.id}
-        query={{ isPending: false, isError: false, error: null, refetch: () => void files.refetch() }}
+        query={{ isPending: false, isError: false, error: null }}
         name={{
           id: "name",
           label: t("portals.files.name"),

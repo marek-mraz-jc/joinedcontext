@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { reasonOf } from "../../api/client";
 import { useIdentity } from "../../auth/AuthProvider";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import { Alert, Badge, Button } from "../../components/ui";
 import { decideChange, operatorChanges, operatorKeys, useOrganizationTitles, when } from "./operatorApi";
 import type { OperatorChange } from "./operatorApi";
@@ -98,7 +99,7 @@ export function OperatorChanges(): JSX.Element {
             key: "actions",
             label: t("operator.changes.actions"),
             actions: true,
-            text: () => "",
+            text: noText,
             cell: (row) =>
               row.state !== "proposed" ? null : (
                 <span className="flex flex-wrap items-center gap-2">

@@ -18,6 +18,7 @@ import type { components } from "../../api/schema";
 import { localized } from "../../api/manifest";
 import { Badge } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import { fieldWord, useFieldWords } from "../../components/entities/fieldTypes";
 import { classSlots, isAnyClass, unitCode, valueClasses } from "./linkml";
 import type { LinkmlModel, LinkmlSlot } from "./linkml";
@@ -217,7 +218,7 @@ export function ModelFields({ project, model, space }: { project: string; model:
                     key: "query",
                     label: t("models.fields.query"),
                     actions: true,
-                    text: () => "",
+                    text: noText,
                     cell: (slot) =>
                       space !== undefined ? (
                         <Link

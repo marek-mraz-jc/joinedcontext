@@ -266,7 +266,7 @@ export function AssistantDock({
     }
   }, [layout]);
   const full = layout === "full";
-  const wide = useSyncExternalStore(onWideChange, isWide, () => false);
+  const wide = useSyncExternalStore(onWideChange, isWide);
   const [listOpen, setListOpen] = useState(true);
   const [panelOpen, setPanelOpen] = useState(true);
   // A run remembered after mount (the run page, the Assistant page, a started conversation)

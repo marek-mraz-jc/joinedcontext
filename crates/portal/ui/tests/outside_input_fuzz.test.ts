@@ -10,6 +10,7 @@ import JCRender from "../src/generated/assistantRender";
 import type { Block, Inline } from "../src/generated/assistantRender";
 import { topicProblem } from "../src/pages/mqttbrokers/brokerDraft";
 import { parsePublicKey } from "../src/pages/mqttbrokers/devices";
+import { EMPTY_MODEL, parseModel } from "../src/pages/models/linkml";
 
 /** mulberry32: a small seeded generator, so every run draws the same inputs. */
 function random(seed: number): () => number {
@@ -129,6 +130,35 @@ const MEMBERS: [string, unknown[]][] = [
   ["k", ["c2VjcmV0"]],
   ["p", ["q"]],
 ];
+
+const YAML = [
+  "id: ", "name: ", "classes:", "slots:", "enums:", "attributes:", "is_a: ", "range: ", "mixins:", "imports:", "prefixes:",
+  "permissible_values:", "required: true", "multivalued: [", "{", "}", "[", "]", "- ", ": ", "&a ", "*a", "!!str ", "? ",
+  "'", '"', "#", "|", ">", "\n", "\n  ", "\n    ", "\t", "x", "Air", "7", "null", "~", "true", "\u0000", "\ufeff", "---\n", "...",
+];
+
+describe("fuzz: an uploaded or pasted LinkML model", () => {
+  it("never throws: a source that does not read is the empty model, never an exception", () => {
+    const next = random(SEED + 3);
+    for (let run = 0; run < RUNS; run += 1) {
+      const source = text(next, YAML, 60);
+      let model: ReturnType<typeof parseModel> | undefined;
+      expect(() => {
+        model = parseModel(source);
+      }, JSON.stringify(source)).not.toThrow();
+      expect(Array.isArray(model?.classes), JSON.stringify(source)).toBe(true);
+    }
+  });
+
+  it("reads a billion-laughs document and a non-mapping root as the empty model", () => {
+    const laughs = ["a: &a [x, x]", ...Array.from({ length: 12 }, (_, i) => `${String.fromCharCode(98 + i)}: &${String.fromCharCode(98 + i)} [*${String.fromCharCode(97 + i)}, *${String.fromCharCode(97 + i)}]`)].join("\n");
+    expect(parseModel(laughs)).toBe(EMPTY_MODEL);
+    expect(parseModel("classes: [")).toBe(EMPTY_MODEL);
+    expect(() => parseModel("- just\n- a list")).not.toThrow();
+    expect(() => parseModel("42")).not.toThrow();
+    expect(() => parseModel("classes: 5\nslots: x\nenums: [1, 2]")).not.toThrow();
+  });
+});
 
 describe("fuzz: a pasted device key", () => {
   it("never throws, never takes a private member, and gives only P-256/ES256 or RSA/RS256 signing keys", async () => {

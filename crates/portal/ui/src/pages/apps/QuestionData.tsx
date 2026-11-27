@@ -90,13 +90,11 @@ export function QuestionData({
     onAnswer({ file: { name: sheetFileName(name, sheets, sheet), format: "csv", text } });
   };
 
-  const take = async (file: File): Promise<void> => {
-    if (!input.file) {
-      return;
-    }
+  const fileInput = input.file;
+  const take = async (file: File, accepted: NonNullable<QuestionInput["file"]>): Promise<void> => {
     const format = formatOf(file.name);
-    if (!input.file.accept.includes(format)) {
-      setProblem(t("agentRun.question.file.wrongType", { formats: input.file.accept.join(", ") }));
+    if (!accepted.accept.includes(format)) {
+      setProblem(t("agentRun.question.file.wrongType", { formats: accepted.accept.join(", ") }));
       return;
     }
     if (format === "xlsx") {
@@ -106,7 +104,7 @@ export function QuestionData({
         if (!only) {
           setProblem(t("agentRun.question.file.empty"));
         } else if (more.length === 0) {
-          sendSheet(file.name, sheets, only, input.file.maxBytes);
+          sendSheet(file.name, sheets, only, accepted.maxBytes);
         } else {
           setProblem(null);
           setBook({ name: file.name, sheets, sheet: only.name });
@@ -116,7 +114,7 @@ export function QuestionData({
       }
       return;
     }
-    if (file.size === 0 || file.size > input.file.maxBytes) {
+    if (file.size === 0 || file.size > accepted.maxBytes) {
       setProblem(file.size === 0 ? t("agentRun.question.file.empty") : t("agentRun.question.file.tooLarge", { kilobytes }));
       return;
     }
@@ -135,15 +133,15 @@ export function QuestionData({
 
   return (
     <div className="mt-3 flex flex-col gap-3" data-testid="question-data">
-      {input.file ? (
+      {fileInput ? (
         <FileDropZone
           label={t("agentRun.question.file.label")}
           button={t("agentRun.question.file.button")}
-          hint={t("agentRun.question.file.hint", { formats: input.file.accept.join(", "), kilobytes })}
-          accept={input.file.accept.map((format) => `.${format}`).join(",")}
+          hint={t("agentRun.question.file.hint", { formats: fileInput.accept.join(", "), kilobytes })}
+          accept={fileInput.accept.map((format) => `.${format}`).join(",")}
           onFiles={(files) => {
             if (!disabled && files[0]) {
-              void take(files[0]);
+              void take(files[0], fileInput);
             }
           }}
         >

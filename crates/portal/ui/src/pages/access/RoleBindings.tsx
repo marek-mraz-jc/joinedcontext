@@ -10,6 +10,7 @@ import { takePrefill } from "../../assistant/state";
 import { ChangeNotice } from "../../components/ChangeNotice";
 import { DeleteResourceAction } from "../../components/DeleteResourceDialog";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { FormRecordLink } from "../../components/RecordLink";
 import { EditResourceAction } from "../../components/EditResourceDialog";
@@ -208,11 +209,8 @@ export function GrantRoleDialog({
     propose.reset();
     onOpenChange(false);
   };
-  const close = (next: boolean) => {
-    if (next) {
-      onOpenChange(true);
-      return;
-    }
+  // The frame has no trigger: it only ever asks to close (Radix opens a Dialog only from one).
+  const close = () => {
     // Escape and the header's close arrive here too, so the question stands in the way of
     // every way out of the dialog (UI-47).
     if (change === null && typed) {
@@ -276,10 +274,10 @@ export function GrantRoleDialog({
       closeLabel={t("resourceDelete.close")}
       footer={
         change || refused ? (
-          <Button onClick={() => close(false)}>{t("resourceDelete.close")}</Button>
+          <Button onClick={close}>{t("resourceDelete.close")}</Button>
         ) : (
           <>
-            <Button variant="secondary" onClick={() => close(false)}>
+            <Button variant="secondary" onClick={close}>
               {t("form.cancel")}
             </Button>
             <PermissionGuard project={ORG_NAMESPACE} kind="RoleBinding" verb="propose">
@@ -611,7 +609,7 @@ export function RoleBindings({
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (binding) => {
