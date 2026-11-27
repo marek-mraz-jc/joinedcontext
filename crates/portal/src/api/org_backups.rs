@@ -1703,6 +1703,13 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A backup store that cannot be reached is a 503 that says why.
+    #[test]
+    fn an_unreachable_backup_store_is_unavailable() {
+        let refused = s3_unavailable(s3::S3Error::Unreadable("the archive file"));
+        assert!(matches!(refused, ApiError::Unavailable(_)), "{refused:?}");
+    }
+
     fn person(id: &str, username: &str, email: Option<&str>) -> org_backup::Person {
         org_backup::Person {
             id: id.into(),

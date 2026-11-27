@@ -2089,6 +2089,16 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A pending-removal store that fails is answered from the error's kind, never its text.
+    #[test]
+    fn a_failed_removal_store_is_answered_by_its_kind() {
+        let refused = db_error(sqlx::Error::PoolTimedOut);
+        assert!(
+            !refused.to_string().contains("pool timed out"),
+            "{refused:?}"
+        );
+    }
+
     #[test]
     fn a_bulk_removal_names_one_to_two_hundred_distinct_ids() {
         let ids = removal_ids(br#"{"ids":["b","a","b"]}"#).expect("two distinct ids");

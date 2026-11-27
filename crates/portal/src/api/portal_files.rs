@@ -438,6 +438,22 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// With no file store handed over, the files answer 503 saying what to ask the operator; a
+    /// poisoned desk lock is still read.
+    #[test]
+    fn without_a_file_store_the_desk_answers_unavailable_even_when_poisoned() {
+        let _ = std::thread::spawn(|| {
+            let _held = DESK.write();
+            panic!("a handover panicked holding the desk");
+        })
+        .join();
+        let refused = desk().err().expect("no desk in the lib tests");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("open data catalogue")),
+            "{refused:?}"
+        );
+    }
+
     /// Each refusal of the file store is the answer a person can act on; a store failure keeps
     /// its detail in the log and out of the answer.
     #[test]

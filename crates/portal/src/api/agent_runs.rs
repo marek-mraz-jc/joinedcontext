@@ -868,11 +868,13 @@ pub(crate) fn with_links(state: &AppState, mut run: AgentRun) -> AgentRun {
                     .for_application(repository::name(&run.project, &run.app_name))
                     .browse_url("", &run.branch)
             } else {
-                // The project's own repository in layout 2 (CC-87).
-                state.forge_for(&run.project).map_or_else(
-                    || shako.browse_url(&run.path_prefix, &run.branch),
-                    |forge| forge.browse_url(&run.path_prefix, &run.branch),
-                )
+                // The project's own repository in layout 2 (CC-87); with a forge configured,
+                // `forge_for` always answers (the organization's repository otherwise).
+                let forge = state.forge_for(&run.project);
+                forge
+                    .as_deref()
+                    .unwrap_or(shako)
+                    .browse_url(&run.path_prefix, &run.branch)
             });
             if run.in_own_repository() {
                 run.mirror_url = state.github_mirror.as_deref().map(|mirror| {
@@ -2876,6 +2878,66 @@ pub fn preview_router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::{app_manifest, caller_token, is_function_name, offered_answer};
+
+    /// AP-71: a run with a merge request names its Change and its source on the forge; one with
+    /// no branch yet names its Change only.
+    #[test]
+    fn a_run_links_its_change_and_its_source_on_the_forge() {
+        let client = crate::forge::ShakoClient::new(
+            "http://forge.example".parse().expect("url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("client");
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let mut run = crate::agents::store::tests::run("r-1", "helsinki", "2026-11-25T10:00:00Z");
+        run.merge_request = Some(7);
+        run.branch = "agent/r-1".into();
+        run.path_prefix = "projects/helsinki/apps/bikes".into();
+        let linked = super::with_links(&state, run.clone());
+        assert_eq!(linked.change_id.as_deref(), Some("chg-00000007"));
+        let source = linked.source_url.expect("a source link");
+        assert!(
+            source.contains("%2Fsrc%2Fbranch%2Fagent%2Fr-1%2Fprojects%2Fhelsinki"),
+            "{source}"
+        );
+        run.branch = String::new();
+        let unbranched = super::with_links(&state, run);
+        assert!(unbranched.source_url.is_none());
+        assert_eq!(unbranched.change_id.as_deref(), Some("chg-00000007"));
+    }
+
+    /// API/04 section 5: an address to a question that asks for none, a file without a member,
+    /// a format the question does not take and an address over 2048 characters are refused by
+    /// what is wrong.
+    #[test]
+    fn an_answer_outside_what_the_question_offers_is_refused_by_name() {
+        let question = serde_json::json!({
+            "input": { "file": { "accept": ["csv"], "maxBytes": 1024 } }
+        });
+        assert_eq!(
+            offered_answer(&question, &serde_json::json!({ "url": "https://hel.fi" })),
+            Err("the question asks for no address".to_owned())
+        );
+        let nameless = serde_json::json!({ "file": { "format": "csv", "text": "a" } });
+        assert_eq!(
+            offered_answer(&question, &nameless),
+            Err("a file needs its name".to_owned())
+        );
+        let pdf = serde_json::json!({ "file": { "name": "a.pdf", "format": "pdf", "text": "a" } });
+        assert_eq!(
+            offered_answer(&question, &pdf),
+            Err("the question does not take a pdf file".to_owned())
+        );
+        let address = serde_json::json!({ "input": { "url": true } });
+        let long = format!("https://hel.fi/{}", "a".repeat(2048));
+        assert_eq!(
+            offered_answer(&address, &serde_json::json!({ "url": long })),
+            Err("the address is longer than 2048 characters".to_owned())
+        );
+    }
 
     /// JC1-07: a question that offers Excel takes a sheet's CSV, never the workbook's bytes.
     #[test]

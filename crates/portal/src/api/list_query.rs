@@ -291,10 +291,7 @@ mod tests {
     use serde_json::json;
 
     fn field_of(err: ApiError) -> String {
-        match err {
-            ApiError::Invalid { errors, .. } => errors.join("|"),
-            other => format!("{other:?}"),
-        }
+        err.field_errors().join("|")
     }
 
     #[test]

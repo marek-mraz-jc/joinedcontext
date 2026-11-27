@@ -2491,6 +2491,37 @@ mod verification_tests {
 mod upload_gate_tests {
     use super::*;
     use std::io::Write;
+
+    /// A Portal with no forge opens no Change for an upload: 503 naming the forge.
+    #[tokio::test]
+    async fn a_proposal_without_a_forge_is_unavailable() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let identity = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-jana".into(),
+            username: "jana".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        };
+        let proposal = Proposal {
+            files: vec![("README.md".into(), "x".into())],
+            branch: "portal/import-x".into(),
+            title: "Import".into(),
+            body: String::new(),
+            lane: Lane::Green,
+            summary: crate::change::PlanSummary::default(),
+        };
+        let refused = propose_files(&state, &identity, "helsinki", proposal)
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
     /// Every scalar either parser hands the visitor keeps its value: null, a negative and a
     /// float number, an escaped string; a YAML tag is refused naming what a document is (T-7837).
     #[test]
@@ -2686,11 +2717,9 @@ mod upload_gate_tests {
     }
 
     fn refusal(bytes: &[u8]) -> String {
-        match parse(bytes) {
-            Err(ApiError::BadRequest(why)) => why,
-            Err(other) => panic!("refused as {other:?} rather than a bad request"),
-            Ok(incoming) => panic!("{} entries were accepted", incoming.len()),
-        }
+        let why = parse(bytes).err().map(|e| e.to_string());
+        let why = why.as_deref().and_then(|w| w.strip_prefix("bad request: "));
+        why.expect("refused as a bad request").to_owned()
     }
 
     /// CC-08, MF-05 (T-1704): a bundle that is small on the wire and enormous once unpacked is

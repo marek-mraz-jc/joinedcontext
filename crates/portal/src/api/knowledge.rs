@@ -1459,6 +1459,31 @@ mod tests {
     use super::{TRANSCRIPT_CALLS_PER_MINUTE, TRANSCRIPT_MISSES};
     use std::time::{Duration, Instant};
 
+    /// A caller that panicked while holding a rate window poisons it; the next call is still
+    /// counted in it.
+    #[test]
+    fn a_poisoned_rate_window_still_counts() {
+        let window = std::sync::OnceLock::new();
+        let now = Instant::now();
+        assert_eq!(
+            super::counted(&window, "jana", now, Duration::from_secs(60)),
+            1
+        );
+        let held = &window;
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _guard = held.get().expect("a window").lock();
+                    panic!("a caller panicked holding the window");
+                })
+                .join();
+        });
+        assert_eq!(
+            super::counted(&window, "jana", now, Duration::from_secs(60)),
+            2
+        );
+    }
+
     /// F-R2POR2-008 (T-6226): who may not write to the project's knowledge sources is refused
     /// before a byte of the upload is read, so a reader cannot make the Portal hold one.
     #[tokio::test]

@@ -540,10 +540,11 @@ mod tests {
     fn gateway(subject: &Value, slug: &str) -> Result<Value, ApiError> {
         let org = subject["organizations"] == json!(["helsinki"]);
         let analysts = subject["organizationGroups"] == json!(["/helsinki/traffic-analysts"]);
-        let yes = match slug.trim_end_matches('z') {
+        let slug = slug.trim_end_matches('z');
+        assert_ne!(slug, "bikes", "the public Endpoint is never asked about");
+        let yes = match slug {
             "counts" => org,
             "vehicles" => org && analysts,
-            "bikes" => panic!("the public Endpoint is never asked about"),
             _ => false,
         };
         Ok(if yes {
