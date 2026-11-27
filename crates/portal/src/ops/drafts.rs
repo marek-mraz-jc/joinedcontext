@@ -1332,6 +1332,23 @@ mod tests {
         scratch.remove().await;
     }
 
+    /// On the database a draft that was never kept drops as nothing, and one that was drops once
+    /// (T-7921).
+    #[tokio::test]
+    async fn dropping_on_the_database_drops_only_a_kept_draft() {
+        let scratch = crate::test_db::scratch().await;
+        let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
+        assert!(!store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+        store
+            .put("hel", "Endpoint", "air", manifest, None, "ana", "person")
+            .await
+            .expect("kept");
+        assert!(store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        assert!(!store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        scratch.remove().await;
+    }
+
     /// T-7817: each store error is the answer a client can act on, and a first put that expects
     /// a version the draft never had is a conflict at 0.
     #[tokio::test]

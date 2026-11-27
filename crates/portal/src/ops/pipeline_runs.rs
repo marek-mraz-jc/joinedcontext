@@ -478,6 +478,33 @@ mod tests {
         );
     }
 
+    /// A run longer than one page answers its first page and the cursor of the rest (T-7921).
+    #[tokio::test]
+    async fn a_long_run_answers_one_page_and_the_cursor_of_the_rest() {
+        let state = logged().await;
+        let lines: Vec<NewLine> = (0..LOG_LINES + 50)
+            .map(|n| NewLine {
+                record_id: format!("r{n}"),
+                step: None,
+                outcome: Outcome::Sent,
+                message: String::new(),
+            })
+            .collect();
+        state
+            .pipeline_log
+            .append("doprava", "counters", "2026-11-01T12:00:00Z", &lines)
+            .await
+            .expect("logged");
+        let page = logs(
+            &state,
+            json!({ "name": "counters", "run": "2026-11-01T12:00:00Z" }),
+        )
+        .await
+        .expect("a page");
+        assert_eq!(page["lines"].as_array().map(Vec::len), Some(LOG_LINES), "{page}");
+        assert!(page["next"].is_number(), "{page}");
+    }
+
     /// A pipeline that never ran answers no run and no lines; an unknown pipeline and a caller
     /// who may not read the project get the same 404.
     #[tokio::test]
