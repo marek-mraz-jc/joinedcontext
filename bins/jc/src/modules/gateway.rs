@@ -1156,12 +1156,8 @@ fn session_slug(req: &Request) -> Option<String> {
     {
         return None;
     }
-    let slug = req
-        .uri()
-        .path()
-        .strip_prefix("/api/endpoint/")?
-        .split('/')
-        .next()?;
+    let rest = req.uri().path().strip_prefix("/api/endpoint/")?;
+    let slug = rest.split_once('/').map_or(rest, |(slug, _)| slug);
     let named = !slug.is_empty()
         && slug.len() <= 64
         && slug

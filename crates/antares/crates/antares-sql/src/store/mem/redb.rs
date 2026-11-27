@@ -112,21 +112,21 @@ impl Shadow {
         &self,
         writes: impl IntoIterator<Item = (Table, &'a [u8], Option<&'a [u8]>)>,
     ) -> Result<(), String> {
-        let mut tx = self.db.begin_write().map_err(|e| e.to_string())?;
+        let mut tx = self.db.begin_write().map_err(super::text)?;
         tx.set_durability(Durability::Immediate)
-            .map_err(|e| e.to_string())?;
+            .map_err(super::text)?;
         for (table, key, value) in writes {
-            let mut t = tx.open_table(table).map_err(|e| e.to_string())?;
+            let mut t = tx.open_table(table).map_err(super::text)?;
             match value {
                 Some(v) => {
-                    t.insert(key, v).map_err(|e| e.to_string())?;
+                    t.insert(key, v).map_err(super::text)?;
                 }
                 None => {
-                    t.remove(key).map_err(|e| e.to_string())?;
+                    t.remove(key).map_err(super::text)?;
                 }
             }
         }
-        tx.commit().map_err(|e| e.to_string())
+        tx.commit().map_err(super::text)
     }
 }
 

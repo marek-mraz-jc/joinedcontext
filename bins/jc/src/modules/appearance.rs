@@ -311,7 +311,7 @@ mod tests {
             "bbsk",
             ORG_NAMESPACE,
             serde_json::json!({ "domain": "bbsk.sk",
-                "appearance": { "opendataWidgets": ["doprava/verejny", "doprava/interny"] } }),
+                "appearance": { "opendataWidgets": ["doprava/verejny", "doprava/interny", "doprava/bez"] } }),
         ));
         mirror.upsert(envelope(
             "Project",
@@ -356,8 +356,26 @@ mod tests {
             "doprava",
             serde_json::json!({ "title": "Interný", "visibility": "organization", "pages": [] }),
         ));
+        // A public Dashboard with no title and no pages is drawn under its name, reading nothing.
+        mirror.upsert(envelope(
+            "Dashboard",
+            "bez",
+            "doprava",
+            serde_json::json!({ "visibility": "public" }),
+        ));
+        let cards = dashboard_cards(&mirror, "bbsk", "sk");
+        let untitled = dataroom_api::DashboardCard {
+            title: "bez".into(),
+            pages: Vec::new(),
+            sources: Vec::new(),
+        };
+        assert!(cards.contains(&untitled), "{cards:?}");
+        assert_eq!(cards.len(), 2, "{cards:?}");
         assert_eq!(
-            dashboard_cards(&mirror, "bbsk", "sk"),
+            cards
+                .into_iter()
+                .filter(|c| c.title != "bez")
+                .collect::<Vec<_>>(),
             [dataroom_api::DashboardCard {
                 title: "Doprava".into(),
                 pages: vec!["Mapa".into()],

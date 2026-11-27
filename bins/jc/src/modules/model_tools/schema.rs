@@ -248,8 +248,10 @@ pub(super) fn py_str(v: &Value) -> String {
 }
 
 fn py_number(n: &serde_json::Number) -> String {
-    if n.is_f64() {
-        n.as_f64().map_or_else(|| n.to_string(), py_float)
+    if n.is_f64()
+        && let Some(f) = n.as_f64()
+    {
+        py_float(f)
     } else {
         n.to_string()
     }
@@ -1331,6 +1333,39 @@ pub(super) fn annotation_value(element: &Obj, tag: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A JSON number is rendered as Python prints it: an integer as is, a float by `repr()`.
+    #[test]
+    fn python_renders_integers_as_is_and_floats_by_repr() {
+        use serde_json::Number;
+        let float = |f: f64| py_number(&Number::from_f64(f).expect("finite"));
+        assert_eq!(py_number(&Number::from(7)), "7");
+        assert_eq!(py_number(&Number::from(-7)), "-7");
+        assert_eq!(py_number(&Number::from(u64::MAX)), u64::MAX.to_string());
+        assert_eq!(float(3.0), "3.0");
+        assert_eq!(float(1e20), "1e+20");
+    }
+
+    /// The longest namespace an IRI starts with wins, the first of equal length; none is None.
+    #[test]
+    fn the_longest_matching_namespace_names_the_curie() {
+        let spaces = [
+            ("ex".to_owned(), "https://ex.test/".to_owned()),
+            ("exm".to_owned(), "https://ex.test/model/".to_owned()),
+            ("same".to_owned(), "https://ex.test/model/".to_owned()),
+            ("o".to_owned(), "https://other.test/".to_owned()),
+        ];
+        assert_eq!(
+            curie_for(&spaces, "https://ex.test/model/Road").as_deref(),
+            Some("exm:Road")
+        );
+        assert_eq!(
+            curie_for(&spaces, "https://ex.test/Road").as_deref(),
+            Some("ex:Road")
+        );
+        assert_eq!(curie_for(&spaces, "urn:x:y"), None);
+        assert_eq!(curie_for(&[], "https://ex.test/Road"), None);
+    }
 
     #[test]
     fn python_renders_floats_and_json_its_own_way() {
