@@ -501,6 +501,59 @@ fn an_unknown_kind_and_an_unserved_api_version_are_both_refused() {
     let _ = std::fs::remove_dir_all(&dest);
 }
 
+/// MF-20, MF-22: an organization's own manifest keeps no project namespace; one without a
+/// namespace lands in the target; a typed reference into the source project follows it; an
+/// empty document is no resource; annotations that are no map are left for validation.
+#[test]
+fn namespaces_typed_references_and_odd_documents_are_rewritten_as_they_say() {
+    let source = temp_dir("import-rewrites-src");
+    write_file(
+        &source,
+        "bundle.yaml",
+        "# nothing but a comment\n---\napiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: kosice\nspec:\n  domain: kosice.sk\n---\napiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: bare\n  annotations: 5\nspec:\n  isSandbox: true\n---\napiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: typed\n  namespace: vzduch\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: bare, namespace: vzduch }\n  slug: 5cnx8we2rt7qh4vaj3md6ykbzp\n  audience: project\n  enabledRepresentations: [\"ngsi-ld\"]\n",
+    );
+    let dest = destination("import-rewrites-dest");
+    let report = collect(&source, &dest, &options("ovzdusie")).expect("import collects");
+    let of = |name: &str| {
+        report
+            .imported
+            .iter()
+            .find(|i| i.manifest.metadata.name == name)
+            .map(|i| i.manifest.clone())
+            .expect("imported")
+    };
+    assert_eq!(of("kosice").metadata.namespace, None);
+    assert_eq!(of("bare").metadata.namespace.as_deref(), Some("ovzdusie"));
+    assert_eq!(of("bare").metadata.rest["annotations"], 5);
+    assert_eq!(of("typed").spec["contextSpaceRef"]["namespace"], "ovzdusie");
+    assert_eq!(report.imported.len(), 3, "{:?}", report.rejections);
+}
+
+/// MF-24: a typed reference that resolves nowhere names its kind; a file that is no text
+/// stops the import naming it.
+#[test]
+fn a_dangling_typed_reference_and_a_file_that_is_no_text() {
+    let source = temp_dir("import-typed-dangling-src");
+    write_file(
+        &source,
+        "endpoint.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: orphan\n  namespace: vzduch\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: nowhere }\n  slug: 5cnx8we2rt7qh4vaj3md6ykbzp\n  audience: project\n  enabledRepresentations: [\"ngsi-ld\"]\n",
+    );
+    let dest = destination("import-typed-dangling-dest");
+    let report = collect(&source, &dest, &options("ovzdusie")).expect("import collects");
+    let reasons: Vec<&str> = report
+        .rejections
+        .iter()
+        .map(|r| r.reason.as_str())
+        .collect();
+    assert!(
+        reasons.iter().any(|r| r.contains("ContextSpace/nowhere")),
+        "{reasons:?}"
+    );
+    std::fs::write(source.join("binary.yaml"), [0xff_u8, 0xfe, 0x00]).expect("a binary file");
+    assert!(collect(&source, &dest, &options("ovzdusie")).is_err());
+}
+
 #[test]
 fn a_reference_to_something_that_exists_nowhere_is_refused() {
     // MF-24: an import whose references dangle produces a repository that does not validate,

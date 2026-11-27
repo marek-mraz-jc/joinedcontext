@@ -28,7 +28,7 @@ use crate::loader::{RawManifest, Repository, ResourceId};
 use crate::waves::wave_of;
 use jc_core::envelope::annotations::SYNC_SOURCE;
 use jc_core::kinds::sync::{ConflictPolicy, Schedule, SyncMode, SyncOrigin, SyncSourceSpec};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -546,14 +546,7 @@ fn proposal_of(
 
 /// Marks a manifest as belonging to this sync source (MF-08, MF-27).
 fn stamp(manifest: &mut RawManifest, owner: &str) {
-    let annotations = manifest
-        .metadata
-        .rest
-        .entry("annotations")
-        .or_insert_with(|| Value::Object(Map::new()));
-    if let Value::Object(annotations) = annotations {
-        annotations.insert(SYNC_SOURCE.to_owned(), json!(owner));
-    }
+    import::annotate(manifest, SYNC_SOURCE, owner);
 }
 
 /// The resources this sync source put in the repository that the current revision no longer
