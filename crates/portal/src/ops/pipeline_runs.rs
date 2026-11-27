@@ -500,7 +500,11 @@ mod tests {
         )
         .await
         .expect("a page");
-        assert_eq!(page["lines"].as_array().map(Vec::len), Some(LOG_LINES), "{page}");
+        assert_eq!(
+            page["lines"].as_array().map(Vec::len),
+            Some(LOG_LINES),
+            "{page}"
+        );
         assert!(page["next"].is_number(), "{page}");
     }
 

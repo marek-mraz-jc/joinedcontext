@@ -370,7 +370,11 @@ async fn an_address_that_answers_nothing_infers_nothing_and_says_so_at_its_field
         "{}",
         inferred.text
     );
-    assert!(inferred.text.contains(r#""path":"url""#), "{}", inferred.text);
+    assert!(
+        inferred.text.contains(r#""path":"url""#),
+        "{}",
+        inferred.text
+    );
     assert!(
         inferred.text.contains("the feed answered nothing"),
         "{}",

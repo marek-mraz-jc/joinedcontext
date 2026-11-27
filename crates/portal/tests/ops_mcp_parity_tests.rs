@@ -274,7 +274,8 @@ async fn a_catalogue_draft_is_for_who_may_propose_the_endpoint() {
     let drafted = call("jc_catalogue_draft", &mcp(steward()), &state, input).await;
     assert_status(&drafted, StatusCode::OK, "steward with a CkanInstance");
     assert_eq!(
-        drafted.body["publish"]["ckan"]["instanceRef"]["name"], "opendata",
+        drafted.body["publish"]["ckan"]["instanceRef"]["name"],
+        "opendata",
         "{}",
         drafted.text()
     );

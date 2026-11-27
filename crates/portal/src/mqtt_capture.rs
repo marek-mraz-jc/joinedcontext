@@ -996,7 +996,10 @@ mod tests {
         let first = socket.read_u8().await?;
         // The subscriber's CONNECT and SUBSCRIBE are under 128 bytes: one length byte.
         let length = socket.read_u8().await?;
-        assert!(length < 0x80, "a packet of the subscriber's is under 128 bytes");
+        assert!(
+            length < 0x80,
+            "a packet of the subscriber's is under 128 bytes"
+        );
         let mut body = vec![0u8; usize::from(length)];
         socket.read_exact(&mut body).await?;
         Ok((first, body))

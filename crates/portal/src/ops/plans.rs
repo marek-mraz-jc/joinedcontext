@@ -2594,7 +2594,10 @@ mod tests {
             Some(crate::test_db::dead_pool()),
             mirror,
         ));
-        let opened = [json!({ "id": "chg-00000001" }), json!({ "error": "refused" })];
+        let opened = [
+            json!({ "id": "chg-00000001" }),
+            json!({ "error": "refused" }),
+        ];
         tokio::time::timeout(
             std::time::Duration::from_secs(30),
             notify_approvers(&state, &caller(None), "doprava", "auto", &opened),
@@ -2892,9 +2895,14 @@ mod tests {
     async fn a_revert_for_an_outsider_is_a_change_not_found() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
         let op = crate::ops::find("jc_change_revert_plan").expect("registered");
-        let refused = (op.run)(&caller(None), &state, "doprava", json!({ "id": "chg-00000035" }))
-            .await
-            .expect_err("refused");
+        let refused = (op.run)(
+            &caller(None),
+            &state,
+            "doprava",
+            json!({ "id": "chg-00000035" }),
+        )
+        .await
+        .expect_err("refused");
         assert!(
             matches!(&refused, OpError::Api(ApiError::NotFound(why))
                 if why == "change 'chg-00000035' not found in project 'doprava'"),

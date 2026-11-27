@@ -240,10 +240,16 @@ async fn the_preview_operation_reads_the_routes_page() {
     let op = ops::find("jc_endpoint_preview").expect("registered");
     let mut input = draft();
     input["name"] = json!("air-staff");
-    let page = ops::call(op, &Caller::new(member(), Via::Mcp), &r.state, "city", input)
-        .await
-        .map_err(|err| format!("{err:?}"))
-        .expect("the page");
+    let page = ops::call(
+        op,
+        &Caller::new(member(), Via::Mcp),
+        &r.state,
+        "city",
+        input,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+    .expect("the page");
     assert_eq!(
         page,
         json!({"count": 7, "entities": [{"id": "urn:ngsi-ld:Car:1", "type": "Car"}]})

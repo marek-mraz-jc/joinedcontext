@@ -521,7 +521,10 @@ async fn a_build_without_its_sbom_or_with_a_failing_forge_publishes_nothing() {
         built_on_forge(&shako, COMMIT, BUNDLE, None).await;
         Mock::given(method("GET"))
             .and(path(format!("{APP_REPO}/Artifacts")))
-            .and(query_param("$filter", format!("Name eq '{artifact}-{COMMIT}'")))
+            .and(query_param(
+                "$filter",
+                format!("Name eq '{artifact}-{COMMIT}'"),
+            ))
             .respond_with(answer)
             .with_priority(1)
             .mount(&shako)
@@ -540,7 +543,12 @@ async fn a_build_without_its_sbom_or_with_a_failing_forge_publishes_nothing() {
     package_takes(&shako, 500).await;
     let state = state_with(&shako);
     let refused = as_lane(&state, app(Some(build()), None)).await;
-    assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE, "{}", refused.text);
+    assert_eq!(
+        refused.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        refused.text
+    );
     assert!(committed(&shako).await.is_empty(), "the build was written");
 }
 

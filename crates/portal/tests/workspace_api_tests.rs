@@ -842,10 +842,7 @@ async fn update_from_main_refuses_yaml_that_is_no_manifest_and_asks_for_a_remove
         refused.text
     );
     // The workspace changed its README; main removed it.
-    for (head, sha) in [
-        ("workspace/air-v2", "r-ours"),
-        ("base1", "r-base"),
-    ] {
+    for (head, sha) in [("workspace/air-v2", "r-ours"), ("base1", "r-base")] {
         Mock::given(method("GET"))
             .and(path(format!(
                 "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
@@ -875,7 +872,10 @@ async fn update_from_main_refuses_yaml_that_is_no_manifest_and_asks_for_a_remove
     let conflicts = body(&asked.text)["conflicts"].clone();
     assert_eq!(conflicts[0]["path"], README, "{conflicts}");
     assert_eq!(conflicts[0]["fields"][0]["ours"], "changed", "{conflicts}");
-    assert_eq!(conflicts[0]["fields"][0]["theirs"], "removed", "{conflicts}");
+    assert_eq!(
+        conflicts[0]["fields"][0]["theirs"], "removed",
+        "{conflicts}"
+    );
 }
 
 #[tokio::test]

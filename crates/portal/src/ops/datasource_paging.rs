@@ -393,8 +393,7 @@ mod tests {
             })),
             Some("features".to_owned())
         );
-        assert!(page_url("not a url")
-            .is_err_and(|why| why.starts_with("the URL does not parse")));
+        assert!(page_url("not a url").is_err_and(|why| why.starts_with("the URL does not parse")));
     }
 
     fn recorded(folder: &str) -> (Value, Value) {

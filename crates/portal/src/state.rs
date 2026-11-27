@@ -2028,7 +2028,10 @@ mod tests {
         let _second = state.mcp_enter(&[("tool", 2)]).expect("a second slot");
         drop(first);
         let _third = state.mcp_enter(&[("tool", 2)]).expect("the slot let go");
-        assert!(state.mcp_enter(&[("tool", 2)]).is_err(), "two held is the cap");
+        assert!(
+            state.mcp_enter(&[("tool", 2)]).is_err(),
+            "two held is the cap"
+        );
         poison(Arc::clone(&state.revocations));
         state.revoke_subject("f:1:gone", now_unix()).await;
         // The database part runs where JC_PORTAL_TEST_DATABASE_URL names a PostgreSQL.

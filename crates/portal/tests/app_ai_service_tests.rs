@@ -534,7 +534,11 @@ async fn a_refusing_counter_store_answers_at_the_step_it_refused() {
     run(&["DROP TABLE app_service_usage"]).await;
     let (status, _, text) = complete(&state, ask()).await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
-    assert_eq!(sent(&proxy).await.len(), 1, "no refused step asks the model");
+    assert_eq!(
+        sent(&proxy).await.len(),
+        1,
+        "no refused step asks the model"
+    );
 }
 
 /// T-3661: the day is reserved before the call, in the statement that checks it, so calls in

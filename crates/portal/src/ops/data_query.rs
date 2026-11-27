@@ -990,7 +990,8 @@ mod tests {
             spec: json!({ "slug": PRIVATE, "audience": "project-list", "allowedProjects": ["espoo"] }),
             status: None,
         });
-        let refused = not_admitted(404, &caller, &state, "helsinki", "listed").expect_err("left out");
+        let refused =
+            not_admitted(404, &caller, &state, "helsinki", "listed").expect_err("left out");
         assert!(
             matches!(&refused, OpError::Api(ApiError::Denied(why))
                 if why.starts_with("Endpoint listed: you would not reach this Endpoint: audience project-list")),

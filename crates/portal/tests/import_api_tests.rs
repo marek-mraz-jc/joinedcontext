@@ -1460,7 +1460,11 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
         let input = json!({ "manifests": [manifest], "dryRun": true, "conflictPolicy": policy });
         let (status, _, plan) = call(input, Some(etag.clone())).await;
         assert_eq!(status, StatusCode::OK, "{policy}: {plan}");
-        assert_eq!(plan["value"]["created"], json!(["ovzdusie"]), "{policy}: {plan}");
+        assert_eq!(
+            plan["value"]["created"],
+            json!(["ovzdusie"]),
+            "{policy}: {plan}"
+        );
     }
     // The plain check last: the change below carries its verdict.
     let (status, _, plan) = call(input, Some(etag.clone())).await;
