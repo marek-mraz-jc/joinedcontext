@@ -100,6 +100,18 @@ pub enum Level {
     Error,
 }
 
+impl Level {
+    /// The five-column tag a report line starts with.
+    fn tag(self) -> &'static str {
+        match self {
+            Level::Ok => "ok   ",
+            Level::Info => "     ",
+            Level::Warn => "warn ",
+            Level::Error => "ERROR",
+        }
+    }
+}
+
 /// One cert-manager Certificate as kubectl lists it.
 #[derive(Debug, Clone)]
 pub struct CertificateState {
@@ -198,13 +210,7 @@ pub fn command(args: &[String]) -> u8 {
     };
     let report = report(&file, &args.edge, args.validation_zone.as_deref(), &world);
     for (level, text) in &report.lines {
-        let tag = match level {
-            Level::Ok => "ok   ",
-            Level::Info => "     ",
-            Level::Warn => "warn ",
-            Level::Error => "ERROR",
-        };
-        println!("{tag} {text}");
+        println!("{} {text}", level.tag());
     }
     u8::from(report.failed())
 }
@@ -1032,6 +1038,14 @@ mod tests {
     use std::collections::HashMap;
 
     const EDGE: &str = "203.0.113.7";
+
+    /// Every level prints a tag of the same width, so the report's texts line up.
+    #[test]
+    fn each_level_tags_its_line_in_five_columns() {
+        let tags = [Level::Ok, Level::Info, Level::Warn, Level::Error].map(Level::tag);
+        assert_eq!(tags, ["ok   ", "     ", "warn ", "ERROR"]);
+        assert!(tags.iter().all(|t| t.len() == 5));
+    }
 
     fn report_for(text: &str, edge: &[IpAddr], zone: Option<&str>, world: &dyn World) -> Report {
         report(&toml::from_str(text).unwrap(), edge, zone, world)

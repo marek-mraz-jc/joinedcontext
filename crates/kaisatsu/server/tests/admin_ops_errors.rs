@@ -275,6 +275,28 @@ async fn send_required_actions_link_refusals() {
     .await;
 }
 
+/// A redirect the named client does not register is refused before any mail is queued.
+#[tokio::test]
+async fn send_required_actions_refuses_a_redirect_the_client_does_not_register() {
+    let api = Api::new().await;
+    let admin = api.admin().await;
+    let mut realm = api.store.get_realm("dev").await.unwrap().unwrap();
+    realm.smtp_server = Some(SmtpServerConfig::default());
+    api.store.upsert_realm(realm).await.unwrap();
+    api.refused(
+        Method::POST,
+        &format!("{BASE}/People('{STEWARD}')/SendRequiredActions"),
+        &admin,
+        Some(
+            json!({ "actions": ["UPDATE_PASSWORD"], "clientId": "portal-api",
+                     "redirectUri": "https://elsewhere.example.test/" }),
+        ),
+        StatusCode::BAD_REQUEST,
+        "invalid redirect_uri",
+    )
+    .await;
+}
+
 #[tokio::test]
 async fn passkey_challenge_is_single_use() {
     let api = Api::new().await;

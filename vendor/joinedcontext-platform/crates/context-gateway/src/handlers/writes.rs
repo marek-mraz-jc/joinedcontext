@@ -300,10 +300,14 @@ impl HeldWrite<'_> {
                             let Some(asked) = chunk.iter().find(|asked| **asked == object) else {
                                 continue;
                             };
-                            if let Some(ids) = found.get_mut(&(class, slot, *asked)) {
-                                ids.push(id.to_owned());
-                                placed = true;
-                            }
+                            // Every asked claim has its entry in `found`.
+                            found
+                                .get_mut(&(class, slot, *asked))
+                                .into_iter()
+                                .for_each(|ids| {
+                                    ids.push(id.to_owned());
+                                    placed = true;
+                                });
                         }
                         // The broker matched an entity whose end names none of the asked
                         // targets as read here: its claims are read one by one, never free.
@@ -1799,12 +1803,55 @@ mod object_query_tests {
 }
 
 #[cfg(test)]
+mod id_chunk_tests {
+    use super::{id_chunks, TARGETS_PER_READ};
+
+    /// No target, no read; targets are encoded, joined and cut at the count and at the room, and
+    /// one id longer than the room is read alone.
+    #[test]
+    fn ids_are_cut_into_reads_the_broker_takes() {
+        assert!(id_chunks(&[], 100).is_empty());
+        let a = "urn:ngsi-ld:T:a b".to_owned();
+        let b = "urn:ngsi-ld:T:b".to_owned();
+        let c = "urn:ngsi-ld:T:c".to_owned();
+        assert_eq!(
+            id_chunks(&[&a], 1000),
+            [("urn%3Angsi-ld%3AT%3Aa%20b".to_owned(), 1)]
+        );
+        let all = id_chunks(&[&b, &c], 1000);
+        assert_eq!(all.len(), 1, "{all:?}");
+        assert_eq!(all[0].1, 2);
+        let narrow = id_chunks(&[&b, &c, &a], 20);
+        assert_eq!(
+            narrow.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+            [1, 1, 1],
+            "{narrow:?}"
+        );
+        let many: Vec<String> = (0..=TARGETS_PER_READ)
+            .map(|n| format!("urn:x:T:{n}"))
+            .collect();
+        let refs: Vec<&String> = many.iter().collect();
+        let counts: Vec<usize> = id_chunks(&refs, usize::MAX)
+            .iter()
+            .map(|(_, count)| *count)
+            .collect();
+        assert_eq!(counts, [TARGETS_PER_READ, 1]);
+    }
+}
+
+#[cfg(test)]
 mod merged_batch_tests {
     use super::merged_batch;
     use axum::body::Body;
     use axum::http::{Response, StatusCode};
 
     async fn merged(status: StatusCode, detail: &str) -> String {
+        // The line a failing broker leaves is built only when a subscriber takes it.
+        let _lines = tracing::subscriber::set_default(
+            tracing_subscriber::fmt()
+                .with_writer(std::io::sink)
+                .finish(),
+        );
         let problem = serde_json::json!({"type": "x", "title": "x", "detail": detail});
         let answer = Response::builder()
             .status(status)

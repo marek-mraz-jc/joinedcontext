@@ -188,8 +188,7 @@ pub fn write(out_dir: &Path, report: &Report) -> std::io::Result<usize> {
     for resource in &report.resources {
         let path = out_dir.join(&resource.path);
         std::fs::create_dir_all(path.parent().unwrap_or(out_dir))?;
-        let yaml = serde_norway::to_string(&resource.manifest)
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        let yaml = serde_norway::to_string(&resource.manifest).expect("a manifest serializes");
         std::fs::write(path, yaml)?;
     }
     Ok(report.resources.len())
@@ -284,10 +283,8 @@ pub fn collect_project(repo_dir: &Path, project: &str) -> std::io::Result<Bundle
     files.sort();
 
     for path in files {
-        let relative = path
-            .strip_prefix(repo_dir)
-            .map_err(|_| std::io::Error::other("path escaped the repository"))?
-            .to_path_buf();
+        // `walk` only yields files under `root`, which is under `repo_dir`.
+        let relative = path.strip_prefix(repo_dir).unwrap_or(&path).to_path_buf();
         // A SOPS file holds the project's secrets and a dot-file is a tool's own state (an
         // editor swap file, a `.env`): neither travels (MF-17, T-5702). The report names each.
         let file_name = relative.file_name().and_then(|n| n.to_str()).unwrap_or("");
@@ -347,8 +344,7 @@ pub fn write_bundle(
     for resource in &bundle.resources {
         let path = out_dir.join(&resource.path);
         std::fs::create_dir_all(path.parent().unwrap_or(out_dir))?;
-        let yaml = serde_norway::to_string(&resource.manifest)
-            .map_err(|err| std::io::Error::other(err.to_string()))?;
+        let yaml = serde_norway::to_string(&resource.manifest).expect("a manifest serializes");
         std::fs::write(path, yaml)?;
         written += 1;
     }
@@ -364,8 +360,7 @@ pub fn write_bundle(
         return Ok(written);
     }
     let index = index_of(project, revision, exported_by, bundle);
-    let yaml =
-        serde_norway::to_string(&index).map_err(|err| std::io::Error::other(err.to_string()))?;
+    let yaml = serde_norway::to_string(&index).expect("a bundle index serializes");
     std::fs::write(out_dir.join("bundle.yaml"), yaml)?;
     Ok(written + 1)
 }

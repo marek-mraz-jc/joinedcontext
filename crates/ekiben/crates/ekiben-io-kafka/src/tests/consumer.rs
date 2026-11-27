@@ -533,6 +533,31 @@ async fn multi_header_keeps_every_value_of_a_header() {
     );
 }
 
+/// A record sent without a key carries no kafka_key, the record beside it keeps its own.
+#[tokio::test]
+async fn a_record_without_a_key_has_no_kafka_key() {
+    let f = Fake::start().await;
+    f.produce("t", 0, &["nokey:bare", "keyed"]);
+    let mut i = input(&f, json!({}));
+    let (b, _) = read(&mut i).await;
+    assert_eq!(values(&b), vec!["bare", "keyed"]);
+    assert_eq!(b[0].meta_get("kafka_key"), None);
+    assert_eq!(b[1].meta_get_str("kafka_key"), "k");
+}
+
+/// Heartbeats the coordinator answers keep the member in the group: no rejoin.
+#[tokio::test(start_paused = true)]
+async fn answered_heartbeats_keep_the_member() {
+    let f = Fake::start().await;
+    f.produce("t", 0, &["a"]);
+    let mut i = group(&f);
+    let (_, ack) = read(&mut i).await;
+    ack.ack();
+    tokio::time::sleep(HEARTBEAT_EVERY * 2 + Duration::from_secs(1)).await;
+    assert!(f.seen(crate::client::HEARTBEAT).len() >= 2);
+    assert!(!i.needs_rejoin());
+}
+
 #[tokio::test]
 async fn without_a_group_a_new_partition_is_read_too() {
     let f = Fake::start().await;

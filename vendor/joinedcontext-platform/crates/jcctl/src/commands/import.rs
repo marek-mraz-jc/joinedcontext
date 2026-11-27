@@ -312,10 +312,7 @@ pub fn write(repo_dir: &Path, report: &Report) -> Result<usize, ImportError> {
             path: parent.to_path_buf(),
             source,
         })?;
-        let yaml = serde_norway::to_string(&resource.manifest).map_err(|err| ImportError::Io {
-            path: resource.path.clone(),
-            source: std::io::Error::other(err.to_string()),
-        })?;
+        let yaml = serde_norway::to_string(&resource.manifest).expect("a manifest serializes");
         std::fs::write(&path, yaml).map_err(|source| ImportError::Io {
             path: resource.path.clone(),
             source,
@@ -625,9 +622,8 @@ fn free_name(kind: &str, name: &str, taken: &BTreeSet<(String, String)>) -> Stri
 
 /// The repository path a manifest belongs at, from its own kind (MF-06).
 fn path_of(manifest: &RawManifest) -> String {
-    let Some(info) = registry::by_kind(&manifest.kind) else {
-        return format!("{}.yaml", manifest.metadata.name);
-    };
+    // `unacceptable` refused every kind the registry lacks, and the bundle index is skipped.
+    let info = registry::by_kind(&manifest.kind).expect("a kind the registry knows");
     let project = manifest.metadata.namespace.as_deref().unwrap_or("org");
     info.repo_path(
         project,

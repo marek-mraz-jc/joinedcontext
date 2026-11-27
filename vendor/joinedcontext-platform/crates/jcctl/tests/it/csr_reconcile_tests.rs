@@ -8,8 +8,8 @@
 //! itself, a `PATCH` body carrying an immutable member, a registration whose name changed.
 
 use jcctl::csr::{
-    apply, forwards_caller_identity, registration, registration_id, remove, CsrError, Endpoints,
-    InMemoryBroker, MemberSource, Outcome,
+    apply, forwards_caller_identity, registration, registration_id, remove, BrokerApi, CsrError,
+    Endpoints, InMemoryBroker, MemberSource, Outcome,
 };
 use jcctl::loader::RawManifest;
 use serde_json::json;
@@ -382,6 +382,60 @@ fn a_manifest_of_another_kind_is_not_a_registration() {
         registration(&other, &endpoints()),
         Err(CsrError::NotARegistration)
     );
+}
+
+/// A spec that is not a registration's (an unknown member) is a spec error naming the member,
+/// not a registration with the member dropped.
+#[test]
+fn a_spec_with_an_unknown_member_is_refused_by_name() {
+    let bogus = manifest(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\n\
+         metadata: { name: bogus }\nspec:\n  contextSpaceRef: hub\n  bogus: 1\n",
+    );
+    let Err(CsrError::Spec(why)) = registration(&bogus, &no_endpoints()) else {
+        unreachable!("an unknown member is a spec error");
+    };
+    assert!(why.contains("bogus"), "{why}");
+}
+
+/// Every registration mode the manifest names is the word the broker is told.
+#[test]
+fn each_mode_is_told_to_the_broker_in_its_own_word() {
+    for mode in ["inclusive", "exclusive", "auxiliary", "redirect"] {
+        let yaml = EXTERNAL.replace(
+            "  operations: [federationOps]\n",
+            &format!("  operations: [federationOps]\n  mode: {mode}\n"),
+        );
+        let body = registration(&manifest(&yaml), &no_endpoints()).expect("builds");
+        assert_eq!(body["mode"], json!(mode));
+    }
+}
+
+/// The in-memory broker, which stands in for the real one in plans: stamping what is not there
+/// adds nothing, an update of a registration it never saw starts one, and a body that is no
+/// object changes nothing.
+#[test]
+fn the_in_memory_broker_ignores_what_it_does_not_hold() {
+    let mut broker = InMemoryBroker::new();
+    broker.stamp(TENANT, "urn:absent", [("status", json!("ok"))]);
+    assert!(broker.tenants().is_empty());
+
+    broker
+        .update(TENANT, "urn:new", &json!({ "mode": "exclusive" }))
+        .expect("updates");
+    assert_eq!(
+        broker.registration(TENANT, "urn:new"),
+        Some(&json!({ "mode": "exclusive" }))
+    );
+    broker
+        .update(TENANT, "urn:new", &json!(["not", "an", "object"]))
+        .expect("updates");
+    assert_eq!(
+        broker.registration(TENANT, "urn:new"),
+        Some(&json!({ "mode": "exclusive" })),
+        "a body that is no object changes nothing"
+    );
+    assert_eq!(broker.calls().len(), 2);
 }
 
 /// The manifest's own validation is the reconciler's: a claim of nothing never reaches a

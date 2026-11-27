@@ -381,6 +381,89 @@ fn a_field_the_manifest_does_not_declare_is_neither_written_nor_missing() {
     );
 }
 
+/// DM-44: a model without a `linkml` member declares only what is under `artifacts`.
+#[test]
+fn a_model_without_a_linkml_member_writes_only_its_declared_artifacts() {
+    let dir = repo_with_model("rebuild-no-linkml", |m| {
+        m.replace("  linkml: ./air-quality.linkml.yaml\n", "")
+    });
+    let out = temp_dir("rebuild-no-linkml-out");
+    let report = artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
+    assert!(
+        report.written.iter().all(|k| !k.contains("linkml")),
+        "{:?}",
+        report.written
+    );
+    assert!(report
+        .written
+        .iter()
+        .any(|k| k.ends_with("air-quality.v1.json")));
+}
+
+/// DM-44: a model whose every declared file is absent gets no index at all, only the missing list.
+#[test]
+fn a_model_whose_declared_files_are_all_absent_gets_no_index() {
+    let dir = repo("rebuild-all-missing");
+    std::fs::remove_file(Path::new(&dir).join(MODELS).join("air-quality.linkml.yaml"))
+        .expect("the linkml file");
+    std::fs::remove_file(
+        Path::new(&dir)
+            .join(MODELS)
+            .join("json-schema/air-quality.v1.json"),
+    )
+    .expect("the schema file");
+    let out = temp_dir("rebuild-all-missing-out");
+    let report = artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
+    assert_eq!(
+        report.missing,
+        vec![
+            "air-quality/linkml",
+            "air-quality/artifacts.jsonSchema",
+            "air-quality/artifacts.context"
+        ]
+    );
+    assert!(
+        report.written.iter().all(|k| !k.contains("schemas/")),
+        "{:?}",
+        report.written
+    );
+    assert!(!out.join(format!("{OVZ}schemas")).exists());
+}
+
+/// DM-44: `contextSpaceRef` may be written as a reference object with a `name`.
+#[test]
+fn a_space_reference_written_as_an_object_names_the_space() {
+    let dir = repo_with_model("rebuild-ref-object", |m| {
+        m.replace(
+            "contextSpaceRef: ovzdusie",
+            "contextSpaceRef: { name: ovzdusie }",
+        )
+    });
+    let out = temp_dir("rebuild-ref-object-out");
+    let report = artifacts::rebuild(&dir, &options(&out)).expect("the rebuild runs");
+    assert!(report
+        .written
+        .iter()
+        .any(|k| k == &format!("{OVZ}schemas/ovzdusie/air-quality/v1/index.json")));
+}
+
+/// DM-44: an object of the store that cannot be written (a folder sits in its place) is an error
+/// naming that path, not a silent skip.
+#[test]
+fn an_object_whose_store_path_is_a_folder_reports_a_file_error_naming_it() {
+    let dir = repo("rebuild-object-blocked");
+    let out = temp_dir("rebuild-object-blocked-out");
+    let object = out.join(format!(
+        "{OVZ}schemas/ovzdusie/air-quality/v1/air-quality.linkml.yaml"
+    ));
+    std::fs::create_dir_all(&object).expect("a folder in the object's place");
+    let error = artifacts::rebuild(&dir, &options(&out)).expect_err("the object is a folder");
+    assert!(
+        matches!(&error, artifacts::Error::File { path, .. } if path.ends_with("air-quality.linkml.yaml")),
+        "{error}"
+    );
+}
+
 /// PF-29: a declared path that climbs out of the manifest's folder never brings a file of the
 /// host into the store, for every field `rebuild` reads.
 #[test]

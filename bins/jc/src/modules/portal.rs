@@ -1411,6 +1411,206 @@ mod tests {
         assert!(organization_vars(&portal_only).is_empty());
     }
 
+    /// A `[[hosts]]` row lists under its Organization at its root (a slash added where the row
+    /// leaves it out), a row on the base host ends the shared `/{org}/` path, each Organization's
+    /// Portal sites reach `JC_PORTAL_PORTAL_HOSTS`, a catalogue entry the Portal cannot read is
+    /// left out, and both token sources mint: in process here, through the remote issuer in a
+    /// split (an unreachable one answers an error, never a token).
+    #[tokio::test]
+    async fn host_rows_portal_sites_and_both_publisher_sources_reach_the_portal() {
+        use clap::Parser as _;
+        let text = include_str!("../../tests/fixtures/two-orgs.toml");
+        let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
+            .expect("parses");
+        let cli =
+            |roles: &str| crate::config::Cli::try_parse_from(["jc", "--role", roles]).expect("cli");
+        let mut cfg =
+            crate::config::Config::merge(cli("portal,dataroom"), file.clone()).expect("config");
+        let base = cfg.base_host.clone();
+        cfg.hosts = vec![
+            crate::config::HostSection {
+                host: "maps.alpha.test".into(),
+                organization: "alpha".into(),
+                root: Some("/opendata".into()),
+            },
+            crate::config::HostSection {
+                host: "www.alpha.test".into(),
+                organization: "alpha".into(),
+                root: Some("/".into()),
+            },
+            crate::config::HostSection {
+                host: "beta.extra.test".into(),
+                organization: "beta".into(),
+                root: None,
+            },
+        ];
+        cfg.organizations[0].hosts.portals = vec!["site.alpha.test".into()];
+        let s = cfg.scheme.clone();
+        let parsed = joinedcontext_portal::organization_host::parse_addresses(
+            &organization_addresses(&cfg).to_string(),
+        )
+        .expect("parses");
+        let urls = |i: usize| -> Vec<String> {
+            parsed[i]
+                .addresses
+                .iter()
+                .map(|a| a.url.to_string())
+                .collect()
+        };
+        let alpha = urls(0);
+        assert!(
+            alpha.contains(&format!("{s}://maps.alpha.test/opendata/")),
+            "{alpha:?}"
+        );
+        assert!(
+            alpha.contains(&format!("{s}://www.alpha.test/")),
+            "{alpha:?}"
+        );
+        assert!(alpha.contains(&format!("{s}://{base}/alpha/")), "{alpha:?}");
+        assert!(urls(1).contains(&format!("{s}://beta.extra.test/")));
+        let vars = organization_vars(&cfg);
+        assert_eq!(vars["JC_PORTAL_PORTAL_HOSTS"], "alpha=site.alpha.test");
+        // A row on the base host binds it: no Organization keeps the shared path.
+        cfg.hosts.push(crate::config::HostSection {
+            host: base.clone(),
+            organization: "beta".into(),
+            root: None,
+        });
+        let bound = organization_addresses(&cfg).to_string();
+        assert!(!bound.contains(&format!("{base}/alpha/")), "{bound}");
+        // An entry the Portal cannot read is left out, the readable one kept.
+        let listener: std::net::SocketAddr = "127.0.0.1:42302".parse().unwrap();
+        let mut entries = organization_catalogues(&cfg, listener);
+        entries.push(serde_json::json!({ "organization": 7 }));
+        assert_eq!(
+            configured_catalogues(&entries, None).len(),
+            entries.len() - 1
+        );
+        // In process: the closure mints from jc's own issuer.
+        let here = publisher_token(&cfg).expect("dataroom here");
+        let minted = here.mint().await;
+        assert!(
+            minted.is_ok(),
+            "the in-process issuer mints: {:?}",
+            minted.err()
+        );
+        // Split: the remote issuer refuses the first call (an error, nothing kept) and then
+        // answers a token, which the closure mints.
+        let mut split = crate::config::Config::merge(cli("portal"), file).expect("config");
+        split
+            .remote_modules
+            .insert(Module::Dataroom, "https://jc.base.test/opendata".into());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let issuer = Router::new().route(
+            "/token",
+            axum::routing::post(move || {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let status = if n == 0 {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    } else {
+                        axum::http::StatusCode::OK
+                    };
+                    let answer =
+                        serde_json::json!({"access_token": "t-dataroom", "expires_in": 300});
+                    (status, axum::Json(answer))
+                }
+            }),
+        );
+        let bound = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = bound.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(bound, issuer).await });
+        let remote = crate::config::RemoteSection {
+            token_url: format!("http://{at}/token"),
+            client_id: "portal".into(),
+            ..crate::config::RemoteSection::default()
+        };
+        let _ = crate::door::REMOTE.set(std::sync::Arc::new(
+            crate::door::Remote::new(&remote, jc_secret::Secret::new("client-secret".into()))
+                .expect("a remote"),
+        ));
+        let there = publisher_token(&split).expect("dataroom in another Deployment");
+        assert!(there.mint().await.is_err(), "the refused call");
+        let minted = there.mint().await.expect("the answered call");
+        assert_eq!(minted.expose(), "t-dataroom");
+    }
+
+    /// A run-time Organization whose host makes no URL lists neither addresses nor a catalogue,
+    /// and the others keep theirs.
+    #[test]
+    fn a_run_time_organization_whose_host_makes_no_url_is_left_out() {
+        let org = |name: &str, portal: &str| crate::config::OrganizationSection {
+            name: name.into(),
+            id: None,
+            hosts: crate::config::OrganizationHosts {
+                portal: portal.into(),
+                ..Default::default()
+            },
+            host: None,
+            same_site_apps: false,
+            catalogue_id: "00000000-0000-7000-8000-000000007898".into(),
+            portal_token_file: None,
+            first_admin: None,
+        };
+        let set = super::super::follow::Organizations {
+            run_time: vec![org("broken", "bad host^"), org("fine", "fine.example")],
+            removed: Vec::new(),
+        };
+        let reach = std::net::SocketAddr::from(([127, 0, 0, 1], 8080));
+        let (catalogues, addresses) = run_time_entries(&set, "https", Some(reach), None);
+        let listed: Vec<&str> = addresses.iter().map(|a| a.organization.as_str()).collect();
+        assert_eq!(listed, ["fine"]);
+        let published: Vec<&str> = catalogues.iter().map(|c| c.organization.as_str()).collect();
+        assert_eq!(published, ["fine"]);
+    }
+
+    /// A registry row's id reaches its run-time Organization when it parses and is dropped when
+    /// it does not; the Portal lists a row at its own host when that host is the served working
+    /// host, else at the working host, and a row without one not at all.
+    #[test]
+    fn run_time_rows_keep_a_valid_id_and_list_at_the_served_host() {
+        use joinedcontext_portal::host_registry::OrganizationRow;
+        let row = |name: &str, id: Option<&str>, host: &str| OrganizationRow {
+            name: name.into(),
+            organization_id: id.map(str::to_owned),
+            host: host.into(),
+            state: "active".into(),
+            catalogue_id: None,
+        };
+        let rows = [
+            row("valid", Some("sk_valid"), "valid.example:8443"),
+            row("bad", Some("Not An Id!"), "elsewhere.example"),
+            row("none", None, ""),
+        ];
+        let served = |portal: &str| crate::config::OrganizationHosts {
+            portal: portal.into(),
+            ..Default::default()
+        };
+        let hosts: BTreeMap<String, crate::config::OrganizationHosts> = [
+            ("valid".to_owned(), served("valid.example")),
+            ("bad".to_owned(), served("bad.example")),
+            ("none".to_owned(), served("")),
+        ]
+        .into();
+        let listed = portal_hosts(&rows, &hosts, "https");
+        assert_eq!(
+            listed,
+            "valid=https://valid.example:8443,bad=https://bad.example"
+        );
+        let set = run_time(&rows, hosts, &[]);
+        let ids: Vec<(String, Option<String>)> = set
+            .iter()
+            .map(|o| (o.name.clone(), o.id.as_ref().map(|i| i.as_str().to_owned())))
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                ("valid".to_owned(), Some("sk_valid".to_owned())),
+                ("bad".to_owned(), None)
+            ]
+        );
+    }
+
     /// T-7133: an Organization with `hosts.idm` gets its realm in the Portal's settings, its
     /// sign-in host dialed at jc's listener beside the hosts jc already reaches; one without gets
     /// none, and neither does a Portal whose realm or reach the environment named.
@@ -1586,6 +1786,35 @@ mod tests {
             );
         }
         assert!(!super::super::gateway::registry_links().contains_key("rt7184"));
+        // Rows the router cannot take keep what answers and name the step: one host as both
+        // the working and the API host puts the Portal and the gateway on one mount, and an
+        // Organization name the host table refuses stops the rebuild.
+        let e = apply(
+            &run,
+            &[
+                host("one.rt7903.sk", "rt7903", "working"),
+                host("one.rt7903.sk", "rt7903", "api"),
+            ],
+            &[org("bbsk", "active"), org("rt7903", "active")],
+        )
+        .expect_err("two modules on one mount");
+        assert!(
+            e.contains("the hosts the registry added kept their entries"),
+            "{e}"
+        );
+        let e = apply(
+            &run,
+            &[host("smartcity.bad.sk", "Not An Org", "working")],
+            &[org("bbsk", "active"), org("Not An Org", "active")],
+        )
+        .expect_err("a name the host table refuses");
+        assert!(e.contains("is not an Organization id"), "{e}");
+        assert_eq!(get("smartcity.bbsk.sk", "/").await, ok("bbsk-portal|bbsk"));
+        assert_eq!(
+            get("one.rt7903.sk", "/").await.0,
+            axum::http::StatusCode::MISDIRECTED_REQUEST,
+            "no host of a refused set answers"
+        );
     }
 
     /// The registry rebuild on a migrated Portal database (`JC_PG_TEST_DATABASE_URL`, a superuser):

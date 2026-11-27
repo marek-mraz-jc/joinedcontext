@@ -77,10 +77,9 @@ pub(crate) async fn endpoint_record(
             endpoint_surface::dataset_html(&endpoint, space, &index, base)
         }
     };
-    match HeaderValue::from_str(format.media_type()) {
-        Ok(media) => ([(axum::http::header::CONTENT_TYPE, media)], body).into_response(),
-        Err(_) => ProblemDetails::internal().into_response(),
-    }
+    // The three media types are literals of `space_surface`, each a valid header value.
+    let media = HeaderValue::from_static(format.media_type());
+    ([(axum::http::header::CONTENT_TYPE, media)], body).into_response()
 }
 
 /// The DCAT-AP record of one dataset of an Endpoint's `spec.catalog.datasets`, as JSON-LD or

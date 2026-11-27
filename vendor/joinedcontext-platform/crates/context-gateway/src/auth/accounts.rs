@@ -153,6 +153,14 @@ impl ServiceAccounts {
         self
     }
 
+    /// The table with `account` under the client `client`, as no repository could write it (a
+    /// platform client's id is struck from every table `accounts_of` builds).
+    #[cfg(test)]
+    pub(crate) fn with_account(mut self, client: &str, account: Account) -> Self {
+        self.by_client_id.insert(client.to_owned(), account);
+        self
+    }
+
     /// Whether a token whose `azp` is `azp` may be admitted on the Endpoint `slug` (AP-113): an
     /// App's client only on the Endpoints that App reads, and an `app-*` client that neither an
     /// App nor a ServiceAccount of the repository names on none. Every other client is no App's
@@ -508,6 +516,113 @@ mod tests {
         assert!(
             accounts.resolve("gwreg-kpi").is_none(),
             "the derived id is nobody's"
+        );
+    }
+
+    /// A repository of manifests held in memory, as the Portal's mirror loads one.
+    fn repository(documents: &[String]) -> Repository {
+        let manifests = documents
+            .iter()
+            .map(|yaml| serde_norway::from_str(yaml).expect("a manifest"))
+            .collect();
+        Repository::from_manifests(manifests, Some("city.example")).expect("the repository loads")
+    }
+
+    fn service_account(project: &str, name: &str) -> String {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {name}\n  \
+             namespace: {project}\nspec:\n  owner: {{ user: jana@hel.fi }}\n  purpose: a job\n  \
+             roles: []\n  credentials: []\n"
+        )
+    }
+
+    /// T-1454: a client id three accounts derive resolves to nobody: the third finds it already
+    /// struck from the table; a derived Pipeline or App job principal that meets an account's
+    /// client id strikes it and takes none.
+    #[test]
+    fn a_client_id_several_accounts_derive_resolves_to_nobody() {
+        let three = repository(&[
+            service_account("a", "b-c-d"),
+            service_account("a-b", "c-d"),
+            service_account("a-b-c", "d"),
+            service_account("a", "lone"),
+        ]);
+        let accounts = accounts_of(&three);
+        assert!(accounts.resolve("a-b-c-d").is_none(), "the shared id");
+        assert!(accounts.resolve("a-lone").is_some(), "a lone account stays");
+
+        let pipeline = "apiVersion: joinedcontext.com/v1alpha2\nkind: Pipeline\nmetadata: { name: \
+             sensors, namespace: city }\nspec:\n  class: resident\n  sources:\n    - dataSourceRef: \
+             { kind: DataSource, name: feed }\n  outputs:\n    - targetEndpoint: \
+             urn:ngsi-ld:Endpoint:city.example:air:ep-write\n"
+            .to_owned();
+        let endpoint = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata: { name: \
+             ep-write, namespace: city }\nspec:\n  contextSpaceRef: air\n  slug: \
+             zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n"
+            .to_owned();
+        let alone = repository(&[endpoint.clone(), pipeline.clone()]);
+        let (project, derived) = jc_manifest::pipeline_identity::derived(&alone)
+            .into_iter()
+            .next()
+            .expect("the Pipeline derives an account");
+        let client = client_id(&project, &derived.name);
+        assert!(accounts_of(&alone).resolve(&client).is_some());
+        let clash = repository(&[endpoint, pipeline, service_account(&project, &derived.name)]);
+        assert!(
+            accounts_of(&clash).resolve(&client).is_none(),
+            "a Pipeline's account and a file's account derive one client id"
+        );
+
+        let app = "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: events\n  \
+             namespace: helsinki\nspec:\n  kind: wasm\n  source:\n    git: { url: \
+             \"https://dev.joinedcontext.com/git/joinedcontext/helsinki_events.git\", ref: main }\n  \
+             build: { node: \"22\", rust: \"1.90\" }\n  visibility: project\n  lifecycle: \
+             published\n  server:\n    jobs:\n      - { name: daily, schedule: \"20 3 * * *\", \
+             export: run }\n  dataNeeds:\n    - contextSpaceRef: { kind: ContextSpace, name: \
+             helsinki }\n      types: [Event]\n      operations: [queryEntity]\n"
+            .to_owned();
+        let job = jc_core::kinds::app_identity::account_name("events");
+        let job_client = client_id("helsinki", &job);
+        let alone = repository(std::slice::from_ref(&app));
+        assert!(accounts_of(&alone).resolve(&job_client).is_some());
+        let clash = repository(&[app, service_account("helsinki", &job)]);
+        assert!(
+            accounts_of(&clash).resolve(&job_client).is_none(),
+            "an App's job principal and a file's account derive one client id"
+        );
+    }
+
+    /// A manifest whose spec does not parse is left out of the audience table, and a reference
+    /// is followed by its `endpointRef` or its slug: one naming neither reaches nothing.
+    #[test]
+    fn manifests_that_do_not_parse_are_left_out_of_the_audience_table() {
+        let broken = |kind: &str, name: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata: {{ name: {name}, \
+                 namespace: city }}\nspec: {{ unknown: true }}\n"
+            )
+        };
+        let reference = |name: &str, target: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: SharedSpaceReference\nmetadata: {{ \
+                 name: {name}, namespace: city }}\nspec:\n  alias: remote\n{target}"
+            )
+        };
+        let repo = repository(&[
+            broken("Endpoint", "ep-broken"),
+            broken("SharedSpaceReference", "ref-broken"),
+            broken("App", "app-broken"),
+            reference(
+                "by-name",
+                "  endpointRef: { project: other, name: missing }\n",
+            ),
+            reference("by-nothing", ""),
+        ]);
+        let accounts = accounts_of(&repo);
+        assert!(accounts.is_empty());
+        assert!(
+            !accounts.admits_on("app-broken", "any-slug"),
+            "a broken App's client is admitted nowhere"
         );
     }
 

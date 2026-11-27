@@ -501,6 +501,104 @@ spec:
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// PF-69: a project's role is reached from a binding at a context space of that project, and a
+/// binding at a space nobody declares, or at no scope at all, is refused naming that scope.
+#[test]
+fn a_project_role_is_reached_from_a_context_space_of_its_project_alone() {
+    let binding = |scope: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata: {{ name: space-analysts, namespace: org }}\nspec:\n  subjects: [{{ user: peter }}]\n  role: air-analyst\n  scope: {scope}\n"
+        )
+    };
+    let dir = demo_repo("project-role-at-space");
+    write(
+        &dir,
+        "projects/ovzdusie/roles/air-analyst.yaml",
+        PROJECT_ROLE_ANALYST,
+    );
+    write(
+        &dir,
+        "users/assignments/space-analysts.yaml",
+        &binding("{ contextSpace: ovzdusie }"),
+    );
+    let compiled = roles::compile(&load(&dir)).expect("the space belongs to the role's project");
+    let data: serde_json::Value = serde_json::from_str(&compiled.roles_json).expect("json");
+    assert_eq!(data["bindings"][0]["scope"]["contextSpace"], "ovzdusie");
+
+    for (scope, said) in [
+        (
+            "{ contextSpace: elsewhere }",
+            "context space scope `elsewhere`",
+        ),
+        ("{}", "an unnamed scope"),
+    ] {
+        write(
+            &dir,
+            "users/assignments/space-analysts.yaml",
+            &binding(scope),
+        );
+        let err = roles::compile(&load(&dir)).expect_err("out of reach");
+        assert!(
+            matches!(&err, RolesError::RoleOutOfReach { role_project, .. } if role_project == "ovzdusie"),
+            "{scope}: {err}"
+        );
+        assert!(err.to_string().contains(said), "{scope}: {err}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CC-41: a project-scoped binding whose role approves owns that project's folder, and a binding
+/// whose subjects name no group (a person is no forge login) owns nothing.
+#[test]
+fn an_approving_project_binding_owns_its_folder_and_one_with_no_group_owns_nothing() {
+    let approver = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata: { name: endpoint-approver, namespace: org }\nspec:\n  rules:\n    - kinds: [Endpoint]\n      verbs: [propose, approve]\n";
+    let binding = |name: &str, subject: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata: {{ name: {name}, namespace: org }}\nspec:\n  subjects: [{{ {subject} }}]\n  role: endpoint-approver\n  scope: {{ project: ovzdusie }}\n"
+        )
+    };
+    let dir = users_repo("codeowners-project-approver");
+    write(&dir, "users/roles/endpoint-approver.yaml", approver);
+    write(
+        &dir,
+        "users/assignments/ovzdusie-reviewers.yaml",
+        &binding("ovzdusie-reviewers", "group: air-quality-reviewers"),
+    );
+    write(
+        &dir,
+        "users/assignments/ovzdusie-peter.yaml",
+        &binding("ovzdusie-peter", "user: peter"),
+    );
+    let owners = roles::compile(&load(&dir)).expect("compiles").codeowners;
+    assert!(
+        owners.contains(
+            "\n# RoleBinding ovzdusie-reviewers (project ovzdusie)\n/projects/ovzdusie/ @banskabystrica/air-quality-reviewers\n"
+        ),
+        "{owners}"
+    );
+    assert!(!owners.contains("ovzdusie-peter"), "{owners}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A ContextSpace that lives in no namespace belongs to no project, so a binding to its name owns
+/// no path and reaches no project's role.
+#[test]
+fn a_space_without_a_namespace_belongs_to_no_project() {
+    let manifest = |yaml: &str| serde_norway::from_str(yaml).expect("a manifest");
+    let repo = jc_manifest::loader::Repository::from_manifests(
+        vec![
+            manifest("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata: { name: loose }\nspec: {}\n"),
+            manifest(ROLE_ADMIN),
+            manifest(&BINDING_SPACE_REVIEWERS.replace("contextSpace: parking", "contextSpace: loose")),
+        ],
+        None,
+    )
+    .expect("builds");
+    let owners = roles::compile(&repo).expect("compiles").codeowners;
+    assert!(!owners.contains("/projects/"), "{owners}");
+    assert!(!owners.contains("parking-reviewers\n/"), "{owners}");
+}
+
 #[test]
 fn the_same_role_name_in_users_and_in_a_project_is_refused() {
     let clash = r#"apiVersion: joinedcontext.com/v1alpha1
@@ -770,6 +868,40 @@ fn the_project_field_prefers_the_manifests_own_namespace_over_the_path_derived_o
     )
     .expect("input");
     assert_eq!(input.changes[0].project.as_deref(), Some("ovzdusie"));
+}
+
+/// PF-52: a quoted path whose octal escapes are no UTF-8 is refused, and a copy proposes the new
+/// manifest without deleting the one it was copied from.
+#[test]
+fn a_non_utf8_quoted_path_is_refused_and_a_copy_deletes_nothing() {
+    let (head, base) = merge_request("roles-copy");
+    let refused = roles::input(&head, &base, "A\t\"a\\377.yaml\"\n", "jana", None, &[]);
+    assert!(
+        matches!(&refused, Err(RolesError::ChangePath { path }) if path == "\"a\\377.yaml\""),
+        "{refused:?}"
+    );
+
+    write(
+        &head,
+        "projects/ovzdusie/pipelines/aq2/pipeline.yaml",
+        &PIPELINE.replace("name: aq", "name: aq2"),
+    );
+    let input = roles::input(
+        &head,
+        &base,
+        "C100\tprojects/ovzdusie/pipelines/aq/pipeline.yaml\tprojects/ovzdusie/pipelines/aq2/pipeline.yaml\n",
+        "jana",
+        None,
+        &[],
+    )
+    .expect("input");
+    assert_eq!(
+        seen(&input)
+            .iter()
+            .map(|c| (c.0, c.2.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("propose", "aq2")]
+    );
 }
 
 /// PF-52, CC-41: a rename proposes the new manifest and deletes the old one, so moving a

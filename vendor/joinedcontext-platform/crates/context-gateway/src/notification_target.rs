@@ -138,6 +138,9 @@ mod tests {
             ("mqtt://broker.example/topic", "HTTP or HTTPS"),
             ("not a url", "not a URL"),
             ("file:///etc/passwd", "HTTP or HTTPS"),
+            // A dot is no host: it trims to nothing, and an empty name is no address to send to.
+            ("http://./notify", "names no host"),
+            ("https://.../notify", "names no host"),
         ] {
             let problem = refusal(uri, &[]).expect("refused");
             assert!(

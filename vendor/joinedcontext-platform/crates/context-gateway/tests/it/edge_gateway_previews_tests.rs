@@ -558,6 +558,62 @@ async fn a_gateway_that_cannot_mint_a_token_asks_nothing_rather_than_asking_anon
     );
 }
 
+#[tokio::test(flavor = "current_thread", start_paused = true)]
+async fn a_previews_directory_that_cannot_be_made_keeps_the_poll_going_and_writes_nothing() {
+    // The directory is a file: every list the Portal sends fails to be written, and the loop
+    // asks again rather than ending, so the next list is taken once the disk is mended.
+    let dir = scratch("follow-unwritable");
+    let blocked = dir.join("previews");
+    std::fs::write(&blocked, "not a directory").expect("a file in the way");
+    let (url, seen) = portal(vec![(200, listing("ws-air-", "space.yaml", "x"))]).await;
+    let follower = tokio::spawn(Mirror::new(&blocked).follow(url, None));
+
+    until(|| seen.calls.load(Ordering::SeqCst) >= 3).await;
+    assert!(!follower.is_finished(), "a write failure ended the poll");
+    assert_eq!(
+        std::fs::read_to_string(&blocked).expect("untouched"),
+        "not a directory"
+    );
+}
+
+#[tokio::test]
+async fn a_realm_that_cannot_be_reached_is_an_error_naming_the_connection_and_no_token() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let closed = listener.local_addr().expect("the bound address");
+    drop(listener);
+    let token = WorkloadToken::new(
+        format!("http://{closed}/token"),
+        "context-gateway".to_owned(),
+        "not-a-real-secret".to_owned(),
+    );
+    let refused = token.get().await.expect_err("nothing answers");
+    assert!(!refused.is_empty());
+    assert!(!refused.contains("not-a-real-secret"), "{refused}");
+}
+
+#[test]
+fn a_withdrawn_preview_that_cannot_be_removed_stays_listed_for_the_next_run() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = scratch("withdraw-stuck");
+    let mut mirror = Mirror::new(&dir);
+    mirror
+        .apply(one("ws-air-", &[("space.yaml", "x")]))
+        .expect("written");
+    // A directory nobody may write to keeps its entries: the removal fails, the rest goes on.
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o555)).expect("read only");
+    let applied = mirror.apply(Vec::new());
+    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("writable");
+    applied.expect("one stuck removal is not a failed apply");
+    assert!(
+        dir.join("ws-air-").is_dir(),
+        "a removal that failed still deleted the preview's directory"
+    );
+    mirror.apply(Vec::new()).expect("the next run removes it");
+    assert!(!dir.join("ws-air-").exists());
+}
+
 /// A realm that grants a token lasting `lifetime` seconds, or refuses when `lifetime` is zero,
 /// counting what it was asked. `(token endpoint, refusals)`.
 async fn realm(lifetime: u64) -> (String, Arc<AtomicUsize>) {

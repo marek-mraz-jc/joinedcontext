@@ -2570,6 +2570,393 @@ mod tests {
         assert!(refused.contains("bbsk/roads"), "{refused}");
     }
 
+    /// A gateway whose Endpoints list `tools/list` as `listings` say (a status or a delayed
+    /// answer), and whose named server lends what `lends` says.
+    async fn gateway_of(
+        listings: &[(&str, ResponseTemplate)],
+        lends: Option<(&str, ResponseTemplate)>,
+    ) -> MockServer {
+        let gateway = MockServer::start().await;
+        for (slug, answer) in listings {
+            Mock::given(method("POST"))
+                .and(path(format!("/api/endpoint/{slug}/mcp")))
+                .respond_with(answer.clone())
+                .mount(&gateway)
+                .await;
+        }
+        if let Some((server, answer)) = lends {
+            Mock::given(method("POST"))
+                .and(path(format!("/api/mcp/{server}")))
+                .respond_with(answer)
+                .mount(&gateway)
+                .await;
+        }
+        gateway
+    }
+
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn tools_answer(names: &[&str]) -> ResponseTemplate {
+        let tools: Vec<_> = names
+            .iter()
+            .map(|n| json!({"name": n, "description": "", "inputSchema": {"type": "object"}}))
+            .collect();
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"tools": tools}}))
+    }
+
+    fn lends_answer(rows: serde_json::Value) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(
+            json!({"jsonrpc": "2.0", "id": 1, "result": {"structuredContent": {"endpoints": rows}}}),
+        )
+    }
+
+    /// A public deployment `name` reading `connectors`, with its server, if any.
+    fn deployment_of(name: &str, connectors: &[&str], server: Option<&str>) -> Deployment {
+        let mut deployment = crate::chat::test_world::public_deployment(name, connectors);
+        deployment.spec.mcp_server = server.map(str::to_owned);
+        deployment
+    }
+
+    fn snapshot_of(endpoints: &[(&str, &str)], deployments: Vec<Deployment>) -> Snapshot {
+        let mut snapshot = Snapshot::default();
+        for (name, slug) in endpoints {
+            crate::chat::test_world::publish(&mut snapshot, name, slug, &["T0"]);
+        }
+        snapshot.deployments = deployments;
+        snapshot
+    }
+
+    /// Warming lists each public connector once, whatever deployments name it, and the sources'
+    /// languages of the deployments that search; a warm-up still running keeps the next away,
+    /// and a snapshot a panic poisoned warms nothing.
+    #[tokio::test]
+    async fn warming_lists_each_connector_once_and_one_warm_up_keeps_the_next_away() {
+        let gateway = gateway_of(
+            &[
+                (
+                    "slugaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    tools_answer(&["query_entities"]),
+                ),
+                (
+                    "slugbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    tools_answer(&["query_entities"]),
+                ),
+            ],
+            None,
+        )
+        .await;
+        let mut data_only = deployment_of("data", &["a"], None);
+        data_only.spec.answer =
+            Some(serde_json::from_value(json!({"routes": "data"})).expect("the answer settings"));
+        let snapshot = snapshot_of(
+            &[
+                ("a", "slugaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                ("b", "slugbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            ],
+            vec![
+                deployment_of("one", &["a", "b"], None),
+                deployment_of("two", &["a"], None),
+                data_only,
+            ],
+        );
+        let state = Arc::new(crate::chat::test_world::state(snapshot, &gateway.uri()));
+        // One warm-up at a time: while one runs, another asks the gateway nothing.
+        WARMING.store(true, std::sync::atomic::Ordering::Release);
+        warm_types(Arc::clone(&state)).await;
+        assert!(gateway
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+        WARMING.store(false, std::sync::atomic::Ordering::Release);
+        warm_types(Arc::clone(&state)).await;
+        let listed = gateway.received_requests().await.expect("recorded").len();
+        assert_eq!(listed, 2, "a and b once each, though `two` names a again");
+        assert!(state
+            .answers
+            .listing_within("slugaaaaaaaaaaaaaaaaaaaaaaaaa", Duration::MAX)
+            .is_some());
+        assert!(!WARMING.load(std::sync::atomic::Ordering::Acquire));
+        // A poisoned snapshot is read as no deployment at all.
+        std::thread::scope(|s| {
+            let held = s.spawn(|| {
+                let _write = state.snapshot.write();
+                std::panic::resume_unwind(Box::new("poisoned on purpose"));
+            });
+            assert!(held.join().is_err());
+        });
+        warm_types(Arc::clone(&state)).await;
+        assert_eq!(
+            gateway.received_requests().await.expect("recorded").len(),
+            listed
+        );
+        assert!(connected(
+            &state,
+            &deployment_of("one", &["a"], None),
+            None,
+            None,
+            &mut Vec::new(),
+            None
+        )
+        .await
+        .is_empty());
+    }
+
+    /// What a public deployment is offered of its connectors: the chosen ones only, those that
+    /// list some of the tools it asks for, never a non-public Endpoint the manifests wrongly
+    /// reach, and a failing listing left out and logged once an hour. Past the routing deadline
+    /// a stale listing answers for a slow one.
+    #[tokio::test]
+    async fn a_public_deployment_is_offered_the_connectors_it_may_read_and_a_slow_one_by_its_last_listing(
+    ) {
+        use jc_core::Audience;
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let gateway = gateway_of(
+            &[
+                (
+                    "slugaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    tools_answer(&["query_entities"]),
+                ),
+                (
+                    "slugbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    tools_answer(&["something_else"]),
+                ),
+                ("slugcccccccccccccccccccccccc", ResponseTemplate::new(500)),
+                (
+                    "slugdddddddddddddddddddddddd",
+                    tools_answer(&["query_entities"]).set_delay(Duration::from_secs(3)),
+                ),
+                (
+                    "slugeeeeeeeeeeeeeeeeeeeeeeeee",
+                    tools_answer(&["query_entities"]),
+                ),
+            ],
+            None,
+        )
+        .await;
+        let names = [
+            ("a", "slugaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            ("b", "slugbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            ("c", "slugcccccccccccccccccccccccc"),
+            ("d", "slugdddddddddddddddddddddddd"),
+            ("e", "slugeeeeeeeeeeeeeeeeeeeeeeeee"),
+            ("f", "slugffffffffffffffffffffffff"),
+        ];
+        let deployment = deployment_of("offer", &["a", "b", "c", "d", "e", "f"], None);
+        let mut snapshot = snapshot_of(&names, vec![deployment.clone()]);
+        // `e` is private on its manifest but the resolver's facts call it public: the token rule
+        // does not follow the resolver, and a public deployment is never offered it.
+        snapshot
+            .endpoints
+            .get_mut(&("hronov".to_owned(), "e".to_owned()))
+            .expect("e")
+            .audience = "organization".into();
+        snapshot.facts.insert(
+            ("hronov".into(), "e".into()),
+            jc_core::reach::EndpointFacts {
+                project: "hronov".into(),
+                name: "e".into(),
+                slug: "slugeeeeeeeeeeeeeeeeeeeeeeeee".into(),
+                space: String::new(),
+                audience: Audience::Public,
+                types: Default::default(),
+                domains: Default::default(),
+                themes: Default::default(),
+            },
+        );
+        let state = crate::chat::test_world::state(snapshot, &gateway.uri());
+        // `d` was listed an hour ago; the gateway now takes three seconds for it.
+        state.answers.keep_listing_aged(
+            "slugdddddddddddddddddddddddd",
+            Duration::from_secs(3_600),
+            vec![json!({"name": "query_entities", "description": "", "inputSchema": {"type": "object"}})],
+        );
+        let mut failed = Vec::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(400);
+        let offered = connected(&state, &deployment, None, None, &mut failed, Some(deadline)).await;
+        let slugs: Vec<_> = offered.iter().map(|c| c.surface.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            [
+                "slugaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "slugdddddddddddddddddddddddd"
+            ],
+            "b lists no tool it asks for, c fails, e is not public, f has no page"
+        );
+        assert!(failed.is_empty(), "a visitor is told nothing of it");
+        let text = log.text();
+        for said in [
+            "offers none of the connector's tools",
+            "a connector's tools could not be listed; left out, logged once an hour",
+            "a non-public Endpoint outside the deployment's reach",
+        ] {
+            assert!(text.contains(said), "{said}: {text}");
+        }
+        // The failure is logged once an hour: asked again, it is not said again.
+        let before = text.matches("left out, logged once an hour").count();
+        connected(&state, &deployment, None, None, &mut Vec::new(), None).await;
+        assert_eq!(
+            log.text().matches("left out, logged once an hour").count(),
+            before
+        );
+        // A question that chose its connectors is offered those alone.
+        let chosen = ["a".to_owned()];
+        let only = connected(
+            &state,
+            &deployment,
+            Some(&chosen),
+            None,
+            &mut Vec::new(),
+            None,
+        )
+        .await;
+        assert_eq!(only.len(), 1);
+        // With no listing kept and none in time, the slow connector is left out.
+        let fresh = crate::chat::test_world::state(
+            snapshot_of(&names[3..4], vec![deployment_of("offer", &["d"], None)]),
+            &gateway.uri(),
+        );
+        let late = tokio::time::Instant::now() + Duration::from_millis(200);
+        let none = connected(
+            &fresh,
+            &deployment_of("offer", &["d"], None),
+            None,
+            None,
+            &mut Vec::new(),
+            Some(late),
+        )
+        .await;
+        assert!(none.is_empty());
+    }
+
+    /// An internal deployment is told which listing failed; a connector whose tools it may not
+    /// call at all offers nothing.
+    #[tokio::test]
+    async fn an_internal_deployment_is_told_of_a_listing_that_failed() {
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let gateway = gateway_of(
+            &[("slugcccccccccccccccccccccccc", ResponseTemplate::new(500))],
+            None,
+        )
+        .await;
+        let mut deployment = deployment_of("inside", &["c"], None);
+        deployment.spec.channel = serde_json::from_value(json!("internal")).expect("a channel");
+        let state = crate::chat::test_world::state(
+            snapshot_of(
+                &[("c", "slugcccccccccccccccccccccccc")],
+                vec![deployment.clone()],
+            ),
+            &gateway.uri(),
+        );
+        let mut failed = Vec::new();
+        let person = PersonToken("person".into());
+        let offered = connected(&state, &deployment, None, Some(&person), &mut failed, None).await;
+        assert!(offered.is_empty());
+        assert_eq!(failed.len(), 1);
+        assert!(
+            matches!(&failed[0], Event::Tool { name, status: "failed", .. } if name == "tools/list")
+        );
+        assert!(
+            log.text()
+                .contains("a connector's tools could not be listed"),
+            "{}",
+            log.text()
+        );
+    }
+
+    /// A named server lends its Endpoints to the asker it may: not another project's server, not
+    /// a listing it refused, not a private Endpoint to nobody, and a lent Endpoint that lists no
+    /// tool or fails is left out and logged.
+    #[tokio::test]
+    async fn a_named_server_lends_what_the_asker_may_read_and_the_rest_is_left_out_and_logged() {
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let rows = json!([
+            {"slug": "lentpublic", "access": "public", "title": "Verejné"},
+            {"slug": "lentprivate", "access": "organization"},
+            {"slug": "lentempty", "access": "public"},
+            {"slug": "lentbroken", "access": "public"},
+            {"slug": "slugaaaaaaaaaaaaaaaaaaaaaaaaa", "access": "public"},
+        ]);
+        let gateway = gateway_of(
+            &[
+                ("lentpublic", tools_answer(&["query_entities"])),
+                ("lentempty", tools_answer(&[])),
+                ("lentbroken", ResponseTemplate::new(500)),
+                ("lentprivate", tools_answer(&["query_entities"])),
+                (
+                    "slugaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    tools_answer(&["query_entities"]),
+                ),
+            ],
+            Some(("hronov/team", lends_answer(rows))),
+        )
+        .await;
+        let deployment = deployment_of("lender", &["a"], Some("hronov/team"));
+        let state = crate::chat::test_world::state(
+            snapshot_of(
+                &[("a", "slugaaaaaaaaaaaaaaaaaaaaaaaaa")],
+                vec![deployment.clone()],
+            ),
+            &gateway.uri(),
+        );
+        let offered = connected(&state, &deployment, None, None, &mut Vec::new(), None).await;
+        let slugs: Vec<_> = offered.iter().map(|c| c.surface.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            ["slugaaaaaaaaaaaaaaaaaaaaaaaaa", "lentpublic"],
+            "the connector, then what the server lends once and to this asker"
+        );
+        assert!(
+            log.text()
+                .contains("a lent Endpoint's tools could not be listed"),
+            "{}",
+            log.text()
+        );
+        // Only a chosen server is read: a question that chose another connector reads none.
+        let chosen = ["a".to_owned()];
+        let kept = connected(
+            &state,
+            &deployment,
+            Some(&chosen),
+            None,
+            &mut Vec::new(),
+            None,
+        )
+        .await;
+        assert_eq!(kept.len(), 1);
+
+        // Another project's server is not offered.
+        let foreign = deployment_of("lender", &[], Some("elsewhere/team"));
+        let none = connected(&state, &foreign, None, None, &mut Vec::new(), None).await;
+        assert!(none.is_empty());
+        assert!(
+            log.text()
+                .contains("the mcpServer is another project's; not offered"),
+            "{}",
+            log.text()
+        );
+
+        // A server that refuses its listing: said once an hour to a visitor, and to a person.
+        let refused = gateway_of(&[], Some(("hronov/team", ResponseTemplate::new(500)))).await;
+        let state = crate::chat::test_world::state(Snapshot::default(), &refused.uri());
+        let mut failed = Vec::new();
+        connected(&state, &deployment, None, None, &mut failed, None).await;
+        assert!(failed.is_empty(), "a visitor is told nothing");
+        let mut inside = deployment_of("lender-in", &[], Some("hronov/team"));
+        inside.spec.channel = serde_json::from_value(json!("internal")).expect("a channel");
+        let person = PersonToken("person".into());
+        connected(&state, &inside, None, Some(&person), &mut failed, None).await;
+        assert_eq!(failed.len(), 1);
+        assert!(
+            log.text()
+                .contains("the mcpServer's Endpoints could not be listed"),
+            "{}",
+            log.text()
+        );
+    }
+
     /// T-5779: a turn's log id is the conversation's hash and the turn, never the id itself.
     #[test]
     fn a_question_id_hashes_its_conversation() {

@@ -168,9 +168,10 @@ pub(crate) async fn guarded(
         same_minted_id(asked, confirmed, &mut sent, Instant::now());
     }
     if let (Some(name), Ok(kept)) = (body, serde_json::from_slice::<Value>(&sent)) {
-        if let Some(arguments) = message["params"]["arguments"].as_object_mut() {
-            arguments.insert(name.to_owned(), kept);
-        }
+        // A body argument was read out of `arguments` above, so it is an object.
+        let _ = message["params"]["arguments"]
+            .as_object_mut()
+            .map(|arguments| arguments.insert(name.to_owned(), kept));
     }
     // The call before the person's answer only plans the changes, so a refusal is told at once.
     let deletes = (confirmed && !planned.is_empty()).then_some((headers, planned));
@@ -236,9 +237,7 @@ fn same_minted_id(asked: Vec<u8>, confirmed: bool, sent: &mut Vec<u8>, now: Inst
         // with "still open", and the next retry needs the same id.
         if let Some((id, _)) = minted.get(&asked).filter(|(_, until)| *until > now) {
             entity["id"] = Value::String(id.clone());
-            if let Ok(kept) = serde_json::to_vec(&entity) {
-                *sent = kept;
-            }
+            *sent = entity.to_string().into_bytes();
         }
         return;
     }
@@ -498,5 +497,145 @@ mod tests {
             create_key(&Subject::anonymous(), &headers),
             "address:10.0.0.7"
         );
+    }
+
+    #[test]
+    fn a_body_that_is_no_text_is_no_taken_call_and_a_refusal_has_a_sentence() {
+        assert!(!taken(axum::http::StatusCode::OK, &[0xff, 0xfe]));
+        assert!(taken(
+            axum::http::StatusCode::OK,
+            br#"{"result":{"content":[]}}"#
+        ));
+        assert!(!taken(
+            axum::http::StatusCode::OK,
+            br#"{"result":{"isError":true}}"#
+        ));
+        assert_eq!(refusal_text(b"not json"), "this Endpoint refused the write");
+        assert_eq!(refusal_text(br#"{"title":"Forbidden"}"#), "Forbidden");
+        assert_eq!(
+            refusal_text(br#"{"title":"Forbidden","detail":"not yours"}"#),
+            "not yours"
+        );
+    }
+
+    /// One test, since the kept ids are one process-wide map: a retry gets the id the question
+    /// was minted with, a body that is no JSON or has no id is left alone, an expired entry
+    /// makes room, and a full map of live entries takes no new question.
+    #[test]
+    fn a_minted_id_is_kept_for_the_retry_and_the_map_stays_bounded() {
+        let now = Instant::now();
+        let key = |n: usize| {
+            asked_key(
+                "s",
+                "jana",
+                "create_entity",
+                &Map::from_iter([("n".to_owned(), json!(n))]),
+            )
+        };
+        let id_of =
+            |sent: &[u8]| serde_json::from_slice::<Value>(sent).expect("json")["id"].clone();
+        let mut garbage = b"not json".to_vec();
+        same_minted_id(key(0), false, &mut garbage, now);
+        assert_eq!(garbage, b"not json");
+
+        let mut first = json!({"id": "urn:x:minted"}).to_string().into_bytes();
+        same_minted_id(key(0), false, &mut first, now);
+        let mut retry = json!({"id": "urn:x:fresh"}).to_string().into_bytes();
+        same_minted_id(key(0), true, &mut retry, now);
+        assert_eq!(id_of(&retry), "urn:x:minted");
+        let mut late = json!({"id": "urn:x:fresh"}).to_string().into_bytes();
+        same_minted_id(key(0), true, &mut late, now + MINTED_FOR * 2);
+        assert_eq!(id_of(&late), "urn:x:fresh");
+
+        let mut nameless = json!({"type": "T"}).to_string().into_bytes();
+        same_minted_id(key(1), false, &mut nameless, now);
+        assert!(!MINTED.lock().expect("map").contains_key(&key(1)));
+
+        let fill = |until: Instant| {
+            let mut map = MINTED.lock().expect("map");
+            map.clear();
+            for n in 0..MINTED_MAX {
+                map.insert(vec![1, n as u8, (n >> 8) as u8], ("urn:x:o".into(), until));
+            }
+        };
+        fill(now);
+        let mut sent = json!({"id": "urn:x:new"}).to_string().into_bytes();
+        same_minted_id(key(2), false, &mut sent, now + MINTED_FOR);
+        assert_eq!(
+            MINTED.lock().expect("map").len(),
+            1,
+            "expired entries made room"
+        );
+
+        fill(now + MINTED_FOR);
+        same_minted_id(key(3), false, &mut sent, now);
+        assert!(
+            !MINTED.lock().expect("map").contains_key(&key(3)),
+            "a full map takes no key"
+        );
+        MINTED.lock().expect("map").clear();
+    }
+
+    /// A confirmed delete whose planned changes cannot be made answers with the reason instead
+    /// of the delete's result; one the broker did not take changes nothing.
+    #[tokio::test]
+    async fn a_planned_change_that_fails_is_the_answer_of_the_call() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("port");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        drop(listener);
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(&url),
+            Box::new(crate::pdp::PolicyPdp),
+            "domain",
+        );
+        let planned = || -> Planned {
+            vec![(
+                "urn:x".to_owned(),
+                vec![crate::handlers::writes::Unlinking::Delete(
+                    "urn:y".to_owned(),
+                )],
+            )]
+        };
+        let kept = carry_out(&gateway, Some((HeaderMap::new(), planned())), false).await;
+        assert_eq!(
+            kept,
+            Ok(()),
+            "nothing changes before the broker took the delete"
+        );
+        let failed = carry_out(&gateway, Some((HeaderMap::new(), planned())), true).await;
+        let text = failed.expect_err("the broker is unreachable");
+        assert!(!text.is_empty(), "the call answers with a reason");
+    }
+
+    /// An Endpoint whose space has no tenant yet refuses a write before it plans anything: the
+    /// route's own tenancy check answers first, so this guard is run directly.
+    #[tokio::test]
+    async fn a_write_on_an_endpoint_without_a_tenant_is_refused_before_it_is_planned() {
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "domain",
+        );
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.tenant = None;
+        let mut message = json!({"id": 3, "params": {"name": "create_entity",
+            "arguments": {"entity": {"id": "urn:ngsi-ld:T:a", "type": "T"}}}});
+        let refused = guarded(
+            &gateway,
+            &endpoint,
+            &Subject::anonymous(),
+            "caller",
+            &mut message,
+        )
+        .await
+        .err()
+        .expect("a refusal");
+        let text = refused["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.contains("has no tenant yet"), "{refused}");
+        assert_eq!(refused["id"], 3);
     }
 }

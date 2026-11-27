@@ -277,22 +277,14 @@ fn resolver_inputs(
             .filter(|((owner, _), _)| *owner == project)
             .map(|((_, name), url)| (name.clone(), url.clone()))
             .collect();
-        for page in
-            crate::catalogue::pages_of(repository, &project, &[], false, &languages, &instances)
-        {
-            let Some(spec) = repository
-                .iter()
-                .find(|(id, _)| {
-                    id.kind == "Endpoint"
-                        && id.namespace.as_deref() == Some(project.as_str())
-                        && id.name == page.name
-                })
-                .and_then(|(_, r)| {
-                    serde_json::from_value::<EndpointSpec>(r.manifest.spec.clone()).ok()
-                })
-            else {
-                continue;
-            };
+        for (page, spec) in crate::catalogue::pages_with_specs(
+            repository,
+            &project,
+            &[],
+            false,
+            &languages,
+            &instances,
+        ) {
             let facts = EndpointFacts::of(
                 &project,
                 &page.name,

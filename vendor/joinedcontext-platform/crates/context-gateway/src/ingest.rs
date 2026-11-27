@@ -117,20 +117,13 @@ fn entity(
     for class in classes {
         for (attribute, mode) in schema.ingest(&class) {
             // the term, its expanded IRI or a compact IRI: one attribute
-            let keys: Vec<String> = object
-                .keys()
-                .filter(|k| crate::quality::names(k, &attribute))
-                .cloned()
-                .collect();
-            for written in keys {
-                let Some(value) = object.get_mut(&written) else {
+            let mut dropped = Vec::new();
+            for (written, value) in object.iter_mut() {
+                if !crate::quality::names(written, &attribute) {
                     continue;
-                };
+                }
                 match mode.as_str() {
-                    "drop" => {
-                        object.remove(&written);
-                        changed = true;
-                    }
+                    "drop" => dropped.push(written.clone()),
                     "keyedHash" => {
                         let key = key.ok_or_else(|| Refusal::NoKey {
                             attribute: attribute.clone(),
@@ -143,6 +136,10 @@ fn entity(
                     }
                     _ => return Err(Refusal::Unknown { attribute, mode }),
                 }
+            }
+            changed |= !dropped.is_empty();
+            for written in dropped {
+                object.remove(&written);
             }
         }
     }
@@ -244,6 +241,22 @@ mod tests {
             .as_str()
             .unwrap_or_default()
             .to_owned()
+    }
+
+    /// A body whose entities are not objects has nothing to minimise: it passes as it is, the
+    /// broker refusing it by its own rules.
+    #[test]
+    fn a_member_that_is_no_entity_is_left_for_the_broker_to_refuse() {
+        let mut body = json!([1, "text", null, [2]]);
+        assert_eq!(run(&mut body, whole()), Ok(false));
+        assert_eq!(body, json!([1, "text", null, [2]]));
+        let mut scalar = json!("rider");
+        assert_eq!(run(&mut scalar, whole()), Ok(false));
+        let mut mixed = json!([{ "id": "urn:ngsi-ld:BikeTrip:1", "type": "BikeTrip",
+            "location": { "type": "GeoProperty", "value": "x" } }, 7]);
+        assert_eq!(run(&mut mixed, whole()), Ok(true));
+        assert_eq!(mixed[0].get("location"), None);
+        assert_eq!(mixed[1], json!(7));
     }
 
     #[test]

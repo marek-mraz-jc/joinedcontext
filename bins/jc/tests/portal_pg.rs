@@ -303,6 +303,61 @@ async fn the_portal_seeds_and_follows_its_registry_on_postgres() {
     }
 }
 
+/// A registry the server refuses to write stops the Portal's start and names that registry,
+/// the Organizations' and then the hosts': a trigger refuses the table the test names while jc
+/// builds the Portal again and again; once it refuses nothing the Portal is ready.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_registry_seed_the_server_refuses_names_its_registry() {
+    let Some(db) = prepare("seed").await else {
+        return;
+    };
+    drop(start(&db).await);
+    let admin = db.admin().await;
+    sqlx::raw_sql(
+        "CREATE SCHEMA jc_test;
+         CREATE TABLE jc_test.refuse (tbl text NOT NULL);
+         INSERT INTO jc_test.refuse VALUES ('organizations');
+         CREATE FUNCTION jc_test.refuse() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+             SET search_path = jc_test AS $$
+         BEGIN
+             IF EXISTS (SELECT 1 FROM jc_test.refuse WHERE tbl = TG_TABLE_NAME) THEN
+                 RAISE EXCEPTION 'the test refuses %', TG_TABLE_NAME;
+             END IF;
+             RETURN NEW;
+         END $$;
+         CREATE TRIGGER jc_test_refuse BEFORE INSERT ON organizations
+             FOR EACH ROW EXECUTE FUNCTION jc_test.refuse();
+         CREATE TRIGGER jc_test_refuse BEFORE INSERT ON organization_hosts
+             FOR EACH ROW EXECUTE FUNCTION jc_test.refuse();",
+    )
+    .execute(&admin)
+    .await
+    .unwrap();
+    let jc = spawn(
+        tempfile::tempdir().unwrap(),
+        &db.url(APP),
+        Some(&db.url(OWNER)),
+    );
+    jc.wait_for("the jc.toml Organizations could not be seeded", 1, 120)
+        .await;
+    sqlx::raw_sql("UPDATE jc_test.refuse SET tbl = 'organization_hosts'")
+        .execute(&admin)
+        .await
+        .unwrap();
+    jc.wait_for("the jc.toml hosts could not be seeded", 1, 120)
+        .await;
+    sqlx::raw_sql("DELETE FROM jc_test.refuse")
+        .execute(&admin)
+        .await
+        .unwrap();
+    jc.wait_for("portal: ready", 1, 120).await;
+    let text = jc.text();
+    assert!(text.contains("the test refuses organizations"), "{text}");
+    for secret in [password(APP), password(OWNER)] {
+        assert!(!text.contains(&secret), "jc printed a password");
+    }
+}
+
 /// Runs jc with this Portal database setting until its log names `refusal`; the Portal is
 /// built again and again meanwhile, nothing else starts it.
 async fn refused(serving: &str, migration: Option<&str>, refusal: &str) {

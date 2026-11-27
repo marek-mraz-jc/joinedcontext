@@ -743,9 +743,8 @@ fn describe(record: &mut Value, included: &mut Vec<Value>, catalog: &Catalog) {
 fn typed_values(distributions: &[Value], included: &mut Vec<Value>) {
     let mut seen = std::collections::BTreeSet::new();
     for distribution in distributions {
-        if let Some(url) = distribution.get("dcat:accessURL").and_then(Value::as_str) {
-            included.push(json!({ "@id": url, "@type": "rdfs:Resource" }));
-        }
+        let url = distribution.get("dcat:accessURL").and_then(Value::as_str);
+        included.extend(url.map(|url| json!({ "@id": url, "@type": "rdfs:Resource" })));
         for (key, class) in [
             ("dcat:mediaType", "dct:MediaType"),
             ("dct:format", "dct:MediaTypeOrExtent"),
@@ -835,9 +834,12 @@ pub fn dataset(endpoint: &Subject<'_>, index: &Value, base: &str) -> Value {
     included.push(json!({ "@id": format!("{iri}/"), "@type": "rdfs:Resource" }));
     included.push(json!({ "@id": format!("{iri}/openapi.json"), "@type": "rdfs:Resource" }));
     included.push(service);
-    if let Some(distributions) = record["dcat:distribution"].as_array() {
-        typed_values(distributions, &mut included);
-    }
+    typed_values(
+        record["dcat:distribution"]
+            .as_array()
+            .map_or(&[], Vec::as_slice),
+        &mut included,
+    );
     included.push(json!({
         "@id": "spdx:checksumAlgorithm_sha256",
         "@type": "spdx:ChecksumAlgorithm",
@@ -905,9 +907,8 @@ pub fn dataset_slice(
             .and_then(Value::as_str)
             .unwrap_or_default()
             .to_owned();
-        let Some(path) = url.strip_prefix(&format!("{iri}/")) else {
-            continue;
-        };
+        // An address outside the Endpoint matches no surface below and is dropped with the rest.
+        let path = url.strip_prefix(&format!("{iri}/")).unwrap_or_default();
         let mut at = |mut distribution: Value, address: String| {
             distribution["@id"] = json!(address);
             distribution["dcat:accessURL"] = json!(address);
@@ -951,26 +952,30 @@ pub fn dataset_slice(
         .cloned()
         .unwrap_or_default();
     let service = whole.iter().find(|node| is_service(node)).cloned();
-    if let Some(included) = record["@included"].as_array_mut() {
-        for node in included.iter_mut().filter(|node| is_service(node)) {
-            if let Some(service) = &service {
-                *node = service.clone();
+    record["@included"]
+        .as_array_mut()
+        .into_iter()
+        .for_each(|included| {
+            for node in included.iter_mut().filter(|node| is_service(node)) {
+                *node = service.clone().unwrap_or(node.take());
+                node["dcat:servesDataset"] = json!(own);
             }
-            node["dcat:servesDataset"] = json!(own);
-        }
-        // The service's licence, when the entry names another, is typed in this record too.
-        for licence in whole
-            .iter()
-            .filter(|node| node.get("@type").and_then(Value::as_str) == Some("dct:LicenseDocument"))
-        {
-            if !included.iter().any(|node| node["@id"] == licence["@id"]) {
-                included.push(licence.clone());
-            }
-        }
-        for address in addresses {
-            included.push(json!({ "@id": address, "@type": "rdfs:Resource" }));
-        }
-    }
+            // The service's licence, when the entry names another, is typed in this record too.
+            let licences: Vec<Value> = whole
+                .iter()
+                .filter(|node| {
+                    node.get("@type").and_then(Value::as_str) == Some("dct:LicenseDocument")
+                })
+                .filter(|licence| !included.iter().any(|node| node["@id"] == licence["@id"]))
+                .cloned()
+                .collect();
+            included.extend(licences);
+            included.extend(
+                addresses
+                    .iter()
+                    .map(|address| json!({ "@id": address, "@type": "rdfs:Resource" })),
+            );
+        });
     record
 }
 
@@ -1048,9 +1053,11 @@ pub fn publisher_feed(records: Vec<Value>, base: &str, owner: &CatalogueOwner<'_
     if let Some(domain) = owner.domain {
         let home = format!("https://{domain}/");
         feed["foaf:homepage"] = json!(home);
-        if let Some(included) = feed["@included"].as_array_mut() {
-            included.push(json!({ "@id": home, "@type": "foaf:Document" }));
-        }
+        let home_node = json!({ "@id": home, "@type": "foaf:Document" });
+        feed["@included"]
+            .as_array_mut()
+            .into_iter()
+            .for_each(|included| included.push(home_node.clone()));
     }
     feed
 }
@@ -1310,16 +1317,17 @@ pub fn dataset_html(endpoint: &Subject<'_>, index: &Value, base: &str) -> String
         .iter()
         .filter_map(|distribution| {
             let url = distribution.get("dcat:accessURL").and_then(Value::as_str)?;
-            let label = match distribution.get("dct:title") {
-                Some(Value::String(title)) => title.as_str(),
-                Some(Value::Array(titles)) => titles
-                    .iter()
-                    .find(|t| t["@language"] == "en")
-                    .or_else(|| titles.first())
-                    .and_then(|t| t["@value"].as_str())
-                    .unwrap_or(url),
-                _ => url,
-            };
+            let label = distribution
+                .get("dct:title")
+                .map_or(url, |title| match title {
+                    Value::Array(titles) => titles
+                        .iter()
+                        .find(|t| t["@language"] == "en")
+                        .or_else(|| titles.first())
+                        .and_then(|t| t["@value"].as_str())
+                        .unwrap_or(url),
+                    other => other.as_str().unwrap_or(url),
+                });
             // The WebSocket says how to use it, in English, beside its guide (T-4064).
             let note = distribution
                 .get("dct:description")

@@ -235,6 +235,41 @@ fn query(endpoint: &str) -> Value {
     )
 }
 
+/// A data space participant's token (it names an agreement) is a transfer token, not a person's:
+/// the hub reads it for nothing it could remember between calls, so each call is judged afresh
+/// and a call that names no Endpoint of its reach answers as an unknown one.
+#[tokio::test]
+async fn a_participants_token_on_the_hub_is_judged_afresh_on_every_call() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let app = app(&broker.url, &realm);
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "did:web:partner.example",
+        "aud": "context-gateway",
+        "agreementId": "urn:uuid:no-such-agreement",
+        "participant": "did:web:partner.example",
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    for round in 0..2 {
+        let (status, answer) = send(
+            app.clone(),
+            hub(Some(&token), call("list_endpoints", json!({}))),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "round {round}: {answer}");
+        let listed = answer["result"]["structuredContent"]["endpoints"]
+            .as_array()
+            .map(Vec::len);
+        assert_eq!(
+            listed,
+            Some(0),
+            "no agreement of this gateway: nothing is reached ({answer})"
+        );
+    }
+}
+
 /// Section 3, row 1: an Endpoint the token may not read is absent from the list and the enum,
 /// and naming it answers the bytes an unknown slug gets, whatever the reason it is out: no
 /// grant, not the caller's project, MCP turned off (SP-20).

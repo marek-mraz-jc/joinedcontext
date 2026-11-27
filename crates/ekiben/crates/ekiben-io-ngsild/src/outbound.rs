@@ -500,11 +500,10 @@ mod tests {
         let addr = listener.local_addr().expect("addr");
         tokio::spawn(async move {
             loop {
-                if let Ok((mut sock, _)) = listener.accept().await {
-                    let mut buf = [0u8; 4096];
-                    let _ = sock.read(&mut buf).await;
-                    let _ = sock.write_all(raw.as_bytes()).await;
-                }
+                let (mut sock, _) = listener.accept().await.expect("accept");
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock.write_all(raw.as_bytes()).await;
             }
         });
         format!("http://{addr}/")

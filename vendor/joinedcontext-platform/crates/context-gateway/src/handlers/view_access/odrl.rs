@@ -19,16 +19,18 @@ pub const TURTLE: &str = "text/turtle";
 /// The broker's ODRL `Set` for one caller (plan 5.6, T-3649) as this Endpoint publishes it: the
 /// licence's duties on every permission (EP-79), which the broker does not hold, and the `uid`
 /// of the gateway's own access URL over the rules with those duties, so a changed licence is a
-/// new identifier too (EP-59). `None` when the broker's answer is not a `Set` object.
+/// new identifier too (EP-59). The broker's answer is a JSON object by the time it gets here
+/// (`from_view` refuses any other); a value that is none is published as an empty `Set`.
 pub fn published(
-    document: Value,
+    mut document: Value,
     endpoint: &Endpoint,
     base: &str,
     digest: impl Fn(&[u8]) -> String,
-) -> Option<Value> {
-    let Value::Object(mut document) = document else {
-        return None;
-    };
+) -> Value {
+    let mut document = document
+        .as_object_mut()
+        .map(std::mem::take)
+        .unwrap_or_default();
     let duties = licence_duties(endpoint);
     if !duties.is_empty() {
         let rules = document.get_mut("permission").and_then(Value::as_array_mut);
@@ -62,7 +64,7 @@ pub fn published(
             digest(&body)
         )),
     );
-    Some(Value::Object(document))
+    Value::Object(document)
 }
 
 /// The same document as Turtle (EP-57).
@@ -303,6 +305,71 @@ mod tests {
                 }],
             }],
         })
+    }
+
+    fn endpoint() -> Endpoint {
+        (*crate::fanout::hub::tests_support::endpoint()).clone()
+    }
+
+    /// A broker answer that names its prohibitions as something else than a list keeps them as
+    /// they are on an open-data Endpoint, an answer that is no object is an empty `Set`, and the
+    /// `uid` is the gateway's own either way.
+    #[test]
+    fn a_published_document_is_always_a_set_under_the_gateways_uid() {
+        let digest = |bytes: &[u8]| format!("{}", bytes.len());
+        let empty = published(json!(5), &endpoint(), "https://gw.example", digest);
+        assert_eq!(empty["conflict"], json!("prohibit"), "{empty}");
+        assert_eq!(
+            empty["uid"],
+            json!("https://gw.example/api/endpoint/s/access#sha256:7"),
+            "{empty}"
+        );
+        assert!(empty.get("permission").is_none(), "{empty}");
+
+        let mut open = endpoint();
+        open.open_data = true;
+        let odd = published(
+            json!({"prohibition": "none"}),
+            &open,
+            "https://gw.example",
+            digest,
+        );
+        assert_eq!(
+            odd["prohibition"],
+            json!("none"),
+            "an odd member stays: {odd}"
+        );
+        let listed = published(
+            json!({"prohibition": [], "permission": [{"action": ["ngsi-ld:queryEntity"]}]}),
+            &open,
+            "https://gw.example",
+            digest,
+        );
+        assert_eq!(
+            listed["prohibition"].as_array().map(Vec::len),
+            Some(1),
+            "{listed}"
+        );
+    }
+
+    /// An action list that holds no name, a duty that names no action and a geometry without
+    /// a type each write nothing for it, and the rule still stands.
+    #[test]
+    fn empty_actions_nameless_duties_and_untyped_geometries_write_nothing() {
+        let out = turtle(&json!({
+            "permission": [{
+                "action": [7],
+                "duty": [{"note": "no action"}],
+                "constraint": [{"leftOperand": "ngsi-ld:geo", "operator": "eq",
+                                "rightOperand": {"coordinates": [1, 2]}}],
+            }],
+        }));
+        assert!(!out.contains("odrl:action"), "{out}");
+        assert!(!out.contains("odrl:duty"), "{out}");
+        assert!(
+            out.contains("odrl:rightOperand [ geojson:coordinates 1, 2 ]"),
+            "{out}"
+        );
     }
 
     #[test]

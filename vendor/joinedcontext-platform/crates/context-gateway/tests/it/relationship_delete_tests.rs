@@ -110,6 +110,10 @@ async fn serve(State(store): State<Shared>, request: Request) -> axum::response:
     if method != Method::GET && store.failing.contains(&decode(&path)) {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     }
+    // A read that names a computed end (`q=`) is refused with 500 when the test asks for it.
+    if method == Method::GET && param("q").is_some() && store.failing.contains("read:q") {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if method == Method::POST && path.ends_with("/mcp") {
         return mcp_tool(&mut store, &bytes);
     }
@@ -872,6 +876,94 @@ async fn an_mcp_delete_unlinks_nothing_before_the_person_confirms_it() {
         .contains_key(&urn("Desk", "d1")));
 }
 
+/// A confirmed MCP delete whose rules the broker then refuses to make is told to the caller as
+/// a tool error saying what is already deleted; a hub's member call carries no reason, so a
+/// delete through it is refused before any hop.
+#[tokio::test]
+async fn a_confirmed_mcp_delete_whose_unlink_fails_is_a_tool_error() {
+    let realm = common::Realm::new();
+    let mut endpoint = endpoint(CLASSES);
+    endpoint.representations.push(Representation::Mcp);
+    let lesson = format!("/ngsi-ld/v1/entities/{}", urn("Lesson", "l1"));
+    let (upstream, store) = broker(campus(), &[lesson.as_str()]).await;
+    let gateway = Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN)
+        .serve([endpoint])
+        .authenticate(
+            Arc::new(realm.verifier()),
+            context_gateway::auth::accounts::ServiceAccounts::new(),
+            None,
+        );
+    let app = router(Arc::new(gateway));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "sub-jana",
+        "aud": [SLUG, "mcp-hub"],
+        "azp": "mcp-hub",
+        "scope": "openid endpoint:*",
+        "preferred_username": "jana",
+        "realm_access": { "roles": ["public"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    let call = |uri: String, params: Value| {
+        let message =
+            json!({ "jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": params });
+        Request::post(uri)
+            .header("content-type", "application/json")
+            .header("accept", "application/json, text/event-stream")
+            .header("authorization", format!("Bearer {token}"))
+            .header("jc-reason", "test")
+            .body(Body::from(message.to_string()))
+            .expect("a request")
+    };
+    let school = urn("School", "s1");
+    for (uri, arguments, said) in [
+        (
+            format!("/api/endpoint/{SLUG}/mcp"),
+            json!({ "id": school }),
+            "is deleted, but",
+        ),
+        (
+            "/api/mcp".to_owned(),
+            json!({ "endpoint": SLUG, "id": school }),
+            "a delete names why in JC-Reason",
+        ),
+    ] {
+        store
+            .lock()
+            .expect("the store")
+            .entities
+            .insert(school.clone(), entity("School", "s1", &[]));
+        let params = json!({
+            "name": "delete_entity", "arguments": arguments,
+            "requestState": "sealed-by-the-broker",
+        });
+        let response = app
+            .clone()
+            .oneshot(call(uri.clone(), params))
+            .await
+            .expect("an answer");
+        assert!(
+            response.status().is_success(),
+            "{uri}: {}",
+            response.status()
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("the body");
+        let text = String::from_utf8_lossy(&bytes);
+        let answer: Value =
+            serde_json::from_str(text.trim_start_matches("data: ").trim()).unwrap_or(Value::Null);
+        assert_eq!(answer["result"]["isError"], json!(true), "{uri}: {text}");
+        assert!(
+            answer["result"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|why| why.contains(said)),
+            "{uri}: {text}"
+        );
+    }
+}
+
 /// T-3767: the reads and the unlinking a held delete makes are the gateway's own and speak as
 /// its service account; the caller's delete is the caller's.
 #[tokio::test]
@@ -1082,6 +1174,68 @@ async fn a_root_the_broker_refuses_leaves_its_dependents_untouched() {
         assert!(answer.held(&kept).is_some(), "{kept} went");
     }
     assert_eq!(answer.writes().len(), 1, "{:?}", answer.writes());
+}
+
+/// A broker that refuses the read of the entities pointing at a root refuses the delete as
+/// unavailable: nothing is deleted on a dependents' list nobody could read.
+#[tokio::test]
+async fn a_dependents_read_the_broker_refuses_is_502_and_deletes_nothing() {
+    common::every_log_line();
+    let answer = send(
+        CLASSES,
+        &["read:q"],
+        Method::DELETE,
+        &format!("/entities/{}", urn("School", "s1")),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_GATEWAY, "{}", answer.body);
+    assert!(
+        answer.body["type"]
+            .as_str()
+            .is_some_and(|kind| kind.ends_with("upstream-unavailable")),
+        "{}",
+        answer.body
+    );
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+    assert!(answer.held(&urn("School", "s1")).is_some());
+}
+
+/// A prohibition of deleting the root's class refuses the delete at the gateway before any
+/// dependent is changed, as a root the grants do not reach is (F-R2PLT2-002).
+#[tokio::test]
+async fn a_prohibited_root_class_leaves_its_dependents_untouched() {
+    let mut prohibited = endpoint(CLASSES);
+    prohibited.policies.push(
+        serde_norway::from_str(&format!(
+            "contextSpaceRef: {SPACE}\n\
+             effect: prohibition\n\
+             assigner: did:web:{DOMAIN}\n\
+             assignee: {{ kind: role, id: public }}\n\
+             operations: [deleteEntity]\n\
+             information:\n\
+             \x20 - entities:\n\
+             \x20     - type: School\n"
+        ))
+        .expect("the policy spec parses"),
+    );
+    let answer = send_to(
+        prohibited,
+        &[],
+        Method::DELETE,
+        &format!("/entities/{}", urn("School", "s1")),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+    for kept in [
+        urn("School", "s1"),
+        urn("Teacher", "t1"),
+        urn("Lesson", "l1"),
+    ] {
+        assert!(answer.held(&kept).is_some(), "{kept} went");
+    }
 }
 
 #[tokio::test]

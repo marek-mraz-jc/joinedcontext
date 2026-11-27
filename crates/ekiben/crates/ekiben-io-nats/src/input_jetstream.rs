@@ -294,7 +294,7 @@ impl JetStreamInput {
                 ))
             }
         };
-        let mut stream = js.get_stream(&stream_name).await.map_err(|e| {
+        let stream = js.get_stream(&stream_name).await.map_err(|e| {
             CoreError::other(format!(
                 "failed to open JetStream stream '{stream_name}': {e}"
             ))
@@ -324,10 +324,8 @@ impl JetStreamInput {
             Some(_) => Vec::new(),
             None => user_subject.map(String::from).into_iter().collect(),
         };
+        // get_stream fetched the stream's info a moment ago: its subjects are current.
         let scope = if filters.is_empty() {
-            stream.info().await.map_err(|e| {
-                CoreError::other(format!("failed to read stream '{stream_name}': {e}"))
-            })?;
             stream.cached_info().config.subjects.clone()
         } else {
             filters
@@ -345,11 +343,41 @@ impl JetStreamInput {
         let filter_subject = user_subject.unwrap_or_default().to_string();
         let max_ack_pending = i64::try_from(self.max_ack_pending).unwrap_or(i64::MAX);
 
-        let is_push = match &existing {
-            Some(info) => info.config.deliver_subject.is_some(),
-            None => self.queue.is_some() || durable.is_none(),
-        };
-        if is_push {
+        // A pull consumer is always durable: a bound consumer without a deliver subject, or a
+        // new durable without a queue group. Everything else is a push consumer.
+        let pull_durable = durable.as_ref().filter(|_| match &existing {
+            Some(info) => info.config.deliver_subject.is_none(),
+            None => self.queue.is_none(),
+        });
+        if let Some(name) = pull_durable {
+            let config = consumer::pull::Config {
+                durable_name: Some(name.clone()),
+                filter_subject,
+                deliver_policy,
+                ack_policy: consumer::AckPolicy::Explicit,
+                ack_wait: self.ack_wait,
+                max_ack_pending,
+                ..Default::default()
+            };
+            let consumer: consumer::PullConsumer = if existing.is_some() {
+                stream.get_consumer(name).await.map_err(consumer_failed)?
+            } else {
+                // Replicas starting together race to create the durable: the loser uses it.
+                match stream.create_consumer(config).await {
+                    Ok(c) => c,
+                    Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
+                }
+            };
+            // Each pull asks for at most max_ack_pending (cap 200) messages, so instances on
+            // one durable split the backlog instead of the first one prefetching all of it.
+            let messages = consumer
+                .stream()
+                .max_messages_per_batch(self.max_ack_pending.clamp(1, 200))
+                .messages()
+                .await
+                .map_err(consumer_failed)?;
+            Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
+        } else {
             let config = consumer::push::Config {
                 deliver_subject: client.new_inbox(),
                 deliver_group: self.queue.clone(),
@@ -376,39 +404,6 @@ impl JetStreamInput {
                     .map_err(consumer_failed)?,
             };
             let messages = consumer.messages().await.map_err(consumer_failed)?;
-            Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
-        } else {
-            let config = consumer::pull::Config {
-                durable_name: durable.clone(),
-                filter_subject,
-                deliver_policy,
-                ack_policy: consumer::AckPolicy::Explicit,
-                ack_wait: self.ack_wait,
-                max_ack_pending,
-                ..Default::default()
-            };
-            let consumer: consumer::PullConsumer = match (&existing, &durable) {
-                (Some(_), Some(name)) => {
-                    stream.get_consumer(name).await.map_err(consumer_failed)?
-                }
-                // Replicas starting together race to create the durable: the loser uses it.
-                (None, Some(name)) => match stream.create_consumer(config).await {
-                    Ok(c) => c,
-                    Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
-                },
-                _ => stream
-                    .create_consumer(config)
-                    .await
-                    .map_err(consumer_failed)?,
-            };
-            // Each pull asks for at most max_ack_pending (cap 200) messages, so instances on
-            // one durable split the backlog instead of the first one prefetching all of it.
-            let messages = consumer
-                .stream()
-                .max_messages_per_batch(self.max_ack_pending.clamp(1, 200))
-                .messages()
-                .await
-                .map_err(consumer_failed)?;
             Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
         }
     }

@@ -90,7 +90,7 @@ pub fn run(dir: &Path) -> Result<Outcome, String> {
     for (path, doc) in files {
         let before = std::fs::read_to_string(dir.join(&path))
             .map_err(|e| format!("{}: {e}", path.display()))?;
-        let text = serde_norway::to_string(&doc).map_err(|e| format!("{}: {e}", path.display()))?;
+        let text = serde_norway::to_string(&doc).expect("a parsed document serializes");
         let text =
             jc_core::yaml_fmt::format(&text).map_err(|e| format!("{}: {e}", path.display()))?;
         if text != before {
@@ -266,6 +266,52 @@ mod tests {
         );
         let refused = run(&dir).expect_err("several documents");
         assert!(refused.contains("migrated by hand"), "{refused}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An account that cannot be written back is an error naming its file; an account without a
+    /// `spec`, or whose `roles` is no list, is left as it is and the migration still finishes.
+    #[test]
+    fn an_unwritable_account_is_named_and_odd_accounts_are_left_alone() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = std::env::temp_dir().join(format!("jcctl-mqtt-roles-3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let broker = |accounts: &str| {
+            format!("apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [{accounts}]\n      publish: [\"air/${{clientid}}/pm10\"]\n")
+        };
+        let scalar = account("scalar").replace(
+            "  roles:\n    - role: space-writer\n      scope:\n        project: air\n",
+            "  roles: nope\n",
+        );
+        write(
+            &dir,
+            "projects/air/access/serviceaccounts/scalar.yaml",
+            &scalar,
+        );
+        write(&dir, "projects/air/mqttbrokers/air.yaml", &broker("scalar"));
+        let outcome = run(&dir).expect("runs");
+        assert!(outcome.left.is_empty(), "{outcome:?}");
+        let after =
+            std::fs::read_to_string(dir.join("projects/air/access/serviceaccounts/scalar.yaml"))
+                .expect("read");
+        assert!(
+            after.contains("roles: nope") && !after.contains("mqtt/air/sensor"),
+            "{after}"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+        write(
+            &dir,
+            "projects/air/access/serviceaccounts/fleet.yaml",
+            &account("fleet"),
+        );
+        write(&dir, "projects/air/mqttbrokers/air.yaml", &broker("fleet"));
+        let locked = dir.join("projects/air/access/serviceaccounts/fleet.yaml");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o444)).expect("locked");
+        let refused = run(&dir).expect_err("the account cannot be written");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644))
+            .expect("unlocked");
+        assert!(refused.contains("fleet.yaml"), "{refused}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

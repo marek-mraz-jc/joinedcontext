@@ -175,6 +175,25 @@ mod tests {
         assert_eq!(got, vec![b"data: 1\n\n".to_vec(), b"data: 2\n\n".to_vec()]);
     }
 
+    /// An upstream body that fails is passed on as the failure it is, after nothing is held back.
+    #[tokio::test]
+    async fn a_body_that_fails_midway_fails_the_same_way() {
+        let failing = futures_util::stream::iter(vec![
+            Ok::<_, std::io::Error>(Bytes::from_static(b"[1,")),
+            Err(std::io::Error::other("the upstream broke")),
+        ]);
+        let mut body = coalesce(json(Body::from_stream(failing))).into_body();
+        let failure = body
+            .frame()
+            .await
+            .expect("a frame")
+            .expect_err("the failure arrives");
+        assert!(
+            failure.to_string().contains("the upstream broke"),
+            "{failure}"
+        );
+    }
+
     #[tokio::test]
     async fn the_size_of_a_full_body_stays_exact() {
         let body = coalesce(json(Body::from("[1,2,3]"))).into_body();

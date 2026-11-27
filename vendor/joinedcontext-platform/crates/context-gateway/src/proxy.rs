@@ -183,7 +183,7 @@ impl Broker {
     pub fn route(&self, brokers: &crate::store::SpaceBrokers) {
         let address = |broker: &String| -> Option<String> {
             match broker.as_str() {
-                jc_core::kinds::IMPLICIT_BROKER => Some(self.base.clone()),
+                // `main` is never routed: `off_main` leaves it to the base address.
                 "" => None,
                 name => self.template.as_ref().map(|t| t.replace("{broker}", name)),
             }
@@ -364,8 +364,10 @@ impl Broker {
         // which would expand the names the gateway decided on to other IRIs (T-3287).
         crate::context_guard::check_link(&headers).map_err(ProxyError::Context)?;
 
-        let mut upstream = axum::http::Request::builder().method(method).uri(&uri);
-        let out = upstream.headers_mut().expect("a fresh builder has headers");
+        let mut request = axum::http::Request::new(body);
+        *request.method_mut() = method;
+        *request.uri_mut() = uri;
+        let out = request.headers_mut();
         copy_relayable(&headers, out);
         // The upstream authority is ours, not the client's.
         out.remove(HOST);
@@ -379,10 +381,6 @@ impl Broker {
         out.remove(CONTENT_LENGTH);
         self.stamp(out);
 
-        let request = upstream
-            .body(body)
-            .map_err(|e| ProxyError::Uri(e.to_string()))?;
-
         let started = std::time::Instant::now();
         let response = tokio::time::timeout(self.answer_within, self.client.request(request))
             .await
@@ -392,12 +390,10 @@ impl Broker {
         let response = response?;
 
         let (parts, body) = response.into_parts();
-        let mut answer = Response::builder().status(parts.status);
-        let out = answer.headers_mut().expect("a fresh builder has headers");
-        copy_relayable(&parts.headers, out);
-        answer
-            .body(Body::new(body))
-            .map_err(|e| ProxyError::Uri(e.to_string()))
+        let mut answer = Response::new(Body::new(body));
+        *answer.status_mut() = parts.status;
+        copy_relayable(&parts.headers, answer.headers_mut());
+        Ok(answer)
     }
 }
 
@@ -508,13 +504,12 @@ mod tests {
     /// silent fallback to the public roots. A request error says the platform is at fault.
     #[test]
     fn a_trust_bundle_adds_certificates_or_refuses_the_start() {
-        let Ok(system) = std::fs::read(SYSTEM_ROOTS) else {
-            // No trust store in this image: the start is refused, naming the file.
-            assert!(
-                matches!(roots_from_file(SYSTEM_ROOTS), Err(ProxyError::Trust(why)) if why.contains(SYSTEM_ROOTS))
-            );
-            return;
-        };
+        // No trust store: the start is refused, naming the file.
+        let missing = "/nonexistent/ca-certificates.crt";
+        assert!(
+            matches!(roots_from_file(missing), Err(ProxyError::Trust(why)) if why.contains(missing))
+        );
+        let system = std::fs::read(SYSTEM_ROOTS).expect("the image ships its trust anchors");
         assert!(Broker::verified("https://broker:1026").is_ok());
         let text = String::from_utf8_lossy(&system);
         let end = "-----END CERTIFICATE-----";
@@ -673,7 +668,8 @@ mod tests {
                 .expect("a port");
             let addr = listener.local_addr().expect("an address");
             tokio::spawn(async move {
-                while let Ok((mut socket, _)) = listener.accept().await {
+                // One connection per broker: the test asks each of them once.
+                if let Ok((mut socket, _)) = listener.accept().await {
                     tokio::spawn(async move {
                         let mut buf = [0u8; 4096];
                         let _ = socket.read(&mut buf).await;

@@ -170,6 +170,75 @@ fn a_broken_repository_an_unreadable_origin_and_an_unwritable_state() {
     assert!(matches!(error, sync::Error::Repository(_)), "{error}");
 }
 
+/// A run whose scratch directory cannot be made says which one, and exits 1.
+#[test]
+fn a_scratch_directory_that_cannot_be_made_is_a_state_error() {
+    let repo = repo_with_source("sync-cmd-scratch");
+    let origin = checkout("sync-cmd-scratch-origin");
+    let tmp_file = origin.join("not-a-dir");
+    std::fs::write(&tmp_file, "x").expect("a file");
+    let output = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args([
+            "sync",
+            "--repo-dir",
+            repo.to_str().expect("path"),
+            "--source",
+            "ovzdusie/regional",
+            "--checkout",
+            origin.to_str().expect("path"),
+            "--once",
+        ])
+        .env("TMPDIR", &tmp_file)
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("jcctl-sync-ovzdusie-regional-"),
+        "{output:?}"
+    );
+}
+
+/// A checkout holding a manifest the import gates refuse: the command prints each refusal on
+/// stderr, still exits 2 (a proposal is open), and as JSON prints the phase and the reason.
+#[test]
+fn the_command_prints_what_the_import_gates_refused() {
+    let repo = repo_with_source("sync-cmd-refused");
+    let origin = checkout("sync-cmd-refused-origin");
+    common::write(
+        &origin,
+        "leaky.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: leaky\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n  token: \"glpat-0000000000000000000000\"\n",
+    );
+    let run = |json: bool| {
+        let mut args = vec![
+            "sync",
+            "--repo-dir",
+            repo.to_str().expect("path"),
+            "--source",
+            "ovzdusie/regional",
+            "--checkout",
+            origin.to_str().expect("path"),
+            "--once",
+        ];
+        if json {
+            args.push("--json");
+        }
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(args)
+            .output()
+            .expect("jcctl runs")
+    };
+    let text = run(false);
+    assert_eq!(text.status.code(), Some(2), "{text:?}");
+    assert!(
+        String::from_utf8_lossy(&text.stderr).contains("literal credential"),
+        "{text:?}"
+    );
+    let json = run(true);
+    assert_eq!(json.status.code(), Some(2), "{json:?}");
+    assert!(String::from_utf8_lossy(&json.stderr).contains("literal credential"));
+}
+
 /// Without --json the command names the proposal and its file count; the run after it over the
 /// same origin proposes nothing and prints the phase with its reason (exit 0); a source the
 /// repository lacks exits 1.

@@ -98,7 +98,8 @@ async fn fetch(
     }
     let request = request
         .body(Body::empty())
-        .map_err(|e| JwksError::Url(e.to_string()))?;
+        .map_err(|e| e.to_string())
+        .map_err(JwksError::Url)?;
     let response = client
         .request(request)
         .await

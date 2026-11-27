@@ -71,6 +71,30 @@ fn each_operator_command_answers_its_own_usage() {
     assert_eq!(code, Some(2));
 }
 
+/// `jc doctor domains` on a jc.toml without a base domain reports that, exits 1 and never prints
+/// the Portal database URL it read from the environment.
+#[test]
+fn doctor_on_a_file_without_a_base_domain_says_so_and_prints_no_database_url() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("jc.toml");
+    std::fs::write(&file, "[[organizations]]\nname = \"alpha\"\n").unwrap();
+    let url = "postgres://portal:doctor-word-7898@127.0.0.1:1/portal";
+    let out = Command::new(env!("CARGO_BIN_EXE_jc"))
+        .args(["doctor", "domains", "--config"])
+        .arg(&file)
+        .env("JC_PORTAL_DATABASE_URL", url)
+        .output()
+        .expect("run jc");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("ERROR jc.toml names no base_domain"),
+        "{stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!stdout.contains("doctor-word") && !stderr.contains("doctor-word"));
+}
+
 #[test]
 fn a_start_failure_exits_1() {
     let taken = std::net::TcpListener::bind("127.0.0.1:0").unwrap();

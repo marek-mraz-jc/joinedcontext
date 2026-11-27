@@ -10,7 +10,7 @@
 //! hub's ten-second call deadline. Category values come from the data: they are numbered on the
 //! picture and named in `categories`, and the answer says it is `untrusted`.
 
-use crate::mcp::hub::{Answer, Hub};
+use crate::mcp::hub::Hub;
 use crate::mcp::jsonrpc::{refused, result};
 use crate::mcp::{catalog, server, tools};
 use base64::Engine as _;
@@ -264,7 +264,7 @@ fn painted(
 
 /// One `render_chart` call on `hub`, answered within the hub's call deadline.
 pub(crate) async fn call(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
-    let work = draw(hub, id.clone(), arguments);
+    let work = draw(hub, id.clone(), arguments, RENDER_CAP);
     match tokio::time::timeout(server::MEMBER_DEADLINE, work).await {
         Ok(answer) => answer,
         Err(_) => refusal(
@@ -274,7 +274,7 @@ pub(crate) async fn call(hub: &Hub, id: Value, arguments: &Map<String, Value>) -
     }
 }
 
-async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
+async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>, cap: Duration) -> Value {
     let mut asked = match asked(arguments) {
         Ok(asked) => asked,
         Err(why) => return refusal(id, &why),
@@ -290,10 +290,7 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
         .await
     {
         Ok(routed) => routed,
-        Err(answer) => match *answer {
-            Answer::Json(answer) => return answer,
-            _ => return refusal(id, "the Endpoint could not be read; ask again"),
-        },
+        Err(answer) => return *answer,
     };
     let personal = personal_named(&asked, &endpoint.personal_attributes());
     if !personal.is_empty() {
@@ -335,7 +332,7 @@ async fn draw(hub: &Hub, id: Value, arguments: &Map<String, Value>) -> Value {
     if truncated {
         view["joinedcontext.com/pointsTruncated"] = json!(true);
     }
-    let png = match paint(charted.chart, RENDER_CAP).await {
+    let png = match paint(charted.chart, cap).await {
         Ok(png) => png,
         Err(why) => return refusal(id, why),
     };
@@ -399,6 +396,7 @@ mod tests {
         assert!(png.starts_with(b"\x89PNG"));
         let past = paint(tiny(), Duration::ZERO).await;
         assert!(past.expect_err("no time to draw").starts_with("limited: "));
+        a_chart_past_its_time_is_refused_and_one_within_it_is_drawn().await;
         assert_eq!(
             SLOTS.available_permits(),
             RENDER_SLOTS,
@@ -499,5 +497,67 @@ mod tests {
         let empty =
             asked(&call(json!("air"), json!({"tool": "query_temporal"}))).expect("an empty read");
         assert_eq!(empty.tool, "query_temporal");
+    }
+
+    /// A drawing that runs out of time after a good read is the tool's own refusal, not the
+    /// broker's answer; with time it is a picture. One test, since the slots are the process's.
+    async fn a_chart_past_its_time_is_refused_and_one_within_it_is_drawn() {
+        let answer = json!({"jsonrpc": "2.0", "id": 1, "result": {
+        "isError": false,
+        "structuredContent": {"entities": [
+            {"id": "urn:a", "type": "AirQualityObserved", "stationName": "A", "pm10": 12},
+            {"id": "urn:b", "type": "AirQualityObserved", "stationName": "B", "pm10": 30}
+        ]}}});
+        let stub = axum::Router::new().fallback(move || {
+            let answer = answer.clone();
+            async move { axum::Json(answer) }
+        });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, stub).await;
+        });
+        let grant: jc_core::kinds::PolicySpec = serde_norway::from_str(
+            "contextSpaceRef: city\nassigner: did:web:example.org\n\
+             assignee: { kind: role, id: public }\noperations: [queryEntity]\n\
+             information:\n  - entities:\n      - type: AirQualityObserved\n",
+        )
+        .expect("the policy spec parses");
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.slug = "aaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned();
+        endpoint.representations = vec![jc_core::kinds::Representation::Mcp];
+        endpoint.policies = vec![grant];
+        let slug = endpoint.slug.clone();
+        let gateway = crate::app::Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let hub = Hub {
+            gateway: std::sync::Arc::new(gateway),
+            reach: std::sync::Arc::from(vec![(
+                std::sync::Arc::new(endpoint),
+                crate::auth::subject::Subject::anonymous(),
+            )]),
+            caller: "caller".to_owned(),
+            server: None,
+            reads_only: true,
+            host: None,
+        };
+        let arguments = call(
+            json!(slug),
+            json!({"tool": "query_entities", "arguments": {"type": "AirQualityObserved"}}),
+        );
+        let late = draw(&hub, json!(1), &arguments, Duration::ZERO).await;
+        assert_eq!(late["result"]["isError"], true, "{late}");
+        let text = late["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.starts_with("limited: "), "{text}");
+        let drawn = draw(&hub, json!(1), &arguments, RENDER_CAP).await;
+        assert_eq!(drawn["result"]["isError"], false, "{drawn}");
+        assert_eq!(drawn["result"]["content"][0]["type"], "image");
     }
 }

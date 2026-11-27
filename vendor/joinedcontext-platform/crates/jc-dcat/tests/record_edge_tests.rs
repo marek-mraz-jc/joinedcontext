@@ -1005,3 +1005,59 @@ fn major_of_reads_a_number_or_digits_as_text_and_nothing_else() {
     assert_eq!(major_of(&json!({"version": -1})), None);
     assert_eq!(major_of(&json!({})), None);
 }
+
+#[test]
+fn keywords_set_by_hand_are_kept_while_the_themes_are_derived() {
+    let f = Fixture::new();
+    let derived = classified(&f.subject(Audience::Public, &[], None, &[]));
+    let mut keywords_only = f.catalog.clone();
+    keywords_only.themes.clear();
+    let mixed = classified(&f.subject(Audience::Public, &[], Some(&keywords_only), &[]));
+    assert_eq!(mixed.keywords, f.catalog.keywords);
+    assert_eq!(mixed.themes, derived.themes);
+}
+
+#[test]
+fn a_publisher_without_a_uri_is_an_anonymous_agent_with_a_name() {
+    let f = Fixture::new();
+    let mut catalog = f.catalog.clone();
+    catalog.publisher = serde_json::from_value(json!({"name": {"en": "City of Example"}})).unwrap();
+    let subject = f.subject(Audience::Public, &[], Some(&catalog), &[]);
+    let record = dataset(&subject, &index(), BASE);
+    assert_eq!(record["dct:publisher"]["@type"], "foaf:Agent");
+    assert!(record["dct:publisher"].get("@id").is_none());
+    assert_eq!(
+        record["dct:publisher"]["foaf:name"][0]["@value"],
+        "City of Example"
+    );
+}
+
+#[test]
+fn turtle_names_a_node_by_the_text_it_has_when_no_prefix_declared_matches() {
+    let record = json!({
+        "@id": "plain-name",
+        "@type": "dcat:Dataset",
+        "dct:source": "urn:other:thing",
+        "dct:license": "nocolon"
+    });
+    let text = turtle(&record);
+    assert!(text.contains("<plain-name>"), "{text}");
+    assert!(text.contains("<urn:other:thing>"), "{text}");
+    assert!(text.contains("<nocolon>"), "{text}");
+}
+
+#[test]
+fn a_distribution_of_a_slice_outside_the_endpoint_is_left_out_of_it() {
+    let f = Fixture::new();
+    let subject = f.subject(Audience::Public, &ALL, Some(&f.catalog), &[]);
+    let whole = dataset(&subject, &index(), BASE);
+    let record = dataset_slice(&subject, &slice(None, None, false), &index(), BASE);
+    let urls: Vec<&str> = record["dcat:distribution"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|d| d["dcat:accessURL"].as_str())
+        .collect();
+    assert!(urls.iter().all(|u| u.starts_with(IRI)), "{urls:?}");
+    assert!(whole["dcat:distribution"].as_array().unwrap().len() >= urls.len());
+}

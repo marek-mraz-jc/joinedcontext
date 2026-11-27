@@ -555,6 +555,52 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
         "active=false must end the user's SSO sessions"
     );
 
+    // 5b. A PUT that keeps the user inactive ends a session opened since, as the PATCH does.
+    let now = jc_time::TimestampTz::now();
+    api.store
+        .upsert_sso_session(SsoSession {
+            id: "sso-bj-2".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            handle_hash: sha256_hex("h-bj-2"),
+            user_id: uid.clone(),
+            username: "bjensen@hel.fi".into(),
+            ip_address: "127.0.0.1".into(),
+            user_agent: String::new(),
+            start: now.as_millis(),
+            last_access: now.as_millis(),
+            auth_time: now.as_second(),
+            acr: "pwd".into(),
+            amr: vec!["pwd".into()],
+            clients: Default::default(),
+            idle_expires_at: now + jiff::SignedDuration::from_hours(1),
+            max_expires_at: now + jiff::SignedDuration::from_hours(10),
+        })
+        .await
+        .unwrap();
+    let (st_put_off, body_put_off) = api
+        .call(
+            Method::PUT,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                "userName": "bjensen@hel.fi",
+                "active": false
+            })),
+        )
+        .await;
+    assert_eq!(st_put_off, StatusCode::OK, "{body_put_off}");
+    assert_eq!(body_put_off["active"], false);
+    assert!(
+        api.store
+            .get_sso_session("dev", "sso-bj-2")
+            .await
+            .unwrap()
+            .is_none(),
+        "a PUT with active=false must end the user's SSO sessions"
+    );
+
     // 6. Groups lifecycle: create with members, GET, PATCH add/remove `members[value eq "..."]`, PUT, DELETE.
     let (st_g, g_created) = api
         .call(

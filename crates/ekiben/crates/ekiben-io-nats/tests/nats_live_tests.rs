@@ -969,3 +969,229 @@ async fn jetstream_tls_verifies_the_server_certificate() {
     assert!(build(serde_json::json!({"enabled": true, "skip_cert_verify": true})).is_err());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A server with a JetStream domain and a 1 KiB max_payload (from a mounted config file): a
+/// JetStream message still reads; a message over max_payload fails each output and the
+/// request processor with the client's refusal; a publish no stream holds is not acknowledged.
+#[tokio::test]
+async fn a_domain_and_a_small_max_payload_reach_each_publish() {
+    let dir = std::env::temp_dir().join(format!("ekiben-nats-conf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("nats.conf"),
+        "max_payload: 1024\njetstream { domain: hub, store_dir: /tmp/js }\n",
+    )
+    .unwrap();
+    let host = dir.to_str().unwrap().to_string();
+    let Some(srv) = start_server(
+        "nats_domain",
+        &["-c", "/conf/nats.conf"],
+        &[(host.as_str(), "/conf")],
+    ) else {
+        return;
+    };
+    let (reg, sctx, pctx) = make_ctx("org-a", Some("org_a"));
+    add_stream(&srv.url, "DOM", &["org_a.dom.>"]).await;
+    js(&srv.url)
+        .await
+        .publish("org_a.dom.one", "small".into())
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let mut i = input(
+        &reg,
+        &sctx,
+        serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.dom.>"}}),
+    )
+    .await;
+    let (p, ack) = read(&mut i, &sctx).await;
+    // nats-server 2.12 alone sends v1 ack subjects, which carry no domain: Bento's nats.go
+    // reads the same subject, so neither sets nats_domain here.
+    assert_eq!(p.as_bytes_ref(), Bytes::from_static(b"small"));
+    assert_eq!(p.meta_get("nats_domain"), None);
+    ack.ack();
+
+    let big = "x".repeat(2048);
+    for (kind, subject) in [
+        ("nats", "org_a.dom.core"),
+        ("nats_jetstream", "org_a.dom.js"),
+    ] {
+        let out = reg
+            .build_output(
+                &conf(serde_json::json!({kind: {
+                    "urls": [srv.url], "subject": subject, "headers": {"X-Source": "ekiben"}
+                }})),
+                &sctx,
+            )
+            .unwrap();
+        out.connect(&sctx).await.unwrap();
+        let err = out
+            .write_batch(&sctx, vec![Part::from_str(&big)])
+            .await
+            .err()
+            .map(|e| format!("{e:?}"))
+            .unwrap_or_default();
+        assert!(err.contains("publish failed"), "{kind}: {err}");
+    }
+    // No stream holds org_a.nostream: the server answers no responders instead of an ack.
+    let out = reg
+        .build_output(
+            &conf(serde_json::json!({"nats_jetstream": {"urls": [srv.url], "subject": "org_a.nostream"}})),
+            &sctx,
+        )
+        .unwrap();
+    out.connect(&sctx).await.unwrap();
+    let err = out
+        .write_batch(&sctx, vec![Part::from_str("lost")])
+        .await
+        .err()
+        .map(|e| format!("{e:?}"))
+        .unwrap_or_default();
+    assert!(err.contains("publish not acknowledged"), "{err}");
+
+    let proc = reg
+        .build_processor(
+            &conf(serde_json::json!({"nats_request_reply": {
+                "urls": [srv.url], "subject": "org_a.echo", "timeout": "1s"
+            }})),
+            &pctx,
+            "0",
+        )
+        .unwrap();
+    let res = ekiben_core::execute_all(&pctx, &[proc], vec![vec![Part::from_str(&big)]])
+        .await
+        .unwrap();
+    let err = res[0][0]
+        .error_get()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("nats request publish failed"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A subject the client refuses (a space in it) fails the core input's connect, with and
+/// without a queue group, and the request processor's reply inbox subscription.
+#[tokio::test]
+async fn a_subject_the_client_refuses_fails_subscribe_with_its_name() {
+    let Some(srv) = start_server("nats_bad_subject", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, pctx) = make_ctx("org-a", Some("org_a"));
+    for (extra, want) in [
+        (serde_json::json!({}), "nats subscribe failed"),
+        (
+            serde_json::json!({"queue": "q"}),
+            "nats queue_subscribe failed",
+        ),
+    ] {
+        let mut v = serde_json::json!({"urls": [srv.url], "subject": "org_a.bad subject"});
+        v.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let mut i = reg
+            .build_input(&conf(serde_json::json!({ "nats": v })), &sctx)
+            .unwrap();
+        let err = i
+            .connect(&sctx)
+            .await
+            .err()
+            .map(|e| e.to_string())
+            .unwrap_or_default();
+        assert!(err.contains(want), "{err}");
+    }
+    let proc = reg
+        .build_processor(
+            &conf(serde_json::json!({"nats_request_reply": {
+                "urls": [srv.url], "subject": "org_a.echo", "inbox_prefix": "bad inbox"
+            }})),
+            &pctx,
+            "0",
+        )
+        .unwrap();
+    let res = ekiben_core::execute_all(&pctx, &[proc], vec![vec![Part::from_str("x")]])
+        .await
+        .unwrap();
+    let err = res[0][0]
+        .error_get()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("reply inbox failed"), "{err}");
+}
+
+/// A subscriber that never answers times the request out; one processor keeps its connection
+/// for every message of a batch.
+#[tokio::test]
+async fn a_request_nobody_answers_times_out_and_the_connection_is_reused() {
+    let Some(srv) = start_server("nats_request_timeout", &[], &[]) else {
+        return;
+    };
+    let silent = async_nats::connect(&srv.url).await.unwrap();
+    let _sub = silent.subscribe("org_a.silent").await.unwrap();
+    silent.flush().await.unwrap();
+    let (reg, _sctx, pctx) = make_ctx("org-a", Some("org_a"));
+    let proc = reg
+        .build_processor(
+            &conf(serde_json::json!({"nats_request_reply": {
+                "urls": [srv.url], "subject": "org_a.silent", "timeout": "300ms"
+            }})),
+            &pctx,
+            "0",
+        )
+        .unwrap();
+    let res = ekiben_core::execute_all(
+        &pctx,
+        &[proc],
+        vec![vec![Part::from_str("a"), Part::from_str("b")]],
+    )
+    .await
+    .unwrap();
+    assert_eq!(res[0].len(), 2);
+    for p in &res[0] {
+        let err = p.error_get().map(|e| e.to_string()).unwrap_or_default();
+        assert!(err.contains("timed out"), "{err}");
+    }
+    // A server that is gone: the connect fails and the message carries why.
+    // A bound socket that never listens: its port refuses connections and stays ours.
+    let closed = tokio::net::TcpSocket::new_v4().unwrap();
+    closed.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let gone = format!("nats://{}", closed.local_addr().unwrap());
+    let proc = reg
+        .build_processor(
+            &conf(serde_json::json!({"nats_request_reply": {"urls": [gone], "subject": "org_a.silent"}})),
+            &pctx,
+            "0",
+        )
+        .unwrap();
+    let res = ekiben_core::execute_all(&pctx, &[proc], vec![vec![Part::from_str("a")]])
+        .await
+        .unwrap();
+    assert!(res[0][0].is_errored());
+    drop(closed);
+}
+
+/// A queue group name the server refuses as a durable (a dot in it) fails the push consumer's
+/// create and the lookup after it, named.
+#[tokio::test]
+async fn a_queue_the_server_refuses_as_a_durable_fails_the_push_consumer() {
+    let Some(srv) = start_server("jetstream_bad_queue", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, _) = make_ctx("org-a", Some("org_a"));
+    add_stream(&srv.url, "Q", &["org_a.q.>"]).await;
+    let mut i = reg
+        .build_input(
+            &conf(serde_json::json!({"nats_jetstream": {
+                "urls": [srv.url], "subject": "org_a.q.>", "queue": "bad.queue"
+            }})),
+            &sctx,
+        )
+        .unwrap();
+    let err = i
+        .connect(&sctx)
+        .await
+        .err()
+        .map(|e| e.to_string())
+        .unwrap_or_default();
+    assert!(err.contains("failed to create JetStream consumer"), "{err}");
+}

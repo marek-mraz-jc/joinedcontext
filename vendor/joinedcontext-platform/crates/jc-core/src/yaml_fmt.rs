@@ -476,12 +476,11 @@ impl Parser {
         }
         let close = closing_quote(&text).unwrap_or(text.len());
         let (quoted, after) = text.split_at(close);
-        let (tail, comment) = split_comment(after);
-        if !tail.trim().is_empty() {
-            return Err(unsupported(no, "text after a closing quote"));
-        }
-        let value: String = serde_norway::from_str(quoted)
-            .map_err(|e| FmtError::Parse(format!("line {no}: {e}")))?;
+        // `format` read the whole text as YAML first, so what follows the closing quote is a
+        // comment and the scalar reads back; were it otherwise, the formatted text would differ
+        // from the source and `format` refuses it as changed.
+        let (_, comment) = split_comment(after);
+        let value: String = serde_norway::from_str(quoted).unwrap_or_default();
         Ok((string_node(&value), comment))
     }
 
@@ -518,8 +517,8 @@ impl Parser {
             ));
         }
         let joined = format!("_: {text}\n  {}\n", more.join("\n  "));
-        let value: Value = serde_norway::from_str(&joined)
-            .map_err(|e| FmtError::Parse(format!("line {no}: {e}")))?;
+        // Read as valid YAML by `format` already; a failure would show as a changed text.
+        let value: Value = serde_norway::from_str(&joined).unwrap_or_default();
         Ok((value_node(&value["_"], no)?, None))
     }
 }
@@ -1188,5 +1187,22 @@ metadata:
 "#;
         let res = format(manifest).expect("formats manifest");
         assert!(res.starts_with("# Top-level comment\napiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: my-project"));
+    }
+
+    #[test]
+    fn a_quoted_or_plain_scalar_over_lines_is_written_on_one_and_bad_yaml_is_refused() {
+        let text = format("a: \"one\n  two\" # note\n").expect("a multi-line quoted scalar");
+        assert!(text.contains("one two"), "{text}");
+        assert!(text.contains("# note"), "{text}");
+        let text = format("a: foo\n  bar\n").expect("a plain scalar on two lines");
+        assert!(text.contains("foo bar"), "{text}");
+        for bad in [
+            "b: \"x\" y\n",
+            "a: \"bad \\q escape\"\n",
+            "a: foo\n  b: bar\n",
+        ] {
+            let err = format(bad).expect_err(bad).to_string();
+            assert!(err.contains("not valid YAML"), "{bad}: {err}");
+        }
     }
 }

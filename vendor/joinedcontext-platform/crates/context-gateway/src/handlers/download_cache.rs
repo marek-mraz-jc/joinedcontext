@@ -340,6 +340,57 @@ mod tests {
         assert_eq!(builds.load(Ordering::SeqCst), 2);
     }
 
+    #[tokio::test]
+    async fn a_full_cache_builds_a_further_key_each_time() {
+        let downloads = Downloads::default();
+        let builds = AtomicUsize::new(0);
+        for n in 0..MAX_HELD {
+            let _ = downloads
+                .get_or_build(key(&format!("q{n}")), counted(&builds, 1))
+                .await;
+        }
+        assert_eq!(builds.load(Ordering::SeqCst), MAX_HELD);
+        for _ in 0..2 {
+            let built = downloads
+                .get_or_build(key("beyond"), counted(&builds, 1))
+                .await;
+            assert_eq!(built.map(|(bytes, _)| bytes.len()), Ok(1));
+        }
+        assert_eq!(
+            builds.load(Ordering::SeqCst),
+            MAX_HELD + 2,
+            "a key past the cap is never held"
+        );
+        let held = downloads.get_or_build(key("q0"), counted(&builds, 1)).await;
+        assert_eq!(held.map(|(bytes, _)| bytes.len()), Ok(1));
+        assert_eq!(builds.load(Ordering::SeqCst), MAX_HELD + 2);
+    }
+
+    #[test]
+    fn a_link_header_is_part_of_the_key() {
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let request = Request::builder()
+            .uri("/api/endpoint/s/file.csv")
+            .header(
+                LINK,
+                "<https://example.org/ctx>; rel=\"http://www.w3.org/ns/json-ld#context\"",
+            )
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let anonymous = anonymous_on(&endpoint);
+        let with = Key::of(Arc::default(), &endpoint, &anonymous, &request).expect("a key");
+        assert!(with
+            .link
+            .as_deref()
+            .is_some_and(|link| link.starts_with(b"<https://")));
+        let plain = Request::builder()
+            .uri("/api/endpoint/s/file.csv")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let without = Key::of(Arc::default(), &endpoint, &anonymous, &plain).expect("a key");
+        assert_eq!(without.link, None);
+    }
+
     #[test]
     fn only_the_anonymous_caller_has_a_key() {
         let endpoint = crate::fanout::hub::tests_support::endpoint();
@@ -414,5 +465,19 @@ mod tests {
         types.put("a", vec!["T".to_owned()]);
         assert_eq!(types.get("a").as_deref(), Some(&vec!["T".to_owned()]));
         assert_eq!(types.get("b"), None);
+        let held = types.put("b", vec!["U".to_owned()]);
+        assert_eq!(*held, vec!["U".to_owned()]);
+        assert_eq!(types.get("a").as_deref(), Some(&vec!["T".to_owned()]));
+        assert_eq!(types.get("b").as_deref(), Some(&vec!["U".to_owned()]));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_stale_type_list_is_dropped_by_the_next_put() {
+        let types = HeldTypes::default();
+        types.put("a", vec!["T".to_owned()]);
+        tokio::time::advance(FRESH_FOR).await;
+        assert_eq!(types.get("a"), None, "a stale list is not served");
+        types.put("b", vec!["U".to_owned()]);
+        assert_eq!(types.held.lock().expect("the lock").len(), 1);
     }
 }

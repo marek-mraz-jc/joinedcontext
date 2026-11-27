@@ -112,10 +112,8 @@ pub fn run_assembled_judged(
         &into.join("render"),
         environment.as_deref(),
     ) {
-        Ok(assembly) if assembly.layout == 1 => match Repository::load(org_dir) {
-            Ok(repository) => judged(org_dir, repository),
-            Err(err) => refused(err.into()),
-        },
+        // The assembly of a layout 1 organization is the repository `Repository::load` reads.
+        Ok(assembly) if assembly.layout == 1 => judged(org_dir, assembly.repository),
         Ok(assembly) => {
             let mut found = assembly_findings(&assembly, |path| path.to_path_buf());
             let mut report = judged(&into.join("render"), assembly.repository);
@@ -373,18 +371,9 @@ fn check(repo_dir: &Path, repo: Repository, organization: bool) -> Report {
     }
 
     for (id, resource) in repo.iter() {
-        let yaml = match serde_norway::to_string(&resource.manifest) {
-            Ok(yaml) => yaml,
-            Err(err) => {
-                report.findings.push(Finding {
-                    path: resource.path.clone(),
-                    document: resource.document,
-                    line: resource.line,
-                    message: err.to_string(),
-                });
-                continue;
-            }
-        };
+        // A manifest holds string keys and finite numbers only, so it always serializes; were
+        // it not, the empty text fails the kind's parse below and is a finding all the same.
+        let yaml = serde_norway::to_string(&resource.manifest).unwrap_or_default();
 
         match registry::validate_yaml(&id.kind, &yaml) {
             Some(Ok(())) => report.checked += 1,
@@ -1227,11 +1216,10 @@ fn replacing_shared_writes(repo: &Repository) -> Vec<(Location, String)> {
         let conflicts = replace_conflicts(&specs, |endpoint| {
             spaces.get(&(project.clone(), endpoint.to_owned())).cloned()
         });
-        for conflict in conflicts {
-            if let Some((_, _, location)) = members.iter().find(|(n, ..)| *n == conflict.pipeline) {
-                found.push((location.clone(), conflict.to_string()));
-            }
-        }
+        found.extend(conflicts.into_iter().filter_map(|conflict| {
+            let (_, _, location) = members.iter().find(|(n, ..)| *n == conflict.pipeline)?;
+            Some((location.clone(), conflict.to_string()))
+        }));
     }
     found
 }
@@ -1294,13 +1282,18 @@ fn output_field(spec: &jc_core::kinds::PipelineSpec, index: usize) -> String {
         };
     }
     let mut rest = index - lane;
-    for (route, outputs) in spec.routes.iter().map(|r| r.outputs.len()).enumerate() {
-        if rest < outputs {
-            return format!("spec.routes.{route}.outputs.{rest}.targetEndpoint");
-        }
-        rest -= outputs;
-    }
-    "spec.outputs".to_owned()
+    // `index` is below the count of every output, so a route holds it.
+    spec.routes
+        .iter()
+        .enumerate()
+        .find_map(|(route, r)| match rest < r.outputs.len() {
+            true => Some(format!("spec.routes.{route}.outputs.{rest}.targetEndpoint")),
+            false => {
+                rest -= r.outputs.len();
+                None
+            }
+        })
+        .unwrap_or("spec.outputs".to_owned())
 }
 
 /// The Endpoints of a repository keyed by (project, name), with the gateway's binding rule.
@@ -1517,17 +1510,17 @@ impl<'a> WriteBindings<'a> {
         let mut found = Vec::new();
         for (id, why) in self.open_data() {
             let Some(message) = why else { continue };
-            let Some(spec) = self
+            // The Endpoint is one of `self.endpoints`, which `open_data` walks.
+            let field = self
                 .endpoints
                 .get(&(id.namespace.clone().unwrap_or_default(), id.name.clone()))
-            else {
-                continue;
-            };
-            let field = match (&spec.policy_ref, &spec.policy_refs) {
-                (Some(_), _) => "spec.policyRef",
-                (None, Some(_)) => "spec.policyRefs",
-                (None, None) => "spec.contextSpaceRef",
-            };
+                .map_or("spec.contextSpaceRef", |spec| {
+                    match (&spec.policy_ref, &spec.policy_refs) {
+                        (Some(_), _) => "spec.policyRef",
+                        (None, Some(_)) => "spec.policyRefs",
+                        (None, None) => "spec.contextSpaceRef",
+                    }
+                });
             found.push(UnmadeWrite {
                 id,
                 field: Some(field.to_owned()),
@@ -2622,12 +2615,13 @@ fn catalogue_datasets_refused(repo_dir: &Path, repo: &Repository) -> Vec<(Locati
             continue;
         }
         let key = (dataset.project.clone(), dataset.endpoint.clone());
-        if let Some(location) = located.get(&key) {
-            refused.push((
+        // Every planned dataset is of an Endpoint the loop above located.
+        refused.extend(located.get(&key).map(|location| {
+            (
                 location.clone(),
                 format!("Endpoint {}/{}: {reason} (EP-177)", key.0, key.1),
-            ));
-        }
+            )
+        }));
     }
     refused
 }
@@ -2811,5 +2805,39 @@ fn finding_of(err: LoadError) -> Finding {
         document,
         line,
         message: err.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A load error with no file of its own is a finding on a stand-in location: the overlay's
+    /// folder for a missing environment, nothing for a refused preview render.
+    #[test]
+    fn a_load_error_without_a_file_is_located_at_its_stand_in() {
+        let missing = finding_of(LoadError::NoSuchEnvironment {
+            name: "nowhere".to_owned(),
+        });
+        assert_eq!(
+            (missing.path, missing.document, missing.line),
+            (PathBuf::from("environments"), 1, 1)
+        );
+        assert!(missing.message.contains("`nowhere`"), "{}", missing.message);
+
+        let unprefixed = finding_of(LoadError::UnprefixedName {
+            prefix: "ws-a-".to_owned(),
+            what: "a project namespace",
+            value: "Project/b".to_owned(),
+        });
+        assert_eq!(
+            (unprefixed.path, unprefixed.document, unprefixed.line),
+            (PathBuf::new(), 1, 1)
+        );
+        assert!(
+            unprefixed.message.contains("ws-a-") && unprefixed.message.contains("Project/b"),
+            "{}",
+            unprefixed.message
+        );
     }
 }

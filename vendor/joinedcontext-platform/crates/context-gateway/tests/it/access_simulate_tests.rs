@@ -573,6 +573,62 @@ async fn view_a_refusal_at_the_door_or_by_the_broker_is_never_a_decision() {
     }
 }
 
+/// A simulation without a resource type asks the engine the action alone; one that asks for the
+/// whole grant of a subject while the broker fails is the broker's failure, never a grant; a
+/// body over 64 KiB is refused; and a gateway with no realm configured answers a token with 401.
+#[tokio::test]
+async fn view_the_simulation_asks_the_action_alone_and_fails_closed() {
+    let realm = common::Realm::new();
+    let decided = json!({ "decision": true, "context": { "reason": "policy_grant_matched" } });
+    let (upstream, hops) = recording_broker(StatusCode::OK, decided.clone()).await;
+    let app = view_app(&realm, upstream);
+    let mut asked = question("retrieveEntity", None);
+    asked["subject"] = json!({});
+    let (status, answer) = simulate(&app, &realm, OPEN, asked).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer, decided);
+    let simulated = taken(&hops);
+    assert_eq!(simulated.len(), 1);
+    assert_eq!(
+        simulated[0].2,
+        question("retrieveEntity", None),
+        "the action alone"
+    );
+
+    let (upstream, _) = recording_broker(StatusCode::INTERNAL_SERVER_ERROR, json!({})).await;
+    let failing = view_app(&realm, upstream);
+    let (status, answer) = simulate(
+        &failing,
+        &realm,
+        OPEN,
+        json!({ "subject": { "user": "ada" } }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{answer}");
+    assert!(answer.get("permissions").is_none(), "{answer}");
+
+    let oversized = json!({ "subject": {}, "action": { "name": "x".repeat(70 * 1024) } });
+    let (status, _) = simulate(&app, &realm, OPEN, oversized).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let unauthenticated = router(Arc::new(
+        Gateway::new(
+            Broker::new("http://127.0.0.1:1"),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .serve([endpoint(OPEN, Audience::Public)]),
+    ));
+    let (status, _) = post(
+        &unauthenticated,
+        &format!("/api/endpoint/{OPEN}/access/simulate"),
+        Some(&portal_token(&realm)),
+        &question("retrieveEntity", None),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
 /// An Endpoint the broker can hold no view of has nobody to decide for it: the simulation is a
 /// `503`, never an answer of the gateway's own, and the broker is not asked (T-3650).
 #[tokio::test]

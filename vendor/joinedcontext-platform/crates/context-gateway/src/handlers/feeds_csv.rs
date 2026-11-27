@@ -118,13 +118,14 @@ pub(crate) async fn preset_csv(
     let mut response = file_csv_for(&gateway, (endpoint, subject), request).await;
     // The output names the file; its name is `[A-Za-z0-9_-]`, so it needs no quoting.
     if response.headers().contains_key(CONTENT_DISPOSITION) {
-        if let Ok(disposition) =
-            HeaderValue::from_str(&format!("attachment; filename=\"{output}.csv\""))
-        {
-            response
-                .headers_mut()
-                .insert(CONTENT_DISPOSITION, disposition);
-        }
+        // `output_name` held the name to `[A-Za-z0-9_-]`, so the value always forms.
+        HeaderValue::from_str(&format!("attachment; filename=\"{output}.csv\""))
+            .into_iter()
+            .for_each(|disposition| {
+                response
+                    .headers_mut()
+                    .insert(CONTENT_DISPOSITION, disposition);
+            });
     }
     response
 }

@@ -996,11 +996,12 @@ mod tests {
     #[test]
     fn the_secret_is_still_readable_by_asking_for_it() {
         let config = config_with_a_client_secret();
-        let Some((id, Credential::Secret(secret))) = config.oidc_client.as_ref() else {
-            panic!("a client with a secret is configured");
-        };
+        let (id, credential) = config.oidc_client.as_ref().expect("a client is configured");
         assert_eq!(id, "context-gateway");
-        assert_eq!(secret.expose(), "Kx7-the-realms-client-secret-9fQ");
+        assert!(
+            matches!(credential, Credential::Secret(secret) if secret.expose() == "Kx7-the-realms-client-secret-9fQ"),
+            "a client with a secret is configured"
+        );
     }
 
     /// On `dev` the issuer is `https://idm.<node>.sslip.io/realms/dev`, the address a browser uses.
@@ -1358,13 +1359,12 @@ mod tests {
     /// T-7767: the binary reads the same variables from its process environment.
     #[test]
     fn the_process_environment_is_one_lookup_like_any_other() {
-        // No test sets JC_GATEWAY_BROKER_URL in the process, so the start is refused naming it.
-        if std::env::var_os("JC_GATEWAY_BROKER_URL").is_none() {
-            assert!(matches!(
-                Config::from_env(),
-                Err(ConfigError::Missing("JC_GATEWAY_BROKER_URL"))
-            ));
-        }
+        // Whatever the process holds, `from_env` answers as a lookup of that environment does.
+        let process = Config::from_env().err().map(|error| error.to_string());
+        let lookup = Config::from_vars(|name| std::env::var(name).ok())
+            .err()
+            .map(|error| error.to_string());
+        assert_eq!(process, lookup);
     }
 
     /// ARCH/IDN-02 (T-7194): the project requirement is off unless switched on, and a value

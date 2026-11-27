@@ -1790,6 +1790,130 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
+    const HEADER: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind:";
+
+    /// Tables of the manifests `files` hold, loaded from a directory of their own.
+    fn tables_of(test: &str, files: &[(&str, String)]) -> super::Tables {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-store-unit-{test}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        for (file, body) in files {
+            std::fs::write(dir.join(file), body).expect("a manifest");
+        }
+        let tables = super::load(&dir).expect("the repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        tables
+    }
+
+    /// A manifest of `kind` named `name` in `namespace`, whose spec is `spec` (indented YAML).
+    fn manifest(kind: &str, namespace: &str, name: &str, spec: &str) -> String {
+        format!(
+            "{HEADER} {kind}\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{spec}"
+        )
+    }
+
+    /// A declaration whose spec does not parse adds nothing, of every kind the tables read: no
+    /// Organization limit, no space, no Endpoint, no Project, no server, no mapping.
+    #[test]
+    fn declarations_whose_spec_does_not_parse_add_nothing() {
+        let tables = tables_of(
+            "unparsed",
+            &[
+                ("org.yaml", manifest("Organization", "org", "hel", "  domain: hel.fi\n  locales: [en]\n  defaultLocale: en\n  limits: nonsense\n")),
+                ("project.yaml", manifest("Project", "org", "city", "  organizationRef: 7\n")),
+                ("space.yaml", manifest("ContextSpace", "city", "air", "  isSandbox: nope\n")),
+                ("endpoint.yaml", manifest("Endpoint", "city", "open", "  slug: 3\n")),
+                ("server.yaml", manifest("McpServer", "city", "all", "  members: 5\n")),
+                ("mapping.yaml", manifest("Mapping", "city", "m", "  artifacts: 5\n")),
+                ("assistant.yaml", manifest("AssistantDeployment", "city", "chat", "  enabled: maybe\n")),
+            ],
+        );
+        assert!(tables.0.is_empty(), "no Endpoint");
+        assert!(tables.1.is_empty(), "no space");
+        assert!(tables.7.by_space.is_empty(), "no space has a broker");
+        assert!(
+            tables.11.organizations.is_empty(),
+            "no Project is of an Organization"
+        );
+        assert_eq!(
+            tables.5.max_request_body,
+            super::Limits::default().max_request_body
+        );
+    }
+
+    /// An Endpoint of a space a move holds is held with it, by its slug; one of a space nobody
+    /// declares is on no broker.
+    #[test]
+    fn an_endpoint_of_a_moving_space_is_held_and_one_of_no_space_is_on_no_broker() {
+        let endpoint = |name: &str, slug: &str, space: &str| {
+            manifest(
+                "Endpoint",
+                "city",
+                name,
+                &format!("  contextSpaceRef: {space}\n  slug: {slug}\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n  representations:\n    feed:\n      - name: all\n        sources: [{{ type: Event, preset: event }}]\n"),
+            )
+        };
+        let moving = format!(
+            "{HEADER} ContextSpace\nmetadata:\n  name: air\n  namespace: city\n  annotations:\n    {}: other\nspec:\n  isSandbox: false\n",
+            jc_core::envelope::annotations::MOVING_TO
+        );
+        let tables = tables_of(
+            "moving",
+            &[
+                ("space.yaml", moving),
+                ("a.yaml", endpoint("a", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "air")),
+                (
+                    "b.yaml",
+                    endpoint("b", "bbbbbbbbbbbbbbbbbbbbbbbbbb", "nowhere"),
+                ),
+            ],
+        );
+        let homes = &tables.7;
+        assert!(
+            homes.moving.contains("aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            "{homes:?}"
+        );
+        assert!(homes.by_view.contains_key("aaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(!homes.by_view.contains_key("bbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        assert!(!homes.moving.contains("bbbbbbbbbbbbbbbbbbbbbbbbbb"));
+    }
+
+    /// The tenant of a space: its segment, or under the project key an error naming what is
+    /// missing or what is not a name.
+    #[test]
+    fn a_tenant_is_the_segment_or_an_error_naming_the_missing_link() {
+        use super::{tenant_name, TenantNames};
+        assert_eq!(
+            tenant_name(
+                "city",
+                "air",
+                || "city-air".to_owned(),
+                TenantNames::Segment
+            ),
+            Ok("city-air".to_owned())
+        );
+        let unkeyed = tenant_name("t7896-no-key", "air", String::new, TenantNames::ProjectKey);
+        assert!(unkeyed.expect_err("no key").contains("no id"));
+        super::publish_project_keys(BTreeMap::from([(
+            "t7896-keyed".to_owned(),
+            jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint()),
+        )]));
+        let keyed = tenant_name("t7896-keyed", "air", String::new, TenantNames::ProjectKey)
+            .expect("a key and a space name");
+        assert!(keyed.ends_with("__air"), "{keyed}");
+        let bad = tenant_name(
+            "t7896-keyed",
+            "Not A Name",
+            String::new,
+            TenantNames::ProjectKey,
+        );
+        assert!(bad.expect_err("not a label").contains("lower-case"));
+    }
+
     /// T-6868 (I-4): an Organization manifest whose spec does not parse is no Organization a
     /// project can be of, and never switches I-4 off: beside two good ones a project naming it
     /// admits nobody; alone it leaves no Organization a member could pass by.

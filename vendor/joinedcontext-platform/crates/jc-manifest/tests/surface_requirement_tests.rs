@@ -491,6 +491,104 @@ fn a_calendar_over_a_model_that_does_not_parse_cannot_be_checked() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// EP-125: a model whose LinkML source is gone cannot be read, and the calendar over it is one
+/// finding naming the file it tried.
+#[test]
+fn a_calendar_over_a_model_whose_source_is_missing_names_the_file() {
+    let dir = repo_with("ical-missing-model-source", Some(EVENT_MODEL), ICAL);
+    std::fs::remove_file(dir.join("projects/city/spaces/events/datamodels/events.linkml.yaml"))
+        .expect("remove the source");
+    let found = surface_findings(&dir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].contains("the representations cannot be checked against the data model: its LinkML source cannot be read at `")
+            && found[0].contains("events.linkml.yaml`"),
+        "{}",
+        found[0]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// EP-135: a display over a space with no model, or whose model's source cannot be read, is
+/// refused with that reason, once per type it names.
+#[test]
+fn a_display_over_a_space_without_a_readable_model_is_refused_for_each_type() {
+    let display =
+        "  display:\n    Event:\n      fields: [name]\n    Meeting:\n      fields: [name]\n";
+    let dir = repo_with("display-no-model", None, display);
+    assert_eq!(
+        display_findings(&dir),
+        [
+            "Endpoint city/calendar: spec.display: space events has no data model (EP-135)",
+            "Endpoint city/calendar: spec.display: space events has no data model (EP-135)",
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let dir = repo_with("display-missing-source", Some(EVENT_MODEL), display);
+    std::fs::remove_file(dir.join("projects/city/spaces/events/datamodels/events.linkml.yaml"))
+        .expect("remove the source");
+    let found = display_findings(&dir);
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found
+            .iter()
+            .all(|m| m.contains("its LinkML source cannot be read at `") && m.ends_with("(EP-135)")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// EP-174, EP-177: two Endpoints that are datasets only by their own names, one in each of two
+/// projects on one CKAN, are left to the publisher's report; a name one of them wrote is refused.
+#[test]
+fn endpoints_sharing_a_default_dataset_name_across_projects_are_left_to_the_publisher() {
+    let dir = repo_with("datasets-default-names", Some(EVENT_MODEL), "");
+    let instance = |project: &str| {
+        write(
+            &dir,
+            &format!("projects/{project}/ckan/open-data.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: open-data\n  \
+             namespace: {project}\nspec:\n  url: https://data.city.example\n  organizationDefault: city\n  \
+             apiTokenRef: {{ name: ckan, key: token }}\n"),
+        );
+    };
+    let town_endpoint = |publish: &str| {
+        write(
+            &dir,
+            "projects/town/spaces/town-events/endpoints/calendar.yaml",
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: calendar\n  \
+             namespace: town\nspec:\n  contextSpaceRef: town-events\n  slug: m7m2qz4tv6xh3n5jb2ryd3wcfa\n  \
+             audience: public\n{publish}"),
+        );
+    };
+    write(
+        &dir,
+        "projects/town/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: town\n  namespace: org\nspec:\n  organizationRef: city\n",
+    );
+    write(
+        &dir,
+        "projects/town/spaces/town-events/space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: town-events\n  namespace: town\nspec:\n  isSandbox: false\n",
+    );
+    instance("city");
+    instance("town");
+    town_endpoint("");
+    assert_eq!(dataset_findings(&dir), Vec::<String>::new());
+
+    town_endpoint("  publish:\n    ckan:\n      instanceRef: open-data\n      name: calendar\n");
+    let found = dataset_findings(&dir);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].starts_with("Endpoint town/calendar:")
+            && found[0].contains("Endpoint city/calendar"),
+        "{}",
+        found[0]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_dataset_name_another_endpoint_publishes_on_the_same_catalogue_is_refused() {
     let dir = repo_with("datasets-collision", Some(EVENT_MODEL), DATASETS);

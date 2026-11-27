@@ -332,6 +332,102 @@ fn only_the_named_space_comes_out() {
     assert_eq!(report.resources.len(), 2, "the space and its one endpoint");
 }
 
+/// A platform that answers every query with the same list, whatever the kind asked for.
+struct Fixed(Vec<RawManifest>);
+
+impl Platform for Fixed {
+    fn list(
+        &self,
+        _project: &str,
+        _plural: &str,
+    ) -> Result<Vec<RawManifest>, jcctl::platform::PlatformError> {
+        Ok(self.0.clone())
+    }
+
+    fn put(&mut self, _manifest: &RawManifest) -> Result<(), jcctl::platform::PlatformError> {
+        Ok(())
+    }
+
+    fn delete(
+        &mut self,
+        _id: &jcctl::loader::ResourceId,
+    ) -> Result<(), jcctl::platform::PlatformError> {
+        Ok(())
+    }
+}
+
+/// A resource of a kind this build does not know is left out of the export rather than guessed a
+/// path for; the known ones beside it still come out.
+#[test]
+fn a_live_resource_of_an_unknown_kind_is_left_out() {
+    let mystery = manifest(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Mystery\nmetadata:\n  name: odd\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n",
+    );
+    let platform = Fixed(vec![mystery, manifest(LIVE_ENDPOINT)]);
+    let report = export::collect(&platform, "ovzdusie", "ovzdusie").expect("the platform answers");
+    assert_eq!(report.resources.len(), 1, "{:?}", report.resources);
+    assert_eq!(report.resources[0].manifest.kind, "Endpoint");
+}
+
+/// A manifest whose only annotations are the platform's comes out with no annotations block.
+#[test]
+fn an_annotations_block_holding_only_system_annotations_is_dropped() {
+    let platform = live(&[&LIVE_ENDPOINT.replace(
+        "    banskabystrica.sk/owner: odbor-zivotneho-prostredia\n",
+        "",
+    )]);
+    let report = export::collect(&platform, "ovzdusie", "ovzdusie").expect("the platform answers");
+    let endpoint = exported(
+        &report,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/public-air.yaml",
+    );
+    assert!(
+        !endpoint.metadata.rest.contains_key("annotations"),
+        "{:?}",
+        endpoint.metadata.rest
+    );
+}
+
+/// PF-68: a kind that lives in either place is the organization's when its namespace says `org`,
+/// a project's otherwise, and an unknown kind is neither.
+#[test]
+fn a_kind_in_either_place_is_the_organizations_by_its_namespace() {
+    assert!(export::belongs_to_the_organization("Role", Some("org")));
+    assert!(!export::belongs_to_the_organization(
+        "Role",
+        Some("ovzdusie")
+    ));
+    assert!(!export::belongs_to_the_organization("Role", None));
+    assert!(export::belongs_to_the_organization("Organization", None));
+    assert!(!export::belongs_to_the_organization(
+        "Endpoint",
+        Some("org")
+    ));
+    assert!(!export::belongs_to_the_organization("Mystery", Some("org")));
+}
+
+/// A file that is not a YAML manifest (another extension, none, or an unregistered kind) is
+/// carried beside the manifests as it is.
+#[test]
+fn files_that_are_not_manifests_travel_as_natives() {
+    let repo = demo_repo("export-bundle-natives");
+    common::write(&repo, "projects/ovzdusie/notes.txt", "plain\n");
+    common::write(&repo, "projects/ovzdusie/Makefile", "all:\n");
+    common::write(&repo, "projects/ovzdusie/other.yaml", "kind: NoSuchKind\n");
+    let bundle = export::collect_project(&repo, "ovzdusie").expect("the checkout is read");
+    let natives: Vec<String> = bundle
+        .natives
+        .iter()
+        .map(|(path, _)| path.display().to_string())
+        .collect();
+    for carried in ["notes.txt", "Makefile", "other.yaml"] {
+        assert!(
+            natives.iter().any(|p| p.ends_with(carried)),
+            "{carried}: {natives:?}"
+        );
+    }
+}
+
 /// A fresh installation exports an empty repository rather than failing: `export` on
 /// nothing is nothing, which is what `jcctl export` prints today.
 #[test]

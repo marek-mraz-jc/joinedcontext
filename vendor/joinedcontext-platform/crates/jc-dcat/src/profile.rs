@@ -304,9 +304,9 @@ fn untype_sources(record: &mut Value) {
     if let Some(included) = record.get_mut("@included").and_then(Value::as_array_mut) {
         for node in included.iter_mut() {
             if node["@type"] == "dcat:Dataset" && sources.contains(&node["@id"]) {
-                if let Some(node) = node.as_object_mut() {
+                node.as_object_mut().into_iter().for_each(|node| {
                     node.remove("@type");
-                }
+                });
             }
         }
     }

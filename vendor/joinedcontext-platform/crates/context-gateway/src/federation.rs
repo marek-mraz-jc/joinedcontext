@@ -133,3 +133,40 @@ pub fn federations_of(repo: &Repository) -> Federations {
     }
     Federations { by_space }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn registration(name: &str, spec: &str) -> jc_manifest::loader::RawManifest {
+        serde_norway::from_str(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\nmetadata:\n  \
+             name: {name}\n  namespace: helsinki\nspec:\n  contextSpaceRef: hub\n  \
+             information:\n    - entities:\n        - type: Vehicle\n{spec}"
+        ))
+        .expect("a manifest")
+    }
+
+    /// A registration that does not parse, or that names both an Endpoint here and an address
+    /// elsewhere, is left out; the valid one beside them stays.
+    #[test]
+    fn a_registration_that_does_not_parse_or_validate_is_left_out() {
+        let repo = Repository::from_manifests(
+            vec![
+                registration("good", "  endpoint: https://other.example/ngsi-ld/v1\n  federation: { identity: anonymous }\n"),
+                registration("unknown-field", "  endpoint: https://a.example\n  surprise: true\n"),
+                registration(
+                    "both",
+                    "  endpoint: https://b.example\n  endpointRef: { kind: Endpoint, name: air }\n",
+                ),
+            ],
+            None,
+        )
+        .expect("the repository assembles");
+        let table = federations_of(&repo);
+        let members = table.members("helsinki", "helsinki-hub");
+        assert_eq!(members.len(), 1, "{members:?}");
+        assert_eq!(members[0].name, "good");
+        assert!(members[0].external);
+    }
+}

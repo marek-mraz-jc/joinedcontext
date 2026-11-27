@@ -271,10 +271,10 @@ fn redact_slots(
     visible: &Visible,
     redacted: &mut Vec<String>,
 ) {
-    let Some(properties) = definition
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-    else {
+    let Some(members) = definition.as_object_mut() else {
+        return;
+    };
+    let Some(properties) = members.get_mut("properties").and_then(Value::as_object_mut) else {
         return;
     };
     properties.retain(|name, _| {
@@ -286,14 +286,12 @@ fn redact_slots(
     });
     let surviving: BTreeSet<String> = properties.keys().cloned().collect();
 
-    if let Some(Value::Array(required)) = definition.get_mut("required") {
+    if let Some(Value::Array(required)) = members.get_mut("required") {
         required.retain(|name| name.as_str().is_some_and(|name| surviving.contains(name)));
     }
     // A pattern could match a slot that was just removed, and a form generated from the
     // schema would then offer a field the caller may not read.
-    if let Some(members) = definition.as_object_mut() {
-        members.remove("patternProperties");
-    }
+    members.remove("patternProperties");
 }
 
 /// The description of a model the checkout has no artifact for: the entity types the
@@ -517,6 +515,36 @@ mod visible_tests {
         assert_eq!(air["properties"]["pm10"], json!({}), "{derived}");
         assert_eq!(air["additionalProperties"], true, "{derived}");
         assert_eq!(derived["title"], "air-quality 1.0.0");
+    }
+
+    /// A definition with no `properties` (an enum, an alias, a boolean schema) has no slot to
+    /// redact: it is copied as it is, and a class of it keeps its `patternProperties`.
+    #[test]
+    fn a_definition_without_properties_is_copied_untouched() {
+        let granted = endpoint(vec![granting(&["AirQualityObserved"], &["pm10"])]);
+        let seen = visible(&Subject::anonymous(), &granted, now());
+        let mut compiled = model(&["AirQualityObserved"]);
+        compiled.json_schema = Some(std::sync::Arc::new(json!({
+            "$defs": {
+                "AirQualityObserved": { "type": "object", "patternProperties": { "^s": {} } },
+                "Anything": true,
+                "Level": { "enum": ["low", "high"] },
+            },
+        })));
+        let mut redacted = Vec::new();
+        let schema = json_schema(&[&compiled], &seen, &mut redacted);
+        assert_eq!(schema["$defs"]["Anything"], json!(true), "{schema}");
+        assert_eq!(
+            schema["$defs"]["Level"],
+            json!({ "enum": ["low", "high"] }),
+            "{schema}"
+        );
+        assert_eq!(
+            schema["$defs"]["AirQualityObserved"]["patternProperties"],
+            json!({ "^s": {} }),
+            "{schema}"
+        );
+        assert!(redacted.is_empty(), "{redacted:?}");
     }
 
     /// T-1158, GW8, EP-47: a prohibition that names no attribute takes the whole type back, and

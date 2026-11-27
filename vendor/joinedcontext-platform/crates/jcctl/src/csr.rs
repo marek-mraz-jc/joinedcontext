@@ -125,6 +125,14 @@ pub fn registration_id(name: &str) -> String {
 
 /// The `csourceRegistration` one manifest becomes (CIM 009 clause 5.2.9).
 pub fn registration(manifest: &RawManifest, endpoints: &impl Endpoints) -> Result<Value, CsrError> {
+    registration_body(manifest, endpoints).map(Value::Object)
+}
+
+/// [`registration`], as the object it always is.
+fn registration_body(
+    manifest: &RawManifest,
+    endpoints: &impl Endpoints,
+) -> Result<Map<String, Value>, CsrError> {
     if manifest.kind != "ContextSourceRegistration" {
         return Err(CsrError::NotARegistration);
     }
@@ -199,10 +207,10 @@ pub fn registration(manifest: &RawManifest, endpoints: &impl Endpoints) -> Resul
         // drift from the string the repository holds.
         body.insert(
             "expiresAt".into(),
-            serde_json::to_value(expires).map_err(|e| CsrError::Spec(e.to_string()))?,
+            serde_json::to_value(expires).expect("a timestamp serializes"),
         );
     }
-    Ok(Value::Object(body))
+    Ok(body)
 }
 
 /// The `information` array, which is the manifest's own: the manifest carries CIM 009's shape
@@ -271,23 +279,21 @@ pub fn apply(
     manifest: &RawManifest,
     endpoints: &impl Endpoints,
 ) -> Result<Outcome, CsrError> {
-    let desired = registration(manifest, endpoints)?;
+    let desired = registration_body(manifest, endpoints)?;
     let id = desired["id"].as_str().unwrap_or_default().to_owned();
     match api.get(tenant, &id)? {
         None => {
-            api.create(tenant, &desired)?;
+            api.create(tenant, &Value::Object(desired))?;
             Ok(Outcome::Created)
         }
         Some(live) if same(&live, &desired) => Ok(Outcome::Unchanged),
         Some(_) => {
             // The id is in the path, and a PATCH body carrying it is refused by the
             // specification's own rules on immutable members.
-            let mut patch = desired.clone();
-            if let Some(object) = patch.as_object_mut() {
-                object.remove("id");
-                object.remove("type");
-            }
-            api.update(tenant, &id, &patch)?;
+            let mut patch = desired;
+            patch.remove("id");
+            patch.remove("type");
+            api.update(tenant, &id, &Value::Object(patch))?;
             Ok(Outcome::Updated)
         }
     }
@@ -310,10 +316,7 @@ pub fn remove(api: &mut impl BrokerApi, tenant: &str, name: &str) -> Result<Outc
 /// Compares only the members this reconciler owns. The broker adds its own — `createdAt`,
 /// `modifiedAt`, `@context`, a status — and treating those as drift would rewrite every
 /// registration on every run (CC-69).
-fn same(live: &Value, desired: &Value) -> bool {
-    let Some(desired) = desired.as_object() else {
-        return false;
-    };
+fn same(live: &Value, desired: &Map<String, Value>) -> bool {
     desired.iter().all(|(key, value)| {
         if key == "id" || key == "type" {
             return true;

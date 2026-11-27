@@ -183,9 +183,7 @@ mod tests {
             .await
             .expect("a free port");
         let address = listener.local_addr().expect("the bound address");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(async move { axum::serve(listener, app).await });
         (Broker::new(format!("http://{address}")), asked)
     }
 

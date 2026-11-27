@@ -977,9 +977,14 @@ fn attribute(slot: &Value, require_units: bool) -> Value {
     } else {
         date_time_literal(without_null(slot))
     };
+    let unit = unit_code(slot).filter(|_| kind == "Property");
+    let mut required = vec![json!("type"), json!(member)];
+    if unit.is_some() && require_units {
+        required.push(json!("unitCode"));
+    }
     let mut shape = json!({
         "type": "object",
-        "required": ["type", member],
+        "required": required,
         "properties": {
             "type": { "const": kind },
             member: value,
@@ -991,13 +996,8 @@ fn attribute(slot: &Value, require_units: bool) -> Value {
     {
         shape["properties"][*member] = instant();
     }
-    if let Some(code) = unit_code(slot).filter(|_| kind == "Property") {
+    if let Some(code) = unit {
         shape["properties"]["unitCode"] = json!({ "const": code });
-        if require_units {
-            if let Some(required) = shape["required"].as_array_mut() {
-                required.push(json!("unitCode"));
-            }
-        }
     }
     shape
 }

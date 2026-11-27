@@ -244,6 +244,25 @@ async fn the_poller_sends_its_token_and_tag_and_a_refusal_forgets_the_tag() {
     assert!(refused.contains("refused the grant"), "{refused}");
 }
 
+/// A Portal nothing listens on is a failed poll naming the connection, and the list stands.
+#[tokio::test]
+async fn a_portal_nobody_answers_for_is_a_failed_poll_and_leaves_the_list() {
+    let realm = common::Realm::new();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let closed = listener.local_addr().expect("the bound address");
+    drop(listener);
+    let mut poller = Revocations::new(
+        format!("http://{closed}/internal/revocations"),
+        None,
+        Arc::new(realm.verifier()),
+    )
+    .expect("a poller");
+    let refused = poller.poll().await.expect_err("nothing answers");
+    assert!(!refused.is_empty());
+}
+
 /// T-7767: the follower polls at once and keeps polling after a failed answer.
 #[tokio::test(flavor = "current_thread", start_paused = true)]
 async fn the_follower_polls_again_after_a_failed_answer() {

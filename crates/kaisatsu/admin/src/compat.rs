@@ -256,16 +256,8 @@ async fn attach_req_info(req: axum::extract::Request, next: axum::middleware::Ne
     let (mut parts, body) = req.into_parts();
     parts.headers = headers;
     parts.extensions.insert(info);
-    let mut resp = next
-        .run(axum::extract::Request::from_parts(parts, body))
-        .await;
-    if let Some(nonce) = resp.extensions().get::<String>().cloned()
-        && let Ok(val) = header::HeaderValue::from_str(&nonce)
-    {
-        resp.headers_mut()
-            .insert(header::HeaderName::from_static("dpop-nonce"), val);
-    }
-    resp
+    next.run(axum::extract::Request::from_parts(parts, body))
+        .await
 }
 
 /// Wraps the protected APIs: DPoP request info, and one transaction per write request, so an

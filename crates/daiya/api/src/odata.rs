@@ -1095,3 +1095,31 @@ pub fn odata_router() -> Router<DaiyaState> {
             get(handle_odata_two_segment_get).post(handle_odata_two_segment_post),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each odata-table refusal keeps its kind: a property the set lacks and a bad request are
+    /// the caller's 400, an unserved option 501, a source failure 500.
+    #[test]
+    fn each_table_error_keeps_its_kind_and_names_the_property() {
+        let unknown = map_table_error(TableError::UnknownProperty("colour".into()));
+        assert!(
+            matches!(&unknown, CrError::BadRequest(m) if m == "unknown OData property 'colour'"),
+            "{unknown:?}"
+        );
+        assert!(matches!(
+            map_table_error(TableError::BadRequest("bad".into())),
+            CrError::BadRequest(m) if m == "bad"
+        ));
+        assert!(matches!(
+            map_table_error(TableError::NotImplemented("$apply".into())),
+            CrError::NotImplemented(m) if m == "$apply"
+        ));
+        assert!(matches!(
+            map_table_error(TableError::Source("down".into())),
+            CrError::Internal(m) if m == "down"
+        ));
+    }
+}

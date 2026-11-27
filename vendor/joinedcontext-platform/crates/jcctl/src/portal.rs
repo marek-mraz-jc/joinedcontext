@@ -217,9 +217,12 @@ impl Portal {
                     && r.method == method.as_str()
                     && r.path.ends_with("{name}") == name.is_some()
             })
-            .ok_or_else(|| PortalError::Invalid(format!("jcctl has no Portal route for {verb}")))?;
+            .expect("every verb jcctl asks for has a Portal route");
         let mut url = self.base.clone();
-        if let Ok(mut path) = url.path_segments_mut() {
+        {
+            let mut path = url
+                .path_segments_mut()
+                .expect("an http(s) URL naming a host has path segments");
             path.pop_if_empty();
             for segment in route.path.split('/').filter(|s| !s.is_empty()) {
                 path.push(match segment {
@@ -494,7 +497,7 @@ pub fn get(
             .map(|m| format!("{plural}/{}\n", name_of(m)))
             .collect(),
         Output::Json => format!("{}\n", pretty_json(&shown)),
-        Output::Yaml => yaml(&shown)?,
+        Output::Yaml => yaml(&shown),
     })
 }
 
@@ -530,7 +533,7 @@ pub fn describe(
     for (label, key) in [("Spec", "spec"), ("Status", "status")] {
         if let Some(value) = manifest.get(key).filter(|v| !v.is_null()) {
             let _ = writeln!(out, "{label}:");
-            for line in yaml(value)?.lines() {
+            for line in yaml(value).lines() {
                 let _ = writeln!(out, "  {line}");
             }
         }
@@ -543,9 +546,8 @@ fn pretty_json(value: &Value) -> String {
     format!("{value:#}")
 }
 
-fn yaml(value: &Value) -> Result<String, PortalError> {
-    serde_norway::to_string(value)
-        .map_err(|e| PortalError::Invalid(format!("the answer does not print as YAML: {e}")))
+fn yaml(value: &Value) -> String {
+    serde_norway::to_string(value).expect("a JSON value prints as YAML")
 }
 
 /// One manifest of a `-f` file, with where its request goes.
@@ -667,8 +669,7 @@ pub fn apply(portal: &Portal, targets: &[Target]) -> Report {
                     }
                     None => false,
                 };
-                let body = serde_json::to_value(&target.manifest)
-                    .map_err(|e| PortalError::Invalid(format!("{what}: {e}")))?;
+                let body = serde_json::to_value(&target.manifest).expect("a manifest is JSON");
                 let change =
                     portal.propose(&target.project, target.plural, name, &body, replace)?;
                 let verb = if replace { "replaced" } else { "created" };
@@ -751,8 +752,7 @@ pub fn plan(portal: &Portal, targets: &[Target]) -> Report {
         let result = portal
             .get(&target.project, target.plural, name)
             .and_then(|live| {
-                let body = serde_json::to_value(&target.manifest)
-                    .map_err(|e| PortalError::Invalid(format!("{what}: {e}")))?;
+                let body = serde_json::to_value(&target.manifest).expect("a manifest is JSON");
                 let replace = live.is_some();
                 portal
                     .dry_run(&target.project, target.plural, name, &body, replace)
@@ -908,13 +908,20 @@ mod tests {
         planned(&mut report, "endpoints/air", false, &refused);
         let same = serde_json::json!({ "valid": true, "lane": "green", "plan": { "fields": [] } });
         planned(&mut report, "endpoints/same", true, &same);
-        assert!(report.failed && !report.differs);
+        let noted = serde_json::json!({
+            "valid": true, "lane": "green", "plan": { "fields": [] },
+            "findings": ["a note", 7]
+        });
+        planned(&mut report, "endpoints/noted", false, &noted);
+        assert!(report.failed && report.differs);
         assert_eq!(
             report.lines,
             [
                 "endpoints/air: the Portal would refuse it",
                 "endpoints/air: error: no space",
-                "endpoints/same: unchanged"
+                "endpoints/same: unchanged",
+                "endpoints/noted: would create (green lane)",
+                "endpoints/noted: note: a note"
             ]
         );
     }

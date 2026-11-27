@@ -100,10 +100,11 @@ fn collect(root: &Path) -> Result<Vec<(String, Vec<u8>)>, RemoteError> {
         .map_err(|error| RemoteError::Unavailable(error.to_string()))?
         .into_iter()
         .map(|entry| {
+            // The walk only yields entries under `root`.
             let relative = entry
                 .path()
                 .strip_prefix(root)
-                .map_err(|_| RemoteError::Unavailable("path escaped the checkout".to_owned()))?
+                .unwrap_or(entry.path())
                 .to_string_lossy()
                 .into_owned();
             let body = std::fs::read(entry.path())
@@ -304,6 +305,43 @@ mod tests {
         assert!(
             Checkout { dir: &looped }.revision(&origin).is_err(),
             "a link loop is an error, not a walk without end"
+        );
+        std::fs::remove_dir_all(&base).expect("the scratch dir goes");
+    }
+
+    /// A checkout that cannot be written into the workspace is an error, whether the folder for a
+    /// file cannot be made or the file's own place is taken by a folder.
+    #[test]
+    fn a_checkout_that_cannot_be_written_is_unavailable() {
+        use super::{Checkout, RemoteError, SyncOrigin, SyncRemote};
+        let base = std::env::temp_dir().join(format!(
+            "jcctl-sync-unwritable-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|since| since.as_nanos())
+                .unwrap_or_default()
+        ));
+        let origin = base.join("origin");
+        std::fs::create_dir_all(origin.join("nested")).expect("an origin");
+        std::fs::write(origin.join("nested/a.yaml"), "kind: Space\n").expect("a manifest");
+        let origin_dir = Checkout { dir: &origin };
+        let source = SyncOrigin::default();
+
+        let file_in_the_way = base.join("file");
+        std::fs::write(&file_in_the_way, "not a folder").expect("a file");
+        let blocked = origin_dir.checkout(&source, "r", &file_in_the_way);
+        assert!(
+            matches!(blocked, Err(RemoteError::Unavailable(_))),
+            "{blocked:?}"
+        );
+
+        let into = base.join("into");
+        std::fs::create_dir_all(into.join("nested/a.yaml")).expect("a folder in the file's place");
+        let taken = origin_dir.checkout(&source, "r", &into);
+        assert!(
+            matches!(taken, Err(RemoteError::Unavailable(_))),
+            "{taken:?}"
         );
         std::fs::remove_dir_all(&base).expect("the scratch dir goes");
     }

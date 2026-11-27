@@ -418,6 +418,25 @@ async fn narrowed_by_the_filter(stored: Endpoint) {
     }
 }
 
+/// A slug that cannot stand in a request target (a served Endpoint always has a base32 one, so
+/// this only guards the rewrite) leaves the output unserved with 404, never a half-built URI.
+#[tokio::test]
+async fn a_feeds_csv_of_an_endpoint_whose_slug_cannot_be_a_target_is_not_found() {
+    let broker = BrokerStub::start(vec![json!([reading(1)])]).await;
+    let mut odd = preset(None);
+    odd.slug = "odd slug".to_owned();
+    let (status, _, _) = download(
+        gateway(&broker.url, odd),
+        "/api/endpoint/odd%20slug/feeds/events.csv",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(
+        broker.hops().is_empty(),
+        "the rewrite failed before the broker"
+    );
+}
+
 /// T-6760: a feeds CSV cannot leave its output: another type, a geo-query of the caller's, a
 /// `q` that closes the output's group or a parameter the table does not read is 400, an
 /// unknown output 404, and none reaches the broker.

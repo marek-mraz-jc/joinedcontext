@@ -142,7 +142,13 @@ async fn ws_a_replaced_socket_ends_at_its_next_ping() -> Result<(), String> {
         status(&c.resume(&old.connection, &old.token, 0).await?),
         200
     );
-    old.closed().await?;
+    // no close frame: an EOF (1005) or, as tungstenite reads a dropped TCP
+    // stream, a reset without the closing handshake
+    match old.closed().await {
+        Ok((1005, _)) => {}
+        Err(e) if e.contains("without closing handshake") => {}
+        other => return Err(format!("ended with a close frame of its own: {other:?}")),
+    }
     Ok(())
 }
 

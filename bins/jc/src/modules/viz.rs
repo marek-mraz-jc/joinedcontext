@@ -515,6 +515,28 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::path::Path;
 
+    /// The explorer bundle's sum is the lowercase hex SHA-256 of its bytes (what a build with the
+    /// UI hands `SHA256SUMS`-less files), and each file kind gets its media type, unknown ones
+    /// none a browser would run.
+    #[test]
+    fn the_explorer_sum_is_hex_sha256_and_each_file_gets_its_media_type() {
+        assert_eq!(
+            sha256(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(sha256(b"").len(), 64);
+        for (path, ctype) in [
+            ("index.html", "text/html; charset=utf-8"),
+            ("a/site.css", "text/css; charset=utf-8"),
+            ("app.js", "text/javascript; charset=utf-8"),
+            ("mod.mjs", "text/javascript; charset=utf-8"),
+            ("data.bin", "application/octet-stream"),
+            ("no-extension", "application/octet-stream"),
+        ] {
+            assert_eq!(content_type(path), ctype, "{path}");
+        }
+    }
+
     fn live() -> LiveAddresses {
         LiveAddresses {
             api: "https://api.city.test".into(),

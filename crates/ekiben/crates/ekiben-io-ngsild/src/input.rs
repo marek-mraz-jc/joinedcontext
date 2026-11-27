@@ -423,6 +423,7 @@ impl Gate {
     }
 }
 
+#[derive(Clone, Copy)]
 struct Pass {
     offset: u64,
     total: Option<u64>,
@@ -541,12 +542,12 @@ impl QueryReader {
                         }
                     }
                 }
-                self.pass = Some(Pass {
-                    offset: 0,
-                    total: None,
-                });
             }
-            match self.page(ctx, label).await {
+            let pass = *self.pass.get_or_insert(Pass {
+                offset: 0,
+                total: None,
+            });
+            match self.page(ctx, label, pass).await {
                 Ok(Some(out)) => return Ok(out),
                 Ok(None) => {}
                 Err(e) => {
@@ -565,16 +566,14 @@ impl QueryReader {
         self.next_pass = Some(Instant::now() + self.interval.unwrap_or(Duration::ZERO));
     }
 
-    /// One page: a batch to emit, or `None` when it emitted nothing (all unchanged, or the pass
-    /// ended).
+    /// One page of `pass`: a batch to emit, or `None` when it emitted nothing (all unchanged,
+    /// or the pass ended).
     async fn page(
         &mut self,
         ctx: &StreamContext,
         label: &str,
+        pass: Pass,
     ) -> Result<Option<(Batch, AckResponder)>, CoreError> {
-        let Some(pass) = self.pass.as_ref() else {
-            return Ok(None);
-        };
         let offset = pass.offset;
         let env = CallEnv {
             org: &ctx.org,
@@ -769,7 +768,6 @@ pub struct TemporalReader {
     next: Option<String>,
     pages_this_pass: u64,
     next_pass: Option<Instant>,
-    in_pass: bool,
 }
 
 impl TemporalReader {
@@ -866,7 +864,6 @@ impl TemporalReader {
             next: None,
             pages_this_pass: 0,
             next_pass: None,
-            in_pass: false,
         })
     }
 
@@ -906,7 +903,7 @@ impl TemporalReader {
             if ctx.is_shutting_down() {
                 return Err(CoreError::EndOfInput);
             }
-            if !self.in_pass {
+            if self.next.is_none() {
                 match (self.interval, self.next_pass) {
                     (_, None) => {}
                     (None, Some(_)) => return Err(CoreError::EndOfInput),
@@ -921,11 +918,14 @@ impl TemporalReader {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
                     .restart();
-                self.in_pass = true;
                 self.pages_this_pass = 0;
-                self.next = Some(self.first_url());
             }
-            match self.page(ctx, label).await {
+            // A pass runs while a next page is known: the first page starts it.
+            let url = match self.next.take() {
+                Some(url) => url,
+                None => self.first_url(),
+            };
+            match self.page(ctx, label, url).await {
                 Ok(Some(out)) => return Ok(out),
                 Ok(None) => {}
                 Err(e) => {
@@ -940,7 +940,6 @@ impl TemporalReader {
     }
 
     fn end_pass(&mut self) {
-        self.in_pass = false;
         self.next = None;
         self.next_pass = Some(Instant::now() + self.interval.unwrap_or(Duration::ZERO));
     }
@@ -949,11 +948,8 @@ impl TemporalReader {
         &mut self,
         ctx: &StreamContext,
         label: &str,
+        url: String,
     ) -> Result<Option<(Batch, AckResponder)>, CoreError> {
-        let Some(url) = self.next.take() else {
-            self.end_pass();
-            return Ok(None);
-        };
         self.pages_this_pass += 1;
         let env = CallEnv {
             org: &ctx.org,

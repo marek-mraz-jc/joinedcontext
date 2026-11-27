@@ -436,10 +436,9 @@ pub async fn sync_ckan(
             if dataset.private || !is_dataset_name(&dataset.name) {
                 continue;
             }
-            let Ok(url) = base.join(&format!("dataset/{}", dataset.name)) else {
-                continue;
-            };
-            let url = url.to_string();
+            // The search above joined its path onto this base, so this join cannot fail; the name
+            // is lowercase letters, digits, `-` and `_` and the base ends in a slash.
+            let url = format!("{base}dataset/{}", dataset.name);
             if !listed.insert(url.clone()) {
                 continue;
             }

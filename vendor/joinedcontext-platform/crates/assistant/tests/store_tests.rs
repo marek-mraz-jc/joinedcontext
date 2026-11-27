@@ -124,6 +124,43 @@ async fn site(
     ids
 }
 
+/// The log lines this binary wrote.
+#[derive(Clone, Default)]
+struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("the log").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Log {
+    /// The log of this test binary, written by one subscriber set for all of it: the tests run
+    /// side by side, and a scoped subscriber lost the race with a callsite another test had met
+    /// with none.
+    fn capture() -> (Self, ()) {
+        static LOG: std::sync::OnceLock<Log> = std::sync::OnceLock::new();
+        let log = LOG.get_or_init(|| {
+            let log = Self::default();
+            let writer = log.clone();
+            let subscriber = tracing_subscriber::fmt()
+                .with_writer(move || writer.clone())
+                .with_ansi(false)
+                .finish();
+            tracing::subscriber::set_global_default(subscriber).expect("no other global default");
+            log
+        });
+        (log.clone(), ())
+    }
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
+    }
+}
+
 async fn search(
     pool: &PgPool,
     project: &str,
@@ -216,6 +253,7 @@ async fn reciprocal_rank_fusion_puts_what_both_rankings_find_first() {
         ],
     )
     .await;
+    let (log, ()) = Log::capture();
     let order = search(
         &pool,
         "helsinki",
@@ -227,6 +265,16 @@ async fn reciprocal_rank_fusion_puts_what_both_rankings_find_first() {
     .await;
     // A: lexical 1 + semantic 1; B: lexical 2 + semantic 3; C: semantic 2; D: semantic 4.
     assert_eq!(order, vec![ids[0], ids[1], ids[2], ids[3]]);
+    // The log says which arm found how many of the passages kept.
+    let logged = log.text();
+    assert!(
+        logged.contains("search arms") && logged.contains("rows=4"),
+        "{logged}"
+    );
+    assert!(
+        logged.contains("lexical=2") && logged.contains("semantic=4"),
+        "{logged}"
+    );
     drop_database(admin, pool, &name).await;
 }
 

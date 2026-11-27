@@ -331,13 +331,14 @@ pub fn targets_with(
         &catalogues,
     );
     let mut targets = Vec::new();
-    for dataset in planned {
-        let Some((id, manifest, spec)) = endpoints
+    // Every planned dataset was planned from one of these Endpoints.
+    let found = planned.into_iter().filter_map(|dataset| {
+        let endpoint = endpoints
             .iter()
-            .find(|(id, _, _)| id.name == dataset.endpoint)
-        else {
-            continue;
-        };
+            .find(|(id, _, _)| id.name == dataset.endpoint)?;
+        Some((dataset, endpoint))
+    });
+    for (dataset, (id, manifest, spec)) in found {
         let space = space_of(repo, id, spec);
         let language = space
             .as_ref()

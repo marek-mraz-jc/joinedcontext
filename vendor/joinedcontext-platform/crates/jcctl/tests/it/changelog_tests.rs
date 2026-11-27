@@ -221,6 +221,57 @@ fn every_kind_of_public_change_is_said_in_its_own_words() {
     assert_eq!(refused.status.code(), Some(1));
 }
 
+/// A title written per language without an English one falls back to the first language given;
+/// one that is neither text nor a map is no title.
+#[test]
+fn a_title_without_an_english_text_falls_back_to_the_first_language_or_none() {
+    let dir = temp_dir("changelog-titles");
+    git(&dir, None, &["init", "-q", "-b", "main"]);
+    write(&dir, "spaces/ovzdusie/space.yaml", SPACE);
+    let reps = "  enabledRepresentations: [ngsi-ld]\n";
+    let with = |title: &str| {
+        endpoint("air", "public", reps).replace(
+            "title: { en: \"Air <b>quality</b>\", sk: \"Ovzdušie\" }",
+            title,
+        )
+    };
+    write(&dir, ENDPOINT_PATH, &with("title: { sk: \"Ovzdušie\" }"));
+    commit(&dir, None, "slovak only");
+    write(
+        &dir,
+        "spaces/ovzdusie/endpoints/untitled.yaml",
+        &with("title: 7").replace("name: air", "name: untitled"),
+    );
+    commit(&dir, None, "a title that is a number");
+    let list = entries(&dir, TimestampTz::now() - SignedDuration::from_hours(24))
+        .expect("the history reads");
+    let title_of = |name: &str| {
+        list.iter()
+            .find(|e| e.endpoint == name)
+            .map(|e| e.title.clone())
+    };
+    assert_eq!(title_of("air"), Some(Some("Ovzdušie".to_owned())));
+    assert_eq!(title_of("untitled"), Some(None));
+}
+
+/// A manifest file that is not YAML at one commit and a non-manifest file change are both read
+/// as "no Endpoint there", never as an error.
+#[test]
+fn a_file_that_does_not_parse_and_a_non_manifest_file_change_nothing() {
+    let dir = temp_dir("changelog-junk");
+    git(&dir, None, &["init", "-q", "-b", "main"]);
+    write(
+        &dir,
+        "spaces/ovzdusie/endpoints/broken.yaml",
+        "{ not: [yaml\n",
+    );
+    write(&dir, "README.md", "hello\n");
+    commit(&dir, None, "junk");
+    let list = entries(&dir, TimestampTz::now() - SignedDuration::from_hours(24))
+        .expect("the history reads");
+    assert!(list.is_empty(), "{list:#?}");
+}
+
 #[test]
 fn the_page_groups_per_surface_and_carries_nothing_internal() {
     let dir = repository();
