@@ -1113,6 +1113,30 @@ mod tests {
         }
     }
 
+    /// A dashboard without panels and a field config without overrides, or with an override
+    /// without properties, sanitise to what they hold: nothing is added.
+    #[test]
+    fn sanitising_keeps_absent_parts_absent() {
+        let out = sanitize_dashboard_for_public_view(
+            &serde_json::json!({ "uid": "u", "title": "T" }),
+            false,
+            false,
+        );
+        assert!(out.get("panels").is_none(), "{out}");
+        assert_eq!(out["timepicker"]["hidden"], true);
+
+        let mut fc = serde_json::json!({ "defaults": { "links": [1], "unit": "s" }, "custom": 1 });
+        sanitize_field_config(&mut fc);
+        assert_eq!(fc, serde_json::json!({ "defaults": { "unit": "s" } }));
+        let mut fc =
+            serde_json::json!({ "overrides": [{ "matcher": { "id": "byName" }, "x": 1 }] });
+        sanitize_field_config(&mut fc);
+        assert_eq!(
+            fc,
+            serde_json::json!({ "overrides": [{ "matcher": { "id": "byName" } }] })
+        );
+    }
+
     /// A rate refusal keeps its 429 for the anonymous viewer; any other failure reads as fixed
     /// text that names nothing of the datasource.
     #[test]

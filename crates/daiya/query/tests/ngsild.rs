@@ -159,6 +159,11 @@ fn an_entity_query_selects_and_projects() {
     // A geo query adds its geoproperty to the projection; an id-only entity query is local.
     let (_, p) = params(&json!({ "queryType": "geo", "attributes": ["pm10"] }));
     assert_eq!(p["attrs"], "pm10,location");
+    let (_, p) = params(&json!({ "queryType": "geo", "attributes": ["location", "pm10"] }));
+    assert_eq!(
+        p["attrs"], "location,pm10",
+        "a projected geoproperty is not added twice"
+    );
     let (_, p) = params(&json!({ "queryType": "entity", "entityId": "urn:a", "limit": 10 }));
     assert_eq!(p["local"], "true");
     assert_eq!(p["limit"], "10");
@@ -193,6 +198,13 @@ fn a_temporal_query_asks_between_the_range_ends() {
     let (_, p) =
         params(&json!({ "entityType": "T", "aggrMethod": "sum", "aggrPeriodDuration": "P1D" }));
     assert_eq!(p["aggrPeriodDuration"], "P1D");
+    let (_, p) =
+        params(&json!({ "entityType": "T", "aggrMethod": "sum", "aggrPeriodDuration": " " }));
+    assert_eq!(p["aggrMethods"], "sum");
+    assert!(
+        !p.contains_key("aggrPeriodDuration"),
+        "a blank period is no period"
+    );
     // A temporal query with only a q filter is local; q alone is no temporal selector.
     let (_, p) = params(&json!({ "customQuery": "a>1" }));
     assert_eq!(p["local"], "true");
@@ -289,6 +301,15 @@ async fn entities_become_one_table_with_units_and_the_newest_observation() {
         "{}",
         one.target(0)
     );
+    // Without it, a nodegraph target reads its entities as series: a current value is none.
+    let sets = driver(&format!("{}/ngsi-ld/v1", one.base))
+        .query(
+            &ctx(Subject::anonymous()),
+            &q(json!({ "queryType": "nodegraph", "entityType": "T" })),
+        )
+        .await
+        .expect("answers");
+    assert!(sets[0].frames.is_empty(), "{:?}", sets[0].frames);
 }
 
 #[tokio::test]
@@ -299,11 +320,11 @@ async fn temporal_entities_become_one_series_per_attribute_and_method() {
           "temp": { "type": "Property", "unitCode": "CEL",
                     "values": [[21.5, "2024-01-01T00:10:00Z"], [20.0, "2024-01-01T00:00:00Z"], ["x", "bad time"], [1]] },
           "load": [
-            { "type": "Property", "avg": [[1.5, "2024-01-01T00:00:00Z", "2024-01-01T01:00:00Z"]],
+            { "type": "Property", "avg": [[2.5, "2024-01-01T01:00:00Z"], [1.5, "2024-01-01T00:00:00Z", "2024-01-01T01:00:00Z"]],
               "max": [[3, "2024-01-01T00:00:00Z"], ["n"]] },
             "not an instance"
           ] },
-        { "id": "s2", "type": "Sensor", "temp": { "values": [[{ "@value": 1 }, "2024-01-01T00:00:00Z"]] } },
+        { "id": "s2", "type": "Sensor", "name": { "type": "Property", "value": "" }, "temp": { "values": [[{ "@value": 1 }, "2024-01-01T00:00:00Z"]] } },
         42
     ]);
     let m = mock(vec![(
@@ -353,6 +374,11 @@ async fn temporal_entities_become_one_series_per_attribute_and_method() {
     assert_eq!(temp.fields[1].labels["entity"], "urn:ngsi-ld:Sensor:s1");
     assert_eq!(temp.fields[1].labels["type"], "Sensor");
     assert_eq!(frames[1].fields[1].labels["aggregation"], "avg");
+    assert_eq!(
+        frames[1].fields[0].values,
+        vec![json!(1_704_067_200_000_i64), json!(1_704_070_800_000_i64)],
+        "buckets sorted by time"
+    );
     assert_eq!(
         frames[2].fields[0].values.len(),
         1,
@@ -478,6 +504,10 @@ async fn the_caller_token_leaves_only_exchanged_and_headers_carry_context_and_te
         .await
         .unwrap_err();
     assert!(matches!(err, DsError::TokenExchange { .. }), "{err}");
+    // A health check of that caller fails the same way, before anything is sent.
+    let caller = Subject::authenticated("c", vec![common::ORG], vec![]).with_bearer_token("jwt-c");
+    let h = deny.health(&ctx(caller)).await;
+    assert_eq!(h.status, HealthState::Error, "{}", h.message);
     assert_eq!(m.count(), 6);
 }
 

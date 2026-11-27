@@ -473,14 +473,12 @@ fn build_prom_table_frame(ref_id: &str, expr: &str, results: &[Value]) -> Frame 
 
     for item in results {
         let m = item.get("metric").and_then(Value::as_object);
-        for k in &label_keys {
+        for (k, col) in &mut label_cols {
             let v = m
                 .and_then(|map| map.get(k))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
-            if let Some(col) = label_cols.get_mut(k) {
-                col.push(v);
-            }
+            col.push(v);
         }
         let pair = item.get("value").and_then(Value::as_array).or_else(|| {
             item.get("values")

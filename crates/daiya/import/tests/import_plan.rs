@@ -304,6 +304,20 @@ fn check_honours_the_allow_file_and_keeps_the_input_folder() {
     );
 }
 
+/// A dashboard sent in Grafana's API wrapper keeps the wrapper's folder over the input's.
+#[test]
+fn check_keeps_the_wrapper_folder_over_the_input_folder() {
+    let mut wrapped = input(json!({ "dashboard": dashboard("w"), "folderUid": "from-wrapper" }));
+    wrapped.folder_uid = Some("from-input".into());
+    let report =
+        check_dashboards_offline(&[wrapped], &[], &BTreeSet::new(), &InputLimits::default())
+            .expect("checks");
+    assert_eq!(
+        report.dashboards[0].folder_uid.as_deref(),
+        Some("from-wrapper")
+    );
+}
+
 #[test]
 fn the_markdown_report_lists_every_refusal_and_mapping_with_its_pointer() {
     let ds = vec![];
@@ -599,7 +613,7 @@ async fn apply_writes_folders_datasources_and_dashboards_as_this_organization() 
     foreign_ds.installation_id = InstallationId::from_u128(5);
     let bundle = DesiredBundle {
         folders: vec![foreign_folder],
-        datasources: vec![foreign_ds],
+        datasources: vec![foreign_ds, datasource("loki")],
         dashboards: vec![input(dashboard("d"))],
     };
     let plan = compute_plan(
@@ -639,6 +653,7 @@ async fn apply_writes_folders_datasources_and_dashboards_as_this_organization() 
             .is_none()
     );
     assert!(store.get_dashboard(ORG, "d").await.unwrap().is_some());
+    assert!(store.get_datasource(ORG, "loki").await.unwrap().is_some());
 
     // Another organization's plan is a 404 to load and to apply.
     let err = load_plan(&store, other_org, &plan.digest)

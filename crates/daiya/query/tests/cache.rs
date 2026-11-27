@@ -159,6 +159,42 @@ fn hits_misses_and_statistics_per_datasource() {
     assert_eq!((public.hits, public.misses, public.entries), (1, 1, 1));
 }
 
+/// A sweep drops the counters of an organization left without an entry; past 10 000 counted
+/// sources a new source is served but not counted, while a counted one keeps counting.
+#[test]
+fn a_sweep_drops_idle_counters_and_new_sources_past_the_cap_go_uncounted() {
+    let cache = QueryCache::default();
+    let k = key(ORG, &[], "prom", "up");
+    cache.insert(k.clone(), sized(10), TTL);
+    assert!(cache.get(&k).is_some());
+    assert!(cache.get(&key(OTHER, &[], "prom", "up")).is_none());
+    cache.sweep();
+    assert_eq!(cache.stats_for_org(ORG, INST)[0].hits, 1);
+    assert!(cache.stats_for_org(OTHER, INST).is_empty());
+
+    for n in 0..10_000 {
+        assert!(
+            cache
+                .get(&key(OTHER, &[], &format!("ds{n}"), "up"))
+                .is_none()
+        );
+    }
+    let stats = cache.stats_for_org(OTHER, INST);
+    assert_eq!(
+        stats.len(),
+        9_999,
+        "the first counter of ORG holds one slot"
+    );
+    assert!(stats.iter().all(|s| s.datasource_uid != "ds9999"));
+    assert!(cache.get(&key(OTHER, &[], "ds0", "up")).is_none());
+    let ds0 = cache
+        .stats_for_org(OTHER, INST)
+        .into_iter()
+        .find(|s| s.datasource_uid == "ds0")
+        .expect("ds0 is counted");
+    assert_eq!(ds0.misses, 2);
+}
+
 /// The ceiling counts what each part of a result holds: label pairs, custom meta, notices and
 /// the members of nested values.
 #[test]

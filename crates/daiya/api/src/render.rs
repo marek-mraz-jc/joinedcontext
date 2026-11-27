@@ -285,22 +285,17 @@ pub(crate) fn attach_notices(frame_sets: &mut Vec<FrameSet>, notices: Vec<String
     if frame_sets.is_empty() {
         frame_sets.push(FrameSet::new("", Vec::new()));
     }
-    let Some(set) = frame_sets.first_mut() else {
-        return;
-    };
-    if set.frames.is_empty() {
-        set.frames.push(Frame::default());
+    for set in frame_sets.iter_mut().take(1) {
+        if set.frames.is_empty() {
+            set.frames.push(Frame::default());
+        }
+        for first in set.frames.iter_mut().take(1) {
+            first.meta.notices.extend(notices.iter().map(|text| Notice {
+                severity: NoticeSeverity::Warning,
+                text: text.clone(),
+            }));
+        }
     }
-    let Some(first) = set.frames.first_mut() else {
-        return;
-    };
-    first
-        .meta
-        .notices
-        .extend(notices.into_iter().map(|text| Notice {
-            severity: NoticeSeverity::Warning,
-            text,
-        }));
 }
 
 /// Runs a panel's transformations once over the frames of all its queries, as Grafana does, so

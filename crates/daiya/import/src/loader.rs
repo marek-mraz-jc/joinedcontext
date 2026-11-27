@@ -115,11 +115,12 @@ fn by_organization(
     file: &Path,
     target: &ProvisioningTarget,
 ) -> CrResult<BTreeMap<OrgId, Value>> {
-    let mut out: BTreeMap<OrgId, Value> = BTreeMap::new();
-    for (key, into) in [
-        ("datasources", "datasources"),
-        ("deleteDatasources", "deleteDatasources"),
-        ("delete_datasources", "deleteDatasources"),
+    // Per organization: its `datasources` and its `deleteDatasources`.
+    let mut parts: BTreeMap<OrgId, (Vec<Value>, Vec<Value>)> = BTreeMap::new();
+    for (key, deletes) in [
+        ("datasources", false),
+        ("deleteDatasources", true),
+        ("delete_datasources", true),
     ] {
         for item in doc.get(key).and_then(Value::as_array).into_iter().flatten() {
             let named = item.get("orgId").or_else(|| item.get("org_id"));
@@ -134,12 +135,8 @@ fn by_organization(
                     named.map_or_else(String::new, Value::to_string)
                 ))
             })?;
-            let part = out.entry(org).or_insert_with(
-                || serde_json::json!({ "datasources": [], "deleteDatasources": [] }),
-            );
-            if let Some(list) = part[into].as_array_mut() {
-                list.push(item.clone());
-            }
+            let (upserts, deletions) = parts.entry(org).or_default();
+            if deletes { deletions } else { upserts }.push(item.clone());
         }
     }
     if doc.as_object().is_none() {
@@ -147,7 +144,14 @@ fn by_organization(
             "datasource provisioning YAML must be a mapping".into(),
         ));
     }
-    Ok(out)
+    Ok(parts
+        .into_iter()
+        .map(|(org, (upserts, deletions))| {
+            let part =
+                serde_json::json!({ "datasources": upserts, "deleteDatasources": deletions });
+            (org, part)
+        })
+        .collect())
 }
 
 /// Expands `$NAME`, `${NAME}` and `$$` in every string value of `doc` from `vars`.
@@ -277,9 +281,10 @@ pub async fn load_provisioning_dir(
             if !provider.disable_deletion {
                 let base = Path::new(&provider.path);
                 let base = base.canonicalize().map_err(io_err(base))?;
-                if let Ok(prefix) = base.strip_prefix(&root) {
-                    pruned.push((org, prefix.to_path_buf()));
-                }
+                // The provider path was resolved inside `root` above, so the prefix strips; an
+                // unstripped path would match no stored dashboard and prune nothing.
+                let prefix = base.strip_prefix(&root).unwrap_or(&base);
+                pruned.push((org, prefix.to_path_buf()));
             }
         }
     }

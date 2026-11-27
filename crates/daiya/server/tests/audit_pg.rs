@@ -109,6 +109,56 @@ async fn a_write_commits_with_its_audit_row_or_neither_stands() {
     }
     assert_eq!(kinds().await, ["FOLDER_CREATE"]);
 
+    // A commit the database refuses only at its end (a deferred trigger) answers 500 and the
+    // dashboard it would have deleted still stands.
+    let send = |method: &'static str, uri: &'static str, body: Option<serde_json::Value>| {
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("authorization", "Bearer admin")
+            .header("content-type", "application/json")
+            .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+            .expect("request");
+        req.extensions_mut().insert(jc_router::ClientAddr(
+            std::net::Ipv4Addr::new(203, 0, 113, 9).into(),
+        ));
+        let app = app.clone();
+        async move {
+            tower::ServiceExt::oneshot(app, req)
+                .await
+                .expect("answer")
+                .status()
+        }
+    };
+    sqlx::raw_sql("ALTER TABLE cr_audit DROP CONSTRAINT refused")
+        .execute(&db.admin)
+        .await
+        .expect("audit rows again");
+    let board = serde_json::json!({
+        "dashboard": { "uid": "late", "title": "Late", "schemaVersion": 42, "panels": [] },
+        "overwrite": true
+    });
+    assert_eq!(
+        send("POST", "/api/dashboards/db", Some(board)).await,
+        StatusCode::OK
+    );
+    sqlx::raw_sql(
+        "CREATE FUNCTION daiya_refuse_late() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused at commit'; END $$; \
+         CREATE CONSTRAINT TRIGGER refused_late AFTER INSERT ON cr_audit \
+         DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION daiya_refuse_late();",
+    )
+    .execute(&db.admin)
+    .await
+    .expect("refuse at commit");
+    let status = send("DELETE", "/api/dashboards/uid/late", None).await;
+    assert!(status.is_server_error(), "{status}");
+    let late = state.store.get_dashboard(org, "late").await.expect("read");
+    assert!(
+        late.is_some(),
+        "a delete that did not commit leaves the dashboard"
+    );
+
     drop((app, state));
     pool.close().await;
     db.admin.close().await;

@@ -34,6 +34,10 @@ pub struct FlakyStore {
     failing: Mutex<BTreeSet<&'static str>>,
     /// Calls a method still answers before it starts failing.
     countdown: Mutex<BTreeMap<&'static str, usize>>,
+    /// Methods that find nothing (`find_org` and `get_dashboard` answer none, `delete_dashboard`
+    /// false), as
+    /// when the row went away in between.
+    empty: Mutex<BTreeSet<&'static str>>,
 }
 
 impl FlakyStore {
@@ -44,9 +48,17 @@ impl FlakyStore {
     pub fn fail_after(&self, method: &'static str, calls: usize) {
         self.countdown.lock().insert(method, calls);
     }
+    /// `method` finds nothing from now on (`find_org`, `get_dashboard`, `delete_dashboard`).
+    pub fn find_nothing(&self, method: &'static str) {
+        self.empty.lock().insert(method);
+    }
     pub fn heal(&self) {
         self.failing.lock().clear();
         self.countdown.lock().clear();
+        self.empty.lock().clear();
+    }
+    fn empty(&self, method: &'static str) -> bool {
+        self.empty.lock().contains(method)
     }
     fn down(&self, method: &'static str) -> bool {
         if let Some(left) = self.countdown.lock().get_mut(method) {
@@ -76,6 +88,9 @@ impl DaiyaStore for FlakyStore {
         installation: daiya_model::InstallationId,
         key: daiya_model::OrgKey,
     ) -> StoreFuture<'_, Option<daiya_model::OrgRow>> {
+        if self.empty("find_org") {
+            return Box::pin(async { Ok(None) });
+        }
         guarded!(self, "find_org", self.inner.find_org(installation, key))
     }
     fn list_orgs(
@@ -148,6 +163,9 @@ impl DaiyaStore for FlakyStore {
         guarded!(self, "list_dashboards", self.inner.list_dashboards(org_id))
     }
     fn get_dashboard(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, Option<DashboardRecord>> {
+        if self.empty("get_dashboard") {
+            return Box::pin(async { Ok(None) });
+        }
         guarded!(self, "get_dashboard", self.inner.get_dashboard(org_id, uid))
     }
     fn upsert_dashboard(
@@ -163,6 +181,9 @@ impl DaiyaStore for FlakyStore {
         )
     }
     fn delete_dashboard(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, bool> {
+        if self.empty("delete_dashboard") {
+            return Box::pin(async { Ok(false) });
+        }
         guarded!(
             self,
             "delete_dashboard",

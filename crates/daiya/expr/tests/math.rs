@@ -388,6 +388,10 @@ fn unions_join_by_labels_like_grafana() {
         ("Empty".to_owned(), vec![]),
         ("Nd".to_owned(), vec![ExprValue::NoData]),
         ("Plain".to_owned(), vec![number(&[], Some(5.0))]),
+        (
+            "MixNd".to_owned(),
+            vec![ExprValue::NoData, number(&[("host", "x")], Some(1.0))],
+        ),
     ]);
 
     // Equal labels pair up; host=c has no partner and is dropped with a notice.
@@ -406,6 +410,11 @@ fn unions_join_by_labels_like_grafana() {
             text: "1 items dropped from union(s)".into()
         }]
     );
+
+    // A no-data value pairs with anything and carries no notice of what the union dropped.
+    let out = eval("$MixNd + $One", &vars);
+    assert_eq!(out.len(), 1, "{out:?}");
+    assert!(matches!(out[0], ExprValue::NoData), "{out:?}");
 
     // A label subset joins with its superset and the result carries the superset.
     for expr in ["$A + $Sub", "$Sub + $A"] {
