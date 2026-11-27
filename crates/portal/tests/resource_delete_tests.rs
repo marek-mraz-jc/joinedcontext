@@ -1573,3 +1573,100 @@ mod under_identity {
         assert_eq!((copy, elsewhere), (refs(&[("Pipeline", "new-sync")]), 0));
     }
 }
+
+/// T-7918 (AG-11): a bearer caller's removal always waits for approval. The handler is called
+/// with the bearer front: the Change is proposed (202, pending approval) and never approved on
+/// the spot, even for the caller who administers the kind.
+#[tokio::test]
+async fn a_bearer_callers_removal_is_proposed_and_waits_for_approval() {
+    use axum::extract::{Path, Query, State};
+    use axum::response::IntoResponse;
+    use joinedcontext_portal::api::delete::delete_resource;
+    use joinedcontext_portal::api::dry_run::DryRunQuery;
+    use joinedcontext_portal::auth::session::{CurrentUser, Front};
+
+    let server = MockServer::start().await;
+    let client = ShakoClient::new(
+        server.uri().parse().expect("valid mock server url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    mount_repo_and_file(&server).await;
+    mount_tree_and_commit(&server, &["projects/ovzdusie/spaces/mobility/space.yaml"]).await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.OpenPullRequest",
+        ))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "Number": 56,
+            "HtmlUrl": "https://shako.example.sk/pulls/56",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
+        })))
+        .mount(&server)
+        .await;
+    let (_config, state) = space_state(client);
+    // The same steward the cookie tests use, as a session the extractor would have produced.
+    let now = session::now_unix();
+    let steward = Session {
+        identity: Identity {
+            client: None,
+            subject: "f:1:demo.steward".into(),
+            username: "demo.steward".into(),
+            email: Some("demo.steward@banskabystrica.sk".into()),
+            name: Some("Demo Steward".into()),
+            roles: Vec::new(),
+            groups: vec!["portal-approver".into()],
+            second_factor: false,
+        },
+        expires_at: now + 3600,
+        issued_at: now,
+        signed_in_at: None,
+        stepped_up_at: None,
+        id_token: "id-token-placeholder".into(),
+        access_expires_at: now + 3600,
+        refresh_token: None,
+    };
+    let response = delete_resource(
+        CurrentUser(steward),
+        Front::Bearer,
+        State(state),
+        Path((
+            "ovzdusie".to_owned(),
+            "spaces".to_owned(),
+            "mobility".to_owned(),
+        )),
+        Query(DryRunQuery::default()),
+        axum::http::HeaderMap::new(),
+    )
+    .await
+    .expect("the removal is proposed")
+    .into_response();
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("bytes")
+        .to_bytes();
+    let change: Change = serde_json::from_slice(&body).expect("a Change");
+    assert_eq!(change.status.phase, ChangePhase::PendingApproval);
+    assert_eq!(change.status.lane, Lane::Red);
+    let requests = server.received_requests().await.expect("requests");
+    assert!(
+        !requests
+            .iter()
+            .any(|r| r.url.path().ends_with("MergePullRequest")),
+        "a bearer removal is never merged by the proposer"
+    );
+}

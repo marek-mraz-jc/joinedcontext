@@ -1859,3 +1859,80 @@ async fn testing_a_source_needs_a_session_and_a_grant_that_proposes_it() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
+
+/// T-7917 (T-5803): a runner that refuses the project's write budget gets no stream: the caller
+/// is told the runner did not answer (503), nothing of the runner's words reaches the answer, and
+/// no stream was created or deleted.
+#[tokio::test]
+async fn a_runner_that_refuses_the_write_budget_is_503_and_gets_no_stream() {
+    let project = "t7917-budget";
+    // No budget mounted: the runner answers its 404 to the declaration.
+    let runner = MockServer::start().await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror(project));
+    let (status, body) = post(&state, "dev@hel.fi", project, &request("root = this")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("the pipeline runner did not answer")),
+        "{body}"
+    );
+    assert!(!body.to_string().contains("rate_limit"), "{body}");
+    assert!(
+        common::stream_requests(&runner).await.is_empty(),
+        "no stream was asked for"
+    );
+}
+
+/// T-7917 (T-2565): a delete the runner never answers in time is said in the trace as a runner
+/// error, like a delete it refuses: the stream may still be there.
+#[tokio::test]
+async fn a_delete_the_runner_never_answers_is_said_as_a_runner_error() {
+    let project = "t7917-delete";
+    let runner = runner_answering(
+        ResponseTemplate::new(200),
+        ResponseTemplate::new(200).set_delay(Duration::from_secs(5)),
+    )
+    .await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror(project));
+    let (status, body) = post(&state, "dev@hel.fi", project, &request("root = this")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said = body["errors"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|e| {
+            e["stage"] == "runner"
+                && e["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains("could not be deleted"))
+        });
+    assert!(said, "{body}");
+}
+
+/// T-7917 (T-4936): a stream the runner holds but will not describe is not a left-over to remove:
+/// the test is the caller's 409 and nothing is deleted.
+#[tokio::test]
+async fn a_held_stream_the_runner_will_not_describe_is_409_and_kept() {
+    let project = "t7917-undescribed";
+    let runner = common::runner().await;
+    Mock::given(method("POST"))
+        .and(path_regex(STREAM))
+        .respond_with(ResponseTemplate::new(400).set_body_string("Stream already exists"))
+        .mount(&runner)
+        .await;
+    Mock::given(method("GET"))
+        .and(path_regex(STREAM))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&runner)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path_regex(STREAM))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&runner)
+        .await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror(project));
+    let (status, body) = post(&state, "dev@hel.fi", project, &request("root = this")).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert!(asked(&runner, "DELETE").await.is_empty());
+}

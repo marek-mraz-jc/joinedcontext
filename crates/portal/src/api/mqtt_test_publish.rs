@@ -717,18 +717,37 @@ async fn watched(
         Vec::new()
     });
     let measured = crate::api::mqtt_measured::measured_now(state, project, &spec, &release).await;
+    Ok(watch_answer(
+        refused,
+        refusals_read,
+        reasons,
+        &measured,
+        query.since,
+        account,
+    ))
+}
+
+/// The watch's answer from what was read: the refusals read (or the reasons they were not), and
+/// what the broker measures, whose own reason joins the others.
+fn watch_answer(
+    refused: Vec<Refusal>,
+    refusals_read: bool,
+    mut reasons: Vec<String>,
+    measured: &crate::api::mqtt_measured::Measured,
+    since: Option<TimestampTz>,
+    account: Option<&str>,
+) -> Watched {
     if let Some(reason) = &measured.reason {
         reasons.push(reason.clone());
     }
-    let connected = connected(&measured, account);
-    Ok(Watched {
+    Watched {
         observed_at: TimestampTz::now(),
-        refusals: filtered(refused, query.since, account),
+        refusals: filtered(refused, since, account),
         refusals_read,
-        connected,
+        connected: connected(measured, account),
         messages_per_second: measured.messages_per_second,
         reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
-    })
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -1016,5 +1035,82 @@ mod tests {
             Some("http://context-gateway.jc.svc.cluster.local:8082")
         );
         assert_eq!(internal_url("not a url"), None);
+    }
+
+    fn pipeline_of(spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta::new("cams", "helsinki"),
+            spec,
+            status: None,
+        }
+    }
+
+    /// T-7917: a Pipeline that cannot be tested here (no source to read) leaves the mapping and
+    /// the endpoint `unchecked` with the sentence that says what to fix, not a runner error.
+    #[tokio::test]
+    async fn a_pipeline_the_tester_refuses_leaves_both_steps_unchecked_with_its_sentence() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let pipeline = pipeline_of(serde_json::json!({
+            "class": "resident",
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:cams"
+        }));
+        let identity = Identity {
+            client: None,
+            subject: "sub-ana".into(),
+            username: "ana".into(),
+            email: Some("ana@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let steps = mapping_steps(&identity, &state, "helsinki", &pipeline, "{}").await;
+        assert_eq!(steps.len(), 2);
+        for step in &steps {
+            assert_eq!(step.outcome, Outcome::Unchecked, "{}", step.step);
+            assert!(
+                step.reason.contains("pipeline.spec.source must declare"),
+                "{}",
+                step.reason
+            );
+        }
+    }
+
+    /// T-7917: a broker that is measured adds no reason, one that is not adds its own, and the
+    /// reasons of a refusal list that was not read stay beside it.
+    #[test]
+    fn the_watch_names_a_reason_only_for_what_it_could_not_read() {
+        let measured = |reason: Option<&str>| crate::api::mqtt_measured::Measured {
+            measured: reason.is_none(),
+            observed_at: TimestampTz::now(),
+            messages_per_second: reason.is_none().then_some(2.5),
+            publishers: None,
+            reason: reason.map(str::to_owned),
+            accounts: Vec::new(),
+            rates: Vec::new(),
+            refused_publishes: None,
+        };
+        let whole = watch_answer(Vec::new(), true, Vec::new(), &measured(None), None, None);
+        assert_eq!(whole.reason, None);
+        assert_eq!(whole.messages_per_second, Some(2.5));
+        assert_eq!(whole.connected, Some(0));
+        assert!(whole.refusals_read);
+
+        let partial = watch_answer(
+            Vec::new(),
+            false,
+            vec!["this instance names no gateway".into()],
+            &measured(Some("the broker did not answer")),
+            None,
+            None,
+        );
+        assert_eq!(
+            partial.reason.as_deref(),
+            Some("this instance names no gateway; the broker did not answer")
+        );
+        assert_eq!(partial.connected, None);
+        assert!(!partial.refusals_read);
     }
 }

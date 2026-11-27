@@ -2921,4 +2921,529 @@ mod upload_gate_tests {
             "a native file travels byte for byte"
         );
     }
+
+    // --- T-7917: the gaps the coverage run named ------------------------------------------
+
+    use serde_json::json;
+
+    /// A manifest of `kind` in `namespace` (none when the file left it out).
+    fn envelope(kind: &str, name: &str, namespace: Option<&str>, spec: Value) -> ResourceEnvelope {
+        let mut metadata = crate::resource::ObjectMeta::new(name, "placeholder");
+        metadata.namespace = namespace.map(str::to_owned);
+        ResourceEnvelope {
+            api_version: resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata,
+            spec,
+            status: None,
+        }
+    }
+
+    fn incoming(envelope: ResourceEnvelope) -> Incoming {
+        Incoming {
+            path: None,
+            envelope: Some(envelope),
+            content: String::new(),
+        }
+    }
+
+    fn caller() -> crate::auth::session::Identity {
+        crate::auth::session::Identity {
+            client: None,
+            subject: "sub-jana".into(),
+            username: "jana".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        }
+    }
+
+    /// A Portal whose mirror holds `held`, each already in the namespace it names.
+    fn state_holding(held: Vec<ResourceEnvelope>) -> AppState {
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        for envelope in held {
+            mirror.upsert(envelope);
+        }
+        AppState::new(crate::config::Config::for_tests(), None).with_mirror(mirror)
+    }
+
+    fn plan(
+        state: &AppState,
+        project: &str,
+        items: Vec<Incoming>,
+        policy: ConflictPolicy,
+    ) -> Result<(ImportReport, Vec<(String, String)>), ApiError> {
+        let options = ImportOptions {
+            conflict_policy: policy,
+            ..Default::default()
+        };
+        plan_import(&items, state, &caller(), project, project, "bb.sk", &options)
+    }
+
+    /// A zip whose entries are stored, so a byte of the body can be flipped in place.
+    fn stored(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        for (name, body) in entries {
+            writer.start_file(*name, options).expect("an entry");
+            writer.write_all(body).expect("the body");
+        }
+        writer.finish().expect("the archive").into_inner()
+    }
+
+    /// T-7917, CC-84: an Environment's hosts are the origin's and are listed as one host need;
+    /// a Group member naming a role, and a user Policy assignee with no id, name no person.
+    #[test]
+    fn an_environment_is_a_host_need_and_a_member_without_a_user_is_no_person() {
+        let needs = needs_of(
+            &[
+                envelope("Environment", "prod", Some("helsinki"), json!({})),
+                envelope(
+                    "Group",
+                    "stewards",
+                    Some("org"),
+                    json!({ "members": [{ "role": "steward" }] }),
+                ),
+                envelope(
+                    "Policy",
+                    "open",
+                    Some("helsinki"),
+                    json!({ "assignee": { "kind": "user" } }),
+                ),
+            ],
+            "helsinki",
+        );
+        assert_eq!(needs.len(), 1, "{needs:?}");
+        assert_eq!(needs[0].kind, "host");
+        assert_eq!(needs[0].location, "Environment/prod spec");
+    }
+
+    /// T-7917, CC-08: a stream that does not read back (a body whose checksum disagrees) is
+    /// listed as unreadable, not refused, and a non-UTF-8 file is skipped by the importer, so
+    /// the readable manifest beside them still imports.
+    #[test]
+    fn an_unreadable_or_binary_entry_is_skipped_and_the_readable_manifest_is_kept() {
+        let payload = b"unreadable-stream-payload".to_vec();
+        let mut bytes = stored(&[
+            ("a.yaml", &payload),
+            ("b.yaml", SPACE.as_bytes()),
+            ("c.yaml", &[0xff, 0xfe, 0x00]),
+        ]);
+        let at = bytes
+            .windows(payload.len())
+            .position(|window| window == payload.as_slice())
+            .expect("a stored body sits in the archive as it is");
+        bytes[at] ^= 0xff;
+
+        let entries = archive_entries(&bytes).expect("an archive with one bad stream opens");
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].0, "a.yaml");
+        assert!(entries[0].1.is_none(), "the bad stream reads as nothing");
+        assert!(entries[1].1.is_some());
+
+        let incoming = parse_archive(&bytes).expect("the readable manifest parses");
+        assert_eq!(incoming.len(), 1, "only b.yaml is a file of the project");
+        assert_eq!(
+            incoming[0].envelope.as_ref().map(|e| e.metadata.name.as_str()),
+            Some("ovzdusie")
+        );
+    }
+
+    /// T-7917, MF-05: an entry whose local header is not a zip header is a 400 naming the entry,
+    /// not a panic or a half-read bundle.
+    #[test]
+    fn an_archive_entry_with_a_broken_header_is_refused_naming_its_index() {
+        let mut bytes = zipped(&[("a.yaml", SPACE.as_bytes())]);
+        bytes[2] = 0x09;
+        let refused = archive_entries(&bytes).expect_err("a broken local header");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.starts_with("archive entry 0:")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917, MF-24: a `secretRef` or `apiTokenRef` names a cluster Secret and no manifest, and a
+    /// `...Ref` that is not a typed reference names nothing; only the typed one is a reference.
+    #[test]
+    fn only_a_typed_reference_is_a_reference_a_secret_ref_is_not() {
+        let mut found = BTreeSet::new();
+        references(
+            &json!({
+                "secretRef": { "kind": "Secret", "name": "s" },
+                "apiTokenRef": { "kind": "Secret", "name": "t" },
+                "labelRef": "plain",
+                "sourceRef": { "kind": "Endpoint", "name": "e" }
+            }),
+            &mut found,
+        );
+        assert_eq!(
+            found,
+            BTreeSet::from([("Endpoint".to_owned(), "e".to_owned())])
+        );
+    }
+
+    /// T-7917, MF-24: a reference to a kind the catalogue does not know is looked for in the
+    /// project and, found nowhere, is named as missing with the project it was looked for in.
+    #[test]
+    fn a_reference_to_a_kind_nobody_serves_is_named_as_missing() {
+        let state = state_holding(vec![]);
+        let manifest = envelope(
+            "Pipeline",
+            "p",
+            Some("helsinki"),
+            json!({ "thingRef": { "kind": "Nonesuch", "name": "x" } }),
+        );
+        let missing = unresolved(&[manifest], &state, "helsinki");
+        assert_eq!(
+            missing,
+            vec!["p: Nonesuch 'x' is in neither the bundle nor project 'helsinki'".to_owned()]
+        );
+    }
+
+    /// T-7917, MF-22: a manifest with no namespace, label or space reference carries no space.
+    #[test]
+    fn a_manifest_without_any_space_adds_none_to_the_bundles_spaces() {
+        let spaces = own_spaces(&[
+            envelope("Pipeline", "bare", None, json!({})),
+            envelope("ContextSpace", "air", None, json!({})),
+        ]);
+        assert_eq!(spaces, BTreeSet::from(["air".to_owned()]));
+    }
+
+    /// T-7917, EP-77, MF-22: a typed reference naming the source namespace follows the import, a
+    /// reference to an organization kind is addressed as `org`, a shared reference to another
+    /// project's Endpoint keeps naming that project, and one with no endpointRef is left alone.
+    #[test]
+    fn a_typed_reference_follows_its_namespace_and_another_projects_endpoint_stays() {
+        let mut reference = envelope(
+            "SharedSpaceReference",
+            "ref",
+            Some("helsinki"),
+            json!({
+                "endpointRef": {
+                    "kind": "Endpoint", "name": "e", "namespace": "helsinki", "project": "other"
+                },
+                "groupRef": { "kind": "Group", "name": "g", "namespace": "elsewhere" }
+            }),
+        );
+        remap(&mut reference, "helsinki", "bb", "bb.sk", &BTreeSet::new());
+        assert_eq!(reference.spec["endpointRef"]["namespace"], "bb");
+        assert_eq!(reference.spec["endpointRef"]["project"], "other");
+        assert_eq!(
+            reference.spec["groupRef"]["namespace"],
+            namespace_for("Group", "bb")
+        );
+
+        let mut bare = envelope(
+            "SharedSpaceReference",
+            "ref",
+            Some("helsinki"),
+            json!({ "note": "x" }),
+        );
+        remap(&mut bare, "helsinki", "bb", "bb.sk", &BTreeSet::new());
+        assert_eq!(bare.spec, json!({ "note": "x" }));
+    }
+
+    /// T-7917, CC-82, R6: a Policy with no assigner is left as it is, one whose assigner is
+    /// already this organization's is not reported, and a structured assigner is carried as its
+    /// JSON text into the report.
+    #[test]
+    fn a_policys_assigner_is_rewritten_only_where_it_is_another_organizations() {
+        let mut policies = vec![
+            envelope("Policy", "bare", Some("helsinki"), json!({ "operations": [] })),
+            envelope(
+                "Policy",
+                "mine",
+                Some("helsinki"),
+                json!({ "assigner": OWN_ASSIGNER }),
+            ),
+            envelope(
+                "Policy",
+                "structured",
+                Some("helsinki"),
+                json!({ "assigner": { "id": "did:web:hel.fi" } }),
+            ),
+            envelope(
+                "Policy",
+                "foreign",
+                Some("helsinki"),
+                json!({ "assigner": "did:web:hel.fi" }),
+            ),
+        ];
+        let carried = reassign_policies(&mut policies);
+        assert_eq!(carried.len(), 2, "{carried:?}");
+        assert_eq!(carried["Policy/foreign"], "did:web:hel.fi");
+        assert_eq!(carried["Policy/structured"], r#"{"id":"did:web:hel.fi"}"#);
+        assert!(policies[0].spec.get("assigner").is_none());
+        assert_eq!(policies[2].spec["assigner"], OWN_ASSIGNER);
+    }
+
+    /// T-7917, MF-42: a manifest that carries no path cannot be matched against the index's
+    /// checksums, and the file the index lists stays in the report as unequal.
+    #[test]
+    fn a_manifest_without_a_path_is_not_matched_and_the_listed_file_is_unequal() {
+        let index = envelope(
+            BUNDLE_KIND,
+            "helsinki",
+            Some("org"),
+            json!({ "files": [{ "path": "a.yaml", "sha256": "00" }] }),
+        );
+        let items = vec![
+            Incoming {
+                path: Some("bundle.yaml".into()),
+                envelope: Some(index),
+                content: String::new(),
+            },
+            incoming(envelope("ContextSpace", "air", Some("helsinki"), json!({}))),
+        ];
+        let verified = verify(&items).expect("the check itself does not fail");
+        assert_eq!(verified.len(), 1);
+        assert_eq!(verified[0].path, "a.yaml");
+        assert!(!verified[0].equal);
+    }
+
+    /// T-7917, MF-20: an index from an older Portal names `revision`, not `sourceRevision`, and a
+    /// manifest the file left without a namespace lands in the project.
+    #[test]
+    fn an_older_index_names_its_revision_and_a_manifest_without_namespace_lands_here() {
+        let state = state_holding(vec![]);
+        let items = vec![
+            incoming(envelope(
+                BUNDLE_KIND,
+                "helsinki",
+                Some("org"),
+                json!({ "revision": "abc123" }),
+            )),
+            incoming(envelope("ContextSpace", "ovzdusie", None, json!({}))),
+        ];
+        let (report, files) =
+            plan(&state, "helsinki", items, ConflictPolicy::Fail).expect("the bundle plans");
+        assert_eq!(report.source.as_deref(), Some("helsinki@abc123"));
+        assert_eq!(report.created, ["ovzdusie"]);
+        assert_eq!(files.len(), 1);
+        assert!(
+            files[0].0.starts_with("projects/helsinki/") && files[0].0.contains("ovzdusie"),
+            "{}",
+            files[0].0
+        );
+    }
+
+    /// T-7917, MF-23: a renamed resource whose new name is taken too is numbered on until a free
+    /// name is found.
+    #[test]
+    fn a_rename_whose_name_is_taken_is_numbered_until_one_is_free() {
+        let state = state_holding(vec![
+            envelope("ContextSpace", "ovzdusie", Some("banska"), json!({})),
+            envelope("ContextSpace", "ovzdusie-helsinki", Some("banska"), json!({})),
+        ]);
+        let items = vec![incoming(envelope(
+            "ContextSpace",
+            "ovzdusie",
+            Some("helsinki"),
+            json!({}),
+        ))];
+        let (report, _) = plan(&state, "banska", items, ConflictPolicy::Rename)
+            .expect("the rename finds a free name");
+        assert_eq!(
+            report.renamed.get("ovzdusie").map(String::as_str),
+            Some("ovzdusie-helsinki-2")
+        );
+    }
+
+    /// T-7917, MF-23: a rename that would make a name too long to store is refused naming both
+    /// names, and nothing is planned.
+    #[test]
+    fn a_rename_that_cannot_be_stored_is_refused_naming_both_names() {
+        let long = "a".repeat(60);
+        let state = state_holding(vec![envelope(
+            "ContextSpace",
+            &long,
+            Some("banska"),
+            json!({}),
+        )]);
+        let items = vec![incoming(envelope(
+            "ContextSpace",
+            &long,
+            Some("helsinki"),
+            json!({}),
+        ))];
+        let refused = plan(&state, "banska", items, ConflictPolicy::Rename)
+            .expect_err("a name past 63 characters is not stored");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m)
+                if m.contains(&format!("renaming '{long}' would produce"))
+                    && m.contains("which is not a name this platform can store")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917, EP-02: an Endpoint whose spec is not an object gets no slug minted into it, and
+    /// still plans.
+    #[test]
+    fn an_endpoint_whose_spec_is_not_a_mapping_gets_no_slug() {
+        let state = state_holding(vec![]);
+        let items = vec![incoming(envelope(
+            "Endpoint",
+            "e",
+            Some("helsinki"),
+            Value::Null,
+        ))];
+        let (report, files) = plan(&state, "helsinki", items, ConflictPolicy::Fail)
+            .expect("the plan does not mint into what is not a mapping");
+        assert_eq!(report.created, ["e"]);
+        assert_eq!(files.len(), 1);
+        assert!(!files[0].1.contains("slug"), "{}", files[0].1);
+    }
+
+    /// T-7917, AP-118, CC-84: a bundled Group is known to the default-group pass, and a member
+    /// of it naming a role is no person while the one naming a user is.
+    #[test]
+    fn a_bundled_group_is_planned_and_only_its_user_member_is_a_person_to_provide() {
+        let state = state_holding(vec![]);
+        let items = vec![incoming(envelope(
+            "Group",
+            "stewards",
+            Some("org"),
+            json!({ "members": [{ "role": "steward" }, { "user": "ada" }] }),
+        ))];
+        let (report, files) = plan(&state, "helsinki", items, ConflictPolicy::Fail)
+            .expect("the group plans");
+        assert_eq!(report.created, ["stewards"]);
+        assert_eq!(files.len(), 1);
+        assert_eq!(report.needs.len(), 1, "{:?}", report.needs);
+        assert_eq!(report.needs[0].kind, "person");
+    }
+
+    /// T-7917, CC-85: a project that keeps its own repository carries no organization file in its
+    /// Change, so the default-group pass is not run and the bundle still plans.
+    #[test]
+    fn a_project_with_its_own_repository_plans_without_the_default_group_pass() {
+        let state = state_holding(vec![]);
+        state.mirror.set_repositories(BTreeMap::from([(
+            "helsinki".to_owned(),
+            "hel-repo".to_owned(),
+        )]));
+        let items = vec![incoming(envelope(
+            "ContextSpace",
+            "ovzdusie",
+            Some("helsinki"),
+            json!({}),
+        ))];
+        let (report, files) = plan(&state, "helsinki", items, ConflictPolicy::Fail)
+            .expect("a layout 2 project plans");
+        assert_eq!(report.created, ["ovzdusie"]);
+        assert_eq!(files.len(), 1);
+    }
+
+    /// T-7917, PF-50: a manifest the validator refuses is named by `Kind/name` when it came with
+    /// no file path, and by its path when it did.
+    #[test]
+    fn a_manifest_that_fails_its_type_is_named_by_kind_and_name_or_by_path() {
+        let spec = json!({
+            "contextSpaceRef": "ovzdusie",
+            "slug": "mluyob4nz52lok3ssk7pgn5vwt",
+            "audience": "everybody",
+            "enabledRepresentations": ["ngsi-ld"]
+        });
+        let bad = envelope("Endpoint", "public-air", Some("helsinki"), spec);
+        let refused = well_formed(&[incoming(bad.clone())], None).expect_err("a bad audience");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m)
+                if m.starts_with("Endpoint/public-air: spec is not a valid Endpoint")),
+            "{refused:?}"
+        );
+        let pathed = Incoming {
+            path: Some("projects/helsinki/endpoints/public-air.yaml".into()),
+            envelope: Some(bad),
+            content: String::new(),
+        };
+        let refused = well_formed(&[pathed], None).expect_err("a bad audience");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m)
+                if m.starts_with("projects/helsinki/endpoints/public-air.yaml: spec is not")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917, MF-24, CC-08: a file of a repository that does not parse is listed with its path
+    /// and the parser's reason, and judging goes on to the next file.
+    #[test]
+    fn a_repository_file_that_does_not_parse_is_listed_with_its_path() {
+        let refused = judge_files(
+            &[
+                (
+                    "projects/helsinki/spaces/a/space.yaml".to_owned(),
+                    "kind: [unclosed".to_owned(),
+                ),
+                ("README.md".to_owned(), "notes".to_owned()),
+            ],
+            None,
+        );
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert!(
+            refused[0].starts_with("projects/helsinki/spaces/a/space.yaml: the YAML did not parse"),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917, MF-24: a native file lies beside a manifest only inside that manifest's own
+    /// directory, and a path with no directory belongs to none.
+    #[test]
+    fn a_native_file_belongs_only_to_the_manifest_of_its_directory() {
+        let manifest = "projects/p/pipelines/aq/pipeline.yaml";
+        assert!(!owns_native("bento.yaml", manifest, "aq"));
+        assert!(!owns_native("projects/p/pipelines/aq/bento.yaml", "pipeline.yaml", "aq"));
+        assert!(owns_native("projects/p/pipelines/aq/bento.yaml", manifest, "aq"));
+        assert!(!owns_native("projects/p/pipelines/other/bento.yaml", manifest, "aq"));
+    }
+
+    /// T-7917, MF-22: a path with no `projects/` root lands under the project, and one from
+    /// another project is re-rooted onto this one.
+    #[test]
+    fn a_path_is_rooted_in_the_project_it_lands_in() {
+        assert_eq!(
+            reproject("pipelines/aq/bento.yaml", "helsinki"),
+            "projects/helsinki/pipelines/aq/bento.yaml"
+        );
+        assert_eq!(
+            reproject("projects/other/pipelines/aq/bento.yaml", "helsinki"),
+            "projects/helsinki/pipelines/aq/bento.yaml"
+        );
+    }
+
+    /// T-7917: a bundle with no manifest to headline is branched `portal/import-{project}-…`;
+    /// with no forge the proposal then answers 503 naming the forge.
+    #[tokio::test]
+    async fn a_bundle_without_a_headline_manifest_is_branched_by_project() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let report = ImportReport {
+            created: Vec::new(),
+            replaced: Vec::new(),
+            skipped: Vec::new(),
+            renamed: BTreeMap::new(),
+            reassigned: BTreeMap::new(),
+            native_files: 1,
+            lane: Lane::Green,
+            source: None,
+            verified: Vec::new(),
+            needs: Vec::new(),
+        };
+        let refused = propose_bundle(
+            &state,
+            &caller(),
+            "helsinki",
+            report,
+            vec![("projects/helsinki/pipelines/aq/bento.yaml".into(), "x".into())],
+            None,
+        )
+        .await
+        .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
 }

@@ -2418,15 +2418,18 @@ fn metadata(
             };
             (StatusCode::OK, headers_for(content_type), text).into_response()
         }
-        Err(e) => {
-            tracing::warn!("the Organization OData metadata did not write: {e}");
-            error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "internal-error",
-                "the service model could not be written",
-            )
-        }
+        Err(e) => unwritten(&e),
     }
+}
+
+/// The answer when the service model did not write: a 500, the cause in the log only.
+fn unwritten(cause: &str) -> Response {
+    tracing::warn!("the Organization OData metadata did not write: {cause}");
+    error(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "internal-error",
+        "the service model could not be written",
+    )
 }
 
 fn headers_for(content_type: &'static str) -> [(header::HeaderName, HeaderValue); 3] {
@@ -3781,5 +3784,419 @@ mod tests {
         assert_eq!(answer.status(), StatusCode::OK);
         assert_eq!(answer.headers()[header::CACHE_CONTROL], "no-store");
         assert_eq!(answer.headers()[header::ETAG], "\"v2\"");
+    }
+
+    fn user_of(groups: &[&str]) -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::ops::testkit::person("pia", groups),
+            expires_at: 0,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 0,
+            refresh_token: None,
+        })
+    }
+
+    /// A Portal whose one Organization, `hel`, is the installation, with a project `helsinki`
+    /// that holds a space.
+    fn hel_state() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for (kind, name, namespace, spec) in [
+            ("Organization", "hel", ORG_NAMESPACE, json!({ "installation": true })),
+            ("ContextSpace", "air", "helsinki", json!({})),
+        ] {
+            state
+                .mirror
+                .upsert(crate::ops::testkit::envelope(kind, name, namespace, spec));
+        }
+        state
+    }
+
+    fn read_by<'a>(state: &'a AppState, user: &'a CurrentUser) -> Read<'a> {
+        Read {
+            state,
+            user,
+            caller: caller_of(user.clone(), Front::Portal),
+            org: "hel".to_owned(),
+            page: 100,
+            people: false,
+            changes: std::sync::Mutex::default(),
+        }
+    }
+
+    async fn text_of(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("a body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// T-7918: a model that does not write is an error naming why, for XML and JSON; a CSDL JSON
+    /// document with no service schema is returned without the singletons rather than refused;
+    /// the 500 for an unwritten model names no cause; a JSON document without the service
+    /// schema takes no actions.
+    #[tokio::test]
+    async fn a_model_that_does_not_write_is_an_error_and_a_schemaless_document_is_left_alone() {
+        let mut broken = (*ORG.public).clone();
+        broken.schemas[0].namespace = "not a namespace!".into();
+        assert!(metadata_xml(&broken).is_err(), "an invalid namespace is not written");
+        assert!(metadata_json(&broken).is_err(), "an invalid namespace is not written");
+        let other = Model {
+            version: odata_csdl::CsdlVersion::V4_01,
+            references: Vec::new(),
+            schemas: vec![odata_csdl::Schema::new("Other")],
+        };
+        let json = metadata_json(&other).expect("written");
+        assert!(!json.contains(NAMESPACE), "{json}");
+        assert!(!json.contains("Person"), "no singletons without the service: {json}");
+        let none: Offered<'_> = (&[], &[]);
+        assert_eq!(
+            json_for("{}", &Rights::default(), &BTreeSet::new(), none),
+            "{}"
+        );
+
+        let answer = unwritten("secret cause");
+        assert_eq!(answer.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let text = text_of(answer).await;
+        assert!(text.contains("the service model could not be written"), "{text}");
+        assert!(!text.contains("secret cause"), "the cause stays in the log: {text}");
+    }
+
+    /// T-7918: a read refuses a set the model lacks (404); a project the caller may not list a
+    /// kind in is no rows of theirs; any other failure of a list (here no forge for Changes)
+    /// is the read's own failure, not an empty list.
+    #[tokio::test]
+    async fn a_read_skips_what_the_caller_may_not_list_and_fails_on_what_broke() {
+        let state = hel_state();
+        let stranger = user_of(&[]);
+        let read = read_by(&state, &stranger);
+        let refused = read
+            .table("nothings", Vec::new(), &QueryOptions::default())
+            .err()
+            .expect("no such set");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        let spaces = kind("spaces").expect("spaces");
+        let none = read
+            .rows(spaces, &["helsinki".to_owned()])
+            .await
+            .expect("a project the caller may not list is no rows");
+        assert!(none.is_empty());
+
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let changes = kind("changes").expect("changes");
+        let refused = read
+            .rows(changes, &["helsinki".to_owned()])
+            .await
+            .err()
+            .expect("no forge to list Changes from");
+        assert!(refused.status().is_server_error(), "{}", refused.status());
+        let refused = read
+            .change("helsinki", "c-1")
+            .await
+            .err()
+            .expect("no forge to read a Change from");
+        assert!(!refused.status().is_success());
+    }
+
+    /// T-7918: `fill` leaves a row that is no object, reads a manifest's detail from the mirror
+    /// (null for a manifest that is not there), reads a Change's detail from the registry (an
+    /// error when it cannot), and refuses a page of Workspaces over the cap that asks for the
+    /// count of their changes; a scope alone reads no Workspace.
+    #[tokio::test]
+    async fn fill_answers_each_detail_it_is_asked_for_or_refuses_why() {
+        let state = hel_state();
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let asking = |members: &[&str], keys: &[&str], rows: Vec<Value>| Answer {
+            rows,
+            keys: keys.iter().map(|k| json!(k)).collect(),
+            select: Some(members.iter().map(|m| (*m).to_owned()).collect()),
+            ..Answer::default()
+        };
+
+        let mut manifests = asking(
+            &["spec"],
+            &["helsinki/air", "helsinki/air", "helsinki/ghost"],
+            vec![json!(1), json!({}), json!({})],
+        );
+        read.fill("spaces", &mut manifests).await.expect("filled");
+        assert_eq!(manifests.rows[0], json!(1), "a row that is no object stays");
+        assert_eq!(manifests.rows[1]["spec"], json!({}), "the mirror's manifest");
+        assert_eq!(manifests.rows[2]["spec"], Value::Null, "no manifest, no spec");
+
+        let mut change = asking(&["files"], &["helsinki/c-1"], vec![json!({})]);
+        let refused = read
+            .fill("changes", &mut change)
+            .await
+            .err()
+            .expect("a Change that cannot be read");
+        assert!(!refused.status().is_success());
+
+        let long = CHANGE_DETAIL_MAX + 1;
+        let mut many = asking(
+            &["changes"],
+            &vec!["helsinki/w"; long],
+            vec![json!({}); long],
+        );
+        let refused = read
+            .fill("workspaces", &mut many)
+            .await
+            .err()
+            .expect("over the cap");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(*refused).await;
+        assert!(text.contains("holds at most 50 Workspaces"), "{text}");
+
+        let mut scope = asking(&["scope"], &["helsinki/w"], vec![json!({})]);
+        read.fill("workspaces", &mut scope).await.expect("scope reads no Workspace");
+        assert_eq!(scope.rows, vec![json!({})]);
+
+        let mut skipped = asking(
+            &["changes"],
+            &["helsinki/w", "no-project-in-the-key"],
+            vec![json!(1), json!({})],
+        );
+        read.fill("workspaces", &mut skipped).await.expect("skipped");
+        assert_eq!(skipped.rows, vec![json!(1), json!({})]);
+
+        let mut unread = asking(&["changes"], &["helsinki/w"], vec![json!({})]);
+        let refused = read
+            .fill("workspaces", &mut unread)
+            .await
+            .err()
+            .expect("no such Workspace");
+        assert!(!refused.status().is_success());
+    }
+
+    /// T-7918: one entity read refuses a set the model lacks, a key that is no text or number,
+    /// a `$select` the evaluator does not serve, and a detail it cannot fill, each with its own
+    /// status.
+    #[tokio::test]
+    async fn an_entity_read_refuses_each_thing_it_cannot_answer() {
+        let state = hel_state();
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let rows = |set: &str| vec![json!({ ROW_KEY: "helsinki/a", PROJECT: "helsinki", "name": "a", "set": set })];
+        let plain = QueryOptions::default();
+        let status = |response: &Response| response.status();
+
+        let unknown = by_key(&read, "nothings", rows("x"), json!("helsinki/a"), &plain, "nothings", "x").await;
+        assert_eq!(status(&unknown), StatusCode::NOT_FOUND);
+        let not_a_key = by_key(&read, "spaces", rows("x"), json!(true), &plain, "spaces", "space").await;
+        assert_eq!(status(&not_a_key), StatusCode::BAD_REQUEST);
+        let nested = QueryOptions {
+            select: Some(vec![odata_url::SelectItem::Path(vec!["spec".into(), "title".into()])]),
+            ..QueryOptions::default()
+        };
+        let refused = by_key(&read, "spaces", rows("x"), json!("helsinki/a"), &nested, "spaces", "space").await;
+        assert_eq!(status(&refused), StatusCode::NOT_IMPLEMENTED);
+        let detail = QueryOptions {
+            select: Some(vec![odata_url::SelectItem::Path(vec!["changes".into()])]),
+            ..QueryOptions::default()
+        };
+        let unfilled = by_key(&read, "workspaces", rows("x"), json!("helsinki/a"), &detail, "workspaces", "Workspace").await;
+        assert!(!status(&unfilled).is_success(), "{}", status(&unfilled));
+    }
+
+    /// T-7918: a path whose project is no name is a 404 before any parse, a document that is no
+    /// resource (`$metadata`) is not served here (501), and a key of a kind under a project that
+    /// is neither text nor number is a 400 saying what a key is.
+    #[tokio::test]
+    async fn a_resource_path_refuses_what_is_no_resource_or_no_key() {
+        let state = hel_state();
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let bad_name = resource(&read, "projects/Not_A_Name/spaces").await;
+        assert_eq!(bad_name.status(), StatusCode::NOT_FOUND);
+        let document = resource(&read, "$metadata").await;
+        assert_eq!(document.status(), StatusCode::NOT_IMPLEMENTED);
+        let boolean = resource(&read, "projects('helsinki')/spaces(true)").await;
+        assert_eq!(boolean.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(boolean).await;
+        assert!(text.contains("a key is a string"), "{text}");
+        let nested = resource(&read, "projects?$expand=spaces($expand=*)").await;
+        assert_eq!(nested.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(nested).await;
+        assert!(text.contains("one level deep"), "{text}");
+    }
+
+    fn call_of<'a>(
+        state: &'a AppState,
+        front: Front,
+        headers: &'a HeaderMap,
+        body: &'static [u8],
+    ) -> Call<'a> {
+        Call {
+            state,
+            user: user_of(&["portal-approver"]),
+            front,
+            org: "hel",
+            headers,
+            body: Bytes::from_static(body),
+        }
+    }
+
+    /// T-7918: an operation action takes no body as no input and fills the Organization in for a
+    /// project's creation; a body that is not a JSON object is a 400 naming what an action takes.
+    #[tokio::test]
+    async fn an_operation_action_reads_its_body_as_an_object_or_as_none() {
+        let state = hel_state();
+        let headers = HeaderMap::new();
+        let bare = operation_action(
+            call_of(&state, Front::Portal, &headers, b""),
+            "projects('helsinki')",
+            "jc_project_create",
+        )
+        .await;
+        assert!(!bare.status().is_success(), "a creation with no name: {}", bare.status());
+        let list = operation_action(
+            call_of(&state, Front::Portal, &headers, b"[1]"),
+            "projects('helsinki')",
+            "jc_project_create",
+        )
+        .await;
+        assert_eq!(list.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(list).await;
+        assert!(text.contains("an action's parameters are a JSON object"), "{text}");
+    }
+
+    /// T-7918: a Portal door answers a person's session only; one the service does not have is a
+    /// 404 naming whether it was asked as a function or an action; a function call that does
+    /// not parse, a parameter the door lacks and a door bound to a project asked on the
+    /// Organization are each refused before the REST door is reached.
+    #[tokio::test]
+    async fn a_portal_door_refuses_each_call_it_cannot_route() {
+        let state = hel_state();
+        let headers = HeaderMap::new();
+        let bearer = portal_door(
+            call_of(&state, Front::Bearer, &headers, b""),
+            ORGANIZATION,
+            "portal_notification_list",
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(bearer.status(), StatusCode::FORBIDDEN);
+        let text = text_of(bearer).await;
+        assert!(text.contains("never a bearer"), "{text}");
+
+        let person = |body: &'static [u8]| call_of(&state, Front::Portal, &headers, body);
+        let no_alias = portal_door(
+            person(b""),
+            ORGANIZATION,
+            "portal_notification_list(limit=@a)",
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(no_alias.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(no_alias).await;
+        assert!(text.contains("the alias @a has no value"), "{text}");
+
+        let function = portal_door(person(b""), ORGANIZATION, "portal_nope()", "", true).await;
+        assert_eq!(function.status(), StatusCode::NOT_FOUND);
+        let text = text_of(function).await;
+        assert!(text.contains("the service has no function portal_nope"), "{text}");
+        let action = portal_door(person(b""), ORGANIZATION, "portal_nope", "", false).await;
+        let text = text_of(action).await;
+        assert!(text.contains("the service has no action portal_nope"), "{text}");
+        let wrong_form = portal_door(
+            person(b""),
+            ORGANIZATION,
+            "portal_person_reset_password()",
+            "",
+            true,
+        )
+        .await;
+        assert_eq!(wrong_form.status(), StatusCode::NOT_FOUND, "an action is no function");
+
+        let unknown_parameter = portal_door(
+            person(br#"{"bogus":1}"#),
+            ORGANIZATION,
+            "portal_person_reset_password",
+            "",
+            false,
+        )
+        .await;
+        assert_eq!(unknown_parameter.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(unknown_parameter).await;
+        assert!(text.contains("has no parameter bogus"), "{text}");
+
+        let misbound = portal_door(person(b"{}"), ORGANIZATION, "portal_secret_set", "", false).await;
+        assert_eq!(misbound.status(), StatusCode::NOT_FOUND);
+        let text = text_of(misbound).await;
+        assert!(text.contains("is bound to a project"), "{text}");
+    }
+
+    /// T-7918: a read that would hold more than [`MAX_ROWS`] rows is refused 400 with the
+    /// narrowing to ask for, never cut: the rows of several projects, the rows an expansion puts
+    /// under the project rows, an Organization set, and the members one binding names.
+    #[tokio::test]
+    async fn a_read_past_the_row_cap_is_refused_with_the_narrowing_to_ask_for() {
+        let state = hel_state();
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let m = &state.mirror;
+        for project in ["helsinki", "tampere"] {
+            for i in 0..6000 {
+                m.upsert(crate::ops::testkit::envelope(
+                    "ContextSpace",
+                    &format!("s{i}"),
+                    project,
+                    json!({}),
+                ));
+            }
+        }
+        let spaces = kind("spaces").expect("spaces");
+        let projects = ["helsinki".to_owned(), "tampere".to_owned()];
+        let refused = read
+            .rows(spaces, &projects)
+            .await
+            .err()
+            .expect("12000 rows are more than a read covers");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(*refused).await;
+        assert!(text.contains("narrow it with $filter on a project"), "{text}");
+
+        let mut rows = vec![json!({}), json!({})];
+        let names = [json!({ "name": "helsinki" }), json!({ "name": "tampere" })];
+        let refused = expand(&read, &mut rows, &names, &[spaces])
+            .await
+            .err()
+            .expect("the expansion holds 12000 rows");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+
+        for i in 0..=MAX_ROWS {
+            m.upsert(crate::ops::testkit::envelope(
+                "Role",
+                &format!("r{i}"),
+                ORG_NAMESPACE,
+                json!({ "rules": [] }),
+            ));
+        }
+        let refused = org_rows(&read, ORG_ROLES)
+            .err()
+            .expect("more roles than a read covers");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(*refused).await;
+        assert!(text.contains(ORG_ROLES), "{text}");
+
+        let subjects: Vec<Value> = (0..=MAX_ROWS).map(|i| json!({ "user": format!("u{i}") })).collect();
+        m.upsert(crate::ops::testkit::envelope(
+            "RoleBinding",
+            "everyone",
+            ORG_NAMESPACE,
+            json!({ "subjects": subjects, "role": "reader", "scope": { "organization": "hel" } }),
+        ));
+        let refused = member_rows(&read)
+            .await
+            .err()
+            .expect("more members than a read covers");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(*refused).await;
+        assert!(text.contains(MEMBERS), "{text}");
     }
 }

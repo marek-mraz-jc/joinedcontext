@@ -616,3 +616,74 @@ fn http_upstream_rejected_from_environment() {
         }
     ));
 }
+
+/// A configured basemap on a fresh cache folder, upstream tiles counted.
+async fn cached_app(
+    ttl: u64,
+    prefix: &str,
+) -> (axum::Router, Arc<AtomicUsize>, std::path::PathBuf) {
+    let (addr, calls) = start_upstream().await;
+    let temp_dir = std::env::temp_dir().join(format!("{prefix}-{}", crate::unique::unique()));
+    let mut config = Config::for_tests();
+    let mut bm = BasemapConfig::for_tests(
+        format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"),
+        "OSM".to_string(),
+        temp_dir.clone(),
+    );
+    bm.cache_ttl_secs = ttl;
+    config.basemap = Some(bm);
+    let app = server::app(AppState::new(config, None).with_mirror(mirror()));
+    (app, calls, temp_dir)
+}
+
+const TILE: &str = "/api/v1/projects/helsinki/basemap/default/1/0/0.png";
+
+/// T-7917: a cached tile older than the configured lifetime is fetched again, not served.
+#[tokio::test]
+async fn a_cached_tile_past_its_lifetime_is_fetched_again() {
+    let (app, calls, dir) = cached_app(0, "jc-bm-stale").await;
+    for fetched in [1, 2] {
+        let (status, _, body) = call_app(&app, TILE).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.len(), 12);
+        assert_eq!(calls.load(Ordering::SeqCst), fetched, "a stale tile is no hit");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-7917: a cached tile stamped in the future (a clock that moved back) cannot be aged, so it is
+/// not trusted: the upstream is asked again and the tile is replaced.
+#[tokio::test]
+async fn a_cached_tile_from_the_future_is_fetched_again() {
+    let (app, calls, dir) = cached_app(3600, "jc-bm-future").await;
+    let (status, _, _) = call_app(&app, TILE).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    let cached = dir.join("default_1_0_0.png");
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&cached)
+        .expect("the cached tile")
+        .set_modified(std::time::SystemTime::now() + Duration::from_secs(3600))
+        .expect("a later stamp");
+    let (status, _, body) = call_app(&app, TILE).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.len(), 12);
+    assert_eq!(calls.load(Ordering::SeqCst), 2, "the future tile was served");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-7917: a cache entry that cannot be read (here a folder where the tile should be) is no
+/// reason to fail the tile: it comes from the upstream and the entry is left as it was.
+#[tokio::test]
+async fn an_unreadable_cache_entry_still_serves_the_tile_from_upstream() {
+    let (app, calls, dir) = cached_app(3600, "jc-bm-unreadable").await;
+    let entry = dir.join("default_1_0_0.png");
+    std::fs::create_dir_all(&entry).expect("a folder in the tile's place");
+    let (status, _, body) = call_app(&app, TILE).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body.len(), 12);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert!(entry.is_dir(), "the entry stays what it was");
+    let _ = std::fs::remove_dir_all(&dir);
+}

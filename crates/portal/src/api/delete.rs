@@ -1453,4 +1453,22 @@ mod tests {
             "{err:?}"
         )
     }
+
+    /// T-7918: a pipeline whose refused records and runs cannot be counted (the database is down)
+    /// says nothing of them: what a removal takes with it is information, never a refusal.
+    #[tokio::test]
+    async fn a_pipeline_whose_counts_the_database_cannot_give_goes_with_nothing_named() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        state.mirror = crate::test_db::placed_mirror("ovzdusie");
+        let state = state.with_db(crate::test_db::dead_pool());
+        let found = goes_with(
+            &state,
+            "ovzdusie",
+            "Pipeline",
+            "air-ingest",
+            &GroupCleanup::default(),
+        )
+        .await;
+        assert!(found.is_empty(), "{found:?}");
+    }
 }

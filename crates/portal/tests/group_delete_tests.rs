@@ -407,3 +407,37 @@ async fn a_group_nothing_names_is_removed_alone() {
     assert_eq!(files.len(), 1, "{files:?}");
     assert!(files[0].1.ends_with("groups/lonely.yaml"));
 }
+
+/// T-7918: a binding the cascade would remove but the forge holds no file for is left out of the
+/// Change, and the group and the edited binding still go in it.
+#[tokio::test]
+async fn a_binding_the_forge_holds_no_file_for_is_not_removed() {
+    let shako = forge().await;
+    files_exist(&shako).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(wiremock::matchers::query_param_contains(
+            "@p",
+            "stewards-only.yaml",
+        ))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = state_with(&shako);
+    let answer = send(
+        &state,
+        person("ada"),
+        "DELETE",
+        &format!("{GROUP}?confirm=stewards"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let files = committed(&shako).await;
+    assert!(file(&files, "groups/stewards.yaml").is_some(), "{files:?}");
+    assert!(
+        file(&files, "stewards-only.yaml").is_none(),
+        "no file, nothing to remove: {files:?}"
+    );
+}

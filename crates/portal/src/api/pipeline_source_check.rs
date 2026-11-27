@@ -557,4 +557,65 @@ mod tests {
         };
         assert_eq!(failed_record(&unparsed, None), json!("not json"));
     }
+
+    fn reading(source: Value) -> PipelineSpec {
+        let mut spec = json!({
+            "class": "resident",
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all"
+        });
+        if !source.is_null() {
+            spec["source"] = source;
+        }
+        serde_json::from_value(spec).expect("a PipelineSpec")
+    }
+
+    fn put_source(state: &AppState, spec: Value) {
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataSource".into(),
+            metadata: crate::resource::ObjectMeta::new("feed", "helsinki"),
+            spec,
+            status: None,
+        });
+    }
+
+    fn conflict(refused: Result<(String, DataSourceSpec), ApiError>) -> String {
+        match refused {
+            Err(ApiError::Conflict(why)) => why,
+            other => format!("not a conflict: {:?}", other.map(|(name, _)| name)),
+        }
+    }
+
+    /// T-7917: the check reads a saved http DataSource of this project only; each other case is a
+    /// 409 that names what to do (no DataSource of this project, one not saved yet, one that does
+    /// not parse, one that streams).
+    #[test]
+    fn the_check_names_why_a_pipelines_source_cannot_be_read_whole() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let feed = json!({ "dataSourceRef": { "kind": "DataSource", "name": "feed" } });
+
+        let none = conflict(read_source(&state, "helsinki", &reading(Value::Null)));
+        assert!(none.contains("reads no DataSource of this project"), "{none}");
+        let other = json!({ "dataSourceRef": { "kind": "DataSource", "name": "feed", "namespace": "espoo" } });
+        let foreign = conflict(read_source(&state, "helsinki", &reading(other)));
+        assert!(foreign.contains("reads no DataSource of this project"), "{foreign}");
+
+        let unsaved = conflict(read_source(&state, "helsinki", &reading(feed.clone())));
+        assert!(
+            unsaved.contains("'feed' is not in project 'helsinki'; save it first"),
+            "{unsaved}"
+        );
+
+        put_source(&state, json!("not a DataSource"));
+        let broken = conflict(read_source(&state, "helsinki", &reading(feed.clone())));
+        assert!(broken.contains("'feed' does not parse"), "{broken}");
+
+        put_source(
+            &state,
+            json!({ "type": "http", "http": { "url": "https://data.example.org/stations" } }),
+        );
+        let (name, source) = read_source(&state, "helsinki", &reading(feed)).expect("an http source");
+        assert_eq!(name, "feed");
+        assert!(matches!(source.source_type, DataSourceType::Http));
+    }
 }

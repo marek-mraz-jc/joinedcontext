@@ -714,4 +714,38 @@ mod tests {
         assert_eq!(client_ip(&HeaderMap::new()), "127.0.0.1");
         assert_eq!(client_ip(&forwarded(" ")), "127.0.0.1");
     }
+
+    /// T-7917: an old tile the cache cannot remove (its folder is read-only) stays, the walk
+    /// goes on, and the tile just fetched is still written.
+    #[test]
+    fn an_old_tile_that_cannot_be_removed_stays_and_the_new_one_is_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "jc-bm-stuck-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let cache = base.join("cache");
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir_all(&cache).expect("cache");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::fs::write(cache.join("old.png"), [0u8; 64]).expect("old");
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).expect("lock");
+        // A process that may write into a read-only folder (root) can remove the tile too.
+        let privileged = std::fs::write(cache.join("probe"), b"").is_ok();
+        let _ = std::fs::remove_file(cache.join("probe"));
+
+        save_and_evict(&cache, &elsewhere.join("new.png"), &[1u8; 64], 10);
+
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        assert!(elsewhere.join("new.png").is_file(), "the new tile is kept");
+        assert_eq!(
+            cache.join("old.png").is_file(),
+            !privileged,
+            "the old tile stays exactly when it cannot be removed"
+        );
+        std::fs::remove_dir_all(&base).expect("cleanup");
+    }
 }

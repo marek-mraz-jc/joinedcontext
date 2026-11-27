@@ -110,10 +110,8 @@ async fn row(state: &AppState, name: String, spec: Option<ContextBrokerSpec>) ->
     if health == Health::Up {
         for space in &spaces {
             let (project, space) = space.split_once('/').unwrap_or_default();
-            let usage = match crate::spaces::tenant(&state.mirror, project, space) {
-                Ok(tenant) => counter.usage(&name, &tenant).await,
-                Err(reason) => Err(reason),
-            };
+            let tenant = crate::spaces::tenant(&state.mirror, project, space);
+            let usage = usage_of(counter, &name, tenant).await;
             match usage {
                 Ok(usage) => entities += usage.entities,
                 Err(why) => reason = Some(format!("{project}/{space}: {why}")),
@@ -135,6 +133,39 @@ async fn row(state: &AppState, name: String, spec: Option<ContextBrokerSpec>) ->
     }
 }
 
+/// The usage of a space on broker `name`, or why its tenant is not known.
+async fn usage_of(
+    counter: &crate::space_usage::Counter,
+    name: &str,
+    tenant: Result<String, String>,
+) -> Result<crate::space_usage::SpaceUsage, String> {
+    counter.usage(name, &tenant?).await
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/organization/brokers", get(list_brokers))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-7917 (PF-130): a space whose tenant is not known reads as the reason, never as a count,
+    /// and the broker is not asked.
+    #[tokio::test]
+    async fn a_space_without_a_tenant_reads_as_why() {
+        let counter = crate::space_usage::Counter::new(None, None);
+        let reason = usage_of(
+            &counter,
+            "main",
+            Err("project `helsinki` has no id in the Portal's project registry yet".to_owned()),
+        )
+        .await
+        .err()
+        .expect("no tenant");
+        assert!(
+            reason.contains("no id in the Portal's project registry"),
+            "{reason}"
+        );
+    }
 }

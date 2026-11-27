@@ -585,6 +585,35 @@ pub struct WorkspaceCommit {
 }
 
 impl ProposeOutcome {
+    /// The dry-run result of an outcome asked for with `dry_run`; anything else is our bug, since
+    /// a dry run short-circuits before a branch or a Change exists.
+    pub fn into_dry_run(self) -> Result<DryRunResult, ApiError> {
+        match self {
+            Self::DryRun(result) => Ok(result),
+            _ => Err(ApiError::Internal("a dry run proposed a change".into())),
+        }
+    }
+
+    /// The commit of an outcome asked for onto a plan's branch; anything else is our bug.
+    pub fn into_bundled(self) -> Result<BundledCommit, ApiError> {
+        match self {
+            Self::Bundled(commit) => Ok(commit),
+            _ => Err(ApiError::Internal(
+                "a bundled proposal answered something else than its commit".into(),
+            )),
+        }
+    }
+
+    /// The answer of an outcome: a Change is `202`, everything else `200`.
+    fn answer(self) -> Response {
+        match self {
+            Self::DryRun(res) => (StatusCode::OK, Json(res)).into_response(),
+            Self::Change(change) => (StatusCode::ACCEPTED, Json(change)).into_response(),
+            Self::Workspace(commit) => (StatusCode::OK, Json(commit)).into_response(),
+            Self::Bundled(commit) => (StatusCode::OK, Json(commit)).into_response(),
+        }
+    }
+
     pub fn into_value(self) -> serde_json::Value {
         match self {
             Self::DryRun(dr) => serde_json::to_value(dr).unwrap_or(serde_json::Value::Null),
@@ -627,12 +656,7 @@ pub async fn propose(
     )
     .await?;
 
-    match outcome {
-        ProposeOutcome::DryRun(res) => Ok((StatusCode::OK, Json(res)).into_response()),
-        ProposeOutcome::Change(change) => Ok((StatusCode::ACCEPTED, Json(change)).into_response()),
-        ProposeOutcome::Workspace(commit) => Ok((StatusCode::OK, Json(commit)).into_response()),
-        ProposeOutcome::Bundled(commit) => Ok((StatusCode::OK, Json(commit)).into_response()),
-    }
+    Ok(outcome.answer())
 }
 
 /// The check this person just ran, kept under the manifest's own kind and name (PF-57): one
@@ -718,12 +742,9 @@ async fn propose_checked(
                 return Ok((StatusCode::OK, Json(refused)).into_response());
             }
         };
-        let ProposeOutcome::DryRun(mut result) = outcome else {
-            return Err(ApiError::Internal("a dry run proposed a change".into()));
-        };
+        let mut result = outcome.into_dry_run()?;
         let verdict = if manifest.get("kind") == Some(&Value::from("DataSource")) {
-            let answer =
-                serde_json::to_value(&result).map_err(|e| ApiError::Internal(e.to_string()))?;
+            let answer = serde_json::to_value(&result).map_err(ApiError::internal)?;
             crate::ops::datasource_verdict(&answer, &manifest)
         } else {
             // A dry run that got this far answered `valid: true`: every fault of the manifest is a
@@ -764,7 +785,6 @@ async fn propose_checked(
     .await?;
     crate::ops::forget_check(state, project, &manifest).await;
     match outcome {
-        ProposeOutcome::DryRun(res) => Ok((StatusCode::OK, Json(res)).into_response()),
         // A person at the Portal who administers every kind of it has it approved now (PF-58);
         // a bearer caller never does (AG-11).
         ProposeOutcome::Change(change) if front != Front::Bearer => {
@@ -783,9 +803,7 @@ async fn propose_checked(
             .await;
             Ok((StatusCode::ACCEPTED, Json(change)).into_response())
         }
-        ProposeOutcome::Change(change) => Ok((StatusCode::ACCEPTED, Json(change)).into_response()),
-        ProposeOutcome::Workspace(commit) => Ok((StatusCode::OK, Json(commit)).into_response()),
-        ProposeOutcome::Bundled(commit) => Ok((StatusCode::OK, Json(commit)).into_response()),
+        other => Ok(other.answer()),
     }
 }
 
@@ -896,7 +914,7 @@ pub async fn propose_gated_onto(
     body_val: Value,
     branch: &str,
 ) -> Result<BundledCommit, ApiError> {
-    match propose_engine(
+    propose_engine(
         identity,
         state,
         project,
@@ -910,12 +928,7 @@ pub async fn propose_gated_onto(
         Some(branch),
     )
     .await?
-    {
-        ProposeOutcome::Bundled(commit) => Ok(commit),
-        _ => Err(ApiError::Internal(
-            "a bundled proposal answered something else than its commit".into(),
-        )),
-    }
+    .into_bundled()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -987,8 +1000,8 @@ async fn propose_engine(
                 &mut envelope.metadata.description,
                 stored.metadata.description.as_ref(),
             );
-            body_val["metadata"] = serde_json::to_value(&envelope.metadata)
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            body_val["metadata"] =
+                serde_json::to_value(&envelope.metadata).map_err(ApiError::internal)?;
         }
     }
 
@@ -1061,7 +1074,7 @@ async fn propose_engine(
         .get(project, kind_info.kind, &envelope.metadata.name)
         .map(serde_json::to_value)
         .transpose()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::internal)?;
     //     Judged in the namespace the envelope filled in: a project Role sent without one is the
     //     project's, never the organization's (T-6266, PF-68).
     let mut judged = body_val.clone();
@@ -1623,8 +1636,7 @@ fn manifest_yaml(
     } else {
         envelope_to_commit.strip_status();
     }
-    serde_norway::to_string(&envelope_to_commit)
-        .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))
+    serde_norway::to_string(&envelope_to_commit).map_err(ApiError::internal)
 }
 
 /// The envelope of a proposal (steps 2 and 3): an apiVersion jc-core serves, the kind its
@@ -1982,10 +1994,9 @@ fn app_grants(
         .and_then(|slug| jc_core::kinds::EndpointSlug::new(slug).ok())
         .unwrap_or_else(generate_slug);
 
-    let manifest: jcctl::loader::RawManifest = serde_json::from_value(
-        serde_json::to_value(envelope).map_err(|e| ApiError::Internal(e.to_string()))?,
-    )
-    .map_err(|e| ApiError::Internal(format!("the App as a manifest: {e}")))?;
+    let manifest: jcctl::loader::RawManifest =
+        serde_json::from_value(serde_json::to_value(envelope).map_err(ApiError::internal)?)
+            .map_err(ApiError::internal)?;
     // The assigner of the App's Policies is the project's publisher (PF-108).
     let domain = crate::api::assistant::publisher_domain(state, project);
     let compiled = match grants(&manifest, &slug, &domain) {
@@ -1998,10 +2009,9 @@ fn app_grants(
     let mut out = AppGrants::default();
     let mut kept = std::collections::BTreeSet::new();
     for raw in compiled {
-        let env: ResourceEnvelope = serde_json::from_value(
-            serde_json::to_value(&raw).map_err(|e| ApiError::Internal(e.to_string()))?,
-        )
-        .map_err(|e| ApiError::Internal(format!("a generated {}: {e}", raw.kind)))?;
+        let env: ResourceEnvelope =
+            serde_json::from_value(serde_json::to_value(&raw).map_err(ApiError::internal)?)
+                .map_err(ApiError::internal)?;
         if raw.kind == "Policy" {
             if let Some(held) = state
                 .mirror
@@ -2024,18 +2034,19 @@ fn app_grants(
         // fails here, as a form error, not after the approval.
         if let Some(checked) = jc_core::registry::validate_yaml(
             &raw.kind,
-            &serde_json::to_string(&env).map_err(|e| ApiError::Internal(e.to_string()))?,
+            &serde_json::to_string(&env).map_err(ApiError::internal)?,
         ) {
             checked.map_err(|e| {
                 ApiError::BadRequest(format!("the App's {} is not valid: {e}", raw.kind))
             })?;
         }
-        let info = resource::by_kind(&raw.kind)
-            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", raw.kind)))?;
+        let info = resource::by_kind(&raw.kind).ok_or(ApiError::Internal(format!(
+            "no catalogue entry for {}",
+            raw.kind
+        )))?;
         let path = resolve_repo_path(&env, info, project)?;
         kept.insert((raw.kind.clone(), env.metadata.name.clone()));
-        let yaml = serde_norway::to_string(&env)
-            .map_err(|e| ApiError::Internal(format!("serialize {}: {e}", raw.kind)))?;
+        let yaml = serde_norway::to_string(&env).map_err(ApiError::internal)?;
         out.uploads.push((path, yaml));
     }
 
@@ -2043,8 +2054,10 @@ fn app_grants(
         if kept.contains(&(held.kind.clone(), held.metadata.name.clone())) {
             continue;
         }
-        let info = resource::by_kind(&held.kind)
-            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", held.kind)))?;
+        let info = resource::by_kind(&held.kind).ok_or(ApiError::Internal(format!(
+            "no catalogue entry for {}",
+            held.kind
+        )))?;
         out.removed.push(resolve_repo_path(&held, info, project)?);
         out.review.push(plan::FieldChange {
             path: format!("grants.{}", held.metadata.name),
@@ -2063,10 +2076,9 @@ fn group_files(
     grants: &mut AppGrants,
 ) -> Result<(), ApiError> {
     let info = resource::by_kind("Group")
-        .ok_or_else(|| ApiError::Internal("no catalogue entry for Group".into()))?;
+        .ok_or(ApiError::Internal("no catalogue entry for Group".into()))?;
     for group in &groups.written {
-        let yaml = serde_norway::to_string(group)
-            .map_err(|e| ApiError::Internal(format!("serialize Group: {e}")))?;
+        let yaml = serde_norway::to_string(group).map_err(ApiError::internal)?;
         grants
             .uploads
             .push((resolve_repo_path(group, info, project)?, yaml));
@@ -2988,14 +3000,16 @@ pub(crate) fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
         .into_iter()
         .map(|gap| format!("spec.representations.ical: {gap}"))
         .chain(
+            // Without a model these fail on nothing: jc-core returns `Err` only for a model
+            // that is not YAML, and none is passed.
             feed_gaps(&representations.feed, None)
-                .map_err(|e| unprocessable(vec![format!("spec.representations.feed: {e}")]))?
+                .unwrap_or_default()
                 .into_iter()
                 .map(|gap| format!("spec.representations.feed: {gap}")),
         )
         .chain(
             widget_gaps(&representations.widget, None)
-                .map_err(|e| unprocessable(vec![format!("spec.representations.widget: {e}")]))?
+                .unwrap_or_default()
                 .into_iter()
                 .map(|gap| format!("spec.representations.widget: {gap}")),
         )
@@ -3301,8 +3315,9 @@ async fn propose_draft(
         // MCP and the assistant reach, instead of a 400 in the form alone (T-0842).
         (_, false) => "jc_resource_propose",
     };
-    let op = crate::ops::find(name)
-        .ok_or_else(|| ApiError::Internal(format!("operation '{name}' is not registered")))?;
+    let op = crate::ops::find(name).ok_or(ApiError::Internal(format!(
+        "operation '{name}' is not registered"
+    )))?;
     let caller = crate::ops::Caller {
         bearer: None,
         identity: user.0.identity,
@@ -3584,9 +3599,7 @@ pub async fn patch(
 
     let mut curr_to_patch = current;
     curr_to_patch.strip_status();
-    let mut desired_val = serde_json::to_value(&curr_to_patch).map_err(|e| {
-        ApiError::Internal(format!("failed to serialize current resource to json: {e}"))
-    })?;
+    let mut desired_val = serde_json::to_value(&curr_to_patch).map_err(ApiError::internal)?;
 
     plan::merge_patch(&mut desired_val, &patch_val);
 
@@ -3629,10 +3642,13 @@ fn keep_languages(sent: &mut Option<jc_core::i18n::Text>, stored: Option<&jc_cor
         return;
     };
     let mut kept = map.clone();
-    // The key came out of the map itself, so the insert cannot refuse it.
-    if kept.insert(&locale, text.clone()).is_ok() {
-        *sent = Some(Text::Localized(kept));
-    }
+    // The key came out of the map, which validated it on load, so the insert cannot refuse it;
+    // were it to, what the person sent stays.
+    let merged = kept
+        .insert(&locale, text.clone())
+        .ok()
+        .map(|()| Text::Localized(kept));
+    *sent = merged.or(sent.take());
 }
 
 #[cfg(test)]
@@ -6062,6 +6078,741 @@ mod tests {
                 Err(ApiError::BadRequest(_))
             ),
             "an upsert beside an existing replace writer is refused"
+        );
+    }
+
+    // ---- T-7917: the doors a proposal reaches beyond the happy create -----------------------
+
+    const FORGE: &str = "/odata/Repositories(Owner='o',Name='r')";
+
+    fn client_of(server: &wiremock::MockServer) -> crate::forge::ShakoClient {
+        crate::forge::ShakoClient::new(server.uri().parse().expect("a url"), "o", "r", "token-xyz")
+            .expect("a client")
+    }
+
+    /// A forge that takes every write a proposal makes: the branch, the files, the pull request.
+    async fn forge_state() -> (AppState, wiremock::MockServer) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(FORGE))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{FORGE}/Shako.CreateBranch")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{FORGE}/Shako.OpenPullRequest")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "Number": 9, "HtmlUrl": "https://shako.example/pulls/9", "State": "open",
+                "Mergeable": true, "Merged": false
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{FORGE}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "commit-1" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{FORGE}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{FORGE}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let state = AppState::new(Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client_of(&server)));
+        (state, server)
+    }
+
+    fn space_body(name: &str) -> Value {
+        json!({
+            "apiVersion": resource::API_VERSION,
+            "kind": "ContextSpace",
+            "metadata": { "name": name, "namespace": "ovzdusie" },
+            "spec": { "isSandbox": true }
+        })
+    }
+
+    /// T-7917: a Change answers 202, a commit to a workspace or to a plan's branch 200; each
+    /// commit's own members reach `into_value`; an outcome the call did not ask for is ours (500).
+    #[test]
+    fn every_outcome_has_its_answer_and_a_wrong_one_is_ours() {
+        let workspace = ProposeOutcome::Workspace(WorkspaceCommit {
+            workspace: "w".into(),
+            branch: "workspace/w".into(),
+            path: "projects/ovzdusie/x.yaml".into(),
+            lane: Lane::Green,
+        });
+        let bundled = || {
+            ProposeOutcome::Bundled(BundledCommit {
+                path: "a.yaml".into(),
+                lane: Lane::Green,
+                waits_on: vec!["chg-1".into()],
+            })
+        };
+        let diff = plan::diff(None, Some(&manifest("ContextSpace", "s", json!({}))));
+        let change = Change::new(
+            ChangeMeta::from_merge_request(9, "ovzdusie"),
+            ChangeStatus::new(Lane::Green, ChangePhase::PendingApproval, diff.summary),
+        );
+        assert_eq!(
+            ProposeOutcome::Change(change).answer().status(),
+            StatusCode::ACCEPTED
+        );
+        assert_eq!(workspace.clone().answer().status(), StatusCode::OK);
+        assert_eq!(bundled().answer().status(), StatusCode::OK);
+        assert_eq!(workspace.clone().into_value()["workspace"], "w");
+        assert_eq!(bundled().into_value()["waitsOn"], json!(["chg-1"]));
+        assert!(matches!(
+            workspace.clone().into_dry_run(),
+            Err(ApiError::Internal(message)) if message.contains("dry run")
+        ));
+        assert!(matches!(
+            workspace.into_bundled(),
+            Err(ApiError::Internal(_))
+        ));
+        assert_eq!(bundled().into_bundled().expect("a commit").path, "a.yaml");
+    }
+
+    /// T-7917 (PF-57): a bearer caller's dry run records its check as a bearer's and answers the
+    /// verdict beside the plan.
+    #[tokio::test]
+    async fn a_bearer_dry_run_answers_a_verdict() {
+        let state = AppState::new(Config::for_tests(), None);
+        let answer = propose_checked(
+            &dummy_user(),
+            Front::Bearer,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            true,
+            space_body("mobility"),
+            None,
+            None,
+        )
+        .await
+        .expect("a dry run");
+        assert_eq!(answer.status(), StatusCode::OK);
+        let bytes = answer
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        let result: DryRunResult = serde_json::from_slice(&bytes).expect("a result");
+        assert!(result.valid);
+        assert!(
+            result.verdict.is_some(),
+            "the check's verdict rides the answer"
+        );
+    }
+
+    /// T-7917: a deletion of a held resource is judged on what it leaves and passes its dry run;
+    /// the same deletion proposed to a forge opens a Change named for the delete.
+    #[tokio::test]
+    async fn a_deletion_is_checked_and_proposed() {
+        let user = dummy_user();
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(manifest(
+            "ContextSpace",
+            "mobility",
+            json!({ "isSandbox": true }),
+        ));
+        let checked = propose(
+            &user,
+            &state,
+            "ovzdusie",
+            "spaces",
+            Some("mobility"),
+            Operation::Delete,
+            true,
+            space_body("mobility"),
+        )
+        .await
+        .expect("a deletion's dry run");
+        assert_eq!(checked.status(), StatusCode::OK);
+
+        let (state, _forge) = forge_state().await;
+        state.mirror.upsert(manifest(
+            "ContextSpace",
+            "mobility",
+            json!({ "isSandbox": true }),
+        ));
+        let proposed = propose(
+            &user,
+            &state,
+            "ovzdusie",
+            "spaces",
+            Some("mobility"),
+            Operation::Delete,
+            false,
+            space_body("mobility"),
+        )
+        .await
+        .expect("a deletion's Change");
+        assert_eq!(proposed.status(), StatusCode::ACCEPTED);
+        let bytes = proposed
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        assert!(
+            String::from_utf8_lossy(&bytes).contains("chg-"),
+            "the Change is named"
+        );
+    }
+
+    /// T-7917: a new space proposed to a forge that answers opens a Change (202).
+    #[tokio::test]
+    async fn a_new_space_proposed_to_a_forge_opens_a_change() {
+        let (state, _forge) = forge_state().await;
+        let proposed = propose(
+            &dummy_user(),
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            false,
+            space_body("mobility"),
+        )
+        .await
+        .expect("a Change");
+        assert_eq!(proposed.status(), StatusCode::ACCEPTED);
+    }
+
+    /// T-7917 (MF-04, AP-73): a plan of several changes never carries a manifest with a status,
+    /// which is the build lane's own write.
+    #[tokio::test]
+    async fn a_manifest_with_status_is_refused_in_a_plan_of_several_changes() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut body = space_body("mobility");
+        body["status"] = json!({ "phase": "Live" });
+        let err = propose_gated_onto(
+            &dummy_user().0.identity,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            body,
+            "portal/plan-1",
+        )
+        .await
+        .expect_err("a status in a plan");
+        assert!(
+            matches!(&err, ApiError::BadRequest(message) if message.contains("plan of several changes")),
+            "{err:?}"
+        );
+    }
+
+    /// T-7917: a forge that errors on the open-change list is a dependency down (503), and an open
+    /// change on the branch is a conflict naming it, found when the branch is taken; a forge that
+    /// refuses the branch itself is down as well.
+    #[tokio::test]
+    async fn the_branch_of_a_proposal_meets_a_failing_forge_and_an_open_change() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let state = AppState::new(Config::for_tests(), None);
+
+        let down = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{FORGE}/PullRequests")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&down)
+            .await;
+        let err = open_change_on(&state, &client_of(&down), "portal/create-x", "ovzdusie")
+            .await
+            .err()
+            .expect("the list fails");
+        assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
+
+        let taken = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{FORGE}/Shako.CreateBranch")))
+            .respond_with(
+                ResponseTemplate::new(409)
+                    .set_body_json(json!({ "error": { "code": "Conflict", "message": "exists" } })),
+            )
+            .mount(&taken)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{FORGE}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{ "Number": 7, "Head": "portal/create-x_0000abcd", "State": "open" }]
+            })))
+            .mount(&taken)
+            .await;
+        let shako = client_of(&taken);
+        let held = turn(&shako, "portal/create-x").await;
+        let err = create_or_reuse_branch(&shako, &held, "main")
+            .await
+            .err()
+            .expect("an open change holds the branch");
+        assert!(
+            matches!(&err, ApiError::Conflict(message) if message.contains("chg-00000007")),
+            "{err:?}"
+        );
+
+        let refusing = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!("{FORGE}/Shako.CreateBranch")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&refusing)
+            .await;
+        let shako = client_of(&refusing);
+        let held = turn(&shako, "portal/create-y").await;
+        let err = create_or_reuse_branch(&shako, &held, "main")
+            .await
+            .err()
+            .expect("the forge refuses the branch");
+        assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
+    }
+
+    /// T-7917: the status of a build write keeps the shard the Portal published and no build when
+    /// the manifest names none; every other write commits no status at all.
+    #[test]
+    fn a_build_writes_status_is_the_portals_and_every_other_is_stripped() {
+        let mut envelope = manifest("App", "bikes", json!({}));
+        envelope.status =
+            Some(serde_json::from_value::<crate::resource::Status>(json!({})).expect("a status"));
+        let published = crate::apps::wasm_apps::Published {
+            component: "sha256:abc".into(),
+            shard: 4,
+        };
+        let yaml = manifest_yaml(&envelope, true, Some(&published)).expect("a build write");
+        assert!(yaml.contains("shard: 4"), "{yaml}");
+        let yaml = manifest_yaml(&envelope, true, None).expect("a build write");
+        assert!(!yaml.contains("shard"), "{yaml}");
+        let yaml = manifest_yaml(&envelope, false, Some(&published)).expect("a plain write");
+        assert!(
+            !yaml.contains("status") && !yaml.contains("shard"),
+            "{yaml}"
+        );
+    }
+
+    fn bikes_app() -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: resource::API_VERSION.into(),
+            kind: "App".into(),
+            metadata: ObjectMeta::new("bikes", "helsinki"),
+            spec: json!({
+                "kind": "static",
+                "source": { "git": {
+                    "url": "https://git.example/joinedcontext/helsinki_bikes.git",
+                    "ref": "0123456789abcdef0123456789abcdef01234567",
+                }},
+                "build": { "node": "22" },
+                "visibility": "roles",
+                "lifecycle": "published",
+                "roles": [{ "name": "viewer" }, { "name": "steward" }],
+                "access": [
+                    { "role": "viewer", "subjects": [{ "group": "bikes-readers" }] },
+                    { "role": "steward", "subjects": [{ "user": "3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14" }] },
+                ],
+                "dataNeeds": [
+                    {
+                        "contextSpaceRef": { "kind": "ContextSpace", "name": "bikes" },
+                        "types": ["BikeHireDockingStation"],
+                        "operations": ["queryEntity"],
+                    },
+                    {
+                        "contextSpaceRef": { "kind": "ContextSpace", "name": "bikes" },
+                        "types": ["BikeHireDockingStation"],
+                        "attrs": ["stewardNote"],
+                        "operations": ["updateAttrs"],
+                        "roles": ["steward"],
+                    },
+                ],
+            }),
+            status: None,
+        }
+    }
+
+    /// T-7917 (AP-05, T-2632): a Policy somebody wrote under the name an App's grant needs is
+    /// never overwritten: a conflict naming it; an App whose spec the compiler refuses is a 400.
+    #[test]
+    fn an_app_grant_never_overwrites_a_hand_written_policy_and_a_bad_spec_is_a_400() {
+        let state = AppState::new(Config::for_tests(), None);
+        for name in ["app-bikes-1", "app-bikes-2-steward"] {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: resource::API_VERSION.into(),
+                kind: "Policy".into(),
+                metadata: ObjectMeta::new(name, "helsinki"),
+                spec: json!({}),
+                status: None,
+            });
+        }
+        let err = app_grants(&state, "helsinki", &bikes_app())
+            .err()
+            .expect("a hand-written name");
+        assert!(
+            matches!(&err, ApiError::Conflict(message)
+                if message.contains("was not generated for App 'bikes'") && message.contains("rename it")),
+            "{err:?}"
+        );
+
+        let mut broken = bikes_app();
+        broken.spec = json!({});
+        let err = app_grants(&state, "helsinki", &broken)
+            .err()
+            .expect("a spec the compiler refuses");
+        assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
+    }
+
+    /// T-7917 (AP-96): the grants of an App are the generated Endpoint, and the generated Policies
+    /// assigned to its service account or its roles; a group, another account or a hand-written
+    /// one is not the App's.
+    #[test]
+    fn the_grants_an_app_holds_are_found_by_who_they_are_assigned_to() {
+        let mirror = crate::store::Mirror::new();
+        let generated = |kind: &str, name: &str, spec: Value| {
+            let mut envelope = ResourceEnvelope {
+                api_version: resource::API_VERSION.into(),
+                kind: kind.into(),
+                metadata: ObjectMeta::new(name, "helsinki"),
+                spec,
+                status: None,
+            };
+            envelope.metadata.annotations.insert(
+                jc_core::annotations::GENERATED_BY.to_owned(),
+                crate::apps::reconciler::GENERATOR.to_owned(),
+            );
+            envelope
+        };
+        let assigned = |kind: &str, id: &str| json!({ "assignee": { "kind": kind, "id": id } });
+        mirror.upsert(generated(
+            "Policy",
+            "by-account",
+            assigned("serviceAccount", "app-bikes"),
+        ));
+        mirror.upsert(generated(
+            "Policy",
+            "of-another",
+            assigned("serviceAccount", "app-bikes-2"),
+        ));
+        mirror.upsert(generated(
+            "Policy",
+            "by-group",
+            assigned("group", "app-bikes"),
+        ));
+        let held: Vec<String> = held_grants(&mirror, "helsinki", "bikes")
+            .into_iter()
+            .map(|envelope| envelope.metadata.name)
+            .collect();
+        assert_eq!(held, ["by-account"]);
+    }
+
+    fn plan_bundle() -> Vec<Value> {
+        vec![
+            json!({ "apiVersion": resource::API_VERSION, "kind": "App",
+                    "metadata": { "name": "map2" }, "spec": {} }),
+            json!({ "apiVersion": resource::API_VERSION, "kind": "Endpoint",
+                    "metadata": { "name": "app-map2" }, "spec": public_air(None) }),
+        ]
+    }
+
+    /// T-7917 (AP-139, T-6740): an App's own Endpoint keeps the App rule when the App is drafted
+    /// in the same plan: it is no Endpoint a new Policy binds, and it needs no Policy reference.
+    #[test]
+    fn an_endpoint_of_an_app_in_the_same_plan_keeps_the_app_rule() {
+        let state = AppState::new(Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(manifest("Endpoint", "b", public_air(None)));
+        let policy = manifest(
+            "Policy",
+            "sensors-read",
+            space_policy(
+                "{ \"kind\": \"role\", \"id\": \"public\" }",
+                &["retrieveOps"],
+            ),
+        );
+        let bound = crate::references::BUNDLE.sync_scope(plan_bundle(), || {
+            endpoints_binding(&state, "ovzdusie", &policy)
+        });
+        assert_eq!(bound, ["b"], "the plan's app-map2 is the App's, not bound");
+
+        let identity = dummy_user().0.identity;
+        let own = manifest("Endpoint", "app-map2", public_air(None));
+        assert!(
+            check_names_policies(&state, &identity, "ovzdusie", &own).is_err(),
+            "outside the plan an Endpoint naming no Policy is refused"
+        );
+        crate::references::BUNDLE.sync_scope(plan_bundle(), || {
+            check_names_policies(&state, &identity, "ovzdusie", &own)
+                .expect("the App's own Endpoint needs no Policy reference");
+        });
+    }
+
+    /// T-7917 (DM-61): a model drafted in the same plan counts as the space's one, so a second one
+    /// is refused naming the first.
+    #[test]
+    fn a_model_of_the_same_plan_counts_as_the_spaces_model() {
+        let state = AppState::new(Config::for_tests(), None);
+        let plan = vec![json!({
+            "apiVersion": resource::API_VERSION, "kind": "DataModel",
+            "metadata": { "name": "first" }, "spec": { "contextSpaceRef": "walk" }
+        })];
+        let result = crate::references::BUNDLE.sync_scope(plan, || {
+            check_one_model(
+                &crate::judge::Ground::of(&state),
+                "ovzdusie",
+                "second",
+                &json!({ "contextSpaceRef": "walk" }),
+            )
+        });
+        let errors = refusal(result);
+        assert!(errors[0].contains("beside `first`"), "{errors:?}");
+    }
+
+    /// T-7917: a serialiser that fails is the platform's own fault, worded for the log and hidden
+    /// from the answer; the JSON and YAML ones every door of this module names.
+    #[test]
+    fn a_serialiser_that_fails_is_ours() {
+        let json = serde_json::from_str::<Value>("{").expect_err("not json");
+        assert!(
+            matches!(ApiError::internal(json), ApiError::Internal(message) if message.contains("EOF")),
+            "the JSON error"
+        );
+        let yaml = serde_norway::from_str::<Value>("a: [").expect_err("not yaml");
+        assert!(matches!(ApiError::internal(yaml), ApiError::Internal(_)));
+    }
+
+    /// T-7917: a spec the kind's own parse refuses is that parse's to judge: the checks beside it
+    /// pass it, whatever its kind.
+    #[tokio::test]
+    async fn a_spec_that_does_not_parse_is_left_to_the_kinds_own_check() {
+        let state = AppState::new(Config::for_tests(), None);
+        let ground = crate::judge::Ground::of(&state);
+        let identity = dummy_user().0.identity;
+        let broken = manifest("Endpoint", "e", json!({}));
+        check_policy_refs(&ground, "ovzdusie", &broken).expect("an Endpoint spec that is no spec");
+        check_names_policies(&state, &identity, "ovzdusie", &broken)
+            .expect("an Endpoint spec that is no spec");
+        check_surfaces(&state, "ovzdusie", "e", &json!({}))
+            .await
+            .expect("an Endpoint spec that is no spec");
+        check_replace(&ground, "ovzdusie", "stations", &json!("not a spec"))
+            .expect("a Pipeline spec that is no spec");
+        organization_within_bounds(
+            &state.config.organization_bounds,
+            "Organization",
+            &json!({ "locales": 7 }),
+            ApiError::Conflict,
+        )
+        .expect("an Organization spec that is no spec");
+        assert!(
+            endpoints_binding(&state, "ovzdusie", &manifest("Policy", "p", json!({}))).is_empty(),
+            "a Policy naming no space binds no Endpoint"
+        );
+    }
+
+    /// T-7917 (CC-73): an Environment is where the domain is written out, so its dry run finds no
+    /// literal domain in it.
+    #[tokio::test]
+    async fn an_environments_dry_run_finds_no_literal_domain() {
+        let state = AppState::new(Config::for_tests(), None);
+        let org = crate::permissions::ORG_NAMESPACE;
+        let body = json!({
+            "apiVersion": resource::API_VERSION,
+            "kind": "Environment",
+            "metadata": { "name": "staging", "namespace": org },
+            "spec": { "orgDomain": "staging.hel.fi" }
+        });
+        let answer = propose(
+            &dummy_user(),
+            &state,
+            org,
+            "environments",
+            None,
+            Operation::Create,
+            true,
+            body,
+        )
+        .await
+        .expect("an Environment's dry run");
+        let bytes = answer
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        let result: DryRunResult = serde_json::from_slice(&bytes).expect("a result");
+        assert!(result.valid);
+        assert!(result.findings.is_empty(), "{:?}", result.findings);
+    }
+
+    /// T-7917 (EP-125): an Endpoint serving a surface that needs a model, in a space that holds
+    /// none, is refused naming the surface.
+    #[tokio::test]
+    async fn a_surface_that_needs_a_model_is_refused_in_a_space_without_one() {
+        let state = AppState::new(Config::for_tests(), None);
+        let refused = check_surfaces(
+            &state,
+            "ovzdusie",
+            "e",
+            &json!({
+                "contextSpaceRef": "ovzdusie", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld", "sta"]
+            }),
+        )
+        .await
+        .expect_err("no model to stand on");
+        assert!(
+            matches!(&refused, ApiError::Unprocessable { errors, .. }
+                if errors[0].starts_with("Endpoint ovzdusie/e, space ovzdusie: `sta` needs")
+                    && errors[0].ends_with("(EP-125)")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917 (T-7491): a chart whose `data` is no object of the kind is named at its own path.
+    #[test]
+    fn a_chart_whose_data_is_no_data_is_named_at_its_path() {
+        let errors = refusal(check_visualization_sources(&json!({
+            "catalog": { "visualizations": [{ "data": "nope" }] }
+        })));
+        assert!(
+            errors[0].starts_with("/spec/catalog/visualizations/0/data: "),
+            "{errors:?}"
+        );
+    }
+
+    /// T-7917 (MP-01): a ModelProjection spec the kind did not parse is a 400 naming the kind.
+    #[tokio::test]
+    async fn a_projection_spec_that_does_not_parse_is_a_400() {
+        let state = AppState::new(Config::for_tests(), None);
+        let err = check_projection(&state, "ovzdusie", &json!({ "unknown": 1 }))
+            .await
+            .expect_err("no data model reference");
+        assert!(
+            matches!(&err, ApiError::BadRequest(message)
+                if message.starts_with("spec is not a valid ModelProjection")),
+            "{err:?}"
+        );
+    }
+
+    /// T-7917 (DM-61, DM-62): a new space's model is named by the organization's domain when it has
+    /// one, its prefix is an NCName whatever the project is called, and a spec that is no object
+    /// gets none.
+    #[test]
+    fn a_new_spaces_model_is_named_by_the_domain_and_a_prefix_that_is_a_name() {
+        let mut config = Config::for_tests();
+        config.org_domain = Some("hel.fi".into());
+        let state = AppState::new(config, None);
+        let mut space = manifest("ContextSpace", "air", json!({}));
+        let files = space_model(&state, "8bikes", &mut space);
+        assert_eq!(files.len(), 2);
+        let source = &files[1].1;
+        assert!(
+            source.contains("id: https://hel.fi/models/8bikes/air"),
+            "{source}"
+        );
+        assert!(source.contains("default_prefix: local"), "{source}");
+        assert_eq!(space.spec["dataModelRef"]["name"], "air");
+
+        let mut bare = manifest("ContextSpace", "air", Value::Null);
+        assert!(space_model(&state, "ovzdusie", &mut bare).is_empty());
+    }
+
+    /// T-7917: the draft a form names reaches the registered operation of its kind, whoever the
+    /// caller is and whichever kind it proposes or checks: the answer is the operation's own, never
+    /// the 500 of an operation nobody registered.
+    #[tokio::test]
+    async fn a_draft_reaches_the_operation_of_its_kind() {
+        let state = AppState::new(Config::for_tests(), None);
+        let draft = || json!({ "kind": "Endpoint", "name": "nothing-drafted" });
+        for (front, plural, dry_run) in [
+            (Front::Bearer, "endpoints", false),
+            (Front::Portal, "datasources", true),
+            (Front::Edge, "apps", false),
+            (Front::Portal, "spaces", true),
+        ] {
+            let answer = propose_draft(
+                dummy_user(),
+                front,
+                &state,
+                "ovzdusie",
+                plural,
+                dry_run,
+                draft(),
+                json!({}),
+            )
+            .await
+            .expect("the operation answers, even a refusal");
+            // A check may answer its findings with a 200; a proposal of a draft nobody holds never.
+            assert!(
+                dry_run || !answer.status().is_success(),
+                "{plural}: {}",
+                answer.status()
+            );
+        }
+    }
+
+    /// T-7917: a proposal that names a draft outside a workspace takes the draft's door; a patch
+    /// into a workspace nobody holds is the workspace's refusal, not a read of the mirror.
+    #[tokio::test]
+    async fn the_draft_and_workspace_doors_of_the_handlers_refuse_what_is_not_there() {
+        let state = AppState::new(Config::for_tests(), None);
+        let json_header = |content_type: &'static str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static(content_type),
+            );
+            headers
+        };
+        let mut body = space_body("mobility");
+        body["draft"] = json!({ "kind": "ContextSpace", "name": "mobility" });
+        let answer = create(
+            dummy_user(),
+            Front::Portal,
+            State(state.clone()),
+            Path(("ovzdusie".to_owned(), "spaces".to_owned())),
+            Query(DryRunQuery::default()),
+            json_header("application/json"),
+            Bytes::from(body.to_string()),
+        )
+        .await
+        .expect("the draft's operation answers");
+        assert!(!answer.status().is_success(), "{}", answer.status());
+
+        let err = patch(
+            dummy_user(),
+            Front::Portal,
+            State(state),
+            Path((
+                "ovzdusie".to_owned(),
+                "spaces".to_owned(),
+                "mobility".to_owned(),
+            )),
+            Query(DryRunQuery {
+                workspace: Some("nobody-opened-this".into()),
+                ..Default::default()
+            }),
+            json_header("application/merge-patch+json"),
+            Bytes::from_static(b"{}"),
+        )
+        .await
+        .expect_err("no such workspace");
+        assert!(
+            matches!(err, ApiError::NotFound(_) | ApiError::Denied(_)),
+            "{err:?}"
         );
     }
 }

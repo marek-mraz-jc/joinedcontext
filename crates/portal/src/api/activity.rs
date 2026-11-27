@@ -670,4 +670,195 @@ mod tests {
         .expect("a filter");
         assert_eq!(filter.limit, MAX_LIMIT);
     }
+
+    use crate::auth::session::{Identity, Session};
+    use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+
+    fn pia() -> CurrentUser {
+        CurrentUser(Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-pia".into(),
+                username: "pia".into(),
+                email: Some("pia@hel.fi".into()),
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    fn put(state: &AppState, kind: &str, name: &str, namespace: &str, spec: Value) {
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        });
+    }
+
+    /// `pia` reads project `helsinki`, which belongs to an Organization the registry would key.
+    fn member_world(state: AppState) -> AppState {
+        let org = crate::permissions::ORG_NAMESPACE;
+        put(
+            &state,
+            "Project",
+            "helsinki",
+            org,
+            json!({ "organizationRef": "somewhere" }),
+        );
+        put(&state, "ContextSpace", "air", "helsinki", json!({}));
+        put(
+            &state,
+            "Role",
+            "reader",
+            org,
+            json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["read"] }] }),
+        );
+        put(
+            &state,
+            "RoleBinding",
+            "pia-reads",
+            org,
+            json!({ "subjects": [{ "user": "pia@hel.fi" }], "role": "reader",
+                    "scope": { "project": "helsinki" } }),
+        );
+        state
+    }
+
+    fn held(n: usize) -> ActivityEvent {
+        ActivityEvent {
+            time: TimestampTz::now(),
+            project: "helsinki".into(),
+            space: None,
+            kind: "access.denied".into(),
+            source: "gateway".into(),
+            summary: format!("event {n}"),
+            severity: "warning".into(),
+            correlation_id: None,
+            details: Value::Null,
+        }
+    }
+
+    /// T-7917: an attribute with no key or no readable value is skipped, not an error, and the
+    /// rest of the record still makes its event.
+    #[test]
+    fn an_attribute_without_a_key_or_a_value_is_skipped() {
+        let event = event_of(&record(vec![
+            json!({ "value": { "stringValue": "no key" } }),
+            json!({ "key": "no-value" }),
+            json!({ "key": "list", "value": { "arrayValue": { "values": [] } } }),
+        ]))
+        .expect("an event");
+        assert_eq!(event.project, "helsinki");
+        assert!(event.details.get("no-value").is_none());
+        assert!(event.details.get("list").is_none());
+    }
+
+    /// T-7917: the instant may be a JSON number of nanoseconds; text that is no number, or any
+    /// other type, means "when it arrived".
+    #[test]
+    fn a_numeric_instant_is_read_and_an_unreadable_one_is_now() {
+        let mut numeric = record(vec![]);
+        numeric["timeUnixNano"] = json!(1_789_314_063_000_000_000_i64);
+        assert_eq!(
+            event_of(&numeric).expect("an event").time.as_second(),
+            1_789_314_063
+        );
+        let before = TimestampTz::now().as_second();
+        for unreadable in [json!("soon"), json!(true), json!(1.5)] {
+            let mut odd = record(vec![]);
+            odd["timeUnixNano"] = unreadable;
+            let at = event_of(&odd).expect("an event").time.as_second();
+            assert!(at >= before, "{at} is when it arrived");
+        }
+    }
+
+    /// T-7917: a database that does not answer is a 503 on the list, not a 500 and not an empty
+    /// page that says nothing happened.
+    #[tokio::test]
+    async fn a_list_over_a_dead_store_is_unavailable() {
+        let state = member_world(AppState::new(crate::config::Config::for_tests(), None))
+            .with_db(crate::test_db::dead_pool());
+        let refused = list_activity(
+            pia(),
+            State(state),
+            Path("helsinki".into()),
+            Query(ActivityQuery::default()),
+        )
+        .await;
+        assert!(matches!(refused, Err(ApiError::Unavailable(_))));
+    }
+
+    /// T-7917: the collector's batch is a 503 when the store cannot keep it, so the collector
+    /// retries instead of believing the audit trail holds it; a caller that is not the
+    /// collector's client is refused before that.
+    #[tokio::test]
+    async fn an_ingest_over_a_dead_store_is_unavailable_and_a_stranger_is_denied() {
+        let state = member_world(AppState::new(crate::config::Config::for_tests(), None))
+            .with_db(crate::test_db::dead_pool());
+        let mut bearer = axum::http::HeaderMap::new();
+        bearer.insert(
+            header::AUTHORIZATION,
+            header::HeaderValue::from_static("Bearer x"),
+        );
+        let batch = json!({ "resourceLogs": [{ "scopeLogs": [{ "logRecords": [record(vec![])] }] }] });
+        let kept = ingest_activity(
+            pia(),
+            Some(axum::Extension(TokenClient(COLLECTOR_CLIENT.into()))),
+            State(state.clone()),
+            bearer.clone(),
+            Json(batch.clone()),
+        )
+        .await;
+        assert!(matches!(kept, Err(ApiError::Unavailable(_))));
+
+        let other = ingest_activity(
+            pia(),
+            Some(axum::Extension(TokenClient("someone-else".into()))),
+            State(state),
+            bearer,
+            Json(batch),
+        )
+        .await;
+        assert!(matches!(other, Err(ApiError::Denied(_))));
+    }
+
+    /// T-7917: a tail that fell more than a channel's capacity behind misses the oldest events,
+    /// not the rest of the tail: it goes on with what the channel still holds.
+    #[tokio::test]
+    async fn a_lagging_tail_skips_what_it_missed_and_goes_on() {
+        use http_body_util::BodyExt;
+        let state = member_world(AppState::new(crate::config::Config::for_tests(), None));
+        let response = stream_activity(
+            pia(),
+            State(state.clone()),
+            Path("helsinki".into()),
+            Query(ActivityQuery::default()),
+        )
+        .await
+        .expect("a stream");
+        for n in 0..300 {
+            state.activity_events.publish(&held(n)).await;
+        }
+        let mut body = response.into_body();
+        let frame = tokio::time::timeout(Duration::from_secs(10), body.frame())
+            .await
+            .expect("a frame in time")
+            .expect("the stream goes on")
+            .expect("no error");
+        let data = frame.into_data().expect("an event");
+        let text = String::from_utf8_lossy(&data);
+        assert!(text.contains("\"summary\":\"event 44\""), "{text}");
+        assert!(!text.contains("\"summary\":\"event 43\""), "{text}");
+    }
 }

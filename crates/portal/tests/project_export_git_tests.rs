@@ -629,3 +629,94 @@ async fn an_import_the_organization_no_longer_holds_is_not_exported() {
     assert!(answer.text.contains("org.stations.v1"), "{}", answer.text);
     assert!(answer.text.contains("2.0.0"), "{}", answer.text);
 }
+
+// --- T-7917: what the coverage run found no test for ------------------------------------
+
+/// T-7917, MF-45: an App with no `source.git` has no repository of its own, so the bundle holds
+/// the project's and its other Apps' and the index does not name it.
+#[tokio::test]
+async fn an_app_with_no_source_repository_is_left_out_of_the_bundle() {
+    let (_server, state) = world(HEAD).await;
+    state.mirror.upsert(envelope(
+        "App",
+        "static-page",
+        "ovzdusie",
+        json!({ "kind": "ui" }),
+    ));
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let files = unzip(&answer.bytes);
+    let index: jc_core::kinds::Bundle =
+        serde_norway::from_slice(&files["bundle.yaml"]).expect("the platform's Bundle");
+    let names: Vec<&str> = index
+        .spec
+        .repositories
+        .iter()
+        .map(|repository| repository.name.as_str())
+        .collect();
+    assert_eq!(names, ["ovzdusie", "air-map"]);
+}
+
+/// T-7917, PF-86: a project repository whose head holds no `project.yaml` cannot be exported:
+/// an import could not read the parameters it declares, so the export says which repository.
+#[tokio::test]
+async fn a_project_repository_without_its_own_file_is_not_exported() {
+    let (server, state) = world(HEAD).await;
+    let file = "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.File(Path=@p,Ref=@r)";
+    // The export reads the file once to judge it readable; the bundle's own read then finds
+    // it gone from the head it took.
+    Mock::given(method("GET"))
+        .and(path(file))
+        .and(query_param("@p", "'project.yaml'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({ "Sha": "blob-project.yaml", "Content": STANDARD.encode("kind: Project\n") }),
+        ))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(file))
+        .and(query_param("@p", "'project.yaml'"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })))
+        .with_priority(2)
+        .mount(&server)
+        .await;
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("has no project.yaml at"),
+        "{}",
+        answer.text
+    );
+}
+
+/// T-7917, MF-45: a registry entry whose `organizationRef` is neither a name nor a typed
+/// reference is an internal error naming the field, never an entry the target cannot place.
+#[tokio::test]
+async fn a_registry_entry_with_a_malformed_organization_ref_is_not_exported() {
+    let (_server, state) = world(HEAD).await;
+    state.mirror.upsert(envelope(
+        "Project",
+        "ovzdusie",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": 7, "repository": { "name": "ovzdusie" }, "ref": "main" }),
+    ));
+    let answer = export(&state, steward(), "?format=git").await;
+    assert_eq!(
+        answer.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        answer.text
+    );
+}
+
+/// T-7917, MF-17: a revision that is a commit id is used as it is, with no branch to resolve
+/// first, and the project's files are read at that commit.
+#[tokio::test]
+async fn a_revision_that_is_a_commit_is_read_without_resolving_a_branch() {
+    let (_server, state) = world(HEAD).await;
+    let answer = export(&state, steward(), &format!("?revision={HEAD}")).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert!(answer.text.contains("name: hluk"), "{}", answer.text);
+}

@@ -449,10 +449,10 @@ async fn mirror_at(
         let Some(mut envelope) = crate::store::envelope_of(&file.content) else {
             continue;
         };
-        match envelope.metadata.namespace.as_deref() {
-            None | Some("") => envelope.metadata.namespace = Some(project.to_owned()),
-            Some(namespace) if namespace != project => continue,
-            Some(_) => {}
+        // `envelope_of` keeps only a manifest that names its namespace; another project's
+        // file under this project's folder is not read.
+        if envelope.metadata.namespace.as_deref() != Some(project) {
+            continue;
         }
         envelope.strip_status();
         mirror.upsert(envelope);

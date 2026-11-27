@@ -4908,3 +4908,212 @@ async fn the_runs_set_holds_each_origin_and_filters_on_it() {
         foreign.text
     );
 }
+
+/// T-7918: a filter the evaluator cannot run (`contains` on a number) is a 400 on every read
+/// that evaluates it, a count and a list alike; a path that is only a reference is not served
+/// (501); a key with a part the type lacks is a 400; each answer names what to fix.
+#[tokio::test]
+async fn an_evaluator_refusal_answers_its_status_on_every_read_that_runs_it() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    for uri in [
+        "/api/v1/projects/$count?$filter=contains(name,1)",
+        "/api/v1/projects('helsinki')/spaces/$count?$filter=contains(name,1)",
+        "/api/v1/spaces/$count?$filter=contains(name,1)",
+        "/api/v1/spaces?$filter=contains(name,1)",
+    ] {
+        let answer = odata(&state, mode, "root", uri).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{uri}: {}", answer.text);
+        assert!(answer.text.contains("takes a string"), "{uri}: {}", answer.text);
+    }
+    let reference = odata(&state, mode, "root", "/api/v1/projects/$ref").await;
+    assert_eq!(reference.status, StatusCode::NOT_IMPLEMENTED, "{}", reference.text);
+    let key = odata(&state, mode, "root", "/api/v1/projects(name='helsinki',x='y')").await;
+    assert_eq!(key.status, StatusCode::BAD_REQUEST, "{}", key.text);
+}
+
+/// T-7918: `$format` picks the `$metadata` document's JSON form, and so does an `Accept`
+/// header; the default is XML.
+#[tokio::test]
+async fn the_metadata_document_answers_in_the_format_asked() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    for uri in [
+        "/api/v1/$metadata?$format=application%2Fjson",
+        "/api/v1/$metadata?$format=application/json",
+    ] {
+        let answer = odata(&state, mode, "root", uri).await;
+        assert_eq!(answer.status, StatusCode::OK, "{uri}: {}", answer.text);
+        let json: Value = serde_json::from_str(&answer.text).expect("CSDL JSON");
+        assert!(json.is_object(), "{uri}");
+    }
+    let cookie = cookies(&state.config, person("root", &[ROOTS]), mode.org()).await;
+    let accepted = send(
+        &state,
+        mode,
+        &cookie,
+        "/api/v1/$metadata",
+        &[("OData-Version", "4.0"), ("Accept", "application/json")],
+    )
+    .await;
+    assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.text);
+    assert!(serde_json::from_str::<Value>(&accepted.text).is_ok(), "{}", accepted.text);
+    let xml = odata(&state, mode, "root", "/api/v1/$metadata").await;
+    assert!(xml.text.trim_start().starts_with('<'), "{}", xml.text);
+}
+
+/// T-7918: Changes live in the forge; with none configured a read that needs them is the
+/// Portal's own failure (a 5xx naming it), never an empty list that looks like "no changes".
+#[tokio::test]
+async fn a_read_of_changes_without_a_forge_is_a_failure_not_an_empty_list() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    for uri in [
+        "/api/v1/changes",
+        "/api/v1/projects?$expand=changes",
+        "/api/v1/projects('helsinki')?$expand=changes",
+    ] {
+        let answer = odata(&state, mode, "root", uri).await;
+        assert!(answer.status.is_server_error(), "{uri}: {} {}", answer.status, answer.text);
+    }
+}
+
+/// T-7918: the count of the members and of the Organization's roles runs the same filter as a
+/// list, and a filter the evaluator cannot run is a 400 there too.
+#[tokio::test]
+async fn the_count_of_an_organization_set_refuses_a_filter_it_cannot_run() {
+    let state = state();
+    for uri in [
+        "/api/v1/members/$count?$filter=contains(user,1)",
+        "/api/v1/organizationRoles/$count?$filter=contains(name,1)",
+    ] {
+        let answer = odata(&state, Mode::Path("hel"), "root", uri).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{uri}: {}", answer.text);
+        assert!(answer.text.contains("takes a string"), "{uri}: {}", answer.text);
+    }
+}
+
+/// T-7918: a caller whose grant on RoleBindings is constrained reads the members of the
+/// bindings the constraint lets through and no one else's.
+#[tokio::test]
+async fn a_constrained_grant_on_bindings_lists_only_the_members_it_lets_through() {
+    let state = state();
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "binding-no-editor",
+        ORG_NAMESPACE,
+        json!({ "rules": [
+            { "kinds": ["Project"], "verbs": ["read"] },
+            { "kinds": ["RoleBinding"], "verbs": ["read"],
+              "constraints": [{ "field": "spec.role", "notIn": ["editor"] }] },
+        ] }),
+    ));
+    for (name, user, role) in [
+        ("hel-scoped", "scoped@hel.fi", "binding-no-editor"),
+        ("hel-uid-reader", "u-111", "reader"),
+        ("hel-uid-editor", "u-222", "editor"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": user }], "role": role, "scope": { "organization": "hel" } }),
+        ));
+    }
+    let rows = odata(&state, Mode::Path("hel"), "scoped", "/api/v1/members").await;
+    assert_eq!(rows.status, StatusCode::OK, "{}", rows.text);
+    let users = names(&rows.json(), "user");
+    assert!(users.contains(&"u-111".to_owned()), "{users:?}");
+    assert!(!users.contains(&"u-222".to_owned()), "the editor binding is constrained out: {users:?}");
+}
+
+/// T-7918: a person the realm knows by id alone has no name and no e-mail: both are null for a
+/// people-admin, not an empty string.
+#[tokio::test]
+async fn a_member_the_realm_knows_without_a_name_has_a_null_name_and_email() {
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/users/sub-ghost"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "id": "sub-ghost" })))
+        .mount(&kc)
+        .await;
+    let mut state = state();
+    state.people = People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    let m = &state.mirror;
+    m.upsert(envelope(
+        "Role",
+        "person-reader",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["Project", "Person"], "verbs": ["read"] }] }),
+    ));
+    for (name, user, role) in [
+        ("hel-people", "sub-ppl", "person-reader"),
+        ("hel-ghost", "sub-ghost", "reader"),
+    ] {
+        m.upsert(envelope(
+            "RoleBinding",
+            name,
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": user }], "role": role, "scope": { "organization": "hel" } }),
+        ));
+    }
+    let rows = odata(
+        &state,
+        Mode::Path("hel"),
+        "ppl",
+        "/api/v1/members?$filter=user%20eq%20'sub-ghost'",
+    )
+    .await;
+    assert_eq!(rows.status, StatusCode::OK, "{}", rows.text);
+    let body = rows.json();
+    assert_eq!(body["value"].as_array().map(Vec::len), Some(1), "{}", rows.text);
+    assert_eq!(body["value"][0]["name"], Value::Null, "{}", rows.text);
+    assert_eq!(body["value"][0]["email"], Value::Null, "{}", rows.text);
+}
+
+/// T-7918: `propose_update` with neither a manifest nor a patch is a 400 saying it takes one of
+/// them; an empty body to `jc_project_create` is refused as a client error, not a 5xx; a project
+/// that only its spaces name (no Project manifest) still reads, with an ETag.
+#[tokio::test]
+async fn an_action_without_what_it_needs_is_refused_and_an_orphan_project_still_reads() {
+    let state = state();
+    let etag = state
+        .mirror
+        .get("helsinki", "ContextSpace", "air")
+        .expect("air")
+        .etag();
+    let propose = "/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.propose_update";
+    let bare = act(&state, "hel-editor", propose, Some(&etag), json!({ "dryRun": true })).await;
+    assert_eq!(bare.status, StatusCode::BAD_REQUEST, "{}", bare.text);
+    assert!(bare.text.contains("takes the whole manifest or a merge patch"), "{}", bare.text);
+
+    let cookie = cookies(&state.config, person("hel-editor", &[]), "hel").await;
+    let empty = raw_sent(
+        &state,
+        "POST",
+        "/api/v1/projects('helsinki')/JoinedContext.Portal.jc_project_create",
+        &cookie,
+        None,
+        None,
+    )
+    .await;
+    assert!(empty.status.is_client_error(), "{} {}", empty.status, empty.text);
+
+    state
+        .mirror
+        .upsert(envelope("ContextSpace", "lone", "orphan", json!({})));
+    let orphan = odata(&state, Mode::Path("hel"), "root", "/api/v1/projects('orphan')").await;
+    assert_eq!(orphan.status, StatusCode::OK, "{}", orphan.text);
+    assert!(orphan.headers.get(header::ETAG).is_some(), "{:?}", orphan.headers);
+}

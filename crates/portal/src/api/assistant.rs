@@ -1688,4 +1688,338 @@ mod tests {
         .expect("a question from a page is fine")
         .is_empty());
     }
+
+    /// T-7917: a ContextSpace is its own space; the fields a word can hit name the labels.
+    #[test]
+    fn a_space_is_its_own_space_and_a_label_is_a_field_a_word_can_hit() {
+        let space = envelope("ContextSpace", "helsinki", "bikes", json!({}));
+        assert_eq!(super::space_of(&space), "bikes");
+        let mut labelled = envelope("Endpoint", "helsinki", "counts", json!({ "slug": "abc" }));
+        labelled
+            .metadata
+            .labels
+            .insert("joinedcontext.com/space".into(), "traffic".into());
+        assert_eq!(super::space_of(&labelled), "traffic");
+        let fields = super::fields(&labelled);
+        let labels = fields
+            .iter()
+            .find(|(name, _)| *name == "labels")
+            .expect("a labels field");
+        assert_eq!(labels.1, "joinedcontext.com/space traffic");
+    }
+
+    /// T-7917: a reference that names no Endpoint (nor a slug, nor an empty one) shares nothing,
+    /// and an Endpoint the project already lists is listed once, under its own owner.
+    #[tokio::test]
+    async fn a_dangling_reference_shares_nothing_and_a_listed_endpoint_is_listed_once() {
+        let state = shared_world();
+        state.mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "helsinki",
+            "dangling",
+            json!({ "alias": "nowhere" }),
+        ));
+        state.mirror.upsert(envelope(
+            "SharedSpaceReference",
+            "helsinki",
+            "empty-slug",
+            json!({ "endpointSlug": "", "alias": "nothing" }),
+        ));
+        let shared: Vec<_> = super::shared_endpoints(&state.mirror, "helsinki")
+            .into_iter()
+            .map(|(reference, endpoint)| (reference.metadata.name, endpoint.metadata.name))
+            .collect();
+        assert_eq!(
+            shared,
+            [(
+                "bb-air".to_owned(),
+                "app-banskabystrica-ovzdusie".to_owned()
+            )]
+        );
+        let everything = crate::permissions::effective(
+            &state.mirror,
+            "boot",
+            &person(&["boot"]),
+            "helsinki",
+            jc_time::TimestampTz::now(),
+        );
+        // A word of none of the shared Endpoint's fields finds nothing of it.
+        let nothing = super::search(&state, "helsinki", &everything, "unrelated", None).await;
+        assert!(nothing.items.is_empty(), "{:?}", nothing.items);
+        // A turn of filler words searches nothing and answers its own question back.
+        let filler = super::search(&state, "helsinki", &everything, "and right now??", None).await;
+        assert!(filler.items.is_empty());
+        assert_eq!(filler.q, "and right now??");
+        // The project's own Endpoint of that name is found once, not again as the shared one.
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "helsinki",
+            "app-banskabystrica-ovzdusie",
+            json!({ "contextSpaceRef": "hel-air", "slug": "ownslug", "audience": "project" }),
+        ));
+        let found = super::search(&state, "helsinki", &everything, "ovzdusie", None).await;
+        let named: Vec<_> = found
+            .items
+            .iter()
+            .filter(|item| item.name == "app-banskabystrica-ovzdusie")
+            .map(|item| item.owner.as_str())
+            .collect();
+        assert_eq!(named, ["helsinki"]);
+    }
+
+    /// T-7917: the Groups a repository declares for a project are named, nobody else's.
+    #[test]
+    fn declared_groups_are_the_projects_own() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(envelope("Group", "helsinki", "analysts", json!({})));
+        state
+            .mirror
+            .upsert(envelope("Group", "espoo", "others", json!({})));
+        assert_eq!(super::declared_groups(&state, "helsinki"), ["analysts"]);
+        assert!(super::declared_groups(&state, "nowhere").is_empty());
+    }
+
+    fn signed_in(username: &str, groups: &[&str]) -> crate::auth::CurrentUser {
+        let mut identity = person(groups);
+        identity.subject = format!("f:1:{username}");
+        identity.username = username.to_owned();
+        crate::auth::CurrentUser(crate::auth::session::Session {
+            identity,
+            expires_at: crate::auth::session::now_unix() + 3600,
+            issued_at: crate::auth::session::now_unix(),
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: crate::auth::session::now_unix() + 3600,
+            refresh_token: None,
+        })
+    }
+
+    /// T-7917: what the profiles list answers is in name order, each with the caller's half.
+    #[tokio::test]
+    async fn the_profiles_are_listed_in_name_order() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        for name in ["zeta", "alpha"] {
+            state.mirror.upsert(envelope(
+                "AgentProfile",
+                crate::api::blueprints::ORG_NAMESPACE,
+                name,
+                json!({ "role": "builder" }),
+            ));
+        }
+        let super::Json(list) = super::get_access(
+            signed_in("demo.steward", &["portal-approver"]),
+            super::State(state.clone()),
+            super::Path("helsinki".into()),
+        )
+        .await
+        .expect("listed");
+        let names: Vec<_> = list.items.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["alpha", "zeta"]);
+        let refused = super::get_access(
+            signed_in("demo.steward", &["portal-approver"]),
+            super::State(state),
+            super::Path("Not A Project".into()),
+        )
+        .await;
+        assert!(matches!(refused, Err(crate::error::ApiError::NotFound(_))));
+    }
+
+    /// T-7917: a form that names only some of kind, draft and field is let through as far as it
+    /// goes.
+    #[test]
+    fn a_form_context_may_name_only_part_of_a_form() {
+        let asked =
+            |kind: Option<&str>, name: Option<&str>, field: Option<&str>| StartConversation {
+                path: None,
+                message: "what goes here?".to_owned(),
+                profile: None,
+                continues: None,
+                endpoint_names: Vec::new(),
+                access: None,
+                page_context: None,
+                form_context: Some(FormContextRequest {
+                    kind: kind.map(str::to_owned),
+                    name: name.map(str::to_owned),
+                    field: field.map(str::to_owned),
+                }),
+            };
+        let nothing = form_context(&asked(None, None, None)).expect("an empty form context");
+        assert!(nothing.is_empty());
+        let draft = form_context(&asked(None, Some("citybikes"), None)).expect("a draft alone");
+        assert_eq!(draft.name.as_deref(), Some("citybikes"));
+        let kind = form_context(&asked(Some("Pipeline"), Some("citybikes"), None))
+            .expect("a kind and a draft");
+        assert_eq!(kind.field, None);
+    }
+
+    fn agent_world() -> crate::state::AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.agent_settings = Some(crate::config::AgentSettings {
+            namespace: None,
+            portal_namespace: "portal".into(),
+            proxy_base: "http://127.0.0.1:1".into(),
+            run_ttl_secs: 600,
+            approval_ttl_secs: 3600,
+        });
+        let state = crate::state::AppState::new(config, None);
+        state.mirror.upsert(envelope(
+            "AgentProfile",
+            crate::api::blueprints::ORG_NAMESPACE,
+            "app-builder",
+            json!({
+                "role": "builder",
+                "runtime": {
+                    "image": "ghcr.io/all-hands-ai/agent-server:v1.4.0",
+                    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                },
+                "model": { "provider": "anthropic", "name": "claude-sonnet-5", "maxTokensPerRun": 400000 },
+                "limits": {
+                    "stepsPerRun": 120, "wallClock": "PT20M",
+                    "concurrentRunsPerOrganization": 2, "requestsPerMinute": 60,
+                    "maxResponseBytes": 2097152
+                },
+                "egress": { "allowedHosts": ["registry.npmjs.org"] },
+                "tools": ["shell", "npm", "git"],
+                "workspace": { "cpu": "1", "memory": "2Gi", "ephemeralStorage": "4Gi" }
+            }),
+        ));
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "helsinki",
+            "helsinki-bikes",
+            json!({ "slug": "si6epqkx364lprho5uaigutk274r5grb", "audience": "project",
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" } }),
+        ));
+        state
+    }
+
+    /// A finished conversation of `created_by` in `helsinki`, reading no Endpoint.
+    fn parent_run(id: &str, created_by: &str) -> crate::agents::run::AgentRun {
+        let (_, ticket_hash) = crate::agents::run::mint_ticket();
+        crate::agents::run::AgentRun {
+            id: id.to_owned(),
+            project: "helsinki".to_owned(),
+            app_name: String::new(),
+            title: None,
+            endpoint_name: String::new(),
+            endpoint_slug: String::new(),
+            endpoints: json!([]),
+            profile: "app-builder".to_owned(),
+            kind: "conversation".to_owned(),
+            unattended: false,
+            continues: None,
+            app_class: "ui".to_owned(),
+            visibility: "private".to_owned(),
+            prompt: "Earlier conversation".to_owned(),
+            prompt_digest: crate::agents::run::digest_prompt("Earlier conversation"),
+            data_needs: json!([]),
+            allows_write: false,
+            branch: String::new(),
+            path_prefix: String::new(),
+            status: "succeeded".to_owned(),
+            ticket_hash,
+            workspace: None,
+            merge_request: None,
+            change_id: None,
+            source_url: None,
+            mirror_url: None,
+            preview_url: None,
+            first_frame_ms: None,
+            first_version_ms: None,
+            files: json!({}),
+            steps: 0,
+            tokens_used: 0,
+            created_by: created_by.to_owned(),
+            origin: "person".to_owned(),
+            starter: serde_json::Value::Null,
+            created_at: "2026-09-12T08:00:00Z".to_owned(),
+            started_at: None,
+            finished_at: Some("2026-09-12T08:05:00Z".to_owned()),
+            expires_at: "2026-09-12T08:30:00Z".to_owned(),
+            error: None,
+        }
+    }
+
+    async fn converse(
+        state: &crate::state::AppState,
+        who: crate::auth::CurrentUser,
+        request: serde_json::Value,
+    ) -> Result<(axum::http::StatusCode, crate::api::agent_runs::CreatedRun), crate::error::ApiError>
+    {
+        let request: StartConversation = serde_json::from_value(request).expect("a request");
+        super::start_conversation(
+            who,
+            crate::agents::run::RunOrigin::Person,
+            super::State(state.clone()),
+            super::Path("helsinki".into()),
+            axum::http::HeaderMap::new(),
+            super::Json(request),
+        )
+        .await
+        .map(|(status, super::Json(created))| (status, created))
+    }
+
+    /// T-7917: a conversation names the Endpoint it was asked to read in its run; a continuation
+    /// that names none keeps its parent's (here: none); and a person who approves nothing does
+    /// not continue another person's conversation.
+    #[tokio::test]
+    async fn a_conversation_carries_its_endpoint_and_a_continuation_stays_the_callers() {
+        let state = agent_world();
+        let admin = || signed_in("demo.steward", &["portal-approver"]);
+        let (status, created) = converse(
+            &state,
+            admin(),
+            json!({ "message": "How are the bikes?", "endpointNames": ["helsinki-bikes"] }),
+        )
+        .await
+        .expect("started");
+        assert_eq!(status, axum::http::StatusCode::ACCEPTED);
+        assert_eq!(created.run.endpoint_name, "helsinki-bikes");
+        assert_eq!(created.run.created_by, "demo.steward");
+
+        state
+            .agents
+            .create_run(&parent_run("parent-run-1", "demo.steward"))
+            .await
+            .expect("a parent run");
+        let (_, kept) = converse(
+            &state,
+            admin(),
+            json!({ "message": "And later?", "continues": "parent-run-1" }),
+        )
+        .await
+        .expect("continued");
+        assert_eq!(kept.run.continues.as_deref(), Some("parent-run-1"));
+        assert!(kept.run.endpoint_name.is_empty());
+
+        // Ana may converse (propose here) but approves nothing, so another person's run is not
+        // visible to her.
+        state.mirror.upsert(envelope(
+            "Role",
+            crate::permissions::ORG_NAMESPACE,
+            "proposer",
+            json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read", "propose"] }] }),
+        ));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            crate::permissions::ORG_NAMESPACE,
+            "ana-proposes",
+            json!({ "subjects": [{ "user": "ana" }], "role": "proposer",
+                    "scope": { "project": "helsinki" } }),
+        ));
+        let hidden = converse(
+            &state,
+            signed_in("ana", &[]),
+            json!({ "message": "Mine now", "continues": "parent-run-1" }),
+        )
+        .await;
+        assert!(
+            matches!(&hidden, Err(crate::error::ApiError::BadRequest(why)) if why.contains("not visible to you")),
+            "{:?}",
+            hidden.as_ref().err()
+        );
+    }
 }

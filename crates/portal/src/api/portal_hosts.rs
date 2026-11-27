@@ -738,4 +738,211 @@ mod tests {
             assert!(line.contains("reserved"), "{host}: {line}");
         }
     }
+
+    /// An administrator of the installation: every Organization's portals are theirs.
+    fn administrator() -> CurrentUser {
+        let now = crate::auth::session::now_unix();
+        CurrentUser(crate::auth::session::Session {
+            identity: Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 3600,
+            refresh_token: None,
+        })
+    }
+
+    fn organization_manifest(
+        name: &str,
+        spec: serde_json::Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Organization".to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, ORG_NAMESPACE),
+            spec,
+            status: None,
+        }
+    }
+
+    fn world(pool: Option<sqlx::PgPool>) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.installation_hosts = Some(("jcdev.example".into(), "idm.jcdev.example".into()));
+        let state = AppState::new(config, None);
+        state
+            .mirror
+            .upsert(organization_manifest("bbsk", json!({})));
+        match pool {
+            Some(pool) => state.with_db(pool),
+            None => state,
+        }
+    }
+
+    fn new_host(organization: &str, host: &str) -> NewSiteHost {
+        serde_json::from_value(json!({ "organization": organization, "host": host }))
+            .expect("a request")
+    }
+
+    /// T-7917: an Organization with a catalogue lists its address, one without lists none.
+    #[tokio::test]
+    async fn an_organizations_catalogue_is_its_open_data_address() {
+        let mut config = crate::config::Config::for_tests();
+        config.organization_catalogues = vec![serde_json::from_value(json!({
+            "organization": "bbsk", "url": "https://opendata.bbsk.example/"
+        }))
+        .expect("a catalogue")];
+        let state = AppState::new(config, None);
+        for name in ["praha", "bbsk"] {
+            state.mirror.upsert(organization_manifest(name, json!({})));
+        }
+        let Json(listed) = list_portal_hosts(administrator(), State(state))
+            .await
+            .expect("listed");
+        let address = |name: &str| {
+            listed
+                .items
+                .iter()
+                .find(|o| o.organization == name)
+                .expect("listed")
+                .opendata
+                .clone()
+        };
+        assert_eq!(
+            address("bbsk").as_deref(),
+            Some("https://opendata.bbsk.example")
+        );
+        assert_eq!(address("praha"), None);
+    }
+
+    /// T-7917: an Organization that names no domain has no verified domain to list, and a
+    /// registry that cannot be read is the 503.
+    #[tokio::test]
+    async fn an_organization_without_a_domain_lists_none_and_a_dead_registry_is_unavailable() {
+        let scratch = crate::test_db::scratch().await;
+        let state = world(Some(scratch.pool.clone()));
+        let Json(listed) = list_portal_hosts(administrator(), State(state))
+            .await
+            .expect("listed");
+        assert_eq!(listed.items[0].verified_domain, None);
+        let dead = world(Some(crate::test_db::dead_pool()));
+        let refused = list_portal_hosts(administrator(), State(dead)).await;
+        assert!(
+            matches!(refused, Err(ApiError::Unavailable(_))),
+            "{refused:?}"
+        );
+        scratch.remove().await;
+    }
+
+    /// T-7917: where an Organization serves no host and has verified no domain, or has only a
+    /// domain, the refusal says what the Organization has to do first.
+    #[test]
+    fn a_refusal_names_what_the_organization_still_lacks() {
+        let none = field(self_service("data.praha.eu", &[], None, RESERVED).unwrap_err());
+        assert!(
+            none.contains("serves no host and verified no domain"),
+            "{none}"
+        );
+        let domain =
+            field(self_service("data.praha.eu", &[], Some("bbsk.sk"), RESERVED).unwrap_err());
+        assert!(domain.contains("e.g. data.bbsk.sk"), "{domain}");
+    }
+
+    /// T-7917: a host whose proof cannot be read because the store fails is the 503, not a
+    /// verdict on the host.
+    #[tokio::test]
+    async fn a_store_that_fails_while_the_proof_is_read_is_unavailable() {
+        let scratch = crate::test_db::scratch().await;
+        sqlx::query(
+            "INSERT INTO organization_ids (id, domain, challenge, requested_by, minted_by, minted_at) \
+             VALUES ('sk_bbsk', 'bbsk.sk', 'c0ffee', 'op', 'op', now())",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("mint");
+        sqlx::query(
+            "INSERT INTO organizations (name, organization_id, host, state, created_by) \
+             VALUES ('bbsk', 'sk_bbsk', 'bbsk.jcdev.example', 'active', 'test')",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("organization");
+        // The proof is read in two statements; the second asks the challenge this drops.
+        sqlx::query("ALTER TABLE organization_ids DROP COLUMN challenge")
+            .execute(&scratch.pool)
+            .await
+            .expect("drop column");
+        let state = world(Some(scratch.pool.clone()));
+        let refused = add_portal_host(
+            administrator(),
+            State(state),
+            None,
+            Ok(Json(new_host("bbsk", "data.bbsk.sk"))),
+        )
+        .await;
+        assert!(
+            matches!(refused, Err(ApiError::Unavailable(_))),
+            "{refused:?}"
+        );
+        scratch.remove().await;
+    }
+
+    /// T-7917: a host added for an Organization the installation no longer lists answers that
+    /// Organization is not there, after the registry took it; and a removal that finds its row
+    /// gone under it answers the host is not there.
+    #[tokio::test]
+    async fn an_organization_the_list_lacks_and_a_row_changed_under_a_removal_are_not_found() {
+        let scratch = crate::test_db::scratch().await;
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ('ghost', 'ghost.jcdev.example', 'active', 'test'), \
+                    ('bbsk', 'bbsk.jcdev.example', 'active', 'test')",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("organizations");
+        sqlx::query(
+            "INSERT INTO organization_hosts (host, organization, role, state, created_by) VALUES \
+             ('ghost.jcdev.example', 'ghost', 'working', 'served', 'jc.toml'), \
+             ('site.bbsk.jcdev.example', 'bbsk', 'portal-site', 'approved', 'somebody')",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("hosts");
+        let state = world(Some(scratch.pool.clone()));
+        let added = add_portal_host(
+            administrator(),
+            State(state.clone()),
+            None,
+            Ok(Json(new_host("ghost", "opendata2.ghost.jcdev.example"))),
+        )
+        .await;
+        assert!(
+            matches!(&added, Err(ApiError::NotFound(why)) if why.contains("ghost")),
+            "{added:?}"
+        );
+        scratch.skip_rows("organization_hosts", "UPDATE").await;
+        let removed = remove_portal_host(
+            administrator(),
+            State(state),
+            None,
+            Path("site.bbsk.jcdev.example".into()),
+        )
+        .await;
+        assert!(
+            matches!(&removed, Err(ApiError::NotFound(why)) if why.contains("site.bbsk.jcdev.example")),
+            "{removed:?}"
+        );
+        scratch.remove().await;
+    }
 }

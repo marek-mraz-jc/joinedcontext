@@ -148,7 +148,63 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::cell;
+    use super::{cell, csv};
+    use crate::api::changes::{ChangeAuthor, ChangeDecision, ChangeProposal, ChangeSummary};
+    use crate::change::{ChangeMeta, ChangePhase, ChangeStatus, Lane, PlanSummary};
+
+    fn closed(name: &str, decision: Option<ChangeDecision>) -> ChangeProposal {
+        ChangeProposal {
+            api_version: "joinedcontext.com/v1alpha1".into(),
+            kind: "ChangeProposal".into(),
+            metadata: ChangeMeta::new(name, "helsinki"),
+            status: ChangeStatus::new(Lane::Green, ChangePhase::Merged, PlanSummary::default()),
+            summary: ChangeSummary {
+                key: "change.update".into(),
+                params: serde_json::Map::new(),
+            },
+            author: ChangeAuthor {
+                name: "Jana".into(),
+                email: Some("jana@hel.fi".into()),
+            },
+            created_at: "2026-10-01T09:00:00Z".into(),
+            plan_fields: None,
+            files: None,
+            file_count: None,
+            workspace: None,
+            waits_on: Vec::new(),
+            decision,
+            ci: None,
+            space: None,
+        }
+    }
+
+    /// T-7917, T-5114: a change closed in the forge itself has no recorded decision, and one whose
+    /// decision carries no time, take the day the change was created as their `closedAt`; the
+    /// e-mail of the proposer is never a column.
+    #[test]
+    fn a_change_with_no_recorded_time_is_dated_by_its_creation() {
+        let timed = ChangeDecision {
+            by: "ada".into(),
+            via: None,
+            at: Some("2026-10-02T10:00:00Z".into()),
+            reason: None,
+        };
+        let untimed = ChangeDecision {
+            at: None,
+            ..timed.clone()
+        };
+        let rows = csv(&[
+            closed("chg-00000001", None),
+            closed("chg-00000002", Some(untimed)),
+            closed("chg-00000003", Some(timed)),
+        ]);
+        let lines: Vec<&str> = rows.lines().collect();
+        assert_eq!(lines.len(), 4, "{rows}");
+        assert!(lines[1].starts_with("2026-10-01T09:00:00Z,chg-00000001,Merged,"), "{rows}");
+        assert!(lines[2].starts_with("2026-10-01T09:00:00Z,chg-00000002,Merged,"), "{rows}");
+        assert!(lines[3].starts_with("2026-10-02T10:00:00Z,chg-00000003,Merged,"), "{rows}");
+        assert!(!rows.contains("jana@hel.fi"), "{rows}");
+    }
 
     #[test]
     fn a_cell_is_quoted_when_it_must_be_and_a_formula_is_defused() {

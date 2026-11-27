@@ -165,3 +165,25 @@ mod tests {
         scratch.remove().await;
     }
 }
+
+impl Scratch {
+    /// Makes every `op` (INSERT, UPDATE or DELETE) on `table` silently affect no row: a row
+    /// trigger returning NULL, so the statement succeeds and reports zero rows.
+    pub(crate) async fn skip_rows(&self, table: &str, op: &str) {
+        let function = format!("jc_skip_{table}");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RETURN NULL; END $$"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger function");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE TRIGGER {function} BEFORE {op} ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION {function}()"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger");
+    }
+}

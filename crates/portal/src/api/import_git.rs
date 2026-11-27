@@ -839,4 +839,39 @@ mod tests {
             assert!(tags(line.as_bytes(), "p").is_err(), "{line}");
         }
     }
+
+    /// T-7917, MF-05: an entry whose local header is not a zip header is a 400 naming its index.
+    #[test]
+    fn unpack_refuses_an_entry_with_a_broken_header_naming_its_index() {
+        let mut bytes = zipped(&[("a.yaml".into(), b"x".to_vec())]);
+        bytes[2] = 0x09;
+        let refused = unpack(&bytes).expect_err("a broken local header");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(why) if why.starts_with("archive entry 0:")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917, MF-42: a stream whose checksum does not hold is a 400 naming the entry, not a
+    /// half-read archive.
+    #[test]
+    fn unpack_refuses_an_entry_whose_stream_does_not_read_back() {
+        let payload = b"unreadable-stream-payload";
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("a.yaml", options).expect("entry");
+        writer.write_all(payload).expect("write");
+        let mut bytes = writer.finish().expect("zip").into_inner();
+        let at = bytes
+            .windows(payload.len())
+            .position(|window| window == &payload[..])
+            .expect("a stored body sits in the archive as it is");
+        bytes[at] ^= 0xff;
+        let refused = unpack(&bytes).expect_err("a stream that fails its checksum");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(why) if why.starts_with("archive entry 'a.yaml':")),
+            "{refused:?}"
+        );
+    }
 }

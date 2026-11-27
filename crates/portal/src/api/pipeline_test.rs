@@ -213,9 +213,12 @@ fn spec_of(pipeline: &Value, project: &str) -> Result<PipelineSpec, ApiError> {
         }
         Some(_) => {}
     }
-    let text = serde_json::to_string(&pipeline).map_err(|e| ApiError::Internal(e.to_string()))?;
-    if let Some(checked) = jc_core::registry::validate_yaml("Pipeline", &text) {
-        checked.map_err(|e| ApiError::BadRequest(format!("spec is not a valid Pipeline: {e}")))?;
+    let text = serde_json::to_string(&pipeline).map_err(ApiError::internal)?;
+    // `Pipeline` is a kind of the catalogue, so the registry always answers for it.
+    if let Some(Err(refused)) = jc_core::registry::validate_yaml("Pipeline", &text) {
+        return Err(ApiError::BadRequest(format!(
+            "spec is not a valid Pipeline: {refused}"
+        )));
     }
     serde_json::from_value(pipeline["spec"].clone())
         .map_err(|e| ApiError::BadRequest(format!("spec is not a valid Pipeline: {e}")))
@@ -385,9 +388,8 @@ pub async fn test_pipeline(
     let pipeline = request.pipeline.clone();
     let trace = execute_test_pipeline(&user.0.identity, &state, &project, request).await?;
     let check = crate::record_check::check_trace(&state, &project, &pipeline, &trace.mapping)?;
-    let mut answer = serde_json::to_value(&trace).map_err(|e| ApiError::Internal(e.to_string()))?;
-    answer["check"] =
-        serde_json::to_value(&check).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut answer = serde_json::to_value(&trace).map_err(ApiError::internal)?;
+    answer["check"] = serde_json::to_value(&check).map_err(ApiError::internal)?;
     Ok(Json(answer))
 }
 
@@ -1846,5 +1848,144 @@ mod tests {
         };
         let (kept, limited) = collect(&mut receiver, window).await;
         assert_eq!((kept.len(), limited), (MAX_MESSAGES, true));
+    }
+
+    fn spec_json(extra: Value) -> PipelineSpec {
+        let mut spec = json!({
+            "class": "auto",
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all"
+        });
+        for (key, value) in extra.as_object().cloned().unwrap_or_default() {
+            spec[key] = value;
+        }
+        serde_json::from_value(spec).expect("a PipelineSpec")
+    }
+
+    /// T-7917: a manifest with no `metadata` is refused by the kind (400) rather than given a
+    /// namespace it has no place for.
+    #[test]
+    fn a_manifest_without_metadata_is_400() {
+        let refused = spec_of(
+            &json!({ "kind": "Pipeline", "spec": { "class": "resident" } }),
+            "helsinki",
+        );
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("spec is not a valid Pipeline")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a pipeline that declares no attributes has no attribute step; one that does gets
+    /// the step with the units of the models of the spaces it writes into, and a slot name the
+    /// kind refuses is a 400 naming `spec.attributes`.
+    #[test]
+    fn the_attribute_step_is_built_from_the_spaces_models_and_a_bad_slot_is_400() {
+        use crate::config::Config;
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta::new("helsinki-all", "helsinki"),
+            spec: json!({ "contextSpaceRef": "helsinki", "slug": "helsinkislug" }),
+            status: None,
+        });
+        state.model_schemas.replace(std::collections::HashMap::from([(
+            ("helsinki".to_owned(), "helsinki".to_owned()),
+            std::sync::Arc::new(crate::pipeline_validation::ModelSchema::compile(
+                "helsinki",
+                "1.0.0",
+                &json!({ "definitions": { "BikeHireDockingStation": {
+                    "additionalProperties": false,
+                    "properties": { "id": { "type": "string" },
+                        "name": { "type": "string", "x-ngsi-ld-kind": "Property" } }
+                }}}),
+                &["BikeHireDockingStation".to_owned()],
+                false,
+            )),
+        )]));
+
+        let none = spec_json(json!({}));
+        assert_eq!(
+            attributes_of(&state, "helsinki", &none, "stations").expect("no step"),
+            None
+        );
+
+        let ruled = spec_json(json!({ "attributes": [{
+            "type": "BikeHireDockingStation",
+            "rules": [{ "names": ["name"], "observedAt": "now" }]
+        }] }));
+        let step = attributes_of(&state, "helsinki", &ruled, "stations")
+            .expect("a step")
+            .expect("the attribute step");
+        assert_eq!(step["label"], "attributes");
+
+        let bad = spec_json(json!({ "attributes": [{
+            "type": "Bike", "rules": [{ "names": ["not a slot"], "observedAt": "now" }]
+        }] }));
+        let refused = attributes_of(&state, "helsinki", &bad, "stations");
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("spec.attributes:")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a history or lifetime rule the kind refuses is a 400 naming its field, and a
+    /// harness without processors or without its envelope step is our fault (500), not a pass.
+    #[test]
+    fn a_bad_history_or_lifetime_is_400_and_a_harness_without_its_steps_is_500() {
+        let bad_slot = json!(["not a slot"]);
+        let history = spec_json(json!({ "history": [{ "type": "Bus", "attributes": [
+            { "names": bad_slot, "keep": "every", "observedAt": "received" }] }] }));
+        let refused = with_lifetime(&mut json!({}), &history, None);
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("spec.history:")),
+            "{refused:?}"
+        );
+        let lifetime = spec_json(json!({ "lifetime": [{ "type": "Bus", "attributes": [
+            { "names": bad_slot, "rolling": "PT5M" }] }] }));
+        let refused = with_lifetime(&mut json!({}), &lifetime, None);
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("spec.lifetime:")),
+            "{refused:?}"
+        );
+
+        let ending = spec_json(json!({ "lifetime": [{ "type": "Bus", "entity": { "rolling": "PT10M" } }] }));
+        let refused = with_lifetime(&mut json!({}), &ending, None);
+        assert!(
+            matches!(&refused, Err(ApiError::Internal(why)) if why.contains("no processors")),
+            "{refused:?}"
+        );
+        let mut without_envelope = json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } });
+        let refused = with_lifetime(&mut without_envelope, &ending, None);
+        assert!(
+            matches!(&refused, Err(ApiError::Internal(why)) if why.contains("no envelope step")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a harness with no processor list is left to fail at the runner, never panicked on.
+    #[test]
+    fn splitting_messages_in_a_harness_without_processors_adds_nothing() {
+        let mut config = json!({});
+        split_messages(&mut config);
+        assert!(config["pipeline"]["processors"].is_null(), "{config}");
+    }
+
+    /// T-7917: only a `lint_errors` list of texts is read line by line; any other body, a list of
+    /// something else or a missing member is kept as the runner wrote it.
+    #[test]
+    fn a_refusal_body_is_read_as_lint_lines_only_when_it_is_a_list_of_texts() {
+        assert_eq!(
+            runner_lints(r#"{"lint_errors":["line 1: a","line 2: b"]}"#),
+            "line 1: a\nline 2: b"
+        );
+        for kept in [
+            r#"{"lint_errors":"line 1: a"}"#,
+            r#"{"lint_errors":["line 1: a", 2]}"#,
+            r#"{"errors":["x"]}"#,
+            "plain text",
+        ] {
+            assert_eq!(runner_lints(kept), kept);
+        }
     }
 }

@@ -437,6 +437,67 @@ mod tests {
         assert_eq!(manifest_acts_as("AgentProfile", &public), ActsAs::Caller);
     }
 
+    /// T-7917 (T-5698): an agent kind lives in no space, so a reader bound to one space reads
+    /// none of them and the registry lists no server.
+    #[tokio::test]
+    async fn a_reader_of_one_space_lists_no_server() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let put = |kind: &str, namespace: &str, name: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        let org = crate::permissions::ORG_NAMESPACE;
+        // A space-scoped binding lies in the project holding the space.
+        put("ContextSpace", "helsinki", "air", json!({}));
+        put(
+            "Role",
+            org,
+            "server-reader",
+            json!({ "rules": [{ "kinds": ["McpServer"], "verbs": ["read"] }] }),
+        );
+        put(
+            "RoleBinding",
+            org,
+            "air-readers",
+            json!({ "subjects": [{ "user": "jana@hel.fi" }], "role": "server-reader",
+                    "scope": { "contextSpace": "air" } }),
+        );
+        put(
+            "McpServer",
+            "helsinki",
+            "air-mcp",
+            json!({ "contextSpaceRef": "air", "members": [] }),
+        );
+        put(
+            "McpServer",
+            "helsinki",
+            "traffic-mcp",
+            json!({ "contextSpaceRef": "traffic", "members": [] }),
+        );
+        let identity = Identity {
+            client: None,
+            subject: "sub-jana".to_owned(),
+            username: "jana@hel.fi".to_owned(),
+            email: Some("jana@hel.fi".to_owned()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let effective = crate::permissions::for_request(&state, &identity, "helsinki");
+        let (items, reads) = namespace_items(&state, &identity, "helsinki", &effective)
+            .await
+            .expect("the namespace's agents");
+        // An agent kind lives in no space, so a grant bound to one space reads none of them.
+        assert!(!reads, "a space-scoped grant reads no agent kind");
+        assert!(items.is_empty(), "{:?}", items.iter().map(|i| &i.name).collect::<Vec<_>>());
+    }
+
     #[test]
     fn endpoints_come_from_connectors_and_endpoint_members_only() {
         let deployment = json!({"connectors": [{"endpoint": "air"}, {"endpoint": "bikes"}, {"endpoint": "air"}]});

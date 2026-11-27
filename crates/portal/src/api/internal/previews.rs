@@ -27,8 +27,9 @@ pub async fn served_previews(
 ) -> Result<Response, ApiError> {
     crate::auth::internal::authenticate_gateway(&state, &headers).await?;
     let list: ServedList = previews::served(&state).await?;
-    let body = serde_json::to_vec(&list)
-        .map_err(|e| ApiError::Internal(format!("the preview list did not serialise: {e}")))?;
+    // A list of strings and maps cannot fail to serialise; the shared wording keeps the arm
+    // a function path instead of a closure no input reaches.
+    let body = serde_json::to_vec(&list).map_err(ApiError::internal)?;
     Ok(super::polled_json(&headers, body))
 }
 

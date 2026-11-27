@@ -267,7 +267,7 @@ pub async fn execute_dry_run(
 
     // The typed outcome, not the route's JSON: `awaited` is no member of the answer, and a
     // round trip through it emptied the open changes a reference waits on (MF-48).
-    match crate::api::mutate::propose_with_identity(
+    crate::api::mutate::propose_with_identity(
         identity,
         state,
         project,
@@ -278,10 +278,7 @@ pub async fn execute_dry_run(
         manifest,
     )
     .await?
-    {
-        crate::api::mutate::ProposeOutcome::DryRun(result) => Ok(result),
-        _ => Err(ApiError::Internal("a dry run proposed a change".to_owned())),
-    }
+    .into_dry_run()
 }
 
 #[cfg(test)]

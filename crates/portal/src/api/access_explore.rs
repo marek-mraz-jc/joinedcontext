@@ -144,11 +144,10 @@ pub async fn explore_access(
     }
 
     let mcp_servers = mcp_servers(&state, &project, &reached);
-    let consents = match &request.subject {
-        Who::Person { id } => match state.people_here() {
-            Some(people) => people.admin().await?.consents(id).await?,
-            None => Vec::new(),
-        },
+    // A person was resolved through the realm above, so one is there to ask; every other kind of
+    // subject has no consents.
+    let consents = match (&request.subject, state.people_here()) {
+        (Who::Person { id }, Some(people)) => people.admin().await?.consents(id).await?,
         _ => Vec::new(),
     };
     record(&state, identity, &project, &subject, reached.len()).await;
@@ -251,4 +250,50 @@ async fn record(
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/projects/{project}/access/explore", post(explore_access))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// T-7917 (ADR-N-043): a McpServer names an Endpoint of its own project, or one with no project
+    /// given; a member of another project, of another kind or an Endpoint nobody reached is not it.
+    #[test]
+    fn a_server_covers_the_endpoints_of_its_project_that_were_reached() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let server = |name: &str, members: Value| {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: "McpServer".to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, "helsinki"),
+                spec: json!({ "members": members }),
+                status: None,
+            });
+        };
+        server(
+            "own",
+            json!([{ "kind": "Endpoint", "name": "air", "namespace": "helsinki" }]),
+        );
+        server("bare", json!([{ "kind": "Endpoint", "name": "air" }]));
+        server(
+            "foreign",
+            json!([{ "kind": "Endpoint", "name": "air", "namespace": "espoo" }]),
+        );
+        server("other", json!([{ "kind": "Endpoint", "name": "water" }]));
+        server("policy", json!([{ "kind": "Policy", "name": "air" }]));
+        let reached = vec![Reached {
+            name: "air".to_owned(),
+            slug: "airzzzzzzzzzzzzzzzzzzzzzzz".to_owned(),
+            title: None,
+            space: "traffic".to_owned(),
+            representations: Vec::new(),
+            policies: Vec::new(),
+            permissions: json!([]),
+            prohibitions: json!([]),
+        }];
+        let mut covering = mcp_servers(&state, "helsinki", &reached);
+        covering.sort();
+        assert_eq!(covering, ["bare", "own"]);
+        assert!(mcp_servers(&state, "helsinki", &[]).is_empty());
+    }
 }

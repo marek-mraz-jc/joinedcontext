@@ -415,7 +415,7 @@ async fn a_move_names_what_it_lacks_before_it_starts() {
             .expect("client"),
         )
     };
-    let cases: [(Config, bool, &str); 4] = [
+    let cases: [(Config, bool, &str); 5] = [
         (
             Config {
                 broker_url: None,
@@ -439,6 +439,15 @@ async fn a_move_names_what_it_lacks_before_it_starts() {
             },
             true,
             "JC_PORTAL_GATEWAY_URL",
+        ),
+        // T-7918: no readable admin token file is named, never a move without the token.
+        (
+            Config {
+                broker_admin_token_file: None,
+                ..full()
+            },
+            true,
+            "JC_PORTAL_BROKER_ADMIN_TOKEN_FILE",
         ),
         (full(), false, "has no forge"),
     ];

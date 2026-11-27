@@ -762,4 +762,80 @@ mod tests {
             );
         }
     }
+
+    /// T-7918: a prohibition grants nobody anything and marks nothing: only the permitting parts
+    /// of a Policy (its own and its rules') name who is granted, a rule with no effect of its
+    /// own taking the Policy's.
+    #[test]
+    fn a_prohibiting_part_of_a_policy_marks_no_one() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let upsert = |name: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: "Policy".to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, "helsinki"),
+                spec,
+                status: None,
+            });
+        };
+        upsert(
+            "forbid",
+            json!({ "effect": "prohibition", "assignee": { "kind": "organization" } }),
+        );
+        upsert(
+            "mixed",
+            json!({ "rules": [
+                { "effect": "prohibition", "assignee": { "kind": "organization" } },
+                { "assignee": { "kind": "group", "id": "traffic-analysts" } },
+            ] }),
+        );
+        assert_eq!(
+            mark(&state, "helsinki", &json!({ "policies": ["forbid"] })),
+            ("granted", None)
+        );
+        assert_eq!(
+            mark(&state, "helsinki", &json!({ "policies": ["mixed", "unknown"] })),
+            ("group", Some("traffic-analysts".to_owned()))
+        );
+    }
+
+    /// T-7918: the handler answers the public alone to a caller with no session, refuses a
+    /// token failure that is not "unauthorized" instead of treating it as the public, and for
+    /// a signed-in caller counts the closed Endpoints the gateway cannot be asked about (this
+    /// Portal has no gateway address) as unanswered, never listing them.
+    #[tokio::test]
+    async fn the_handler_serves_the_public_refuses_a_broken_token_and_counts_unanswered() {
+        let state = world();
+        let Json(anonymous) = get_readable(
+            Err(ApiError::Unauthorized),
+            HeaderMap::new(),
+            State(state.clone()),
+        )
+        .await
+        .expect("anonymous catalogue");
+        assert_eq!(
+            anonymous.datasets.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            ["bikes"]
+        );
+        assert_eq!(anonymous.unanswered, 0);
+
+        let broken = get_readable(
+            Err(ApiError::Internal("the token check broke".into())),
+            HeaderMap::new(),
+            State(state.clone()),
+        )
+        .await
+        .expect_err("not the public");
+        assert!(matches!(broken, ApiError::Internal(_)), "{broken:?}");
+
+        let Json(member) = get_readable(
+            Ok(CurrentUser(session(""))),
+            HeaderMap::new(),
+            State(state),
+        )
+        .await
+        .expect("member catalogue");
+        assert!(member.unanswered >= 1, "{member:?}");
+        assert!(member.datasets.iter().all(|d| d.name == "bikes"), "{member:?}");
+    }
 }

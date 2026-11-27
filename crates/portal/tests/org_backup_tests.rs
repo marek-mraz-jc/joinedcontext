@@ -35,11 +35,20 @@ const SECRET: &str = "wJalrXUtnFEMI-K7MDENG-bravoNEVERshown";
 /// One object's versions, oldest first: `(version id, body or None for a delete marker, time)`.
 type Versions = Vec<(String, Option<Vec<u8>>, String)>;
 
+/// Runs once, before the next GetObject of a version is answered: a test's way to change the
+/// world between two of the Portal's reads.
+type HookFuture = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
+type Hook = Arc<dyn Fn() -> HookFuture + Send + Sync>;
+
 #[derive(Default)]
 struct Bucket {
+    on_get: Option<Hook>,
     versioning: String,
     objects: BTreeMap<String, Versions>,
     counter: u32,
+    /// `(method, text of the request's URI, status)`: a call matching one is answered with that
+    /// status and changes nothing, so a failing bucket can be told apart per call.
+    fail: Vec<(String, String, u16)>,
 }
 
 type FakeS3 = Arc<Mutex<Bucket>>;
@@ -87,7 +96,26 @@ async fn s3(
     if name != "backups" {
         return error(StatusCode::NOT_FOUND, "NoSuchBucket");
     }
+    let hook = if method == Method::GET && uri.query().is_some_and(|q| q.contains("versionId")) {
+        bucket.lock().expect("bucket").on_get.take()
+    } else {
+        None
+    };
+    if let Some(hook) = hook {
+        hook().await;
+    }
     let mut bucket = bucket.lock().expect("bucket");
+    let refused = bucket
+        .fail
+        .iter()
+        .find(|(verb, needle, _)| verb == method.as_str() && uri.to_string().contains(needle))
+        .map(|(_, _, status)| *status);
+    if let Some(status) = refused {
+        return error(
+            StatusCode::from_u16(status).expect("a status"),
+            "InternalError",
+        );
+    }
     bucket.counter += 1;
     let tick = bucket.counter;
     let now = format!("2026-11-16T10:{:02}:{:02}.000Z", tick / 60, tick % 60);
@@ -3878,4 +3906,558 @@ async fn a_bundle_of_another_organization_is_not_restored() {
         "{}",
         refused.text
     );
+}
+
+// ---- T-7918: the failures a bucket and a bundle can bring to the configuration doors ----------
+
+const AUDITOR: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Role\nmetadata:\n  name: auditor\n  \
+                       namespace: org\nspec:\n  rules:\n    - kinds: [Endpoint]\n      verbs: [read]\n";
+
+/// A bundle crafted from the run's own: `edit` changes its files and its index, and the result
+/// is one more version of `key` under `id`, sealed to both recipients as a run seals it.
+fn plant(
+    world: &World,
+    key: &str,
+    id: &str,
+    edit: impl FnOnce(&mut BTreeMap<String, String>, &mut Value),
+) {
+    let mut files = unzip(&opened(&latest(&world.bucket, key)));
+    let mut index: Value = serde_norway::from_str(&files["index.yaml"]).expect("index");
+    edit(&mut files, &mut index);
+    files.insert(
+        "index.yaml".into(),
+        serde_norway::to_string(&index).expect("yaml"),
+    );
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, text) in &files {
+        writer
+            .start_file(path.as_str(), zip::write::SimpleFileOptions::default())
+            .expect("entry");
+        std::io::Write::write_all(&mut writer, text.as_bytes()).expect("write");
+    }
+    let crafted = writer.finish().expect("zip").into_inner();
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .objects
+        .get_mut(key)
+        .expect("the bundle")
+        .push((
+            id.into(),
+            Some(sealed(&crafted)),
+            "2026-11-16T11:00:00.000Z".into(),
+        ));
+}
+
+/// The restore door of version `id`, as ada asks it.
+async fn restore(world: &World, id: &str, apply: bool) -> common::Answer {
+    send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/versions/{id}/restore"),
+        Some(json!({ "identity": identity(), "apply": apply })),
+    )
+    .await
+}
+
+/// A version the bucket refuses to hand over is 503 naming the bucket, wherever the Portal asks
+/// for it: at the key of today, or at the key of before T-7207 once today's says it is unknown.
+#[tokio::test]
+async fn a_bucket_that_fails_a_download_is_unavailable_at_either_key() {
+    let world = world("alfa", "Enabled").await;
+    let run = saved_and_run(&world, "ada").await;
+    let version = run["versionId"].as_str().expect("version").to_owned();
+    let door = format!("{DOOR}/versions/{version}");
+
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .fail
+        .push(("GET".into(), "bundle.zip".into(), 500));
+    let failed = send(&world.state, person("ada"), "GET", &door, None).await;
+    assert_eq!(
+        failed.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        failed.text
+    );
+    world.bucket.lock().expect("bucket").fail.clear();
+
+    // An id of no version at today's key is asked of the old key, whose bucket answers 500.
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .fail
+        .push(("GET".into(), "jc/alfa/configuration/".into(), 500));
+    let unknown = send(
+        &world.state,
+        person("ada"),
+        "GET",
+        &format!("{DOOR}/versions/nosuchversion"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        unknown.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        unknown.text
+    );
+}
+
+/// A backup still current at the key of before T-7207 is hidden by the same delete, and a delete
+/// the bucket refuses, or a listing it cannot give, is 503 that names the failure and is logged.
+#[tokio::test]
+async fn a_soft_delete_hides_the_old_key_too_and_a_failing_bucket_is_unavailable() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    let bundle = latest(&world.bucket, &key);
+    let legacy = "jc/alfa/configuration/bundle.zip";
+    world.bucket.lock().expect("bucket").objects.insert(
+        legacy.into(),
+        vec![(
+            "old".into(),
+            Some(bundle),
+            "2026-11-16T09:00:00.000Z".into(),
+        )],
+    );
+    let door = format!("{DOOR}/bundle");
+
+    let deleted = send(&world.state, person("ada"), "DELETE", &door, None).await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.text);
+    {
+        let bucket = world.bucket.lock().expect("bucket");
+        let old = &bucket.objects[legacy];
+        assert!(
+            old.last().is_some_and(|(_, body, _)| body.is_none()),
+            "the old key is behind a delete marker too"
+        );
+        assert!(bucket.objects[&key]
+            .last()
+            .is_some_and(|(_, body, _)| body.is_none()));
+    }
+
+    // The listing of the old key fails after the delete of today's key went through.
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .fail
+        .push(("GET".into(), "versions".into(), 500));
+    let listing = send(&world.state, person("ada"), "DELETE", &door, None).await;
+    assert_eq!(
+        listing.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        listing.text
+    );
+    world.bucket.lock().expect("bucket").fail.clear();
+
+    // The delete itself is refused.
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .fail
+        .push(("DELETE".into(), "bundle.zip".into(), 500));
+    let refused = send(&world.state, person("ada"), "DELETE", &door, None).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        refused.text
+    );
+    let log = body(&send(&world.state, person("ada"), "GET", DOOR, None).await);
+    let failed: Vec<&Value> = log["log"]
+        .as_array()
+        .expect("log")
+        .iter()
+        .filter(|e| e["action"] == "delete" && e["ok"] == false)
+        .collect();
+    assert_eq!(failed.len(), 2, "both failures are in the log: {log}");
+}
+
+/// A restore plan skips what it cannot place (an item with no file, a file outside any project),
+/// lists a manifest the Organization lacks as created, and sends an Organization-level one to
+/// its own repository by a note.
+#[tokio::test]
+async fn a_plan_skips_what_it_cannot_place_and_lists_new_manifests_as_created() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    plant(&world, &key, "crafted", |files, index| {
+        let new = ALFA_ENDPOINT
+            .replace("alfa-air", "alfa-new")
+            .replace("alfaairslug", "alfanewslug");
+        files.insert(
+            "projects/alfa-city/spaces/air/endpoints/alfa-new.yaml".into(),
+            new.clone(),
+        );
+        files.insert("misc/loose.yaml".into(), new);
+        files.insert("organization/roles/auditor.yaml".into(), AUDITOR.into());
+        let items = index["items"].as_array_mut().expect("items");
+        for (kind, id, path) in [
+            (
+                "Endpoint",
+                "alfa-new",
+                "projects/alfa-city/spaces/air/endpoints/alfa-new.yaml",
+            ),
+            (
+                "Endpoint",
+                "ghost",
+                "projects/alfa-city/spaces/air/endpoints/ghost.yaml",
+            ),
+            ("Endpoint", "loose", "misc/loose.yaml"),
+            ("Role", "auditor", "organization/roles/auditor.yaml"),
+        ] {
+            items.push(json!({ "kind": kind, "id": id, "path": path, "revision": HEAD }));
+        }
+    });
+    let planned = restore(&world, "crafted", false).await;
+    assert_eq!(planned.status, StatusCode::OK, "{}", planned.text);
+    let plan = body(&planned);
+    assert_eq!(plan["changes"], 2, "{plan}");
+    let group = |name: &str| {
+        plan["groups"]
+            .as_array()
+            .and_then(|groups| groups.iter().find(|g| g["name"] == name))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    assert_eq!(
+        group("alfa-city")["created"],
+        json!(["Endpoint/alfa-new"]),
+        "{plan}"
+    );
+    let own = group("organization");
+    assert_eq!(own["created"], json!(["Role/auditor"]), "{plan}");
+    assert!(
+        own["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("organization repository")),
+        "{plan}"
+    );
+}
+
+/// The bundle's people missing from the realm today are listed to invite by hand, and the ones
+/// still there are counted.
+#[tokio::test]
+async fn a_plan_lists_the_bundles_people_the_realm_no_longer_holds() {
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/hel/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/groups"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "g0", "path": "/alfa", "subGroups": [{ "id": "g1", "path": "/alfa/members" }] }
+        ])))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/hel/groups/g1/members"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "u1", "username": "ana", "email": "ana@alfa.example", "enabled": true }
+        ])))
+        .mount(&kc)
+        .await;
+    let mut world = world("alfa", "Enabled").await;
+    world.state.people = joinedcontext_portal::people::People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    plant(&world, &key, "with-people", |files, _| {
+        files.insert(
+            org_backup::PEOPLE_PATH.into(),
+            "- { id: u1, username: ana, email: ana@alfa.example }\n\
+             - { id: u2, username: bea, email: bea@alfa.example }\n"
+                .into(),
+        );
+    });
+    let planned = restore(&world, "with-people", false).await;
+    assert_eq!(planned.status, StatusCode::OK, "{}", planned.text);
+    let plan = body(&planned);
+    let people = plan["groups"]
+        .as_array()
+        .and_then(|groups| groups.iter().find(|g| g["name"] == "organization/people"))
+        .cloned()
+        .expect("the people group");
+    assert_eq!(people["created"], json!(["bea <bea@alfa.example>"]), "{plan}");
+    assert_eq!(people["unchanged"], 1, "{plan}");
+    assert!(
+        people["note"].as_str().is_some_and(|n| n.contains("by hand")),
+        "{plan}"
+    );
+    assert_eq!(plan["changes"], 0, "people are never a change: {plan}");
+}
+
+/// An applied restore of a bundle that is as the Organization is proposes nothing: no project
+/// has a manifest to create or change, so no Change is opened and the forge is not written.
+#[tokio::test]
+async fn an_applied_restore_of_an_unchanged_bundle_proposes_no_change() {
+    let world = world("alfa", "Enabled").await;
+    let run = saved_and_run(&world, "ada").await;
+    let version = run["versionId"].as_str().expect("version").to_owned();
+    let applied = restore(&world, &version, true).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+    let plan = body(&applied);
+    assert_eq!(plan["changes"], 0, "{plan}");
+    assert!(
+        plan["groups"]
+            .as_array()
+            .is_some_and(|g| g.iter().all(|g| g.get("change").is_none())),
+        "{plan}"
+    );
+    let writes: Vec<String> = world
+        ._forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.method.as_str() != "GET")
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(writes.is_empty(), "{writes:?}");
+}
+
+// ---- T-7918: the approval of a data restore, where the world changes under it ------------------
+
+fn seal_for(plain: &[u8], ids: &[age::x25519::Identity; 2]) -> Vec<u8> {
+    let recipients: Vec<_> = ids.iter().map(|k| k.to_public()).collect();
+    let encryptor =
+        age::Encryptor::with_recipients(recipients.iter().map(|r| r as &dyn age::Recipient))
+            .expect("recipients");
+    let mut out = Vec::new();
+    let mut writer = encryptor.wrap_output(&mut out).expect("encrypt");
+    std::io::Write::write_all(&mut writer, plain).expect("write");
+    writer.finish().expect("finish");
+    out
+}
+
+/// A data backup of alfa that held one draft, lost since, and a restore of it that ada asked
+/// for and cid may approve: `(world, database, identities, version id, request id)`. `None`
+/// without a test database.
+async fn asked_restore() -> Option<(World, sqlx::PgPool, [age::x25519::Identity; 2], String, i64)> {
+    let db = seeded_portal_db().await?;
+    as_project(
+        &db,
+        "alfa-city",
+        "INSERT INTO drafts (project, kind, name, manifest, touched_by, touched_kind) \
+         VALUES ('alfa-city', 'Pipeline', 'alfa-draft', '{}', 'ada', 'user')",
+    )
+    .await;
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    world.state.mirror.upsert(org(
+        "RoleBinding",
+        "cid-admin",
+        json!({ "subjects": [{ "user": "cid@hel.fi" }], "role": "org-admin", "scope": { "organization": "alfa" } }),
+    ));
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+    as_project(
+        &db,
+        "alfa-city",
+        "DELETE FROM drafts WHERE project = 'alfa-city'",
+    )
+    .await;
+    let asked = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DATA_DOOR}/versions/{version}/restore"),
+        Some(json!({ "identity": secret_of(&ids[0]), "request": true })),
+    )
+    .await;
+    assert_eq!(asked.status, StatusCode::OK, "{}", asked.text);
+    let id = body(&asked)["request"]["id"].as_i64().expect("a request");
+    Some((world, db, ids, version, id))
+}
+
+async fn approve(world: &World, ids: &[age::x25519::Identity; 2], id: i64) -> common::Answer {
+    send(
+        &world.state,
+        person("cid"),
+        "POST",
+        &format!("{DATA_DOOR}/restores/{id}/approve"),
+        Some(json!({ "identity": secret_of(&ids[1]) })),
+    )
+    .await
+}
+
+/// The bucket's object is another upload of the same version (the run log names both): it opens
+/// and is this Organization's, but it is not the bytes the request was checked on, so nothing
+/// is written and the request stays pending.
+#[tokio::test]
+async fn an_approval_of_bytes_other_than_the_checked_ones_is_refused() {
+    let Some((world, db, ids, version, id)) = asked_restore().await else {
+        return;
+    };
+    let data_key = key_of(&world, "alfa", "data").await;
+    let resealed = {
+        let mut bucket = world.bucket.lock().expect("bucket");
+        let slot = bucket
+            .objects
+            .get_mut(&data_key)
+            .expect("the archive")
+            .iter_mut()
+            .find(|v| v.0 == version)
+            .expect("the version");
+        let plain = decrypt(slot.1.as_ref().expect("bytes"), &ids[0]);
+        let again = seal_for(&plain, &ids);
+        slot.1 = Some(again.clone());
+        again
+    };
+    world
+        .state
+        .org_backups
+        .log(org_backup::NewEntry {
+            organization: "alfa",
+            kind: "data",
+            action: "run",
+            actor: "ada",
+            ok: true,
+            bytes: 1,
+            object_key: &data_key,
+            version_id: &version,
+            message: "uploaded again",
+            sha256: &org_backup::sha256_hex(&resealed),
+        })
+        .await
+        .expect("logged");
+    let refused = approve(&world, &ids, id).await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(
+        refused
+            .text
+            .contains("not the one this request was checked on"),
+        "{}",
+        refused.text
+    );
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert!(drafts.is_empty(), "nothing was written: {drafts:?}");
+}
+
+/// A request another approval declines while this one reads the archive is not applied: the
+/// answer is 404 naming the request, and no row is written.
+#[tokio::test]
+async fn an_approval_that_loses_the_request_meanwhile_is_not_found() {
+    let Some((world, db, ids, _version, id)) = asked_restore().await else {
+        return;
+    };
+    let state = world.state.clone();
+    let hook: Hook = Arc::new(move || -> HookFuture {
+        let state = state.clone();
+        Box::pin(async move {
+            org_backup::restore::decide(&state, "alfa", id, "bob", "declined", "declined by bob")
+                .await
+                .expect("declined");
+        })
+    });
+    world.bucket.lock().expect("bucket").on_get = Some(hook);
+    let lost = approve(&world, &ids, id).await;
+    assert_eq!(lost.status, StatusCode::NOT_FOUND, "{}", lost.text);
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert!(drafts.is_empty(), "nothing was written: {drafts:?}");
+}
+
+/// A restore the database refuses part way is rolled back and ends as failed with the reason,
+/// and the answer is the request itself, not an error.
+#[tokio::test]
+async fn an_approval_the_database_refuses_ends_as_failed_with_its_reason() {
+    let Some((world, db, ids, _version, id)) = asked_restore().await else {
+        return;
+    };
+    sqlx::query(
+        "CREATE FUNCTION refuse_the_draft() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+    )
+    .execute(&db)
+    .await
+    .expect("a function");
+    sqlx::query(
+        "CREATE TRIGGER refuse_the_draft BEFORE INSERT ON drafts \
+         FOR EACH ROW EXECUTE FUNCTION refuse_the_draft()",
+    )
+    .execute(&db)
+    .await
+    .expect("a trigger");
+    let failed = approve(&world, &ids, id).await;
+    assert_eq!(failed.status, StatusCode::OK, "{}", failed.text);
+    assert_eq!(body(&failed)["state"], "failed", "{}", failed.text);
+    assert!(
+        body(&failed)["message"]
+            .as_str()
+            .is_some_and(|m| !m.is_empty()),
+        "{}",
+        failed.text
+    );
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert!(drafts.is_empty(), "the rows were rolled back: {drafts:?}");
+}
+
+/// Twenty-one newer requests arrive while an approval runs: the list of the newest twenty no
+/// longer holds the request just decided, and the answer says so (404) after it was applied.
+#[tokio::test]
+async fn an_approval_pushed_out_of_the_newest_requests_answers_not_found() {
+    let Some((world, db, ids, _version, id)) = asked_restore().await else {
+        return;
+    };
+    let state = world.state.clone();
+    let hook: Hook = Arc::new(move || -> HookFuture {
+        let state = state.clone();
+        Box::pin(async move {
+            let plan = org_backup::restore::DataPlan {
+                organization: "alfa".into(),
+                version_id: "v-newer".into(),
+                taken_at: "2026-11-16T10:00:00Z".into(),
+                modules: BTreeMap::new(),
+                not_restored: BTreeMap::new(),
+                not_in_archive: BTreeMap::new(),
+                erasures_replayed: 0,
+            };
+            for n in 0..21 {
+                org_backup::restore::request(&state, "alfa", &person(&format!("zed{n}")), &plan, "")
+                    .await
+                    .expect("a newer request");
+            }
+        })
+    });
+    world.bucket.lock().expect("bucket").on_get = Some(hook);
+    let pushed = approve(&world, &ids, id).await;
+    assert_eq!(pushed.status, StatusCode::NOT_FOUND, "{}", pushed.text);
+    let drafts: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM drafts WHERE project = 'alfa-city'")
+            .fetch_all(&db)
+            .await
+            .expect("drafts");
+    assert_eq!(drafts, ["alfa-draft"], "the restore was applied first");
 }

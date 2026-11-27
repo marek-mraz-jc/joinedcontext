@@ -584,4 +584,117 @@ mod tests {
             );
         }
     }
+
+    /// T-7918: a refused endpoint whose status carries no `Accepted=False` message (none at all,
+    /// or another condition) still shows the generic reason, so the page never says nothing.
+    #[test]
+    fn a_refused_endpoint_without_a_message_shows_the_generic_reason() {
+        let instance: CkanInstanceSpec = serde_json::from_value(serde_json::json!({
+            "url": "https://opendata.bratislava.sk",
+            "apiTokenRef": { "name": "ckan-token", "key": "token" },
+            "organizationDefault": "bratislava"
+        }))
+        .expect("instance");
+        let instances = vec![("bratislava".to_owned(), instance)];
+        let endpoint = |name: &str, status: Value| -> ResourceEnvelope {
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Endpoint",
+                "metadata": { "name": name, "namespace": "bratislava" },
+                "spec": {
+                    "contextSpaceRef": "bratislava", "slug": "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm",
+                    "audience": "public", "enabledRepresentations": ["ngsi-ld", "csv"],
+                    "publish": { "ckan": { "instanceRef": { "kind": "CkanInstance", "name": "bratislava" } } }
+                },
+                "status": status,
+            }))
+            .expect("endpoint")
+        };
+        let settings = Settings::new("api.bratislava.sk");
+        let silent = endpoint("silent", Value::Null);
+        let other = endpoint(
+            "other",
+            serde_json::json!({ "phase": "Error", "conditions": [
+                { "type": "Ready", "status": "False", "reason": "X", "message": "not this one" }
+            ] }),
+        );
+        let rows = refused_publications(vec![silent, other], &[], "bratislava", &instances, &settings);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        for row in &rows {
+            assert_eq!(
+                row.refused.as_deref(),
+                Some("the Portal refused this endpoint"),
+                "{row:?}"
+            );
+        }
+    }
+
+    /// T-7918: the status of a project of an Organization with its own catalogue names that
+    /// catalogue's address (trailing slash trimmed), not the instance's own URL; a caller
+    /// reading no CkanInstance gets 404, not an empty page.
+    #[tokio::test]
+    async fn the_status_names_the_organizations_own_catalogue_and_hides_it_from_strangers() {
+        let config = Config {
+            organization_catalogues: crate::organization_host::parse_catalogues(
+                r#"[{"organization":"ba","url":"http://opendata.ba.localhost:42141/",
+                     "dataHost":"http://api.ba.localhost:42141","tokenFile":"/run/ba"}]"#,
+            )
+            .expect("catalogues"),
+            ..Config::for_tests()
+        };
+        let state = AppState::new(config, None);
+        state.mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Project",
+                "metadata": { "name": "bratislava", "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": "ba" },
+            }))
+            .expect("project"),
+        );
+        state.mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "CkanInstance",
+                "metadata": { "name": "main", "namespace": "bratislava" },
+                "spec": {
+                    "url": "https://ckan.example",
+                    "apiTokenRef": { "name": "ckan-token", "key": "token" },
+                },
+            }))
+            .expect("instance"),
+        );
+        let session = |groups: Vec<String>| {
+            CurrentUser(crate::auth::session::Session {
+                identity: crate::auth::session::Identity {
+                    client: None,
+                    subject: "sub-pia".into(),
+                    username: "pia".into(),
+                    email: None,
+                    name: None,
+                    roles: Vec::new(),
+                    groups,
+                    second_factor: false,
+                },
+                expires_at: 0,
+                issued_at: 0,
+                signed_in_at: None,
+                stepped_up_at: None,
+                id_token: String::new(),
+                access_expires_at: 0,
+                refresh_token: None,
+            })
+        };
+        let Json(status) = get_status(
+            State(state.clone()),
+            session(vec!["portal-approver".to_owned()]),
+            Path("bratislava".to_owned()),
+        )
+        .await
+        .expect("status");
+        assert_eq!(status.instances.len(), 1);
+        assert_eq!(status.instances[0].url, "http://opendata.ba.localhost:42141");
+        let denied = get_status(State(state), session(Vec::new()), Path("bratislava".to_owned()))
+            .await
+            .err()
+            .expect("refused");
+        assert!(matches!(denied, ApiError::NotFound(_)), "{denied:?}");
+    }
 }

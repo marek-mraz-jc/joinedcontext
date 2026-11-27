@@ -1129,6 +1129,10 @@ mod tests {
             "columns": [{ "attr": "a", "width": 120 }] } });
         let found = check(&config, &before, &known);
         assert!(!found.iter().any(|f| f.contains("width")), "{found:?}");
+        let zero = serde_json::json!({ "grid": { "source": "s", "type": "T",
+            "columns": [{ "attr": "a", "width": 0 }] } });
+        let found = check(&zero, &before, &known);
+        assert!(found.iter().any(|f| f.contains("width")), "{found:?}");
 
         let state = AppState::new(crate::config::Config::for_tests(), None);
         let user = CurrentUser(crate::auth::session::Session {

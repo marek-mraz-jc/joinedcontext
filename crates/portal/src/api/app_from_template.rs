@@ -530,4 +530,19 @@ mod tests {
         serde_json::from_value::<jc_core::kinds::DataNeed>(needs[0].clone())
             .expect("the App kind reads it");
     }
+
+    /// T-7917: a name that fits a label but not the forge beside a long project name is refused
+    /// on `name`, telling the person how long it may be.
+    #[test]
+    fn a_name_too_long_for_the_forge_beside_its_project_is_refused_on_name() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let project = "p".repeat(50);
+        let refused = checked_name(&state, &project, &"a".repeat(60)).expect_err("too long");
+        assert!(
+            matches!(&refused, ApiError::Unprocessable { detail, .. }
+                if detail.starts_with("name: ") && detail.contains("at most 49 characters")),
+            "{refused:?}"
+        );
+        assert!(checked_name(&state, &project, "kpi-board").is_ok());
+    }
 }
