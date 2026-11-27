@@ -2269,4 +2269,14 @@ mod tests {
         // An Organization without a members group has no people here: no file, never everyone.
         assert_eq!(people_yaml(&realm, "turku").await, None);
     }
+
+    /// An archive write that fails is the Portal's 500 naming the archive.
+    #[test]
+    fn a_failed_archive_write_names_the_archive() {
+        let err = zip_error("disk full");
+        assert!(
+            matches!(&err, ApiError::Internal(why) if why == "the backup archive failed: disk full"),
+            "{err:?}"
+        );
+    }
 }

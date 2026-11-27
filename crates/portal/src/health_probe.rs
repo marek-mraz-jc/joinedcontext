@@ -856,20 +856,18 @@ mod tests {
     async fn a_round_builds_one_file_at_a_time() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         let building = Arc::new(AtomicUsize::new(0));
-        let held = Arc::clone(&building);
-        // Like the gateway past its build slots: a second file asked while one builds is a 503.
+        let most = Arc::new(AtomicUsize::new(0));
+        let (held, peak) = (Arc::clone(&building), Arc::clone(&most));
+        // Like the gateway past its build slots: how many files build at once is counted, and
+        // the round may never have two.
         let app = axum::Router::new().fallback(move |uri: axum::http::Uri| {
-            let held = Arc::clone(&held);
+            let (held, peak) = (Arc::clone(&held), Arc::clone(&peak));
             async move {
-                if !uri.path().ends_with("/file.csv") {
-                    return axum::http::StatusCode::OK;
-                }
-                if held.fetch_add(1, Ordering::SeqCst) > 0 {
+                if uri.path().ends_with("/file.csv") {
+                    peak.fetch_max(held.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+                    tokio::time::sleep(StdDuration::from_millis(20)).await;
                     held.fetch_sub(1, Ordering::SeqCst);
-                    return axum::http::StatusCode::SERVICE_UNAVAILABLE;
                 }
-                tokio::time::sleep(StdDuration::from_millis(20)).await;
-                held.fetch_sub(1, Ordering::SeqCst);
                 axum::http::StatusCode::OK
             }
         });
@@ -900,6 +898,7 @@ mod tests {
         assert_eq!(files.len(), 4, "{found:?}");
         assert!(files.iter().all(|f| f.status == Status::Ok), "{files:?}");
         assert_eq!(building.load(Ordering::SeqCst), 0);
+        assert_eq!(most.load(Ordering::SeqCst), 1, "one file at a time");
     }
 
     #[tokio::test]

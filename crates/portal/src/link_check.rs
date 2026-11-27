@@ -1443,13 +1443,6 @@ mod tests {
             .await
             .expect("bind");
         let port = listener.local_addr().expect("address").port();
-        let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let seen = Arc::clone(&hits);
-        let app = axum::Router::new().fallback(move || {
-            seen.fetch_add(1, Ordering::SeqCst);
-            async { axum::http::StatusCode::OK }
-        });
-        tokio::spawn(async move { axum::serve(listener, app).await });
         let http = link_client();
         let url = Url::parse(&format!("http://localhost:{port}/podujatia/1")).expect("url");
         let refused = http.head(url.clone()).send().await.expect_err("refused");
@@ -1461,7 +1454,11 @@ mod tests {
         let mut queue = HostQueue::new(&http, "localhost".into(), &inventoried);
         queue.pause = StdDuration::from_millis(1);
         assert_eq!(queue.ask(&url).await, Outcome::Skipped);
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        let dialled = tokio::time::timeout(StdDuration::from_millis(100), listener.accept()).await;
+        assert!(
+            dialled.is_err(),
+            "nothing connected to the internal address"
+        );
     }
 
     /// One public space `s1` fed by the pipeline `podujatia-a` from `a.example`.

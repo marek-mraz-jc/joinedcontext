@@ -1105,3 +1105,29 @@ fn generated(name: String, project: &str, kind: &str, spec: Value) -> RawManifes
         status: None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    /// A CIDR reads as its family, network and prefix; a prefix past its family's width, an
+    /// address that is none or a missing prefix is no network.
+    #[test]
+    fn a_cidr_is_a_network_only_within_its_familys_width() {
+        assert_eq!(
+            super::network("10.0.0.0/8"),
+            Some((true, u128::from(10u32 << 24) << 96, 8))
+        );
+        assert_eq!(
+            super::network("fc00::/7").map(|n| (n.0, n.2)),
+            Some((false, 7))
+        );
+        for refused in [
+            "10.0.0.0/33",
+            "fc00::/129",
+            "ten/8",
+            "10.0.0.0",
+            "10.0.0.0/x",
+        ] {
+            assert_eq!(super::network(refused), None, "{refused}");
+        }
+    }
+}

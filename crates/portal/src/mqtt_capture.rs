@@ -672,12 +672,17 @@ mod tests {
         );
     }
 
+    /// A manifest's parse error as the mirror keeps it.
+    fn unparsed(error: serde_json::Error) -> String {
+        error.to_string()
+    }
+
     fn broker(name: &str, mode: &str) -> Broker {
         let spec = serde_json::from_value(serde_json::json!({
             "mode": mode,
             "roles": [{"name": "camera", "serviceAccounts": ["cam"], "publish": ["cams/${clientid}/frame"]}],
         }))
-        .map_err(|error| error.to_string());
+        .map_err(unparsed);
         Broker {
             project: "p".to_owned(),
             name: name.to_owned(),
@@ -819,7 +824,7 @@ mod tests {
             "mode": "capture",
             "roles": [{"name": "camera", "serviceAccounts": ["cam"], "publish": [publish]}],
         }))
-        .map_err(|error| error.to_string());
+        .map_err(unparsed);
         Broker {
             project: "p".to_owned(),
             name: "cams".to_owned(),

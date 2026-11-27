@@ -1198,4 +1198,39 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&into);
     }
+
+    /// One connection answered with `answer`, then closed.
+    async fn answering(answer: &'static [u8]) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut buf = [0u8; 1024];
+                let _ = socket.read(&mut buf).await;
+                let _ = socket.write_all(answer).await;
+            }
+        });
+        format!("http://{at}/x")
+    }
+
+    /// A redirect the client does not follow and an answer that is no HTTP are each said in
+    /// words, without the URL.
+    #[tokio::test]
+    async fn a_redirect_or_a_broken_answer_is_said_without_the_url() {
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::limited(0))
+            .build()
+            .expect("client");
+        let moved =
+            answering(b"HTTP/1.1 302 Found\r\nlocation: /y\r\ncontent-length: 0\r\n\r\n").await;
+        let err = client.get(&moved).send().await.expect_err("not followed");
+        assert!(reason(err).contains("redirected somewhere"));
+        let broken = answering(b"not http at all\r\n\r\n").await;
+        let err = client.get(&broken).send().await.expect_err("no http");
+        let said = reason(err);
+        assert!(!said.contains("127.0.0.1"), "{said}");
+    }
 }

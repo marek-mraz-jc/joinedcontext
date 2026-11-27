@@ -1148,4 +1148,70 @@ mod tests {
             .expect_err("no bearer");
         assert_eq!(words(err), missing, "no bearer");
     }
+
+    /// A gateway that does not answer is a 503 the caller can retry, never a hang or a 500.
+    #[tokio::test]
+    async fn a_gateway_that_does_not_answer_is_unavailable() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        drop(closed);
+        let (state, caller) = helsinki(Some(format!("http://127.0.0.1:{port}")));
+        let err = run(
+            &caller,
+            &state,
+            "t6025-full",
+            input(json!({ "endpoint": PUBLIC, "type": "GtfsStop" })),
+        )
+        .await
+        .expect_err("nobody answers");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("did not answer")),
+            "{err:?}"
+        );
+    }
+
+    /// An answer that breaks off inside its body is a 503 saying so, not a short page.
+    #[tokio::test]
+    async fn a_page_that_breaks_off_is_unavailable() {
+        use tokio::io::AsyncWriteExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = listener.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept");
+            let mut buf = [0u8; 1024];
+            let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut buf).await;
+            let _ = socket
+                .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\nshort")
+                .await;
+        });
+        let answer = reqwest::get(format!("http://{at}/"))
+            .await
+            .expect("headers");
+        let err = capped_page(answer).await.expect_err("broke off");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("broke off")),
+            "{err:?}"
+        );
+    }
+
+    /// The caller's own Endpoint that has no slug yet is a 503 to read again, not a 404.
+    #[test]
+    fn an_own_endpoint_without_a_slug_is_read_again_later() {
+        let (state, _) = helsinki(None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("fresh", "helsinki"),
+            spec: json!({ "audience": "project" }),
+            status: None,
+        });
+        let admin = crate::ops::testkit::admin(&state);
+        let err = readable_slug(&admin, &state, "helsinki", "fresh").expect_err("no slug");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("has no slug yet")),
+            "{err:?}"
+        );
+    }
 }

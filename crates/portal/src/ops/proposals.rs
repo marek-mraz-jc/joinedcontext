@@ -1347,4 +1347,26 @@ mod tests {
             assert!(verdict.findings.is_empty(), "{odd} became a finding");
         }
     }
+
+    /// An import check that could not be kept says why in words an operator acts on: a
+    /// project not created yet, one of no active Organization, or the store's own failure.
+    #[test]
+    fn an_unkept_import_check_says_why() {
+        let state = crate::ops::testkit::state();
+        let fresh = import_check_error(&state, DraftError::Unplaced("hel".into())).to_string();
+        assert!(fresh.contains("is not created yet"), "{fresh}");
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Project",
+            "hel",
+            crate::permissions::ORG_NAMESPACE,
+            json!({}),
+        ));
+        let unplaced = import_check_error(&state, DraftError::Unplaced("hel".into())).to_string();
+        assert!(unplaced.contains("no active Organization"), "{unplaced}");
+        let other = import_check_error(&state, DraftError::Db("gone".into()));
+        assert!(
+            matches!(&other, ApiError::Internal(why) if why.contains("was not recorded") && why.contains("gone")),
+            "{other:?}"
+        );
+    }
 }

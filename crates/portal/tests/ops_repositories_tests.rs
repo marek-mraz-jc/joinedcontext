@@ -649,3 +649,106 @@ async fn the_reads_page_walk_a_root_commit_and_name_what_is_not_there() {
         nameless.text()
     );
 }
+
+/// The list filters by name or description, case-blind, and pages with a cursor while more
+/// remain; a filter matching nothing is an empty page.
+#[tokio::test]
+async fn the_list_filters_by_name_or_description_and_pages() {
+    let (_server, state) = world().await;
+    let caller = session(steward());
+    let call = |input: Value| doors::call("jc_repository_list", &caller, &state, input);
+    let all = call(json!({})).await;
+    assert_eq!(all.status, StatusCode::OK, "{}", all.text());
+    let total = all.body["total"].as_u64().expect("total");
+    let named = call(json!({ "filter": "DASH" })).await;
+    assert_eq!(named.body["total"], 1, "{}", named.text());
+    assert_eq!(named.body["items"][0]["name"], "ovzdusie_dash");
+    let described = call(json!({ "filter": "config repository" })).await;
+    assert_eq!(described.body["total"], 1, "{}", described.text());
+    let none = call(json!({ "filter": "no such words" })).await;
+    assert_eq!(none.body["total"], 0);
+    assert_eq!(none.body["items"], json!([]));
+    if total > 1 {
+        let first = call(json!({ "limit": 1 })).await;
+        assert_eq!(first.body["items"].as_array().map(Vec::len), Some(1));
+        assert_eq!(first.body["nextCursor"], 1, "{}", first.text());
+        let last = call(json!({ "cursor": total - 1, "limit": 1 })).await;
+        assert!(last.body.get("nextCursor").is_none(), "{}", last.text());
+    }
+}
+
+/// A folder lists folders first, then files and submodules by name; a path deeper than 32
+/// folders is refused before the forge is asked; a file that is not at the ref is a 404.
+#[tokio::test]
+async fn a_folder_sorts_folders_first_and_a_deep_or_missing_path_is_refused() {
+    let (server, state) = world().await;
+    get_with(
+        &server,
+        &format!("/odata/Repositories('{CONFIG_ID}')/Tree"),
+        "Ref",
+        "dev",
+        json!({ "Sha": ROOT, "Tree": [
+            { "Path": "zeta.txt", "Type": "blob", "Size": 1, "Sha": "z" },
+            { "Path": "vendor", "Type": "commit", "Size": 0, "Sha": "v" },
+            { "Path": "lib", "Type": "tree", "Size": 0, "Sha": "l" },
+            { "Path": "app", "Type": "tree", "Size": 0, "Sha": "a" },
+        ] }),
+    )
+    .await;
+    let tree = doors::call(
+        "jc_repository_tree",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config", "ref": "dev" }),
+    )
+    .await;
+    assert_eq!(tree.status, StatusCode::OK, "{}", tree.text());
+    let rows: Vec<(String, String)> = tree.body["entries"]
+        .as_array()
+        .or_else(|| tree.body["items"].as_array())
+        .expect("entries")
+        .iter()
+        .map(|e| {
+            (
+                e["name"].as_str().unwrap_or_default().to_owned(),
+                e["type"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            ("app".into(), "folder".into()),
+            ("lib".into(), "folder".into()),
+            ("vendor".into(), "submodule".into()),
+            ("zeta.txt".into(), "file".into()),
+        ]
+    );
+    let deep = vec!["d"; 33].join("/");
+    let refused = doors::call(
+        "jc_repository_tree",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config", "path": deep }),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text()
+    );
+    assert!(
+        refused.text().contains("deeper than 32 folders"),
+        "{}",
+        refused.text()
+    );
+    let missing = doors::call(
+        "jc_repository_file",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config", "path": "nothere.txt" }),
+    )
+    .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text());
+}

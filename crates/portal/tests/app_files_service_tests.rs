@@ -589,3 +589,31 @@ async fn concurrent_puts_never_pass_files_mib_together() {
     let total: usize = held.lock().expect("held").values().sum();
     assert!(total <= 1024 * 1024, "{total} bytes stored past filesMiB 1");
 }
+
+/// An installation with no App store answers 503 in words, and a project registry that does
+/// not answer is a 503 too: neither guesses a prefix to write under.
+#[tokio::test]
+async fn no_store_or_no_registry_is_unavailable() {
+    let store = store(0).await;
+    let mut bare = state(&store, json!(["files"]));
+    bare.wasm_apps = None;
+    let (status, body, _) = call(&bare, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["detail"], "this installation stores no App files");
+
+    let mut dead = state(&store, json!(["files"]));
+    let connect: sqlx::postgres::PgConnectOptions = "postgres://nobody@127.0.0.1:1/none"
+        .parse()
+        .expect("options");
+    dead.db = Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy_with(connect),
+    );
+    let (status, _, text) = call(&dead, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(
+        asked(&store, "GET").await.is_empty(),
+        "the store is not asked"
+    );
+}
