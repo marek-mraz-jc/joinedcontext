@@ -419,7 +419,7 @@ async fn handle_set_streams(
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = Some(caller.org);
+    let caller_org = Some(caller.org.clone());
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
@@ -436,7 +436,7 @@ async fn handle_set_streams(
             return (StatusCode::BAD_REQUEST, e).into_response();
         }
         let val_str = serde_json::to_string(val).unwrap_or_default();
-        match parse_and_lint_stream(&state, id, &val_str, caller_org.as_ref()) {
+        match parse_and_lint_stream(&state, id, &val_str, &caller.org) {
             Ok((conf, lints, _)) => {
                 for l in lints {
                     all_lints.push(format!("stream '{id}': {l}"));
@@ -494,18 +494,17 @@ async fn handle_create_stream(
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = Some(caller.org);
     if let Err(e) = validate_stream_id(&id) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &id, &body_str, caller_org.as_ref()) {
-            Ok(parsed) => parsed,
-            Err(resp) => return *resp,
-        };
+    let (mut conf, lints, posted) = match parse_and_lint_stream(&state, &id, &body_str, &caller.org)
+    {
+        Ok(parsed) => parsed,
+        Err(resp) => return *resp,
+    };
 
     if !chilled && !lints.is_empty() {
         return lint_response(&lints);
@@ -529,18 +528,18 @@ async fn handle_put_stream(
     Query(params): Query<StreamsQueryParams>,
     body: Bytes,
 ) -> Response {
-    let caller_org = Some(caller.org);
+    let caller_org = Some(caller.org.clone());
     if let Err(e) = validate_stream_id(&id) {
         return (StatusCode::BAD_REQUEST, e).into_response();
     }
     let chilled = params.is_chilled();
     let body_str = String::from_utf8_lossy(&body);
 
-    let (mut conf, lints, posted) =
-        match parse_and_lint_stream(&state, &id, &body_str, caller_org.as_ref()) {
-            Ok(parsed) => parsed,
-            Err(resp) => return *resp,
-        };
+    let (mut conf, lints, posted) = match parse_and_lint_stream(&state, &id, &body_str, &caller.org)
+    {
+        Ok(parsed) => parsed,
+        Err(resp) => return *resp,
+    };
 
     if !chilled && !lints.is_empty() {
         return lint_response(&lints);
@@ -683,12 +682,12 @@ fn parse_and_lint_stream(
     state: &ServerState,
     id: &str,
     body_str: &str,
-    caller_org: Option<&OrgId>,
+    caller_org: &OrgId,
 ) -> Result<ParsedStream, Box<Response>> {
     let mut env_lints = Vec::new();
     // `${VAR}` comes from the stream's scope and the caller's organization's variables, then the
     // process environment only as the server's `EnvAccess` allows (E1, T-7269).
-    let vars_org = caller_org.cloned().unwrap_or_default();
+    let vars_org = caller_org.clone();
     let interpolated = match state.manager.interpolate_stream(&vars_org, id, body_str) {
         Ok(s) => s,
         Err(err) => {
@@ -705,18 +704,16 @@ fn parse_and_lint_stream(
     let mut conf = StreamConfig::from_json_value(&raw_json)
         .map_err(|e| Box::new((StatusCode::BAD_REQUEST, format!("Error: {e}")).into_response()))?;
 
-    if let Some(c_org) = caller_org {
-        if conf.org != OrgId::default() && &conf.org != c_org {
-            return Err(Box::new(
-                (
-                    StatusCode::FORBIDDEN,
-                    "Forbidden: stream config specifies another organization",
-                )
-                    .into_response(),
-            ));
-        }
-        conf.org = c_org.clone();
+    if conf.org != OrgId::default() && &conf.org != caller_org {
+        return Err(Box::new(
+            (
+                StatusCode::FORBIDDEN,
+                "Forbidden: stream config specifies another organization",
+            )
+                .into_response(),
+        ));
     }
+    conf.org = caller_org.clone();
 
     let mut lint_report = state.manager.registry.lint_stream_config(&conf, env_lints);
     // Streams mode: an http_server input serves on the shared ingest listener (E4).
