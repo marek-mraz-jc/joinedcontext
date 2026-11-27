@@ -869,6 +869,37 @@ async fn the_gateway_starts_as_a_data_plane_without_the_portal() {
         answer.status()
     );
     running.stop().await.expect("stop");
+    // Wired to its siblings, the data plane takes the gateway's own client: a Portal page's
+    // session read asks the Portal's internal listener over the network (T-7226), which
+    // answers nothing here, so the read stays anonymous.
+    // One loopback stub stands in for kaisatsu's key endpoint and the Portal's internal
+    // listener: an empty key set, and a refusal for the person's Endpoint token.
+    let stub = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let at = stub.local_addr().unwrap();
+    let answers = axum::Router::new()
+        .route(
+            "/internal/endpoint-token",
+            axum::routing::post(|| async { axum::http::StatusCode::FORBIDDEN }),
+        )
+        .fallback(|| async { axum::Json(serde_json::json!({ "keys": [] })) });
+    tokio::spawn(async move { axum::serve(stub, answers).await });
+    let mut wired = cfg.clone();
+    wired.portal_siblings = true;
+    let section = wired.gateway.as_mut().expect("the [gateway] section");
+    section.portal_internal = format!("http://{at}");
+    section.kaisatsu_internal = Some(format!("http://{at}"));
+    let running = jc::start(&wired, CancellationToken::new())
+        .await
+        .expect("the wired data plane starts");
+    let session = reqwest::Client::new()
+        .get(format!("http://{}/api/endpoint/x", running.addr))
+        .header("cookie", "jc_session=names-nobody")
+        .header("sec-fetch-site", "same-origin")
+        .send()
+        .await
+        .expect("the gateway answers");
+    assert!(!session.status().is_server_error(), "{}", session.status());
+    running.stop().await.expect("stop");
     // A data plane whose gateway the environment breaks stops whole and names the setting.
     // SAFETY of the test: env access is serialized by the lock above; removed before unlocking.
     unsafe { std::env::set_var("JC_GATEWAY_BIND", "no-address-7903") };
