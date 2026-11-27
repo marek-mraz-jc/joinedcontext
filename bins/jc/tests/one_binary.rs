@@ -876,6 +876,23 @@ async fn the_gateway_starts_as_a_data_plane_without_the_portal() {
     unsafe { std::env::remove_var("JC_GATEWAY_BIND") };
     let err = result.err().expect("the gateway is refused");
     assert!(err.to_string().contains("JC_GATEWAY_BIND"), "{err}");
+    // With shako in this container and the forge's webhook secret the operator gives it (the
+    // Portal elsewhere registers its hooks with it), the data plane provisions the forge
+    // repository first: a repository name jc may not put in a URL path stops the start before
+    // the gateway is built, and the error names the setting.
+    cfg.roles.push(Module::Shako);
+    cfg.portal_siblings = true;
+    unsafe { std::env::set_var("JC_SHAKO_WEBHOOK_SECRET", "webhook-secret-for-tests-7905") };
+    unsafe { std::env::set_var("JC_SHAKO_REPO", "../portal-7905") };
+    let result = jc::start(&cfg, CancellationToken::new()).await;
+    unsafe { std::env::remove_var("JC_SHAKO_REPO") };
+    unsafe { std::env::remove_var("JC_SHAKO_WEBHOOK_SECRET") };
+    let err = result.err().expect("the forge provisioning is refused");
+    assert!(
+        err.to_string()
+            .contains("JC_SHAKO_REPO is not a repository name"),
+        "{err}"
+    );
 }
 
 /// `[antares.database]` names PostgreSQL: a store the environment sets to anything else is

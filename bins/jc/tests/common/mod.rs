@@ -58,7 +58,7 @@ impl Jar {
         }
     }
 
-    fn header_for(&self, url: &str) -> String {
+    pub fn header_for(&self, url: &str) -> String {
         let (host, path) = host_and_path(url);
         self.0
             .iter()

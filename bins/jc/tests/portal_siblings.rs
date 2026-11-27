@@ -438,6 +438,25 @@ async fn the_portal_runs_on_its_sibling_modules() {
         !sessions.as_array().unwrap().is_empty(),
         "kaisatsu has the session"
     );
+    // A Portal page's read of an Endpoint the realm opens no scope for (T-6783): kaisatsu
+    // refuses the session's token exchange, the gateway logs that and answers the read as it
+    // answers an anonymous one, never wider.
+    let read = jc.url("/api/endpoint/no-such-endpoint-7905/ngsi-ld/v1/entities");
+    let anonymous = Client::new().get(&read).send().await.unwrap().status();
+    let as_session = Client::new()
+        .get(&read)
+        .header("cookie", browser.jar.header_for(&read))
+        .header("sec-fetch-site", "same-origin")
+        .send()
+        .await
+        .unwrap()
+        .status();
+    assert_eq!(as_session, anonymous);
+    eventually("the refused exchange in the log", 10, || async {
+        jc.log_has("no Endpoint token for the Portal session")
+            .then_some(())
+    })
+    .await;
 
     // b. The Portal creates a person through kaisatsu's admin API.
     let person = json!({

@@ -2178,6 +2178,85 @@ mod tests {
         assert_eq!(moved, (StatusCode::PERMANENT_REDIRECT, want.into()));
     }
 
+    /// An old-name entry reached without a public prefix that ends in the entry's own (no
+    /// [`Mount`] at all, or one the router wrote for another prefix) answers `308` to the
+    /// configured target alone: no part of a prefix it cannot place is kept.
+    #[tokio::test]
+    async fn a_moved_entry_outside_its_own_prefix_answers_the_configured_target() {
+        let renamed = Renamed {
+            spec: MountSpec {
+                module: "viz".into(),
+                host: None,
+                path_prefix: Some("/viz".into()),
+            },
+            to: "/embed".into(),
+        };
+        let other = Mount {
+            module: "viz".into(),
+            scheme: "https".into(),
+            host: "city.test".into(),
+            path_prefix: "/alpha/elsewhere".into(),
+        };
+        for mount in [None, Some(other)] {
+            let mut req = Request::builder()
+                .uri("/explore.html?x=1")
+                .body(axum::body::Body::empty())
+                .unwrap();
+            if let Some(m) = &mount {
+                req.extensions_mut().insert(m.clone());
+            }
+            let resp = moved(&renamed).oneshot(req).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::PERMANENT_REDIRECT, "{mount:?}");
+            assert_eq!(
+                resp.headers()[header::LOCATION],
+                "/embed/explore.html?x=1",
+                "{mount:?}"
+            );
+        }
+    }
+
+    /// The Portal's `*.apps.{domain}` entry gives its hosts the Apps role in the host registry:
+    /// the module reads `apps` from the router, never a role the client sent.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn an_apps_wildcard_mount_takes_the_apps_role_in_the_registry() {
+        let text = format!(
+            "mode = \"host\"\nbase_host = \"city.test\"\n\
+             [[mounts.portal]]\nhost = \"portal.city.test\"\n\
+             [[mounts.portal]]\nhost = \"*.apps.city.test\"\n{}",
+            include_str!("../tests/fixtures/two-orgs.toml")
+        );
+        let cfg = dev_config("gateway,portal", &text);
+        let plans = plan_mounts(&cfg).unwrap();
+        let table = host_table(&cfg, &plans).unwrap().expect("a registry");
+        let mut builder = JcRouterBuilder::new("https", "city.test").hosts(table);
+        for plan in &plans {
+            let name = plan.module.name();
+            let router = Router::new().fallback(move |headers: HeaderMap| async move {
+                let role = headers
+                    .get(jc_router::HOST_ROLE_HEADER)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("none")
+                    .to_owned();
+                format!("{name} {role}")
+            });
+            builder = mount_all(builder, plan, &router);
+        }
+        let jc = builder.build().unwrap();
+        let req = Request::builder()
+            .uri("/index.html")
+            .header(header::HOST, "map.apps.city.test")
+            .header(jc_router::HOST_ROLE_HEADER, "working")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = jc.dispatch(req, None).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&body), "portal apps");
+    }
+
     /// T-6992: in host mode the label is `embed.`; `viz.` answers `308` to the configured
     /// `embed.` host with path and query, whatever Host or `X-Forwarded-Host` the request names.
     #[tokio::test]

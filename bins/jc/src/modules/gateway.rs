@@ -1799,6 +1799,77 @@ mod tests {
         );
     }
 
+    /// T-7131 at start: a gateway built beside kaisatsu and the Portal, the realm jc filled,
+    /// takes each Organization's own sign-in realm (`JC_OIDC_ORGANIZATION_REALMS`).
+    #[tokio::test]
+    async fn a_gateway_beside_kaisatsu_takes_each_organizations_own_realm() {
+        let cfg = JcConfig::merge(
+            Cli {
+                role: Some("gateway,kaisatsu,portal".into()),
+                base_host: Some("city.example".into()),
+                scheme: Some("https".into()),
+                ..Cli::default()
+            },
+            JcConfig::parse_file(
+                Path::new("jc.toml"),
+                "[[organizations]]\nname = \"bbsk\"\n\
+                 catalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+                 hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n",
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        let plans = crate::app::plan_mounts(&cfg).unwrap();
+        let mount = plans
+            .iter()
+            .find(|p| p.module == Module::Gateway)
+            .map(|p| p.mount.clone())
+            .unwrap();
+        // jc's listener as kaisatsu's siblings reach it: every realm's keys, none yet.
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let keys = Router::new().fallback(|| async { axum::Json(serde_json::json!({"keys": []})) });
+        tokio::spawn(async move { axum::serve(listener, keys).await });
+        let siblings = Siblings::new(&plans, addr);
+        let dir = tempfile::tempdir().unwrap();
+        let setup = Setup::prepare(dir.path(), &cfg.roles, &BTreeMap::new()).unwrap();
+        let secrets = crate::config::Secrets::default();
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let filled = |log: &str| {
+            log.lines()
+                .find(|l| l.contains("gateway: settings filled from sibling modules"))
+                .is_some_and(|l| l.contains("JC_OIDC_ORGANIZATION_REALMS"))
+        };
+        let portal = Some("127.0.0.1:1".parse().unwrap());
+        crate::runtime::install_crypto_provider();
+        // The broker jc's own hop names; nothing answers there while the gateway is built.
+        let hop = Hop {
+            addr: "127.0.0.1:1".parse().unwrap(),
+            secret: "s".into(),
+        };
+        let (file, guard) = crate::modules::capture_log();
+        let _router = build(
+            ctx,
+            &cfg.organizations,
+            true,
+            mount,
+            Some(hop),
+            portal,
+            None,
+        )
+        .await
+        .expect("the gateway starts while kaisatsu's keys do not answer yet");
+        drop(guard);
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(filled(&log), "{log}");
+    }
+
     #[test]
     fn search_documents_asks_the_assistants_internal_listener_unless_the_operator_names_one() {
         let (mut siblings, setup, mount, _d) = fixture();
