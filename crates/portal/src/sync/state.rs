@@ -268,13 +268,10 @@ mod tests {
     /// project with no key keeps nothing and reads as never run.
     #[tokio::test]
     async fn the_database_keeps_a_runs_memory_in_its_projects_key() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let run = jc_types::ProjectId::mint().path_segment();
         let project = format!("t7656-{run}");

@@ -1950,13 +1950,10 @@ mod tests {
 
     #[tokio::test]
     async fn the_periodic_sweep_puts_a_lost_dashboard_back_on_its_first_tick() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("migrate");
         let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
         sqlx::query(

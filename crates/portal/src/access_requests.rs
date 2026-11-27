@@ -1285,10 +1285,11 @@ mod tests {
         assert_eq!(refusal_reason(&[revoked_without_time], now), None);
     }
 
-    fn database_url() -> Option<String> {
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     /// A project of an Organization of the registry, so its requests are keyed (T-7202).
@@ -1313,10 +1314,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_decision_is_taken_back_to_the_request_as_it_was_and_only_by_its_decider() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let project = format!("ar{}", jc_types::ProjectId::mint().path_segment());
         keyed(&pool, &project).await;
@@ -1429,10 +1427,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_request_into_a_project_with_no_key_is_neither_stored_nor_taken_back() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let project = format!("unkeyed{}", jc_types::ProjectId::mint().path_segment());
         let request = stored(&project, &new_id(), Operations::Read);

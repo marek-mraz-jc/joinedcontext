@@ -796,12 +796,10 @@ mod tests {
         mirror
     }
 
-    async fn database() -> Option<sqlx::PgPool> {
-        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return None;
-        };
-        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    async fn database() -> sqlx::PgPool {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        crate::db::connect(&url).await.expect("connect + migrate")
     }
 
     fn unique() -> String {
@@ -929,9 +927,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_project_without_a_key_keeps_reads_and_purges_nothing() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let store = CaptureStore::new(Some(pool), Arc::new(crate::store::Mirror::new()));
         let project = format!("cov-{}", unique());
         store
@@ -949,9 +945,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_keyed_project_keeps_an_empty_batch_as_a_trim_and_reads_its_messages_back() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let mirror = Arc::new(crate::store::Mirror::new());
         let project = format!("cov-{}", unique());
         let organization = format!("cov-org-{}", unique());

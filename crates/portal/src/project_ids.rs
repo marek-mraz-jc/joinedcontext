@@ -1241,12 +1241,10 @@ mod backfill_loop_tests {
             .expect("a lazy pool")
     }
 
-    async fn database() -> Option<PgPool> {
-        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return None;
-        };
-        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    async fn database() -> PgPool {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        crate::db::connect(&url).await.expect("connect + migrate")
     }
 
     fn unique() -> String {
@@ -1317,9 +1315,7 @@ mod backfill_loop_tests {
 
     #[tokio::test]
     async fn a_synced_leader_keys_the_rows_of_a_placed_project_and_names_the_waiting_one() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let forge = forge().await;
         let mut state =
             AppState::new(crate::config::Config::for_tests(), None).with_db(pool.clone());

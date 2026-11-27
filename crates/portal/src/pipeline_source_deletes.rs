@@ -2499,12 +2499,10 @@ mod tests {
             .expect("a lazy pool")
     }
 
-    async fn database() -> Option<sqlx::PgPool> {
-        let Ok(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL") else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return None;
-        };
-        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+    async fn database() -> sqlx::PgPool {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        crate::db::connect(&url).await.expect("connect + migrate")
     }
 
     #[tokio::test]
@@ -2643,9 +2641,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_project_without_a_key_has_no_ledger_and_every_call_answers_empty() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let ledger = Ledger::new(Some(pool), Arc::new(crate::store::Mirror::new()));
         let ids = ["urn:a".to_owned()];
         ledger
