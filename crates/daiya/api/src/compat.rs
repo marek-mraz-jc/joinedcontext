@@ -1132,7 +1132,12 @@ async fn compat_ds_query(
 /// take in place of the dashboard's current values.
 fn render_range(params: Vec<(String, String)>) -> (u32, PanelTimeRange) {
     let mut panel_id = 1;
-    let mut range = PanelTimeRange::default();
+    // No `from`/`to`: the panel's `timeFrom`, else the dashboard's saved range, as the page reads.
+    let mut range = PanelTimeRange {
+        from: None,
+        to: None,
+        ..PanelTimeRange::default()
+    };
     for (key, value) in params {
         match key.as_str() {
             "panel" => panel_id = value.parse().unwrap_or(1),

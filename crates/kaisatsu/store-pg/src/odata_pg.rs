@@ -910,11 +910,13 @@ mod tests {
             ("IdentityProviderLinks", "idp_links"),
         ];
         for (set, table) in sets {
-            let query = PgScopedTable::relation_subquery(set)
-                .unwrap_or_else(|| panic!("{set} has no pushed-down query"));
-            assert!(query.contains(&format!("FROM kaisatsu.{table}")), "{set}");
+            let query = PgScopedTable::relation_subquery(set);
             assert!(
-                query.contains("$1"),
+                query.is_some_and(|q| q.contains(&format!("FROM kaisatsu.{table}"))),
+                "{set} reads kaisatsu.{table}: {query:?}"
+            );
+            assert!(
+                query.is_some_and(|q| q.contains("$1")),
                 "{set} is not scoped to the bound realm"
             );
         }

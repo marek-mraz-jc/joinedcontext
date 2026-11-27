@@ -847,6 +847,86 @@ fn turtle_of_a_value_that_is_no_node_is_the_prefixes_alone() {
 }
 
 #[test]
+fn turtle_skips_a_type_that_is_no_text_and_keeps_a_language_tag_with_subtags() {
+    let text = turtle(&json!({
+        "@id": "https://example.org/d",
+        "@type": [7, "dcat:Dataset"],
+        "dct:title": [
+            {"@value": "Colour", "@language": "en-GB"},
+            {"@value": "trailing", "@language": "en-"},
+            {"@value": "digit first", "@language": "1en"}
+        ]
+    }));
+    assert!(
+        text.contains("<https://example.org/d> a dcat:Dataset ;"),
+        "{text}"
+    );
+    assert!(text.contains("\"Colour\"@en-GB"), "{text}");
+    assert!(
+        text.contains("dct:title \"trailing\" ;"),
+        "an empty subtag is dropped: {text}"
+    );
+    assert!(
+        text.contains("dct:title \"digit first\""),
+        "a digit-led tag is dropped: {text}"
+    );
+    assert!(!text.contains("@1en"));
+}
+
+#[test]
+fn a_period_with_one_end_open_writes_only_the_date_it_has() {
+    let f = Fixture::new();
+    for (temporal, has, lacks) in [
+        (
+            json!({"start": "2019-01-01"}),
+            "dcat:startDate",
+            "dcat:endDate",
+        ),
+        (
+            json!({"end": "2026-12-31"}),
+            "dcat:endDate",
+            "dcat:startDate",
+        ),
+    ] {
+        let catalog: Catalog = serde_json::from_value(json!({ "temporal": temporal }))
+            .expect("a catalogue with an open period");
+        let subject = f.subject(Audience::Public, &ALL, Some(&catalog), &[]);
+        let period = &dataset(&subject, &index(), BASE)["dct:temporal"];
+        assert_eq!(period["@type"], "dct:PeriodOfTime");
+        assert!(period.get(has).is_some(), "{period}");
+        assert!(period.get(lacks).is_none(), "{period}");
+    }
+}
+
+#[test]
+fn the_page_without_publisher_or_licence_names_neither() {
+    let f = Fixture::new();
+    let catalog = Catalog::default();
+    let subject = f.subject(Audience::Public, &ALL, Some(&catalog), &[]);
+    let page = dataset_html(&subject, &index(), BASE);
+    assert!(!page.contains("Published by"), "{page}");
+    assert!(!page.contains("Licence:"), "{page}");
+}
+
+#[test]
+fn a_feed_titled_without_english_or_without_a_tagged_title_is_listed_by_what_it_has() {
+    let mut f = Fixture::new();
+    f.feeds = serde_json::from_value(json!([
+        {"name": "kultura", "title": {"sk": "Kultúra", "de": "Kultur"},
+         "sources": [{"type": "Event", "preset": "event"}]},
+        {"name": "sport", "title": {"": "Šport", "sk": "Šport SK"},
+         "sources": [{"type": "Event", "preset": "event"}]}
+    ]))
+    .expect("two feed outputs");
+    let subject = f.subject(Audience::Public, &[Representation::Feed], None, &[]);
+    let page = dataset_html(&subject, &index(), BASE);
+    // No English title: the first language's (de) names the link.
+    assert!(page.contains(">Kultur (RSS 2.0)</a>"), "{page}");
+    // The first title is an untagged text with no `@value`: the address names the link.
+    assert!(page.contains(&format!(">{IRI}/feeds/sport")), "{page}");
+}
+
+#[test]
 fn the_page_lists_each_distribution_its_publisher_licence_and_alternates() {
     let f = Fixture::new();
     let mut fixture = Fixture::new();

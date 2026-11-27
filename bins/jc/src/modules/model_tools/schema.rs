@@ -1467,7 +1467,7 @@ mod tests {
                 max_elements: 10_000,
             },
         };
-        View::load(source, &imports).unwrap_or_else(|e| panic!("{e}: {source}"))
+        View::load(source, &imports).expect(source)
     }
 
     const BOUNDED: &str = "\

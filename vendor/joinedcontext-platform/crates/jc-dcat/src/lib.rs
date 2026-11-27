@@ -1110,11 +1110,14 @@ pub fn turtle(record: &Value) -> String {
     }
     let mut written = std::collections::BTreeSet::new();
     while let Some(node) = queue.pop_front() {
-        let Some(id) = node.get("@id").and_then(Value::as_str) else {
+        let Some(object) = node.as_object() else {
+            continue;
+        };
+        let Some(id) = object.get("@id").and_then(Value::as_str) else {
             continue;
         };
         let subject = expand(id);
-        let body = properties(&node, 1, &mut queue);
+        let body = properties(object, 1, &mut queue);
         // A node named twice (a distribution listed by two index entries) is one statement.
         if body.is_empty() || !written.insert((subject.clone(), body.clone())) {
             continue;
@@ -1126,10 +1129,11 @@ pub fn turtle(record: &Value) -> String {
 
 /// The predicate-object list of one node; nested nodes with an `@id` are queued as statements
 /// of their own and referenced, nodes without one are written in place as blank nodes.
-fn properties(node: &Value, depth: usize, queue: &mut VecDeque<Value>) -> String {
-    let Some(object) = node.as_object() else {
-        return String::new();
-    };
+fn properties(
+    object: &serde_json::Map<String, Value>,
+    depth: usize,
+    queue: &mut VecDeque<Value>,
+) -> String {
     let indent = "    ".repeat(depth);
     let mut lines = Vec::new();
     if let Some(types) = object.get("@type") {
@@ -1197,7 +1201,7 @@ fn object_term(
                 }
                 return Some(format!("<{}>", iri_ref(&expand(id))));
             }
-            let inner = properties(value, depth + 1, queue);
+            let inner = properties(map, depth + 1, queue);
             let indent = "    ".repeat(depth);
             Some(format!("[{inner}\n{indent}]"))
         }
@@ -1452,4 +1456,17 @@ pub fn major_of(model: &Value) -> Option<u64> {
     version
         .as_u64()
         .or_else(|| version.as_str().and_then(|text| text.parse().ok()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A feed's distributions name their own file type per format (`feed_distributions`); the
+    /// shared table still answers ATOM for the representation itself.
+    #[test]
+    fn the_feed_representation_is_an_atom_file_type() {
+        assert!(file_type_iri(Representation::Feed).ends_with("/file-type/ATOM"));
+        assert!(file_type_iri(Representation::Mcp).ends_with("/file-type/JSON"));
+    }
 }

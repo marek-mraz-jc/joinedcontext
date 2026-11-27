@@ -164,12 +164,12 @@ impl PgStreams {
     }
 
     async fn scoped(&self, org: &OrgId) -> Result<Transaction<'_, Postgres>, String> {
-        let mut tx = self.pool.begin().await.map_err(|e| e.to_string())?;
+        let mut tx = self.pool.begin().await.map_err(text)?;
         sqlx::query("SELECT set_config('ekiben.org', $1, true)")
             .bind(&org.0)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(text)?;
         Ok(tx)
     }
 
@@ -179,8 +179,8 @@ impl PgStreams {
         let rows = sqlx::query_as("SELECT id, posted FROM ekiben.stream ORDER BY id")
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
-        tx.commit().await.map_err(|e| e.to_string())?;
+            .map_err(text)?;
+        tx.commit().await.map_err(text)?;
         Ok(rows)
     }
 
@@ -190,8 +190,8 @@ impl PgStreams {
         let rows = sqlx::query_as("SELECT kind, id, posted FROM ekiben.resource ORDER BY kind, id")
             .fetch_all(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
-        tx.commit().await.map_err(|e| e.to_string())?;
+            .map_err(text)?;
+        tx.commit().await.map_err(text)?;
         Ok(rows)
     }
 
@@ -204,7 +204,7 @@ impl PgStreams {
         let orgs: Vec<String> = sqlx::query_scalar("SELECT org FROM ekiben.org ORDER BY org")
             .fetch_all(&self.pool)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(text)?;
         let mut started = 0;
         for org in orgs.into_iter().map(OrgId) {
             for (kind, id, posted) in self.resources(&org).await? {
@@ -238,7 +238,7 @@ impl StreamPersistence for PgStreams {
                 .bind(&org.0)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(text)?;
             sqlx::query(
                 "INSERT INTO ekiben.stream (org, id, posted) VALUES ($1, $2, $3)
                  ON CONFLICT (org, id) DO UPDATE SET posted = EXCLUDED.posted, updated_at = now()",
@@ -248,8 +248,8 @@ impl StreamPersistence for PgStreams {
             .bind(posted)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
-            tx.commit().await.map_err(|e| e.to_string())
+            .map_err(text)?;
+            tx.commit().await.map_err(text)
         })
     }
 
@@ -266,7 +266,7 @@ impl StreamPersistence for PgStreams {
                 .bind(&org.0)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| e.to_string())?;
+                .map_err(text)?;
             sqlx::query(
                 "INSERT INTO ekiben.resource (org, kind, id, posted) VALUES ($1, $2, $3, $4)
                  ON CONFLICT (org, kind, id) DO UPDATE SET posted = EXCLUDED.posted, updated_at = now()",
@@ -277,8 +277,8 @@ impl StreamPersistence for PgStreams {
             .bind(posted)
             .execute(&mut *tx)
             .await
-            .map_err(|e| e.to_string())?;
-            tx.commit().await.map_err(|e| e.to_string())
+            .map_err(text)?;
+            tx.commit().await.map_err(text)
         })
     }
 
@@ -290,10 +290,15 @@ impl StreamPersistence for PgStreams {
                 .bind(id)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| e.to_string())?;
-            tx.commit().await.map_err(|e| e.to_string())
+                .map_err(text)?;
+            tx.commit().await.map_err(text)
         })
     }
+}
+
+/// A driver error as the stream manager's persistence reports it.
+fn text(e: sqlx::Error) -> String {
+    e.to_string()
 }
 
 /// The store on real Postgres (`JC_PG_TEST_DATABASE_URL`, a superuser that only prepares):

@@ -879,3 +879,56 @@ async fn the_runtime_loads_the_realms_keys_and_says_why_it_cannot() {
     .await;
     assert_eq!((status, answer["body"].clone()), (StatusCode::OK, json!(2)));
 }
+
+/// A realm that cannot be reached, breaks its answer off or never answers leaves the runtime
+/// saying which; the background refresh logs the failure and keeps its loop.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_unreachable_cut_off_or_silent_realm_is_named() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let http = reqwest::Client::new();
+    let verifier = Arc::new(Verifier::new(ISSUER));
+    // Nothing listens on port 9 of the loopback.
+    let unreachable = "http://127.0.0.1:9/certs";
+    let error = functions::refresh_keys(&verifier, &http, unreachable)
+        .await
+        .unwrap_err();
+    assert!(error.contains("the realm did not answer:"), "{error}");
+    // keep_keys logs the failure and sleeps until the next refresh: it is still running.
+    let kept = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        functions::keep_keys(Arc::clone(&verifier), http.clone(), unreachable.to_owned()),
+    )
+    .await;
+    assert!(kept.is_err(), "keep_keys returned");
+
+    // A realm that promises 100 bytes, sends one and closes the connection.
+    let cut = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let at = cut.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut stream, _) = cut.accept().await.unwrap();
+        let mut head = [0u8; 1024];
+        let _ = stream.read(&mut head).await;
+        let _ = stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{")
+            .await;
+    });
+    let error = functions::refresh_keys(&verifier, &http, &format!("http://{at}/certs"))
+        .await
+        .unwrap_err();
+    assert!(error.contains("broke off"), "{error}");
+
+    // A realm that takes the connection and never answers: the 10 s limit.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let at = silent.local_addr().unwrap();
+    let held = tokio::spawn(async move {
+        let (stream, _) = silent.accept().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        drop(stream);
+    });
+    let error = functions::refresh_keys(&verifier, &http, &format!("http://{at}/certs"))
+        .await
+        .unwrap_err();
+    assert!(error.contains("did not answer within 10s"), "{error}");
+    held.abort();
+}
