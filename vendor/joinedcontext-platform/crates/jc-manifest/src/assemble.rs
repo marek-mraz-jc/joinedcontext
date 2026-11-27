@@ -1124,6 +1124,41 @@ mod tests {
             .collect()
     }
 
+    /// A render beside the root has no name to take and is called `assembly`.
+    #[test]
+    fn a_sibling_of_the_root_is_named_assembly() {
+        let root = std::path::Path::new("/");
+        assert_eq!(
+            super::sibling(root, "next"),
+            std::path::Path::new("/.assembly.next")
+        );
+        assert_eq!(
+            super::sibling(std::path::Path::new("/tmp/render"), "next"),
+            std::path::Path::new("/tmp/.render.next")
+        );
+    }
+
+    /// A directory that is gone counts as removed; one the process may not remove is an error
+    /// naming it.
+    #[cfg(unix)]
+    #[test]
+    fn remove_ignores_a_missing_directory_and_names_one_it_cannot_remove() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("jc-assemble-remove-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let locked = base.join("locked");
+        std::fs::create_dir_all(locked.join("inner")).expect("create");
+        assert!(super::remove(&base.join("missing")).is_ok());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("lock");
+        let result = super::remove(&locked.join("inner"));
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        let _ = std::fs::remove_dir_all(&base);
+        assert!(
+            matches!(&result, Err(super::AssembleError::Io { path, .. }) if *path == locked.join("inner")),
+            "{result:?}"
+        );
+    }
+
     /// The host's environment holds other modules' secrets (`jc`): git sees only the allow-list.
     /// Cargo sets `CARGO_MANIFEST_DIR` in this test process; a git that inherited the
     /// environment would print it through the alias.
