@@ -868,6 +868,9 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_system_window_parallel_read_and_writes() {
         let f = Arc::new(Fixture::new(unix(10, 500_000_000), [SECOND, 0, 0, 0]));
+        // One message before the race: a reader that moves the clock past the window before the
+        // writer's first write would wait forever on an empty window (the clock is fake).
+        f.write(&[r#"{"id":"first","ts":10.5}"#], AckResponder::noop());
         let writer = f.clone();
         let writes = tokio::spawn(async move {
             for i in 0..1000 {
