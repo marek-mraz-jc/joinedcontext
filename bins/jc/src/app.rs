@@ -2269,7 +2269,7 @@ mod tests {
         };
         let cfg = dev_config("portal", "");
         assert_eq!(portal_age_key(&cfg, &secrets).unwrap(), Some(path));
-        let cfg = dev_config("gateway", "");
+        let cfg = dev_config("daiya", "");
         assert_eq!(portal_age_key(&cfg, &secrets).unwrap(), None);
     }
 
