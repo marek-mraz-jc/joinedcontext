@@ -963,7 +963,7 @@ mod tests {
             ("susr-om-pohyb", "slovensko/susr-om-pohyb"),
             ("x/susr-om-pohyb", "slovensko/susr-om-pohyb"),
         ] {
-            let c = endpoint_of(&connectors, named).unwrap_or_else(|e| panic!("{named}: {e}"));
+            let c = endpoint_of(&connectors, named).expect(named);
             assert_eq!(c.endpoint, endpoint, "{named}");
         }
         let shared = endpoint_of(&connectors, "registre").unwrap_err();
@@ -1306,44 +1306,42 @@ mod tests {
                 counts: false,
             })
         };
-        let Event::Stage {
-            stage: read,
-            topic,
-            detail,
-        } = stage(0, json!({"type": "Bridge", "q": " yearBuilt<1950 "}))
-        else {
-            panic!("a read's stage")
+        let read = |stage: &'static str, topic: Option<&str>, filter: Option<&str>| Event::Stage {
+            stage,
+            topic: topic.map(str::to_owned),
+            detail: super::super::agent::Detail {
+                source: Some("BBSK bridge register".into()),
+                filter: filter.map(str::to_owned),
+                ..Default::default()
+            },
         };
-        assert_eq!((read, topic.as_deref()), ("reading", Some("Bridge")));
-        assert_eq!(detail.source.as_deref(), Some("BBSK bridge register"));
-        assert_eq!(detail.filter.as_deref(), Some("yearBuilt<1950"));
-        let Event::Stage {
-            stage: history,
-            detail,
-            ..
-        } = stage(
-            1,
-            json!({"type": "Bridge", "timeAt": "2026-10-01T00:00:00Z", "endTimeAt": "2026-10-08T00:00:00Z"}),
-        )
-        else {
-            panic!("a history read's stage")
-        };
-        assert_eq!(history, "history");
         assert_eq!(
-            detail.filter.as_deref(),
-            Some("2026-10-01T00:00:00Z..2026-10-08T00:00:00Z")
+            stage(0, json!({"type": "Bridge", "q": " yearBuilt<1950 "})),
+            read("reading", Some("Bridge"), Some("yearBuilt<1950"))
         );
-        let Event::Stage {
-            stage: schema,
-            detail,
-            ..
-        } = stage(2, json!({}))
-        else {
-            panic!("a schema step's stage")
-        };
-        assert_eq!(schema, "schema");
-        assert_eq!(detail.source.as_deref(), Some("BBSK bridge register"));
-        assert_eq!(detail.filter, None);
+        assert_eq!(
+            stage(
+                1,
+                json!({"type": "Bridge", "timeAt": "2026-10-01T00:00:00Z", "endTimeAt": "2026-10-08T00:00:00Z"}),
+            ),
+            read(
+                "history",
+                Some("Bridge"),
+                Some("2026-10-01T00:00:00Z..2026-10-08T00:00:00Z")
+            )
+        );
+        // A history from a moment on, with no end, is filtered from it.
+        assert_eq!(
+            stage(
+                1,
+                json!({"type": "Bridge", "timeAt": "2026-10-01T00:00:00Z"})
+            ),
+            read("history", Some("Bridge"), Some("2026-10-01T00:00:00Z"))
+        );
+        assert_eq!(
+            stage(2, json!({})),
+            read("schema", Some("mosty-bbsk"), None)
+        );
     }
 
     /// T-4761: `limit: 1, count: true` on 47 bridges showed "first 1 of 47" and one row; the

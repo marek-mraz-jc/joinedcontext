@@ -3560,6 +3560,153 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-4810: a catalogue question lists the live data the deployment reads, cited at its
+/// Endpoint's address unless the sources hold its page, beside the catalogue's pages, under the
+/// catalogue rule.
+#[tokio::test]
+async fn a_catalogue_question_lists_the_live_data_beside_the_catalogues_pages() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = vec!["list_types".into(), "query_entities".into()];
+    let w = world("chatcataloguelist", d).await;
+    recorded_air(&w.gateway, SLUG).await;
+    // Warming lists the Endpoint's types, which the live data's passage names.
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
+    script_routed(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": json!({"route": "catalogue", "queries": ["ovzdušie"]}).to_string()}),
+            130,
+        )],
+        vec![],
+        vec![streamed(&["Jeden zdroj živých dát [1]."], 900, 20)],
+    )
+    .await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Aké dáta máte o ovzduší?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+    let calls = model_calls(&w.proxy).await;
+    let answer = calls_of(&calls, None);
+    let read = answer.last().expect("an answer call").to_string();
+    assert!(read.contains("Live data the assistant reads"), "{read}");
+    assert!(read.contains("Holds: AirQualityObserved"), "{read}");
+    assert!(read.contains("Group them by publisher"), "{read}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// AG-104: a routed question whose conversation cannot hold the router's call, or whose router
+/// call spent what the direct answer or the searched one would need, ends with the
+/// conversation's limit and no answer call.
+#[tokio::test]
+async fn a_routed_question_past_its_conversations_tokens_ends_at_the_limit() {
+    let spent_by = |events: &[(String, Value)]| {
+        events
+            .iter()
+            .any(|(n, d)| n == "error" && d["title"] == "Conversation Budget Spent")
+    };
+    let w = world("chatroutedcap", deployment(Channel::Public, 300, 10)).await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Kedy je zber?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(spent_by(&events), "{events:?}");
+    assert!(model_calls(&w.proxy).await.is_empty());
+    db::drop_database(w.admin, w.pool, &w.name).await;
+
+    let w = world(
+        "chatroutedcapspent",
+        deployment(Channel::Public, 50_000, 10),
+    )
+    .await;
+    script_routed(
+        &w.proxy,
+        vec![
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"direct\"}"}),
+                49_600,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"zber odpadu\", \"harmonogram\"]}"}),
+                49_600,
+            ),
+        ],
+        vec![],
+        vec![],
+    )
+    .await;
+    for message in ["Napíš mi básničku o jeseni.", "Kedy je zber?"] {
+        let (status, events, _) =
+            answer_of(&w.app, ask(json!({"message": message}), Some(ORIGIN))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(spent_by(&events), "{message}: {events:?}");
+        assert!(
+            events.iter().all(|(n, _)| n != "answer"),
+            "{message}: {events:?}"
+        );
+    }
+    let calls = model_calls(&w.proxy).await;
+    assert!(
+        calls_of(&calls, None).is_empty(),
+        "no answer call: {calls:?}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// Every visitor path of an id no assistant is published under is not found, a preflight
+/// without an origin is refused, and a token request whose body is no proof is refused in words.
+#[tokio::test]
+async fn an_unknown_id_is_not_found_on_every_visitor_path() {
+    let w = world("chatunknownid", deployment(Channel::Public, 50_000, 10)).await;
+    let send = |method: &str, uri: &str, body: &'static str| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .expect("a request")
+    };
+    for (method, uri) in [
+        ("GET", "/api/v1/d/nobody/challenge"),
+        ("POST", "/api/v1/d/nobody/token"),
+        ("GET", "/api/v1/d/nobody/turns/1/resume"),
+        ("POST", "/api/v1/d/nobody/turns/1/cancel"),
+        ("GET", "/api/v1/d/nobody/map/1"),
+        ("OPTIONS", "/api/v1/d/nobody/chat"),
+    ] {
+        let response = w
+            .app
+            .clone()
+            .oneshot(send(method, uri, "{}"))
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+    let preflight = w
+        .app
+        .clone()
+        .oneshot(send("OPTIONS", "/api/v1/d/hronov-obcania/chat", ""))
+        .await
+        .expect("an answer");
+    assert_eq!(preflight.status(), StatusCode::FORBIDDEN);
+    let token = w
+        .app
+        .clone()
+        .oneshot(send(
+            "POST",
+            "/api/v1/d/hronov-obcania/token",
+            "not a proof",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(token.status(), StatusCode::BAD_REQUEST);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// A row of `answer_timings`: deployment, cached, model calls, then the first token, the total
 /// and the route, search, judge and answer stages in milliseconds, whether the judgement was
 /// skipped.
@@ -6685,6 +6832,92 @@ async fn internal_post(
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     )
+}
+
+/// The MCP search reads the publisher a question names first, and every source when that one
+/// holds nothing; a body that is no JSON, no sources or a context without its chunk is refused;
+/// a source with no passages counts none; and with the store down every path says so.
+#[tokio::test]
+async fn the_mcp_search_reads_a_named_publisher_first_and_says_when_the_store_is_down() {
+    let w = world("chatdocumentsdown", deployment(Channel::Public, 50_000, 10)).await;
+    corpus::pages(
+        &w.pool,
+        "trutnov",
+        "web",
+        &[(
+            "https://trutnov.example/kniznica",
+            "sk",
+            "Knižnica v Trutnove je otvorená v utorok a vo štvrtok.",
+        )],
+    )
+    .await;
+    embed_missing(&w.pool, &w.state.embedder, "trutnov", 100)
+        .await
+        .expect("embedded");
+    let two =
+        json!([{"project": "hronov", "source": "web"}, {"project": "trutnov", "source": "web"}]);
+    let named = json!({"query": "Trutnov knižnica", "sources": two});
+    let (status, found) = internal_post(&w.app, "/internal/v1/search", named.clone(), false).await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    let hits = found["hits"].as_array().expect("hits");
+    assert!(
+        !hits.is_empty() && hits.iter().all(|h| h["publisher"] == "trutnov"),
+        "{found}"
+    );
+    let (status, none) = internal_post(
+        &w.app,
+        "/internal/v1/search",
+        json!({"query": "Trutnov knižnica", "sources": two, "lang": "en"}),
+        false,
+    )
+    .await;
+    assert_eq!((status, none), (StatusCode::OK, json!({"hits": []})));
+    let (status, held) = internal_post(
+        &w.app,
+        "/internal/v1/sources",
+        json!({"sources": [{"project": "hronov", "source": "web"}, {"project": "hronov", "source": "nic"}, {"project": "prazdny", "source": "web"}]}),
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    assert_eq!(held["publishers"], json!(["hronov"]), "{held}");
+    let web = json!([{"project": "hronov", "source": "web"}]);
+    for (uri, body) in [
+        ("/internal/v1/sources", json!({"sources": []})),
+        (
+            "/internal/v1/context",
+            json!({"sources": [], "chunkId": 1, "before": 0, "after": 0}),
+        ),
+        ("/internal/v1/context", json!({"sources": web})),
+        ("/internal/v1/sources", json!({"sources": web, "x": 1})),
+    ] {
+        let (status, _) = internal_post(&w.app, uri, body.clone(), false).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri} {body}");
+    }
+    let untyped = Request::builder()
+        .method("POST")
+        .uri("/internal/v1/search")
+        .body(Body::from(named.to_string()))
+        .expect("a request");
+    let response = w.app.clone().oneshot(untyped).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    w.pool.close().await;
+    for (uri, body) in [
+        ("/internal/v1/search", named),
+        (
+            "/internal/v1/search",
+            json!({"query": "knižnica", "sources": web}),
+        ),
+        ("/internal/v1/sources", json!({"sources": web})),
+        (
+            "/internal/v1/context",
+            json!({"sources": web, "chunkId": 1, "before": 0, "after": 0}),
+        ),
+    ] {
+        let (status, _) = internal_post(&w.app, uri, body.clone(), false).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri} {body}");
+    }
+    db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
 /// T-4659 (AG-119, EP-133): the MCP servers' search answers the public passages of the sources it
