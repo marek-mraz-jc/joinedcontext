@@ -3894,8 +3894,7 @@ mod tests {
         let read = read_by(&state, &stranger);
         let refused = read
             .table("nothings", Vec::new(), &QueryOptions::default())
-            .err()
-            .expect("no such set");
+            .expect_err("no such set");
         assert_eq!(refused.status(), StatusCode::NOT_FOUND);
         let spaces = kind("spaces").expect("spaces");
         let none = read
@@ -3910,14 +3909,12 @@ mod tests {
         let refused = read
             .rows(changes, &["helsinki".to_owned()])
             .await
-            .err()
-            .expect("no forge to list Changes from");
+            .expect_err("no forge to list Changes from");
         assert!(refused.status().is_server_error(), "{}", refused.status());
         let refused = read
             .change("helsinki", "c-1")
             .await
-            .err()
-            .expect("no forge to read a Change from");
+            .expect_err("no forge to read a Change from");
         assert!(!refused.status().is_success());
     }
 
@@ -3959,8 +3956,7 @@ mod tests {
         let refused = read
             .fill("changes", &mut change)
             .await
-            .err()
-            .expect("a Change that cannot be read");
+            .expect_err("a Change that cannot be read");
         assert!(!refused.status().is_success());
 
         let long = CHANGE_DETAIL_MAX + 1;
@@ -3972,8 +3968,7 @@ mod tests {
         let refused = read
             .fill("workspaces", &mut many)
             .await
-            .err()
-            .expect("over the cap");
+            .expect_err("over the cap");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
         assert!(text.contains("holds at most 50 Workspaces"), "{text}");
@@ -3998,8 +3993,7 @@ mod tests {
         let refused = read
             .fill("workspaces", &mut unread)
             .await
-            .err()
-            .expect("no such Workspace");
+            .expect_err("no such Workspace");
         assert!(!refused.status().is_success());
     }
 
@@ -4246,8 +4240,7 @@ mod tests {
         let refused = read
             .rows(spaces, &projects)
             .await
-            .err()
-            .expect("12000 rows are more than a read covers");
+            .expect_err("12000 rows are more than a read covers");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
         assert!(
@@ -4259,8 +4252,7 @@ mod tests {
         let names = [json!({ "name": "helsinki" }), json!({ "name": "tampere" })];
         let refused = expand(&read, &mut rows, &names, &[spaces])
             .await
-            .err()
-            .expect("the expansion holds 12000 rows");
+            .expect_err("the expansion holds 12000 rows");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
 
         for i in 0..=MAX_ROWS {
@@ -4271,9 +4263,7 @@ mod tests {
                 json!({ "rules": [] }),
             ));
         }
-        let refused = org_rows(&read, ORG_ROLES)
-            .err()
-            .expect("more roles than a read covers");
+        let refused = org_rows(&read, ORG_ROLES).expect_err("more roles than a read covers");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
         assert!(text.contains(ORG_ROLES), "{text}");
@@ -4289,8 +4279,7 @@ mod tests {
         ));
         let refused = member_rows(&read)
             .await
-            .err()
-            .expect("more members than a read covers");
+            .expect_err("more members than a read covers");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
         assert!(text.contains(MEMBERS), "{text}");
@@ -4304,12 +4293,11 @@ mod tests {
         let state = hel_state();
         let admin = user_of(&["portal-approver"]);
         let read = read_by(&state, &admin);
-        let refused = org_rows(&read, "nothings").err().expect("no such set");
+        let refused = org_rows(&read, "nothings").expect_err("no such set");
         assert_eq!(refused.status(), StatusCode::NOT_FOUND);
         let refused = read
             .table("spaces", vec![json!(1)], &QueryOptions::default())
-            .err()
-            .expect("a row that is no object");
+            .expect_err("a row that is no object");
         assert!(!refused.status().is_success());
 
         let spaces = kind("spaces").expect("spaces");

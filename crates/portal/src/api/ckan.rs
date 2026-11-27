@@ -706,8 +706,7 @@ mod tests {
             Path("bratislava".to_owned()),
         )
         .await
-        .err()
-        .expect("refused");
+        .expect_err("refused");
         assert!(matches!(denied, ApiError::NotFound(_)), "{denied:?}");
     }
 }

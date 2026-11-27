@@ -6334,8 +6334,7 @@ mod tests {
             .await;
         let err = open_change_on(&state, &client_of(&down), "portal/create-x", "ovzdusie")
             .await
-            .err()
-            .expect("the list fails");
+            .expect_err("the list fails");
         assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
 
         let taken = MockServer::start().await;
@@ -6358,8 +6357,7 @@ mod tests {
         let held = turn(&shako, "portal/create-x").await;
         let err = create_or_reuse_branch(&shako, &held, "main")
             .await
-            .err()
-            .expect("an open change holds the branch");
+            .expect_err("an open change holds the branch");
         assert!(
             matches!(&err, ApiError::Conflict(message) if message.contains("chg-00000007")),
             "{err:?}"
@@ -6375,8 +6373,7 @@ mod tests {
         let held = turn(&shako, "portal/create-y").await;
         let err = create_or_reuse_branch(&shako, &held, "main")
             .await
-            .err()
-            .expect("the forge refuses the branch");
+            .expect_err("the forge refuses the branch");
         assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
     }
 
@@ -6455,8 +6452,8 @@ mod tests {
             });
         }
         let err = app_grants(&state, "helsinki", &bikes_app())
-            .err()
-            .expect("a hand-written name");
+            .map(drop)
+            .expect_err("a hand-written name");
         assert!(
             matches!(&err, ApiError::Conflict(message)
                 if message.contains("was not generated for App 'bikes'") && message.contains("rename it")),
@@ -6466,8 +6463,8 @@ mod tests {
         let mut broken = bikes_app();
         broken.spec = json!({});
         let err = app_grants(&state, "helsinki", &broken)
-            .err()
-            .expect("a spec the compiler refuses");
+            .map(drop)
+            .expect_err("a spec the compiler refuses");
         assert!(matches!(err, ApiError::BadRequest(_)), "{err:?}");
     }
 
@@ -6893,8 +6890,7 @@ mod tests {
             Some("w1"),
         )
         .await
-        .err()
-        .expect("a workspace");
+        .expect_err("a workspace");
         for refused in [in_plan, in_workspace] {
             assert!(
                 matches!(&refused, ApiError::BadRequest(message)

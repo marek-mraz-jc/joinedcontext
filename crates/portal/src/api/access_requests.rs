@@ -1566,7 +1566,7 @@ mod tests {
         .expect("a domain is known");
         assert_eq!(
             served(&state, json!({ "spec": { "policyRefs": [grant.clone()] } })),
-            [grant.clone()],
+            std::slice::from_ref(&grant),
             "already named, not named twice"
         );
         let other = "urn:ngsi-ld:Policy:hel.fi:air:other".to_owned();

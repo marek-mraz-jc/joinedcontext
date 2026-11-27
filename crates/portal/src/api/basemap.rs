@@ -754,7 +754,7 @@ mod tests {
     #[tokio::test]
     async fn a_cache_write_that_did_not_finish_is_only_logged() {
         let panicked = tokio::task::spawn_blocking(|| {
-            None::<()>.expect("the test makes the cache write fail");
+            panic!("the test makes the cache write fail");
         })
         .await;
         assert!(panicked.is_err());

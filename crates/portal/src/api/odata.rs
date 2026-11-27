@@ -624,8 +624,8 @@ fn collection(root: &str, path: &[Segment], options: &QueryOptions, answer: Answ
 /// The in-memory table of the set `name` over `rows`; a set the model lacks, or rows that are
 /// no table (a missing or repeated key), are the service's own fault, answered as a source error
 /// whose text stays in the log.
-fn table_of(served: &Served, name: &str, rows: Vec<Value>) -> Result<MemoryTable, Response> {
-    let fail = |e: TableError| Refusal::from(e).into_response();
+fn table_of(served: &Served, name: &str, rows: Vec<Value>) -> Result<MemoryTable, Box<Response>> {
+    let fail = |e: TableError| Box::new(Refusal::from(e).into_response());
     let info = served
         .service
         .info(served.model.clone(), name)
@@ -674,7 +674,7 @@ async fn answer(
     };
     let rows = rows_of(set, caller, state, project).await?;
     let fail = |e: TableError| Refusal::from(e).into_response();
-    let table = table_of(served, name, rows).map_err(Box::new)?;
+    let table = table_of(served, name, rows)?;
     let root = service_root(state, project);
     let all = Scope::all();
     match rest {
@@ -1692,13 +1692,9 @@ mod tests {
     async fn rows_that_are_no_table_are_a_500_without_the_rows() {
         let served = &*SERVED;
         let twice = vec![json!({ "name": "air" }), json!({ "name": "air" })];
-        let refused = table_of(served, "endpoints", twice)
-            .err()
-            .expect("a repeated key");
+        let refused = table_of(served, "endpoints", twice).expect_err("a repeated key");
         assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let refused = table_of(served, "nothings", Vec::new())
-            .err()
-            .expect("not in the model");
+        let refused = table_of(served, "nothings", Vec::new()).expect_err("not in the model");
         assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert!(table_of(served, "endpoints", vec![json!({ "name": "air" })]).is_ok());
     }
@@ -1832,7 +1828,7 @@ mod tests {
             Bytes::from_static(br#"{"mcp":false}"#),
         )
         .await;
-        let status = outcome.err().expect("a refusal").into_response().status();
+        let status = outcome.expect_err("a refusal").into_response().status();
         assert!(
             ![
                 StatusCode::FORBIDDEN,
@@ -1969,8 +1965,7 @@ mod tests {
         assert_eq!(served.status(), StatusCode::OK);
         let hidden = metadata(session_of(&[]), State(state), Path("helsinki".to_owned()))
             .await
-            .err()
-            .expect("a stranger");
+            .expect_err("a stranger");
         assert!(matches!(hidden, ApiError::NotFound(_)), "{hidden:?}");
     }
 }

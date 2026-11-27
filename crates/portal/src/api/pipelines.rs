@@ -2428,24 +2428,20 @@ uptime_seconds 900
     #[tokio::test]
     async fn a_replay_needs_ids_a_runner_and_an_internal_listener() {
         let bare = replay_world(None, None);
-        let refused = retry(&bare, Vec::new()).await.err().expect("no ids");
+        let refused = retry(&bare, Vec::new()).await.expect_err("no ids");
         assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
         let refused = retry(&bare, (1..=101).collect())
             .await
-            .err()
-            .expect("101 ids");
+            .expect_err("101 ids");
         assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
 
-        let refused = retry(&bare, vec![1]).await.err().expect("no runner");
+        let refused = retry(&bare, vec![1]).await.expect_err("no runner");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("no pipeline runner")),
             "{refused:?}"
         );
         let no_listener = replay_world(Some("http://127.0.0.1:1".into()), None);
-        let refused = retry(&no_listener, vec![1])
-            .await
-            .err()
-            .expect("no listener");
+        let refused = retry(&no_listener, vec![1]).await.expect_err("no listener");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("internal listener")),
             "{refused:?}"
@@ -2472,7 +2468,7 @@ uptime_seconds 900
             Some(crate::test_db::dead_pool()),
             crate::test_db::placed_mirror("helsinki"),
         ));
-        let refused = retry(&down, vec![1]).await.err().expect("the list is down");
+        let refused = retry(&down, vec![1]).await.expect_err("the list is down");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read")),
             "{refused:?}"
@@ -2490,8 +2486,7 @@ uptime_seconds 900
         let id = keep_one(&state).await;
         let refused = retry(&state, vec![id])
             .await
-            .err()
-            .expect("no runner answers");
+            .expect_err("no runner answers");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("did not answer")),
             "{refused:?}"

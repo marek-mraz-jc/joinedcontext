@@ -162,8 +162,7 @@ mod tests {
             Err("project `helsinki` has no id in the Portal's project registry yet".to_owned()),
         )
         .await
-        .err()
-        .expect("no tenant");
+        .expect_err("no tenant");
         assert!(
             reason.contains("no id in the Portal's project registry"),
             "{reason}"
