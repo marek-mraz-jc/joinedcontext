@@ -2058,6 +2058,61 @@ mod tests {
 
     /// S-10: a breaking change counts the stored entities of the class it touches, also for a
     /// top-level slot a class lists.
+    /// A breaking change's stored entities are not counted when the model names no space or the
+    /// space's broker cannot count them, and the row says why; an additive change, or one of a
+    /// class the published model does not hold, carries no count at all.
+    #[tokio::test]
+    async fn a_breaking_change_says_why_its_entities_were_not_counted() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let held = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Content": "Y2xhc3NlczoKICBQYXJraW5nOgogICAgc2xvdHM6IFtzcGFjZXNdCnNsb3RzOgogIHNwYWNlczoKICAgIHJhbmdlOiBpbnRlZ2VyCg==", "Encoding": "base64",
+                "Sha": "s1", "Path": "doprava/parking.linkml.yaml"
+            })))
+            .mount(&held)
+            .await;
+        let state = on_forge(&held).await;
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("parking", "doprava"),
+            spec: json!({ "contextSpaceRef": "mobility", "linkml": "./parking.linkml.yaml" }),
+            status: None,
+        });
+        let change = |severity: &str, subject: &str| datamodels::ModelChange {
+            severity: severity.into(),
+            subject: subject.into(),
+            reason: "r".into(),
+        };
+        let changes = [
+            change("breaking", "Parking.spaces"),
+            change("additive", "Parking.name"),
+            change("breaking", "Kiosk.name"),
+        ];
+        for (manifest, why) in [
+            (json!({ "spec": {} }), "the model names no contextSpaceRef"),
+            (
+                json!({ "spec": { "contextSpaceRef": "mobility" } }),
+                "could not be counted",
+            ),
+        ] {
+            let rows = affected(&state, "doprava", "parking", &manifest, &changes).await;
+            assert!(rows[0]["affectedEntities"].is_null(), "{rows:?}");
+            assert!(
+                rows[0]["notCounted"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(why)),
+                "{rows:?}"
+            );
+            for row in &rows[1..] {
+                assert!(row.get("notCounted").is_none(), "{row}");
+            }
+        }
+    }
+
     #[test]
     fn a_change_touches_its_class_or_every_class_listing_its_slot() {
         let published = json!({ "classes": {

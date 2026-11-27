@@ -455,9 +455,12 @@ async fn a_pipeline_test_is_red_at_a_type_the_model_lacks_and_a_record_it_refuse
             "output": { "type": "Bench", "mode": "upsert" }
         }
     });
-    let captured = [json!({ "input": "{}", "error": null, "output": {
+    let captured = [
+        json!({ "input": "{}", "error": null, "output": {
         "id": "urn:ngsi-ld:BikeStation:hel.fi:bikes:01", "type": "BikeStation",
-        "capacity": "twelve" } })];
+        "capacity": "twelve" } }),
+        json!({ "input": "{}", "error": null, "output": { "id": "bench-1", "type": "BikeStation" } }),
+    ];
     let body = json!({ "pipeline": pipeline, "steps": true,
         "sample": { "text": "station,capacity\n01,twelve\n", "format": "csv" } });
     let uri = op("tested", "jc_pipeline_test");
@@ -476,6 +479,7 @@ async fn a_pipeline_test_is_red_at_a_type_the_model_lacks_and_a_record_it_refuse
         .collect();
     assert!(paths.contains(&"spec.output.type"), "{paths:?}");
     assert!(paths.contains(&"records[0].capacity"), "{paths:?}");
+    assert!(paths.contains(&"validation[1]"), "{paths:?}");
     assert!(answer["steps"].is_array(), "{answer}");
 }
 
