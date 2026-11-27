@@ -1262,6 +1262,7 @@ mod tests {
         let (read, _) = hub.open(Arc::new(personal), "user:jana".into(), jana);
         let (plain, _) = open(&hub);
         let lines = Lines::default();
+        std::io::Write::flush(&mut lines.clone()).expect("a flush");
         let writer = lines.clone();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(move || writer.clone())
@@ -1636,6 +1637,37 @@ mod tests {
                 Out::Gap | Out::Closing(_) | Out::Refused | Out::OutOfScope { .. } => None,
             })
             .collect()
+    }
+
+    /// A call that names a closed connection is 410 or nothing, an entity without an id is
+    /// not held, a multi-instance attribute loses its system stamps, and a token issued for a
+    /// gone connection changes nothing.
+    #[test]
+    fn calls_on_a_gone_connection_or_entity_change_nothing() {
+        let hub = Arc::new(Hub::new("s", 10));
+        let (conn, queue) = hub.open(endpoint(), "anonymous".into(), Subject::default());
+        hub.close(999, "n", "t", Kept::default());
+        assert_eq!(hub.subscribe(999, None, &json!({}), false).status, 410);
+        assert_eq!(hub.unsubscribe(999, "x").status, 410);
+        hub.seed(json!({"type": "Vehicle"}));
+        hub.apply(json!({"type": "Vehicle"}), jc_time::TimestampTz::now());
+        assert_eq!(hub.entities(), 0);
+        subscribe(&hub, conn, Value::Null);
+        hub.live();
+        let speed = json!([{"type": "Property", "value": 1, "createdAt": "2026-01-01T00:00:00Z"}]);
+        hub.apply(
+            json!({"id": "urn:ngsi-ld:Vehicle:1", "type": "Vehicle", "speed": speed,
+                "createdAt": "2026-01-01T00:00:00Z"}),
+            jc_time::TimestampTz::now(),
+        );
+        queue.push(Out::Gap);
+        for sent in data(&queue) {
+            assert!(sent["speed"][0].get("createdAt").is_none(), "{sent}");
+        }
+        let gone = Joined::new(Arc::clone(&hub), 998, Arc::new(Queue::default()));
+        gone.issued(5);
+        drop(gone);
+        assert_eq!(hub.subscriptions(conn), 1);
     }
 
     /// The upstream carries what the broker let this hub's identity read; a filter narrows it

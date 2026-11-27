@@ -69,6 +69,19 @@ fn checkouts<'a>(
     }
 }
 
+/// A cache path a file stands on is refused with the reason, before git runs.
+#[test]
+fn a_cache_that_cannot_be_created_is_refused_before_git_runs() {
+    let (forge, _work) = forge("cache-blocked");
+    let blocked = temp_dir("cache-blocked-file").join("cache");
+    std::fs::write(&blocked, b"a file where the cache goes").expect("block the cache");
+    let resolver = checkouts(&forge, blocked.join("inner"), &no_secrets);
+    let err = resolver
+        .checkout("ovzdusie", &entry("v1.0.0").spec)
+        .expect_err("no cache");
+    assert!(!err.is_empty() && !err.contains("git"), "{err}");
+}
+
 /// CC-86: a tag and a branch are checked out at their commits; a moved branch is fetched again
 /// and the checkout of the old commit goes; a ref that names nothing is refused by name.
 #[test]

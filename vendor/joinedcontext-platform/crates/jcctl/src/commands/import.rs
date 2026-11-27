@@ -306,12 +306,12 @@ pub fn write(repo_dir: &Path, report: &Report) -> Result<usize, ImportError> {
             return Err(ImportError::Escape(resource.path.clone()));
         }
         let path = repo_dir.join(&resource.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| ImportError::Io {
-                path: parent.to_path_buf(),
-                source,
-            })?;
-        }
+        // Every component is a normal one, so the joined path always has a parent.
+        let parent = path.parent().unwrap_or(repo_dir);
+        std::fs::create_dir_all(parent).map_err(|source| ImportError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
         let yaml = serde_norway::to_string(&resource.manifest).map_err(|err| ImportError::Io {
             path: resource.path.clone(),
             source: std::io::Error::other(err.to_string()),
@@ -446,13 +446,19 @@ fn rewrite(manifest: &mut RawManifest, options: &Options, origin: &str) {
 
     // MF-20: an imported object says where it came from, so a reviewer reading the merge
     // request knows which bundle to look at and a later re-import can be recognised.
+    annotate(manifest, IMPORTED_FROM, origin);
+}
+
+/// Sets the annotation `key` of `manifest` to `value`, adding the annotations map when there is
+/// none; annotations that are no map are left as they are, for validation to report.
+pub(crate) fn annotate(manifest: &mut RawManifest, key: &str, value: &str) {
     let annotations = manifest
         .metadata
         .rest
         .entry("annotations")
         .or_insert_with(|| Value::Object(Map::new()));
     if let Value::Object(annotations) = annotations {
-        annotations.insert(IMPORTED_FROM.to_owned(), json!(origin));
+        annotations.insert(key.to_owned(), json!(value));
     }
 }
 

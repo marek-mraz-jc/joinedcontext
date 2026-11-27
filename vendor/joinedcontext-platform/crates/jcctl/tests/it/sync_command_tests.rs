@@ -141,6 +141,35 @@ fn the_state_file_and_the_source_name_are_checked() {
     let _ = std::fs::remove_dir_all(&origin);
 }
 
+/// A repository that does not load, an origin file that cannot be read and a state file that
+/// cannot be written each stop the run naming what failed.
+#[test]
+fn a_broken_repository_an_unreadable_origin_and_an_unwritable_state() {
+    let repo = repo_with_source("sync-cmd-broken");
+    let origin = checkout("sync-cmd-broken-origin");
+    let unwritable = options(&origin, &origin.join("no-such-dir/state.json"));
+    let error = sync::run(&repo, &unwritable).expect_err("the state cannot be written");
+    assert!(error.to_string().contains("no-such-dir"), "{error}");
+
+    let locked = origin.join("locked.yaml");
+    std::fs::write(&locked, FOREIGN_SPACE).expect("a second file");
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("locked");
+    }
+    let state = temp_dir("sync-cmd-broken-state").join("state.json");
+    let error = sync::run(&repo, &options(&origin, &state)).expect_err("unreadable");
+    assert!(matches!(error, sync::Error::Sync(_)), "{error}");
+
+    common::write(
+        &repo,
+        "projects/ovzdusie/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: NoSuchKind\nmetadata:\n  name: x\n",
+    );
+    let error = sync::run(&repo, &options(&origin, &state)).expect_err("no repository");
+    assert!(matches!(error, sync::Error::Repository(_)), "{error}");
+}
+
 /// Without --json the command names the proposal and its file count; the run after it over the
 /// same origin proposes nothing and prints the phase with its reason (exit 0); a source the
 /// repository lacks exits 1.

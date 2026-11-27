@@ -169,6 +169,17 @@ fn resolve_units_writes_the_model_s_code_only_when_every_name_shares_it() {
     );
 }
 
+/// A rule naming no slot has no code to take from the model and keeps `model`.
+#[test]
+fn resolve_units_leaves_a_rule_without_names_unresolved() {
+    let mut none = spec("    - type: Sensor\n      rules: [{ names: [], unitCode: model }]\n");
+    resolve_units(&mut none, &model());
+    assert_eq!(
+        none.attributes[0].rules[0].unit_code.as_deref(),
+        Some("model")
+    );
+}
+
 #[test]
 fn no_attributes_is_no_step() {
     let mut plain = spec("    []\n");

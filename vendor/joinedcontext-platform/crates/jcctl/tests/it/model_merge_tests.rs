@@ -854,3 +854,120 @@ fn merge_names_the_model_whose_source_is_missing_or_not_yaml() {
         "{refused:?}"
     );
 }
+
+/// DM-62: a model renamed without an `id` keeps none; a source without a default prefix leaves
+/// its attributes' IRIs to the merged model's; two slots named and left empty are the same.
+#[test]
+fn merge_without_an_id_or_a_default_prefix_and_with_empty_slots() {
+    let base = source("a", "name: a\nslots:\n  shared:\n");
+    let other = source(
+        "b",
+        "name: b\nslots:\n  shared:\nclasses:\n  Thing:\n    attributes:\n      size: {}\n",
+    );
+    let merged = merge_sources("merged", &[base, other]).expect("the merge");
+    assert_eq!(text(&merged, &["name"]), Some("merged"));
+    assert!(at(&merged, &["id"]).is_none(), "{merged:?}");
+    assert!(
+        at(
+            &merged,
+            &["classes", "Thing", "attributes", "size", "slot_uri"]
+        )
+        .is_none(),
+        "{merged:?}"
+    );
+}
+
+/// DM-62: classes and consumers two models share are listed once; an artifact both name or
+/// neither committed is removed once or not at all.
+#[test]
+fn merge_lists_shared_classes_and_consumers_once_and_removes_a_shared_file_once() {
+    let dir = repo(
+        "shared",
+        &[
+            ("air", "AirQualityObserved", AIR),
+            ("kpi", "AirQualityObserved, KeyPerformanceIndicator", KPI),
+        ],
+        None,
+    );
+    for (name, classes, consumers) in [
+        (
+            "air",
+            "AirQualityObserved",
+            "[{ kind: Endpoint, name: e1 }]",
+        ),
+        (
+            "kpi",
+            "AirQualityObserved, KeyPerformanceIndicator",
+            "[{ kind: Endpoint, name: e1 }, { kind: Endpoint, name: e2 }]",
+        ),
+    ] {
+        write(
+            &dir,
+            &format!("{MODELS}/{name}.yaml"),
+            &format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  contextSpaceRef: city\n  linkml: ./{name}.linkml.yaml\n  version: 1.2.0\n  lifecycle: draft\n  classes: [{classes}]\n  consumers: {consumers}\n  artifacts:\n    jsonSchema: ./shared.schema.json\n    context: ./never-written.jsonld\n"
+            ),
+        );
+    }
+    write(&dir, &format!("{MODELS}/shared.schema.json"), "{}");
+    let report = merge(&dir, "helsinki", "city", None).expect("the merge runs");
+    let shared = PathBuf::from(format!("{MODELS}/shared.schema.json"));
+    assert_eq!(
+        report.removed.iter().filter(|f| **f == shared).count(),
+        1,
+        "{report:?}"
+    );
+    let manifest: Value = serde_norway::from_str(
+        &std::fs::read_to_string(dir.join(MODELS).join("city.yaml")).expect("merged manifest"),
+    )
+    .expect("yaml");
+    let classes = at(&manifest, &["spec", "classes"])
+        .and_then(Value::as_sequence)
+        .map(Vec::len);
+    assert_eq!(classes, Some(2), "{manifest:?}");
+    let consumers = at(&manifest, &["spec", "consumers"])
+        .and_then(Value::as_sequence)
+        .map(Vec::len);
+    assert_eq!(consumers, Some(2), "{manifest:?}");
+}
+
+/// A model that does not validate, a file that cannot be removed and a merged file that cannot
+/// be written each stop the merge naming what failed.
+#[test]
+fn merge_names_an_invalid_model_and_a_file_it_cannot_remove_or_write() {
+    let models = [
+        ("air", "AirQualityObserved", AIR),
+        ("kpi", "KeyPerformanceIndicator", KPI),
+    ];
+    let dir = repo("invalid", &models, None);
+    write(
+        &dir,
+        &format!("{MODELS}/kpi.yaml"),
+        &model_manifest("kpi", "KeyPerformanceIndicator")
+            .replace("linkml: ./kpi.linkml.yaml", "linkml: ../kpi.linkml.yaml"),
+    );
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("kpi leaves its folder");
+    assert!(
+        matches!(&refused, MergeError::Source { model, .. } if model == "kpi"),
+        "{refused:?}"
+    );
+
+    let dir = repo("unremovable", &models, None);
+    let schema = dir.join(MODELS).join("kpi.v1.schema.json");
+    std::fs::remove_file(&schema).expect("the file goes");
+    std::fs::create_dir_all(schema.join("inside")).expect("a directory where the file was");
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("a directory is no file");
+    assert!(
+        matches!(&refused, MergeError::Repository(why) if why.contains("kpi.v1.schema.json")),
+        "{refused:?}"
+    );
+
+    let dir = repo("unwritable", &models, None);
+    std::fs::create_dir_all(dir.join(MODELS).join("city.linkml.yaml"))
+        .expect("a directory where the source goes");
+    let refused = merge(&dir, "helsinki", "city", None).expect_err("a directory is no file");
+    assert!(
+        matches!(&refused, MergeError::Repository(why) if why.contains("city.linkml.yaml")),
+        "{refused:?}"
+    );
+}

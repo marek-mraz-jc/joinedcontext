@@ -214,6 +214,46 @@ fn two_organizations_declaring_one_domain_are_refused_ep188() {
     );
 }
 
+/// PF-130: `organizationRef` may be written as `{ name }`; an Organization whose domain is no
+/// domain is an error naming the Organization, the project and the domain.
+#[test]
+fn a_space_organization_reads_a_typed_ref_and_refuses_a_domain_that_is_none() {
+    let manifest = |kind: &str, name: &str, spec: serde_json::Value| {
+        serde_json::from_value::<jc_manifest::loader::RawManifest>(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": kind,
+            "metadata": {"name": name, "namespace": "org"},
+            "spec": spec,
+        }))
+        .expect("a manifest")
+    };
+    let repo = |domain: &str| {
+        jc_manifest::loader::Repository::from_manifests(
+            vec![
+                manifest(
+                    "Project",
+                    "doprava",
+                    serde_json::json!({"organizationRef": {"kind": "Organization", "name": "bb"}}),
+                ),
+                manifest("Organization", "bb", serde_json::json!({"domain": domain})),
+            ],
+            None,
+        )
+        .expect("loads")
+    };
+    let id = repo("banskabystrica.sk")
+        .space_organization("doprava")
+        .expect("a typed ref resolves");
+    assert_eq!(id.to_string(), "sk_banskabystrica");
+    let err = repo("not a domain")
+        .space_organization("doprava")
+        .expect_err("no domain");
+    assert!(
+        err.contains("Organization `bb` of project `doprava`: domain `not a domain`"),
+        "{err}"
+    );
+}
+
 /// T-7035 (PF-130): a project's tenant Organization comes from its own `organizationRef` and
 /// that Organization's domain, never from the installation's; a missing link is an error that
 /// names it.

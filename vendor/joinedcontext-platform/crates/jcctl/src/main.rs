@@ -2701,12 +2701,10 @@ mod tests {
                 let Ok(mut stream) = stream else { continue };
                 let mut raw = Vec::new();
                 let mut buffer = [0_u8; 4096];
-                loop {
-                    let read = stream.read(&mut buffer).unwrap_or(0);
+                let mut read = usize::MAX;
+                while read != 0 && !request_complete(&raw) {
+                    read = stream.read(&mut buffer).unwrap_or(0);
                     raw.extend_from_slice(&buffer[..read]);
-                    if read == 0 || request_complete(&raw) {
-                        break;
-                    }
                 }
                 counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let text = String::from_utf8_lossy(&raw);
@@ -2892,6 +2890,46 @@ mod tests {
             .expect("utf-8 temp dir")
             .to_owned();
         (dir, missing)
+    }
+
+    /// Both deletion flags parse; a schema export into a file fails; a model inferred or
+    /// imported through Model Tools prints its answer and exits by its errors.
+    #[test]
+    fn deletion_flags_a_blocked_schema_export_and_model_answers() {
+        let parsed = apply_options(&["--prune", "--confirm-deletions"]).map(|(o, _)| o);
+        assert_eq!(parsed, Some(CONFIRMED));
+        let (dir, _) = scratch("schema-blocked");
+        let file = dir.join("a-file");
+        std::fs::write(&file, "x").expect("a file");
+        let under = file.join("out");
+        let under = under.to_str().expect("utf-8");
+        assert_eq!(
+            run(&["schema", "export", "--out", under]),
+            ExitCode::FAILURE
+        );
+
+        let (url, _) = fixed_gateway((200, "{}"), (200, r#"{"linkml":"name: x"}"#));
+        let sample = dir.join("sample.csv");
+        std::fs::write(&sample, "a,b\n1,2\n").expect("a sample");
+        let sample = sample.to_str().expect("utf-8");
+        assert_eq!(
+            run(&["model", "infer", "--file", sample, "--url", &url]),
+            ExitCode::SUCCESS
+        );
+        let (url, _) = fixed_gateway(
+            (200, "{}"),
+            (
+                200,
+                r#"{"generatorVersion":"linkml-1","errors":["no such model"]}"#,
+            ),
+        );
+        let out = dir.join("air.linkml.yaml");
+        let out = out.to_str().expect("utf-8");
+        assert_eq!(
+            run(&["model", "import", "sdm/Air", "--out", out, "--url", &url]),
+            ExitCode::FAILURE
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

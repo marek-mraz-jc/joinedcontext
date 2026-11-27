@@ -709,9 +709,7 @@ fn normalize_broker_url(raw: &str) -> Result<String, ConfigError> {
         .or_else(|| trimmed.strip_prefix("https://"))
         .ok_or_else(|| invalid("must start with http:// or https://"))?;
 
-    if rest.is_empty() {
-        return Err(invalid("has no host"));
-    }
+    // `rest` is never empty: the trailing `/` is trimmed first, so `http://` has no prefix.
     if rest.contains('/') {
         return Err(invalid("must be scheme and authority only, with no path"));
     }
@@ -775,6 +773,12 @@ fn token_endpoint(named: Option<&str>, issuer: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A broker URL that is only its scheme names no host.
+    #[test]
+    fn a_broker_url_without_a_host_is_refused() {
+        assert!(normalize_broker_url("http://").is_err());
+    }
 
     /// `JC_GATEWAY_URN_OWNER_WARN_UNTIL` ends at the midnight UTC after its day, read as the
     /// chrono build read it (T-7253). Seconds pasted from the chrono build.

@@ -246,6 +246,45 @@ spec:
     }
 }
 
+/// An option a source leaves out leaves its key out of the input: no `open_message`, no `user`,
+/// no `tls` over plain http, no `records` in `paginate`, and no auth block a webhook lacks.
+#[test]
+fn an_option_left_out_leaves_its_input_key_out() {
+    let parse = |yaml: &str| {
+        ResourceEnvelope::<DataSourceSpec>::from_yaml(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata: {{ name: bare, namespace: bb-ovzdusie }}\nspec:\n{yaml}"
+        ))
+        .expect("parses")
+        .spec
+    };
+    let ws = rendered(
+        &parse("  type: websocket\n  webSocket:\n    url: wss://feed.example.org/aq\n"),
+        "bare",
+    );
+    assert!(!ws.contains("open_message"), "{ws}");
+    let mqtt = rendered(
+        &parse(
+            "  type: mqtt\n  mqtt:\n    urls: [\"tcp://mqtt.example.org:1883\"]\n    topics: [a]\n",
+        ),
+        "bare",
+    );
+    assert!(!mqtt.contains("user:"), "{mqtt}");
+    let http = rendered(
+        &parse("  type: http\n  http:\n    url: http://feed.example.org/aq.json\n    paging:\n      mode: offset\n      offsetParam: o\n      limitParam: l\n"),
+        "bare",
+    );
+    assert!(
+        !http.contains("tls:") && !http.contains("records:"),
+        "{http}"
+    );
+    assert!(http.contains("offset_param: o"), "{http}");
+    let hook = rendered(
+        &parse("  type: webhook\n  webhook:\n    auth: {}\n"),
+        "bare",
+    );
+    assert!(!hook.contains("bearer") && !hook.contains("hmac"), "{hook}");
+}
+
 /// T-7056: `spec.http.paging` becomes the runner's `paginate` option, its fields in the
 /// runner's snake_case and `records` taken from `spec.http.records`.
 const ARCGIS: &str = r#"apiVersion: joinedcontext.com/v1alpha1

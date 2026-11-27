@@ -438,6 +438,14 @@ mod tests {
     use super::reads;
     use serde_json::json;
 
+    /// T-4423: a `secretRef` inside a list is named, and an escaped quote stays inside its
+    /// string literal, which reads nothing.
+    #[test]
+    fn a_listed_secret_ref_is_named_and_an_escaped_quote_reads_nothing() {
+        assert!(super::names_secret_ref(&json!([{"secretRef": "x"}])));
+        assert_eq!(super::expr_reads(r"'a\'b'"), Some(Vec::new()));
+    }
+
     #[test]
     fn a_slot_with_a_source_and_an_expression_reads_both() {
         let transformation = json!({

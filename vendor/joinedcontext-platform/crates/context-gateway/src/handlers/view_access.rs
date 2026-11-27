@@ -1013,6 +1013,71 @@ mod tests {
         );
     }
 
+    /// EP-55, EP-56, EP-187: the Endpoint's document names its every-attribute version read,
+    /// its open-data refusal of writes and a rate without a burst; a document that is no
+    /// object is left as the broker sent it.
+    #[test]
+    fn the_endpoint_document_names_versions_open_data_and_its_rate() {
+        let policy: jc_core::kinds::PolicySpec = serde_norway::from_str(
+            "contextSpaceRef: air\nassigner: did:web:city.example\n\
+             assignee: { kind: role, id: public }\noperations: [retrieveTemporal]\n\
+             actions: [readVersions]\n",
+        )
+        .expect("the policy spec parses");
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.policies = vec![policy];
+        endpoint.open_data = true;
+        endpoint.rate_limit = Some(jc_core::kinds::RateLimits {
+            requests_per_minute: 5,
+            burst: None,
+        });
+        let public = Subject {
+            roles: ["public".to_owned()].into(),
+            ..Subject::default()
+        };
+        let document = endpoint_document(json!({}), &endpoint, &public);
+        assert_eq!(document["versions"], json!({ "read": "*" }), "{document}");
+        assert_eq!(document["openData"]["readOnly"], json!(true));
+        assert_eq!(document["limits"], json!({ "requestsPerMinute": 5 }));
+        assert_eq!(endpoint_document(json!(5), &endpoint, &public), json!(5));
+        assert_eq!(
+            policy_named(json!({"decision": true})),
+            json!({"decision": true})
+        );
+    }
+
+    /// EP-103: a simulated service account is its client's own service-account user.
+    #[test]
+    fn a_simulated_account_is_its_clients_service_account_user() {
+        let who: Simulated = serde_json::from_value(json!({ "serviceAccount": "ingest" }))
+            .expect("the subject parses");
+        let claims = claims_of(&who).expect("the claims build");
+        assert_eq!(claims.azp.as_deref(), Some("ingest"));
+        assert_eq!(claims.sub, "service-account-ingest");
+    }
+
+    /// ADR-N-057 decision 3: a person is named by their Keycloak id too, a dataspace caller by
+    /// their DID.
+    #[test]
+    fn a_subject_is_the_callers_by_their_id_or_did() {
+        let person = Subject {
+            id: Some("0f5a".to_owned()),
+            ..Subject::default()
+        };
+        assert!(names_the_caller(
+            &person,
+            &json!({ "type": "user", "id": "0f5a" })
+        ));
+        let participant = Subject {
+            did: Some("did:web:city.example".to_owned()),
+            ..Subject::default()
+        };
+        assert!(names_the_caller(
+            &participant,
+            &json!({ "type": "did", "id": "did:web:city.example" })
+        ));
+    }
+
     #[test]
     fn a_policy_of_two_rules_is_listed_once() {
         assert_eq!(

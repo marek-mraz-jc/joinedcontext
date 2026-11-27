@@ -430,9 +430,7 @@ pub fn render(repo_dir: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error
     let mut written = Vec::new();
     for (rel, content) in files(&repo)?.unwrap_or_default() {
         let path = repo_dir.join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(repo_dir))?;
         std::fs::write(&path, content)?;
         written.push(PathBuf::from(rel));
     }
@@ -616,4 +614,31 @@ pub fn input(
         groups: groups.to_vec(),
         changes,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_group_handle_names_the_organization_only_when_there_is_one() {
+        let group = Subject {
+            group: Some("approvers".to_owned()),
+            ..Subject::default()
+        };
+        assert_eq!(handle(&group, Some("bb")).as_deref(), Some("@bb/approvers"));
+        assert_eq!(handle(&group, None).as_deref(), Some("@approvers"));
+        assert_eq!(handle(&Subject::default(), Some("bb")), None);
+    }
+
+    #[test]
+    fn a_path_belongs_to_a_project_only_under_projects() {
+        assert_eq!(
+            project_of("/projects/doprava/a.yaml").as_deref(),
+            Some("doprava")
+        );
+        assert_eq!(project_of("projects/doprava").as_deref(), Some("doprava"));
+        assert_eq!(project_of("projects/"), None);
+        assert_eq!(project_of("org.yaml"), None);
+    }
 }
