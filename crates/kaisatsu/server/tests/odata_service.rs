@@ -1620,6 +1620,13 @@ async fn mcp_lists_only_permitted_tools_and_lists_match_odata() {
     };
     assert_eq!(ids(&listed), ids(&odata));
     assert_eq!(ids(&listed), vec![ANALYST.to_owned()]);
+    // Without a filter the list tool answers the whole set, as the OData set does.
+    let all = mcp_value(&api.mcp(&admin, "wk_person_list", json!({})).await);
+    let (_, _, every, _) = api
+        .call(Method::GET, &format!("{BASE}/People"), &admin, None)
+        .await;
+    assert_eq!(ids(&all), ids(&every));
+    assert!(ids(&all).contains(&ANALYST.to_owned()));
 
     // A member calling an admin tool gets the same slug OData answers.
     let refused = api.mcp(&member, "keys_rotate", json!({})).await;
