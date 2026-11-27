@@ -1579,6 +1579,7 @@ mod tests {
             }
         }
         let lines = Lines::default();
+        std::io::Write::flush(&mut lines.clone()).expect("a flush");
         let writer = lines.clone();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(move || writer.clone())
@@ -1959,6 +1960,122 @@ mod tests {
             Some(vec!["urn:ngsi-ld:Thing:one".to_owned()])
         );
         assert!(!String::from_utf8_lossy(&batch).contains("secret"));
+    }
+
+    /// T-5508, PF-43: a batch none of whose members pass is answered whole here, 207 of refusals.
+    #[test]
+    fn judged_write_answers_a_batch_of_refused_members_itself() {
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.hidden_attributes.insert("secret".to_owned());
+        let mut divided = None;
+        let mut batch =
+            br#"[{"id":"urn:ngsi-ld:Thing:two","type":"Thing","secret":{"value":1}}]"#.to_vec();
+        let answered = judged_write(
+            &endpoint,
+            "/entityOperations/create",
+            Operation::CreateBatch,
+            &mut batch,
+            &mut divided,
+        );
+        assert_eq!(
+            answered.err().map(|answer| answer.status()),
+            Some(StatusCode::MULTI_STATUS)
+        );
+        assert!(divided.is_none());
+    }
+
+    /// EP-97: a form that mints ids refuses a create body that is no JSON entity.
+    #[test]
+    fn a_minting_form_refuses_a_body_that_is_no_entity() {
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.creates = Some(jc_core::kinds::Creates {
+            mint_ids: true,
+            ..Default::default()
+        });
+        let mut sent = b"not json".to_vec();
+        let refused = one_entity_per_create(&endpoint, Operation::CreateEntity, &mut sent, None);
+        assert_eq!(
+            refused.err().map(|answer| answer.status()),
+            Some(StatusCode::BAD_REQUEST)
+        );
+    }
+
+    fn problem(body: impl Into<Body>) -> Response<Body> {
+        let mut answer = Response::new(body.into());
+        answer.headers_mut().insert(
+            axum::http::header::CONTENT_TYPE,
+            HeaderValue::from_static(jc_core::PROBLEM_JSON),
+        );
+        answer
+    }
+
+    /// CIM 009 6.3.3: a problem too large to hold is a 500, one that is no JSON goes on as
+    /// sent, and one that is no object keeps its shape.
+    #[tokio::test]
+    async fn an_odd_problem_is_answered_without_rewriting() {
+        let large = as_ngsi_ld_error(problem(vec![b' '; 64 * 1024 + 1])).await;
+        assert_eq!(large.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let plain = as_ngsi_ld_error(problem("not json")).await;
+        assert_eq!(text(plain).await, "not json");
+        let list = as_ngsi_ld_error(problem("[1]")).await;
+        assert_eq!(text(list).await, "[1]");
+    }
+
+    /// GW31: a type that is no NGSI-LD name is refused as sent.
+    #[test]
+    fn a_type_that_is_no_name_is_refused() {
+        let params = [("type".to_owned(), "a b".to_owned())];
+        let refused = query_shape_refusal(&params).map(|answer| answer.status());
+        assert_eq!(refused, Some(StatusCode::BAD_REQUEST));
+    }
+
+    /// DM-139: a read the caller's grants narrow fails closed when it is too large to hold or
+    /// no JSON, and an empty answer goes on.
+    #[tokio::test]
+    async fn a_narrowed_read_fails_closed() {
+        let public: jc_core::kinds::PolicySpec = serde_norway::from_str(
+            "contextSpaceRef: ovzdusie\nassigner: did:web:banskabystrica.sk\n\
+             assignee: { kind: role, id: public }\noperations: [queryEntity]\n\
+             actions: [readVersions]\n",
+        )
+        .expect("the policy spec parses");
+        let passed = Passed::of(
+            &Subject::anonymous(),
+            &[public],
+            Operation::QueryEntity,
+            true,
+            crate::pdp::now(),
+        )
+        .expect("the public grant narrows the actor");
+        let large = stripped(
+            answered(StatusCode::OK, "").map(|_| Body::from(vec![b' '; MAX_BODY + 1])),
+            Some(&passed),
+        )
+        .await;
+        assert_eq!(large.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let empty = stripped(answered(StatusCode::OK, ""), Some(&passed)).await;
+        assert_eq!(empty.status(), StatusCode::OK);
+        let plain = stripped(answered(StatusCode::OK, "not json"), Some(&passed)).await;
+        assert_eq!(plain.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// A member that is no entity names none; a refusal that is no JSON keeps its body; a link
+    /// that is no text is kept as sent; a notification uri that is no string is refused.
+    #[tokio::test]
+    async fn odd_answers_and_bodies_are_kept_or_refused_whole() {
+        let mut ids = Vec::new();
+        inlined(&serde_json::json!(5), &mut ids);
+        assert!(ids.is_empty());
+        let kept = with_platform_slug(answered(StatusCode::FORBIDDEN, "nope")).await;
+        assert_eq!(text(kept).await, "nope");
+        let mut headers = HeaderMap::new();
+        let latin = HeaderValue::from_bytes(b"/x/views/a/\xff").expect("a header value");
+        headers.insert(LOCATION, latin.clone());
+        caller_links(&mut headers, "/x/views/a", "/api/endpoint/a");
+        assert_eq!(headers.get(LOCATION), Some(&latin));
+        let refused =
+            subscription_target_refusal(br#"{"notification":{"endpoint":{"uri":5}}}"#, &[]);
+        assert!(refused.is_some());
     }
 
     /// T-5508: the broker's address keeps the caller's query and no empty `?`.
