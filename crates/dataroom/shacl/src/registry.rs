@@ -432,9 +432,10 @@ impl ProfileRegistry {
                         .profiles
                         .write()
                         .unwrap_or_else(PoisonError::into_inner);
-                    if let Some((stored_rec, _)) = guard.get_mut(&key) {
+                    // Inserted above under `key`: the stored record takes the layout too.
+                    guard.entry(key.clone()).and_modify(|(stored_rec, _)| {
                         stored_rec.form_fields.clone_from(&record.form_fields);
-                    }
+                    });
                 }
                 self.dry_run(
                     &record.id,
@@ -1721,9 +1722,14 @@ mod tests {
         let port: &dyn DatasetValidator = &registry;
         let mut cat = small_catalogue("dcat-ap-3.0.1");
         let none = BTreeMap::new();
-        let refused_field = |r: Result<()>| match r {
-            Err(DataroomError::Validation { fields, .. }) => fields.into_keys().collect::<Vec<_>>(),
-            other => panic!("a field refusal expected: {other:?}"),
+        let refused_field = |r: Result<()>| {
+            let e = serde_json::to_value(r.expect_err("a field refusal expected")).expect("json");
+            e["Validation"]["fields"]
+                .as_object()
+                .expect("a field refusal")
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
         };
         assert_eq!(
             refused_field(port.check_profile_choice(&cat, &["dcat-ap-cz"], true)),

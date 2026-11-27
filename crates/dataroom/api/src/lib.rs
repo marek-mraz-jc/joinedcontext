@@ -1450,10 +1450,9 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
                 .strip_prefix(&state.mount_prefix())
                 .unwrap_or(&url_target)
                 .trim_start_matches('/');
-            if let Some(seg) = trimmed.split('/').next() {
-                if seg.len() == 2 && seg.bytes().all(|b| b.is_ascii_lowercase()) {
-                    chosen_lang = Some(seg.to_owned());
-                }
+            let seg = trimmed.split('/').next().unwrap_or_default();
+            if seg.len() == 2 && seg.bytes().all(|b| b.is_ascii_lowercase()) {
+                chosen_lang = Some(seg.to_owned());
             }
         }
     }
@@ -1463,20 +1462,20 @@ fn redirect_from_form(state: &DataroomState, body: &[u8]) -> Response {
         &state.mount_prefix()
     };
     if let Some(l) = chosen_lang {
+        // `url_target` passed `is_safe_local_target`, so it is a valid header: the redirect is
+        // a 303 that can carry the cookie.
         let mut response = safe_redirect(StatusCode::SEE_OTHER, &url_target);
-        if response.status() == StatusCode::SEE_OTHER {
-            match axum::http::HeaderValue::try_from(format!(
-                "ckan_lang={l}; Path={cookie_path}; SameSite=Lax"
-            )) {
-                Ok(cookie) => {
-                    response.headers_mut().insert(header::SET_COOKIE, cookie);
-                }
-                Err(_) => {
-                    return problem_response(DataroomError::Validation {
-                        message: "mount prefix is not a valid cookie path".into(),
-                        fields: Default::default(),
-                    })
-                }
+        match axum::http::HeaderValue::try_from(format!(
+            "ckan_lang={l}; Path={cookie_path}; SameSite=Lax"
+        )) {
+            Ok(cookie) => {
+                response.headers_mut().insert(header::SET_COOKIE, cookie);
+            }
+            Err(_) => {
+                return problem_response(DataroomError::Validation {
+                    message: "mount prefix is not a valid cookie path".into(),
+                    fields: Default::default(),
+                })
             }
         }
         response
