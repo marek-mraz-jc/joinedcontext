@@ -1346,11 +1346,25 @@ fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> Exi
         }
     }
     let mut platform = InMemory::new();
-    // The replay runs against an in-memory store that is empty and takes every write, so it
-    // cannot fail and no result is one a reader acts on: "applied" would claim a change nothing
-    // received (CC-72, F-PLT3-015), so none is printed.
-    let report = commands::apply::run(&repo, &mut platform, options)
-        .expect("the in-memory platform takes every write");
+    let report = match commands::apply::run(&repo, &mut platform, options) {
+        Ok(report) => report,
+        Err(err) => return fail(&err.to_string()),
+    };
+
+    // The replay runs against no platform store, so only what it could not take is a result a
+    // reader acts on; "applied" would claim a change nothing received (CC-72, F-PLT3-015).
+    for result in &report.results {
+        let outcome = match &result.outcome {
+            commands::apply::Outcome::Applied | commands::apply::Outcome::Unchanged => continue,
+            commands::apply::Outcome::Skipped(why) => format!("skipped: {why}"),
+            commands::apply::Outcome::Failed(err) => format!("failed: {err}"),
+        };
+        println!(
+            "{:<9} {} {outcome}",
+            result.action.as_str().to_lowercase(),
+            result.id,
+        );
+    }
     println!("configuration: read from the repository by each component, nothing to apply (CC-72)");
     if let Some(revision) = &report.revision {
         println!("applied revision {revision}");
