@@ -1494,13 +1494,34 @@ mod tests {
             "the in-process issuer mints: {:?}",
             minted.err()
         );
-        // Split: the remote issuer, unreachable here, answers an error.
+        // Split: the remote issuer refuses the first call (an error, nothing kept) and then
+        // answers a token, which the closure mints.
         let mut split = crate::config::Config::merge(cli("portal"), file).expect("config");
         split
             .remote_modules
             .insert(Module::Dataroom, "https://jc.base.test/opendata".into());
+        let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let issuer = Router::new().route(
+            "/token",
+            axum::routing::post(move || {
+                let n = calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    let status = if n == 0 {
+                        axum::http::StatusCode::UNAUTHORIZED
+                    } else {
+                        axum::http::StatusCode::OK
+                    };
+                    let answer =
+                        serde_json::json!({"access_token": "t-dataroom", "expires_in": 300});
+                    (status, axum::Json(answer))
+                }
+            }),
+        );
+        let bound = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let at = bound.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(bound, issuer).await });
         let remote = crate::config::RemoteSection {
-            token_url: "http://127.0.0.1:1/token".into(),
+            token_url: format!("http://{at}/token"),
             client_id: "portal".into(),
             ..crate::config::RemoteSection::default()
         };
@@ -1509,7 +1530,9 @@ mod tests {
                 .expect("a remote"),
         ));
         let there = publisher_token(&split).expect("dataroom in another Deployment");
-        assert!(there.mint().await.is_err());
+        assert!(there.mint().await.is_err(), "the refused call");
+        let minted = there.mint().await.expect("the answered call");
+        assert_eq!(minted.expose(), "t-dataroom");
     }
 
     /// A run-time Organization whose host makes no URL lists neither addresses nor a catalogue,
@@ -1763,6 +1786,35 @@ mod tests {
             );
         }
         assert!(!super::super::gateway::registry_links().contains_key("rt7184"));
+        // Rows the router cannot take keep what answers and name the step: one host as both
+        // the working and the API host puts the Portal and the gateway on one mount, and an
+        // Organization name the host table refuses stops the rebuild.
+        let e = apply(
+            &run,
+            &[
+                host("one.rt7903.sk", "rt7903", "working"),
+                host("one.rt7903.sk", "rt7903", "api"),
+            ],
+            &[org("bbsk", "active"), org("rt7903", "active")],
+        )
+        .expect_err("two modules on one mount");
+        assert!(
+            e.contains("the hosts the registry added kept their entries"),
+            "{e}"
+        );
+        let e = apply(
+            &run,
+            &[host("smartcity.bad.sk", "Not An Org", "working")],
+            &[org("bbsk", "active"), org("Not An Org", "active")],
+        )
+        .expect_err("a name the host table refuses");
+        assert!(e.contains("is not an Organization id"), "{e}");
+        assert_eq!(get("smartcity.bbsk.sk", "/").await, ok("bbsk-portal|bbsk"));
+        assert_eq!(
+            get("one.rt7903.sk", "/").await.0,
+            axum::http::StatusCode::MISDIRECTED_REQUEST,
+            "no host of a refused set answers"
+        );
     }
 
     /// The registry rebuild on a migrated Portal database (`JC_PG_TEST_DATABASE_URL`, a superuser):
