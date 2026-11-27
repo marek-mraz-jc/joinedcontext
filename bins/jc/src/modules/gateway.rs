@@ -1566,7 +1566,13 @@ mod tests {
                 String::from_utf8(body.to_vec()).unwrap()
             }
         };
+        // A kept token that is no header value is never sent.
+        state.keep_exchanged(&session, "broken-token", "a\nb".into(), now + 600);
         let (file, guard) = crate::modules::capture_log();
+        assert_eq!(
+            read("/api/endpoint/broken-token", cookies.join("; ")).await,
+            "anonymous"
+        );
         assert_eq!(
             read("/api/endpoint/helsinki-bikes/schema", cookies.join("; ")).await,
             "Bearer exchanged-for-helsinki-bikes-2208"

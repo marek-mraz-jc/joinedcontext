@@ -1639,9 +1639,9 @@ mod desk_tests {
         assert!(done.is_empty(), "retried next round");
     }
 
-    /// With the Portal in this process a round reads its mirror: a Portal manifest there is
+    /// With the Portal in this process each round reads its mirror: a Portal manifest there is
     /// written with its sources and one that does not read is left out.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn a_round_writes_the_portals_the_mirror_of_this_processs_portal_holds() {
         let dir = tempfile::tempdir().unwrap();
         let w = writer(Arc::new(MemoryStore::new()), dir.path());
@@ -1667,23 +1667,29 @@ mod desk_tests {
         state.mirror.upsert(envelope(
             "m",
             serde_json::json!({ "organizationRef": "city", "path": "mobility", "sources": [
-                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl",
+                  "allowedHosts": ["data.kosice.sk"] },
             ] }),
         ));
         state
             .mirror
             .upsert(envelope("broken", serde_json::json!({ "path": 7 })));
         let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
-        // One round: the follower writes once, then sees the shutdown.
-        shutdown.cancel();
         let (file, guard) = crate::modules::capture_log();
         follow(w.clone(), city(), &shutdown, &tasks);
+        // Two rounds: the second finds the same Organizations and keeps the desks it handed.
+        tokio::time::sleep(
+            super::super::appearance::FOLLOW_EVERY + std::time::Duration::from_secs(1),
+        )
+        .await;
+        shutdown.cancel();
         tasks.close();
         tasks.wait().await;
         drop(guard);
         let log = std::fs::read_to_string(file.path()).unwrap();
         assert!(log.contains("Portal refused; not served"), "{log}");
-        assert_eq!(sources(&w, "mobility").await, ["a"], "{log}");
+        assert!(log.contains("portal served"), "{log}");
+        assert_eq!(sources(&w, "mobility").await, ["a"]);
     }
 
     /// A run the store refuses to claim ends at once: the failure is logged and the source is
