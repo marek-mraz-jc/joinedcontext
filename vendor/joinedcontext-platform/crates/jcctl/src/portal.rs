@@ -539,7 +539,8 @@ pub fn describe(
 }
 
 fn pretty_json(value: &Value) -> String {
-    serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string())
+    // `{:#}` is serde_json's pretty printer, which cannot fail on a `Value`.
+    format!("{value:#}")
 }
 
 fn yaml(value: &Value) -> Result<String, PortalError> {
@@ -861,9 +862,7 @@ pub fn operation(
         ));
     }
     let answer = portal.operation(project, name, &input)?;
-    let text =
-        serde_json::to_string_pretty(&answer).map_err(|e| PortalError::Invalid(e.to_string()))?;
-    Ok(format!("{text}\n"))
+    Ok(format!("{}\n", pretty_json(&answer)))
 }
 
 #[cfg(test)]
