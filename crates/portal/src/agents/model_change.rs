@@ -783,7 +783,8 @@ fn slot_flag(model: &Value, slot: &str, field: &str) -> bool {
 /// relationship end only by its `annotations.ngsi_ld_kind`, so it is an object.
 fn slot_object<'a>(model: &'a mut Value, name: &str) -> &'a mut Map<String, Value> {
     let slot = section_mut(model, "slots").entry(name).or_insert(json!({}));
-    slot.as_object_mut().expect("a relationship end is an object")
+    slot.as_object_mut()
+        .expect("a relationship end is an object")
 }
 
 fn set_slot_field(model: &mut Value, name: &str, field: &str, value: Option<Value>) {

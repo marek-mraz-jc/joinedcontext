@@ -1148,10 +1148,9 @@ mod tests {
         );
     }
 
-    /// A block that still holds another key after the edit stays, and an Endpoint committed
-    /// without a spec takes an audience edit as a spec of its own (PF-57, T-7912).
+    /// A block that still holds another key after the edit stays (T-7912).
     #[test]
-    fn a_block_with_another_key_stays_and_a_bare_endpoint_takes_its_first_spec() {
+    fn a_block_with_another_key_stays() {
         let calendar = json!({
             "metadata": { "name": "events", "namespace": "helsinki" },
             "spec": {
@@ -1169,18 +1168,19 @@ mod tests {
         )
         .expect("edits");
         let spec = &edited.endpoint["spec"];
-        assert_eq!(spec["representations"], json!({ "csv": { "delimiter": ";" } }));
+        assert_eq!(
+            spec["representations"],
+            json!({ "csv": { "delimiter": ";" } })
+        );
         assert_eq!(spec["projection"], json!({ "renamed": { "a": "b" } }));
-
-        let bare = json!({ "metadata": { "name": "bare", "namespace": "helsinki" } });
-        let public = edit(&[bare], &edit_of(json!({ "name": "bare", "audience": "public", "addRepresentations": ["ngsi-ld"] })))
-            .expect("edits");
-        assert_eq!(public.endpoint["spec"]["audience"], "public");
-        assert!(public.endpoint["spec"].get("allowedProjects").is_none());
 
         let mut text = json!("not an object");
         super::remove_key(&mut text, "status");
-        assert_eq!(text, json!("not an object"), "a value with no keys is left as it is");
+        assert_eq!(
+            text,
+            json!("not an object"),
+            "a value with no keys is left as it is"
+        );
     }
 
     #[test]

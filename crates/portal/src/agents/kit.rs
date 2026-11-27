@@ -63,10 +63,15 @@ mod tests {
     #[test]
     fn the_embedded_files_read_the_same_by_name_and_by_the_trait() {
         let by_name: Vec<String> = Dist::iter().map(|path| path.into_owned()).collect();
-        let by_trait: Vec<String> = <Dist as RustEmbed>::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Dist as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
         assert_eq!(by_name, by_trait);
         for path in &by_name {
-            assert_eq!(Dist::get(path).map(|f| f.data), <Dist as RustEmbed>::get(path).map(|f| f.data));
+            assert_eq!(
+                Dist::get(path).map(|f| f.data),
+                <Dist as RustEmbed>::get(path).map(|f| f.data)
+            );
         }
         assert!(<Dist as RustEmbed>::get("no/such/file").is_none());
     }

@@ -2080,7 +2080,11 @@ mod repository_tests {
             .commit_files(&files(), &mut BTreeMap::new(), "First version")
             .await
             .expect("nothing to commit");
-        assert!(forge.received_requests().await.unwrap_or_default().is_empty());
+        assert!(forge
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
     }
 
     /// AP-79: a copy that follows the forge is left as it is and nothing is said; one whose last
@@ -2098,7 +2102,11 @@ mod repository_tests {
                 }] })))
                 .mount(&forge)
                 .await;
-            for action in ["Shako.RemovePushMirror", "Shako.AddPushMirror", "Shako.SyncPushMirrors"] {
+            for action in [
+                "Shako.RemovePushMirror",
+                "Shako.AddPushMirror",
+                "Shako.SyncPushMirrors",
+            ] {
                 Mock::given(method("POST"))
                     .and(path(format!("{REPO}/{action}")))
                     .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
@@ -2113,9 +2121,12 @@ mod repository_tests {
                 .mount(&github)
                 .await;
             let (state, mut driver) = driver(&forge);
-            let state = state.with_github_mirror(Arc::new(
-                crate::forge::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
-            ));
+            let state =
+                state.with_github_mirror(Arc::new(crate::forge::github_mirror::GithubMirror::at(
+                    &github.uri(),
+                    "hel-apps",
+                    "ghp_secret",
+                )));
             driver.state = state.clone();
             let mut committed = files();
             let mut next = files();
@@ -2133,7 +2144,8 @@ mod repository_tests {
                 assert!(
                     about_github
                         .iter()
-                        .any(|text| text.contains("stopped following the forge (authentication failed)")),
+                        .any(|text| text
+                            .contains("stopped following the forge (authentication failed)")),
                     "{said:?}"
                 );
             }

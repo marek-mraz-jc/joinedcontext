@@ -382,7 +382,10 @@ async fn a_version_too_large_for_the_sandbox_never_reaches_the_cluster() {
     let report = run(&sandbox(&server), &files, 2_000).await;
     assert_eq!(report.outcome, Outcome::Error, "{report:?}");
     let reason = report.reason.expect("a reason");
-    assert!(reason.contains("the sandbox takes at most 900 KiB"), "{reason}");
+    assert!(
+        reason.contains("the sandbox takes at most 900 KiB"),
+        "{reason}"
+    );
     assert!(server
         .received_requests()
         .await

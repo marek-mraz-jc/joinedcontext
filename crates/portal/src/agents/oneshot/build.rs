@@ -369,7 +369,11 @@ mod tests {
             created_at: String::new(),
         };
         vec![
-            event(1, "question", json!({ "step": step, "questionId": format!("q-{step}") })),
+            event(
+                1,
+                "question",
+                json!({ "step": step, "questionId": format!("q-{step}") }),
+            ),
             event(
                 2,
                 "answer",
@@ -387,7 +391,11 @@ mod tests {
         let mut events = asked_and_answered(ACCESS_STEP, "read");
         events.extend(asked_and_answered(AUDIENCE_STEP, "project"));
         let failed = driver
-            .build_answer(DESCRIBE_STEP, &json!({ "answer": "a map of bikes" }), &events)
+            .build_answer(
+                DESCRIBE_STEP,
+                &json!({ "answer": "a map of bikes" }),
+                &events,
+            )
             .await
             .err()
             .expect("no endpoint");

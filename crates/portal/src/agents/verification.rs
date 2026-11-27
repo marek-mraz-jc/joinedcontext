@@ -282,7 +282,9 @@ mod tests {
             vec!["007".to_owned()]
         );
         assert_eq!(
-            marks_of(&json!({ "name": { "languageMap": { "fi": " Kaivopuisto ", "sv": "Brunnsparken" } } })),
+            marks_of(
+                &json!({ "name": { "languageMap": { "fi": " Kaivopuisto ", "sv": "Brunnsparken" } } })
+            ),
             vec!["Kaivopuisto".to_owned(), "Brunnsparken".to_owned()]
         );
         assert!(marks_of(&json!({})).is_empty());

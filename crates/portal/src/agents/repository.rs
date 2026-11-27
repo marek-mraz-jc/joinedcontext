@@ -555,7 +555,8 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(format!("{REPO}/PullRequests(7)/Shako.Merge")))
             .respond_with(
-                ResponseTemplate::new(405).set_body_json(serde_json::json!({ "message": "not yet" })),
+                ResponseTemplate::new(405)
+                    .set_body_json(serde_json::json!({ "message": "not yet" })),
             )
             .up_to_n_times(1)
             .with_priority(1)

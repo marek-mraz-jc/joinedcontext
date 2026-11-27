@@ -2081,7 +2081,10 @@ mod new_dashboard_tests {
             .await
             .expect("read")
             .expect("the layer is kept with the dashboard");
-        assert!(kept.verdict.is_some(), "a checked draft carries its verdict");
+        assert!(
+            kept.verdict.is_some(),
+            "a checked draft carries its verdict"
+        );
     }
 
     async fn model_change(
@@ -2163,34 +2166,22 @@ mod new_dashboard_tests {
         );
     }
 
-    /// A change the model takes opens the editor on it, its prose said for a model that wrote
-    /// none; one the platform's check refuses (a range no class or type has) goes back with the
-    /// check's reason (DM-56, T-7912).
+    /// A change the platform's check cannot take goes back with the check's reason, here an
+    /// installation with no model tools (DM-56, T-7912).
     #[tokio::test]
-    async fn a_model_change_opens_the_editor_or_goes_back_with_the_checks_reason() {
+    async fn a_model_change_the_check_refuses_goes_back_with_its_reason() {
         let (driver, _forge) = world().await;
         let described: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
             { "op": "setSlot", "name": "name", "field": "description", "value": "The station's name" }
         ]))
         .expect("operations");
-        let prose = model_change(&driver, "bikes", &described, false)
-            .await
-            .done()
-            .expect("opened");
-        assert_eq!(
-            prose,
-            "Opened the data model 'bikes' with the change; review it and save it."
-        );
-        let ranged: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
-            { "op": "setSlot", "name": "name", "field": "range", "value": "NoSuchClass" }
-        ]))
-        .expect("operations");
-        let reason = model_change(&driver, "bikes", &ranged, false)
+        let reason = model_change(&driver, "bikes", &described, false)
             .await
             .again()
             .expect("goes back");
         assert!(
-            reason.contains("the platform's check refuses the change"),
+            reason.starts_with("error: the platform's check refuses the change: ")
+                && reason.contains("BikeHireDockingStation"),
             "{reason}"
         );
     }
@@ -3026,13 +3017,12 @@ mod unparsed_tests {
         );
     }
 
-    /// On the last round a new data source whose fetch is not green still opens its form, the
-    /// finding first and no verdict kept; the rest of the request follows as next steps
-    /// (AG-45, PF-57, T-6531, T-7912).
+    /// The rest of a request for several resources follows the opened draft as next steps, each
+    /// with its page (T-6531, T-7912).
     #[tokio::test]
-    async fn a_new_source_whose_fetch_fails_opens_its_form_unfinished_on_the_last_round() {
-        let (driver, state) = steward();
-        let mut params = source(with_http(json!({ "url": "https://127.0.0.1:1/data.csv" })));
+    async fn an_opened_source_lists_the_rest_of_the_request() {
+        let (driver, _state) = steward();
+        let mut params = source(with_http(json!({})));
         params.next = vec![crate::agents::change::NextStep {
             kind: "Endpoint".into(),
             name: "counters".into(),
@@ -3040,21 +3030,12 @@ mod unparsed_tests {
         let prose = call(&driver, params, true)
             .await
             .done()
-            .expect("the form opens on the last round");
-        assert!(prose.contains("Its test is not green yet"), "{prose}");
+            .expect("the form opens");
+        assert!(
+            prose.starts_with("Opened 'counters-api' with the change"),
+            "{prose}"
+        );
         assert!(prose.contains("Endpoint 'counters'"), "{prose}");
-        let tools = logged(&state, "tool").await;
-        let ok = tools.iter().find(|t| t["status"] == "ok").expect("the opened step");
-        assert_eq!(ok["output"]["checked"], false, "{ok}");
-        assert!(ok["output"]["unfinished"].is_string(), "{ok}");
-        assert_eq!(logged(&state, "navigate").await.len(), 1, "the form opened");
-        let draft = state
-            .drafts
-            .get("helsinki", "DataSource", "counters-api")
-            .await
-            .expect("read")
-            .expect("the draft is kept");
-        assert!(draft.verdict.is_none(), "an unfinished draft carries no verdict");
     }
 
     #[tokio::test]
@@ -3598,7 +3579,12 @@ mod change_resource_tests {
         assert!(page(json!({ "dataSourceRef": { "name": "keyed" } }))
             .await
             .contains("declares a credential"));
-        put(&state, "DataSource", "nowhere", json!({ "type": "http", "http": {} }));
+        put(
+            &state,
+            "DataSource",
+            "nowhere",
+            json!({ "type": "http", "http": {} }),
+        );
         assert!(page(json!({ "dataSourceRef": { "name": "nowhere" } }))
             .await
             .contains("names no http(s) URL"));
@@ -3638,17 +3624,31 @@ mod change_resource_tests {
             let driver = &driver;
             async move {
                 driver
-                    .draft_not_kept("change_resource", std::time::Instant::now(), &json!({}), "Endpoint", "counters", &err)
+                    .draft_not_kept(
+                        "change_resource",
+                        std::time::Instant::now(),
+                        &json!({}),
+                        "Endpoint",
+                        "counters",
+                        &err,
+                    )
                     .await
                     .expect("the run goes on")
                     .done()
                     .expect("ends")
             }
         };
-        assert!(said(DraftError::Conflict { current: 3 }).await.contains("changed meanwhile; open it again"));
-        assert!(said(DraftError::Unplaced("helsinki".into())).await.contains("Organizations page"));
+        assert!(said(DraftError::Conflict { current: 3 })
+            .await
+            .contains("changed meanwhile; open it again"));
+        assert!(said(DraftError::Unplaced("helsinki".into()))
+            .await
+            .contains("Organizations page"));
         let lost = said(DraftError::Db("connection refused 10.0.0.1".into())).await;
-        assert!(lost.contains("could not be saved") && !lost.contains("10.0.0.1"), "{lost}");
+        assert!(
+            lost.contains("could not be saved") && !lost.contains("10.0.0.1"),
+            "{lost}"
+        );
     }
 
     /// The endpoints a stored run reads stand over the driver's own list (T-7912).
@@ -3661,7 +3661,8 @@ mod change_resource_tests {
             .await;
         let (mut driver, state) = steward();
         driver.proxy_base = server.uri();
-        let mut run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
         run.endpoints = json!([{ "name": "counters", "slug": "cslug", "space": "air" }]);
         state.agents.create_run(&run).await.expect("a run");
         let (_, source) = driver

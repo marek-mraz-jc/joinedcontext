@@ -581,7 +581,11 @@ mod tests {
             ],
         );
         assert_eq!(rows.len(), 5);
-        assert_eq!(rows[2]["status"], json!("working"), "a row read in this call joins too");
+        assert_eq!(
+            rows[2]["status"],
+            json!("working"),
+            "a row read in this call joins too"
+        );
         assert_eq!(rows[4].get("id"), None);
         assert_eq!(rows[0]["name"], json!("Kaivopuisto"));
         assert_eq!(rows[0]["status"], json!("working"));

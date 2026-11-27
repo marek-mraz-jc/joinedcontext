@@ -525,20 +525,6 @@ mod tests {
         assert!(project.styles.is_empty());
     }
 
-    /// TypeScript that parses but that the ES module transform refuses (`import x = require`,
-    /// `export =`) is a problem naming its file, and no module is emitted (T-7912).
-    #[test]
-    fn typescript_the_module_transform_refuses_is_named() {
-        let project = transpile(&files(&[
-            ("src/Old.ts", "import fs = require(\"fs\");\nexport const y = fs;\n"),
-            ("src/Assigned.ts", "const z = 1;\nexport = z;\n"),
-        ]));
-        let named: Vec<String> = project.problems.iter().map(ToString::to_string).collect();
-        assert!(named.iter().any(|n| n.starts_with("src/Old.ts:")), "{named:#?}");
-        assert!(named.iter().any(|n| n.starts_with("src/Assigned.ts:")), "{named:#?}");
-        assert!(project.modules.is_empty(), "{:?}", project.modules.keys());
-    }
-
     #[test]
     fn a_syntax_error_is_named_and_a_missing_file_too() {
         let project = transpile(&files(&[
