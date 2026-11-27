@@ -232,18 +232,31 @@ macro_rules! options {
 /// bad cert bundle must fail the one delivery, not the broker.
 fn shared_tls_config() -> Result<rumqttc::TlsConfiguration, NgsiError> {
     static TLS: std::sync::OnceLock<Option<rumqttc::TlsConfiguration>> = std::sync::OnceLock::new();
-    TLS.get_or_init(|| {
-        // `TlsConfiguration::default()` is the only rumqttc constructor
-        // that loads the platform trust store, and it panics on failure —
-        // contain that so a broken cert bundle degrades to failed mqtts
-        // deliveries instead of killing the process. The failure is cached:
-        // a store unreadable at first use will not become readable later.
-        std::panic::catch_unwind(rumqttc::TlsConfiguration::default)
-            .map_err(|_| tracing::error!("mqtts: loading the platform certificate store failed"))
-            .ok()
-    })
-    .clone()
-    .ok_or_else(|| NgsiError::InternalError("mqtts trust store unavailable".into()))
+    trust_store_or_refusal(
+        TLS.get_or_init(|| trust_store(rumqttc::TlsConfiguration::default))
+            .clone(),
+    )
+}
+
+/// `load` run with its panic contained. `TlsConfiguration::default()` is the
+/// only rumqttc constructor that loads the platform trust store, and it
+/// panics on failure — contain that so a broken cert bundle degrades to
+/// failed mqtts deliveries instead of killing the process. The caller caches
+/// the failure: a store unreadable at first use will not become readable
+/// later.
+fn trust_store(
+    load: impl FnOnce() -> rumqttc::TlsConfiguration + std::panic::UnwindSafe,
+) -> Option<rumqttc::TlsConfiguration> {
+    std::panic::catch_unwind(load)
+        .map_err(|_| tracing::error!("mqtts: loading the platform certificate store failed"))
+        .ok()
+}
+
+/// The trust store, or the delivery's refusal when it could not be loaded.
+fn trust_store_or_refusal(
+    store: Option<rumqttc::TlsConfiguration>,
+) -> Result<rumqttc::TlsConfiguration, NgsiError> {
+    store.ok_or_else(|| NgsiError::InternalError("mqtts trust store unavailable".into()))
 }
 
 /// Is egress to private/loopback ranges allowed? The MQTT destination is
@@ -308,6 +321,40 @@ async fn checked_addr(
 /// [`options!`]).
 fn dial_host(addr: std::net::SocketAddr) -> String {
     addr.ip().to_string()
+}
+
+/// What one publish attempt came to.
+enum Settled {
+    /// Delivered on a live session: pool it.
+    Delivered,
+    /// Failed on the first attempt: drop the session, try a fresh one.
+    Retry,
+    /// Failed for good.
+    Failed(NgsiError),
+}
+
+/// Judges one publish attempt: `published` is what the bounded publish
+/// answered, `alive` whether the session's pump still runs, `retried`
+/// whether this is the second attempt. An acknowledged publish on a session
+/// that is already over is no delivery.
+fn settle(
+    published: Result<Result<(), String>, tokio::time::error::Elapsed>,
+    alive: bool,
+    retried: bool,
+    ep: &MqttEndpoint,
+) -> Settled {
+    match published {
+        Ok(Ok(())) if alive => Settled::Delivered,
+        _ if !retried => Settled::Retry,
+        Ok(Ok(())) => Settled::Failed(NgsiError::InternalError(
+            "mqtt connection lost during publish".into(),
+        )),
+        Ok(Err(e)) => Settled::Failed(NgsiError::InternalError(format!("mqtt publish: {e}"))),
+        Err(_) => Settled::Failed(NgsiError::InternalError(format!(
+            "mqtt publish to {}:{} timed out",
+            ep.host, ep.port
+        ))),
+    }
 }
 
 /// One pooled connection: the client plus its event-loop pump task.
@@ -384,24 +431,13 @@ impl MqttSink {
                 Ok(())
             })
             .await;
-            match published {
-                Ok(Ok(())) if !conn.pump.is_finished() => {
+            match settle(published, !conn.pump.is_finished(), retried, ep) {
+                Settled::Delivered => {
                     self.checkin(key, conn);
                     return Ok(());
                 }
-                _ if !retried => retried = true, // drop conn, retry fresh
-                Ok(Ok(())) => {
-                    return Err(NgsiError::InternalError(
-                        "mqtt connection lost during publish".into(),
-                    ))
-                }
-                Ok(Err(e)) => return Err(NgsiError::InternalError(format!("mqtt publish: {e}"))),
-                Err(_) => {
-                    return Err(NgsiError::InternalError(format!(
-                        "mqtt publish to {}:{} timed out",
-                        ep.host, ep.port
-                    )))
-                }
+                Settled::Retry => retried = true, // drop conn, retry fresh
+                Settled::Failed(e) => return Err(e),
             }
         }
     }
@@ -904,6 +940,59 @@ mod tests {
                     if std::sync::Arc::ptr_eq(a, b)
             ),
             "expected one shared injected-rustls config, each call built its own"
+        );
+    }
+
+    /// A trust store whose load panics is contained: no store, and every mqtts
+    /// delivery that asks for it is refused with the same error.
+    #[test]
+    fn an_unreadable_trust_store_is_contained_and_refuses_the_delivery() {
+        assert!(trust_store(|| panic!("could not load platform certs")).is_none());
+        let refused = trust_store_or_refusal(None).expect_err("no store, no delivery");
+        assert!(
+            refused
+                .to_string()
+                .contains("mqtts trust store unavailable"),
+            "{refused}"
+        );
+        assert!(trust_store_or_refusal(Some(
+            trust_store(rumqttc::TlsConfiguration::default).expect("the platform store loads")
+        ))
+        .is_ok());
+    }
+
+    /// Every way one publish attempt can end: delivered on a live session
+    /// only; the first failure of any kind retries; a second one is reported
+    /// as what it was.
+    #[tokio::test]
+    async fn a_publish_attempt_is_settled_by_its_answer_its_session_and_its_retry() {
+        let ep = ep_at(1883);
+        let elapsed = || async {
+            tokio::time::timeout(Duration::ZERO, std::future::pending::<Result<(), String>>()).await
+        };
+        for retried in [false, true] {
+            assert!(
+                matches!(settle(Ok(Ok(())), true, retried, &ep), Settled::Delivered),
+                "an acknowledged publish on a live session is delivered, retried={retried}"
+            );
+        }
+        for (answer, alive) in [
+            (Ok(Ok(())), false),
+            (Ok(Err("x".to_owned())), true),
+            (elapsed().await, true),
+        ] {
+            assert!(matches!(settle(answer, alive, false, &ep), Settled::Retry));
+        }
+        let failed = |settled: Settled| match settled {
+            Settled::Failed(e) => e.to_string(),
+            Settled::Delivered | Settled::Retry => String::new(),
+        };
+        assert!(failed(settle(Ok(Ok(())), false, true, &ep)).contains("connection lost"));
+        assert!(
+            failed(settle(Ok(Err("boom".into())), true, true, &ep)).contains("mqtt publish: boom")
+        );
+        assert!(
+            failed(settle(elapsed().await, true, true, &ep)).contains("127.0.0.1:1883 timed out")
         );
     }
 

@@ -160,6 +160,57 @@ async fn a_document_is_checked_stored_replaced_and_deleted() {
     }
 }
 
+/// More stale Entities than one page of the scan holds are all marked, and
+/// all lifted once the rule that marked them is gone.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sweep_reads_past_one_page_to_mark_and_to_lift() {
+    let b = TestBroker::new().await.expect("broker");
+    let app = b.serve_mounted(Vec::new()).expect("app");
+    let rule = r#"{"rules":[{"name":"stale-position","type":"https://example.org/Vehicle",
+        "attribute":"https://example.org/position","maxAge":"PT10M"}]}"#;
+    assert_eq!(
+        send(
+            &app,
+            Method::PUT,
+            "/q/quality/city",
+            None,
+            Some(rule.into())
+        )
+        .await
+        .0,
+        StatusCode::CREATED
+    );
+    for n in 0..1001 {
+        create(&app, "city", positioned(&format!("urn:v:{n}"), V, 30)).await;
+    }
+    let marked = b.sweep_quality(jiff::Timestamp::now()).await;
+    assert_eq!(
+        marked
+            .iter()
+            .filter(|c| c.outcome == "quarantine")
+            .map(|c| c.count)
+            .sum::<u64>(),
+        1001,
+        "{marked:?}"
+    );
+    assert_eq!(
+        send(&app, Method::DELETE, "/q/quality/city", None, None)
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    let lifted = b.sweep_quality(jiff::Timestamp::now()).await;
+    assert_eq!(
+        lifted
+            .iter()
+            .filter(|c| c.outcome == "lift")
+            .map(|c| c.count)
+            .sum::<u64>(),
+        1001,
+        "{lifted:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stale_entity_is_quarantined_and_lifted_when_fresh_and_nothing_else_is_touched() {
     let b = TestBroker::new().await.expect("broker");

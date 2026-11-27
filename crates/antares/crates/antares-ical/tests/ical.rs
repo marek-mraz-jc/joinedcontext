@@ -277,6 +277,24 @@ async fn a_bad_window_a_view_without_events_and_a_write_are_refused() {
     assert_eq!((a.status, a.body.as_str()), (StatusCode::OK, ""));
 }
 
+/// An Entity of several types matches no one-type source: it is no event,
+/// and the calendar still holds the others.
+#[tokio::test]
+async fn an_entity_of_several_types_is_no_event() {
+    let (_broker, app) = fixture().await;
+    let both = json!({"id": "urn:ngsi-ld:Event:both", "type": ["Event", "Meeting"],
+        "name": prop("two types"), "startDate": prop("2026-09-11")});
+    let a = send(&app, "POST", "/ngsi-ld/v1/entities", &both.to_string()).await;
+    assert_eq!(a.status, StatusCode::CREATED, "{}", a.body);
+    let a = send(&app, "GET", "/x/views/every/ical/v1/events.ics", "").await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.body);
+    let got = uids(&parse(&a.body));
+    assert!(
+        got.contains(&"urn:ngsi-ld:Event:jarmok".to_owned()),
+        "{got:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_view_of_every_type_serves_its_events_alone() {
     let (_broker, app) = fixture().await;

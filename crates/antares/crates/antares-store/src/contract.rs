@@ -550,6 +550,11 @@ pub async fn run_current_state_contract(
     let live: Vec<String> = (0..4).map(|i| format!("{stem}live{i}")).collect();
     // sorts between live1 and live2, so it falls inside the first page below
     let expired = format!("{stem}live1x");
+    // sorts after every id of the stem, so the walk reads one that is not of it
+    let tail = format!("urn:ngsi-ld:{prefix}:pagf");
+    d.upsert(a, Kind::Entity, &tail, doc(&tail))
+        .await
+        .expect("upsert tail entity");
     for id in &live {
         d.upsert(a, Kind::Entity, id, doc(id))
             .await
@@ -618,7 +623,7 @@ pub async fn run_current_state_contract(
         "the walk must serve every live entity of the tenant exactly once, in id \
          order, and never the expired one"
     );
-    for id in live.iter().chain(std::iter::once(&expired)) {
+    for id in live.iter().chain([&expired, &tail]) {
         d.delete(a, Kind::Entity, id)
             .await
             .expect("delete page entity");
@@ -661,6 +666,12 @@ pub async fn run_current_state_contract(
     d.upsert(a, Kind::Entity, &exp_a, with_attrs)
         .await
         .expect("upsert entity with an expired attribute");
+    let holds_gone = format!("urn:ngsi-ld:{prefix}:expiry:holds");
+    let mut holder = doc(&holds_gone);
+    holder[iri("gone")] = json!([{"value": 9}]);
+    d.upsert(a, Kind::Entity, &holds_gone, holder)
+        .await
+        .expect("upsert entity holding the Attribute live");
     let served = d
         .get(a, Kind::Entity, &exp_a)
         .await
@@ -718,7 +729,17 @@ pub async fn run_current_state_contract(
             .all(|r| r.get(iri("gone")).is_none()),
         "a query served an expired Attribute"
     );
+    assert!(
+        by_attr
+            .rows
+            .iter()
+            .all(|r| r["id"] != holds_gone.as_str() || r.get(iri("gone")).is_some()),
+        "a query dropped the Attribute of an Entity that holds it live"
+    );
     d.delete(a, Kind::Entity, &exp_a).await.expect("delete");
+    d.delete(a, Kind::Entity, &holds_gone)
+        .await
+        .expect("delete");
 
     // batch_upsert takes each id once: the API splits repeats into rounds
     // (5.6.8 / 5.6.10), and what a backend does with a repeat inside one
@@ -1053,6 +1074,15 @@ pub async fn run_current_state_contract(
     )
     .await
     .expect("a Cached copy belongs to no tenant");
+    let b_id = format!("{prefix}-ctx-b-hosted");
+    d.context_put(
+        Some(b),
+        &b_id,
+        json!({"localId": b_id, "kind": "Hosted", "owner": b.as_str(),
+               "body": {"@context": {"t": "https://example.org/b"}}}),
+    )
+    .await
+    .expect("the owning tenant stores its own @context");
 
     assert!(
         d.context_get(Some(a), &hosted_id)
@@ -1075,13 +1105,23 @@ pub async fn run_current_state_contract(
             .is_none(),
         "no tenant in scope must reach a tenant's @context"
     );
+    let listed = d
+        .context_list_meta(Some(b))
+        .await
+        .expect("context_list_meta");
     assert!(
-        d.context_list_meta(Some(b))
-            .await
-            .expect("context_list_meta")
-            .iter()
-            .all(|r| r["localId"] != hosted_id.as_str()),
+        listed.iter().any(|r| r["localId"] == b_id.as_str()),
+        "a tenant must list its own @context"
+    );
+    assert!(
+        listed.iter().all(|r| r["localId"] != hosted_id.as_str()),
         "another tenant's @context must not be listed"
+    );
+    assert!(
+        d.context_delete(Some(b), &b_id)
+            .await
+            .expect("context_delete"),
+        "the contract's own @context must be removable by its owner"
     );
     assert!(
         !d.context_delete(Some(b), &hosted_id)
@@ -1767,5 +1807,42 @@ pub async fn run_tenant_isolation_contract(
             "{}'s {kind:?} survived",
             b.as_str()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{both, run_temporal_contract};
+    use antares_model::{NgsiError, TenantId};
+
+    /// A driver without temporal storage has no temporal contract to run.
+    #[tokio::test]
+    async fn a_driver_without_history_runs_no_temporal_contract() -> Result<(), NgsiError> {
+        let (a, b) = (TenantId::new("none-a")?, TenantId::new("none-b")?);
+        run_temporal_contract(&crate::NoTemporal, &a, &b, "none").await;
+        Ok(())
+    }
+
+    /// Pending once, ready on the next poll.
+    async fn after_one_yield(n: u32) -> u32 {
+        let mut yielded = false;
+        std::future::poll_fn(|cx| {
+            if yielded {
+                std::task::Poll::Ready(n)
+            } else {
+                yielded = true;
+                cx.waker().wake_by_ref();
+                std::task::Poll::Pending
+            }
+        })
+        .await
+    }
+
+    /// Two futures that do not finish on the first poll are polled again until both have.
+    #[tokio::test]
+    async fn both_waits_for_the_slower_of_two_futures() {
+        assert_eq!(both(after_one_yield(1), async { 2 }).await, (1, 2));
+        assert_eq!(both(async { 3 }, after_one_yield(4)).await, (3, 4));
+        assert_eq!(both(after_one_yield(5), after_one_yield(6)).await, (5, 6));
     }
 }

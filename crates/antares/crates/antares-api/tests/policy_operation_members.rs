@@ -668,3 +668,35 @@ async fn a_purge_names_its_types_attributes_and_query() {
     assert_eq!(s.attrs, vec![iri("speed")]);
     assert!(s.q, "the purge's q");
 }
+
+/// A read whose Link header names an @context the loader cannot fetch is
+/// refused under an engine as without one: the members it would show the
+/// engine stay empty, and no Entity is served.
+#[tokio::test]
+async fn a_read_with_an_unloadable_context_under_an_engine_serves_nothing() {
+    let (st, _seen) = state().await;
+    seed(&st).await;
+    for uri in [
+        "/ngsi-ld/v1/entities?type=Vehicle",
+        "/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z",
+    ] {
+        let req = Request::builder()
+            .method("GET")
+            .uri(uri)
+            .header(
+                "Link",
+                "<http://127.0.0.1:1/absent.jsonld>; rel=\"http://www.w3.org/ns/json-ld#context\"; type=\"application/ld+json\"",
+            )
+            .body(Body::empty())
+            .expect("request");
+        let status = antares_api::router(st.clone())
+            .oneshot(req)
+            .await
+            .expect("response")
+            .status();
+        assert!(
+            status.is_client_error() || status.is_server_error(),
+            "{uri}: {status}"
+        );
+    }
+}

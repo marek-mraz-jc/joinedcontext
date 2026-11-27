@@ -107,6 +107,142 @@ async fn current_state_still_works_and_records_no_history() {
     );
 }
 
+/// A driver that would page a temporal query by its `q`: it records every
+/// name the broker's expander gives it, for the pushdown verdict and for the
+/// read, and delegates the read.
+struct Expanding {
+    inner: Arc<dyn antares_store::TemporalDriver>,
+    expanded: std::sync::Mutex<Vec<String>>,
+}
+
+impl Expanding {
+    fn note(&self, iri: String) {
+        self.expanded.lock().expect("lock").push(iri);
+    }
+}
+
+#[async_trait::async_trait]
+impl antares_store::TemporalDriver for Expanding {
+    fn q_pushdown_exact(
+        &self,
+        _q: &antares_ql::QNode,
+        _range: Option<&antares_store::filter::InstanceRange<'_>>,
+        expand: &dyn Fn(&str) -> String,
+    ) -> bool {
+        self.note(expand("speed"));
+        false
+    }
+    async fn query_temporal(
+        &self,
+        t: &antares_model::TenantId,
+        f: &antares_store::filter::TemporalFilter<'_>,
+    ) -> Result<antares_store::filter::TemporalOutcome, antares_model::NgsiError> {
+        self.note((f.expand)("speed"));
+        self.inner.query_temporal(t, f).await
+    }
+    async fn get_temporal(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+        f: &antares_store::filter::TemporalFilter<'_>,
+    ) -> Result<Option<Value>, antares_model::NgsiError> {
+        self.inner.get_temporal(t, id, f).await
+    }
+    async fn temporal_append(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+        shell: &Value,
+        additions: &Value,
+    ) -> Result<(), antares_model::NgsiError> {
+        self.inner.temporal_append(t, id, shell, additions).await
+    }
+    async fn get(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+    ) -> Result<Option<Value>, antares_model::NgsiError> {
+        self.inner.get(t, id).await
+    }
+    async fn create(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+        doc: Value,
+    ) -> Result<bool, antares_model::NgsiError> {
+        self.inner.create(t, id, doc).await
+    }
+    async fn upsert(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+        doc: Value,
+    ) -> Result<bool, antares_model::NgsiError> {
+        self.inner.upsert(t, id, doc).await
+    }
+    async fn delete(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+    ) -> Result<bool, antares_model::NgsiError> {
+        self.inner.delete(t, id).await
+    }
+    async fn list(
+        &self,
+        t: &antares_model::TenantId,
+    ) -> Result<Vec<Value>, antares_model::NgsiError> {
+        self.inner.list(t).await
+    }
+    async fn mutate_boxed<'a>(
+        &self,
+        t: &antares_model::TenantId,
+        id: &str,
+        f: antares_store::MutateFn<'a>,
+    ) -> Result<Option<Result<(), ()>>, antares_model::NgsiError> {
+        self.inner.mutate_boxed(t, id, f).await
+    }
+}
+
+/// A temporal query's `q` reaches a driver that pages by it through the
+/// request's own @context: the pushdown verdict and the read both expand
+/// `speed` to its full name.
+#[tokio::test]
+async fn a_temporal_q_reaches_the_driver_expanded_by_the_request_context() {
+    let base = AppState::new("me".into());
+    let driver = Arc::new(Expanding {
+        inner: base.temporal.clone(),
+        expanded: std::sync::Mutex::default(),
+    });
+    let st = AppState::with_drivers("me".into(), base.store.clone(), driver.clone(), "memory");
+    let (status, body) = req(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/temporal/entities",
+        Some(
+            json!({"id": "urn:ngsi-ld:Vehicle:q", "type": "Vehicle", "speed": [
+            {"type": "Property", "value": 5, "observedAt": "2026-01-01T00:00:00Z"}]}),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = req(
+        &st,
+        "GET",
+        "/ngsi-ld/v1/temporal/entities?type=Vehicle&q=speed%3E1&timerel=after&timeAt=2025-01-01T00:00:00Z",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body.as_array().map(Vec::len), Some(1), "{body}");
+    let seen = driver.expanded.lock().expect("lock").clone();
+    assert!(seen.len() >= 2, "{seen:?}");
+    assert!(
+        seen.iter()
+            .all(|s| s == "https://uri.etsi.org/ngsi-ld/default-context/speed"),
+        "{seen:?}"
+    );
+}
+
 #[tokio::test]
 async fn the_default_composition_is_not_refused() {
     // control: same requests against the fused store — anything but the

@@ -2944,10 +2944,11 @@ pub fn combine(
     if parts.iter().all(Part::ok) {
         return ok;
     }
-    if parts.len() == 1 || parts.iter().all(|p| p.status == 404) {
-        let Some(p) = parts.first() else {
-            return ok;
-        };
+    // `parts` holds at least one failure here: every part ok returned above
+    if let Some(p) = parts
+        .first()
+        .filter(|_| parts.len() == 1 || parts.iter().all(|p| p.status == 404))
+    {
         return part_error(p, tenant);
     }
     // TS 104 176 7.2.3.2: the 207 body is a BatchOperationResult. 5.2.16
@@ -2960,23 +2961,23 @@ pub fn combine(
         .filter(|p| !p.ok())
         .map(|p| {
             let (etype, title) = p.problem(p.status);
-            let mut e = json!({
-                "error": {
+            let mut e = Map::new();
+            e.insert(
+                "error".into(),
+                json!({
                     "status": p.status,
                     "type": format!("https://uri.etsi.org/ngsi-ld/errors/{etype}"),
                     "title": title,
                     "detail": p.detail,
-                }
-            });
-            if let Some(o) = e.as_object_mut() {
-                if let Some(id) = id {
-                    o.insert("entityId".into(), Value::String(id.to_owned()));
-                }
-                if let Some(rid) = &p.registration {
-                    o.insert("registrationId".into(), Value::String(rid.clone()));
-                }
+                }),
+            );
+            if let Some(id) = id {
+                e.insert("entityId".into(), Value::String(id.to_owned()));
             }
-            e
+            if let Some(rid) = &p.registration {
+                e.insert("registrationId".into(), Value::String(rid.clone()));
+            }
+            Value::Object(e)
         })
         .collect();
     let success: Vec<&str> = id
@@ -3634,6 +3635,51 @@ mod forward_parts {
         .await
     }
 
+    /// clause 4.3.6, step 6: what the registered @context cannot express travels as the
+    /// client sent it: a path segment that names no Attribute, a fragment
+    /// that does not expand or is no object, an Entity that does not expand.
+    #[tokio::test]
+    async fn what_the_registered_context_cannot_express_travels_unchanged() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let mut r = reg();
+        r.csi = vec![("jsonldContext".into(), antares_jsonld::CORE_CONTEXT.into())];
+        let base = "http://127.0.0.1:1/ngsi-ld/v1/entities/urn:ngsi-ld:V:1";
+        for (url, body) in [
+            (format!("{base}/attrs/id"), None),
+            (
+                format!("{base}/attrs/speed"),
+                Some(json!({"type": "Vehicle"})),
+            ),
+            (format!("{base}/attrs/speed"), Some(json!([1]))),
+            (
+                base.to_owned(),
+                Some(json!({"type": "Vehicle", "speed": {"type": "NoAttributeType"}})),
+            ),
+            (
+                base.to_owned(),
+                Some(json!({"id": "not an id", "type": "Vehicle"})),
+            ),
+        ] {
+            let b = built(
+                &st,
+                &tenant,
+                &r,
+                &url,
+                &HeaderMap::new(),
+                antares_jsonld::CORE_CONTEXT,
+                body.clone(),
+            )
+            .await;
+            assert_eq!(b.url(), url);
+            let sent = b
+                .body
+                .as_deref()
+                .map(|s| serde_json::from_slice::<Value>(s).expect("JSON"));
+            assert_eq!(sent, body, "{url}");
+        }
+    }
+
     /// Clause 4.3.6, item 5 / F-ANT3-003 / F-R2ANT1-005: a registration states its own
     /// headers; it never copies the caller's credential, never states a
     /// gateway trust header, and copies a request header only when the
@@ -3847,8 +3893,8 @@ mod forward_parts {
         let addr = listener.local_addr().expect("addr");
         let hold = tokio::spawn(async move {
             let mut open = Vec::new();
-            while let Ok((sock, _)) = listener.accept().await {
-                open.push(sock);
+            loop {
+                open.push(listener.accept().await.map(|(sock, _)| sock));
             }
         });
         let mut r = reg();
@@ -4811,11 +4857,12 @@ mod tests {
         )
         .await
         .expect("plan");
-        let WritePlan::Forward(regs) = plan else {
-            panic!("no Via chain, so nothing answers early");
-        };
-        let ids: Vec<&str> = regs.iter().map(|r| r.reg_id.as_str()).collect();
-        assert_eq!(ids, vec!["urn:ngsi-ld:ContextSourceRegistration:cars"]);
+        assert!(
+            matches!(&plan, WritePlan::Forward(regs)
+                if regs.iter().map(|r| r.reg_id.as_str())
+                    .eq(["urn:ngsi-ld:ContextSourceRegistration:cars"])),
+            "no Via chain, so nothing answers early; only the matching source"
+        );
     }
 
     /// 6.3.18: a `Via` chain that already names this broker is answered by
@@ -4849,15 +4896,15 @@ mod tests {
         )
         .await
         .expect("plan");
-        let WritePlan::Answered(resp) = looped else {
-            panic!("a Via chain naming this broker with one exclusive source is answered, not forwarded");
-        };
-        assert_eq!(resp.status(), 508);
+        assert!(
+            matches!(&looped, WritePlan::Answered(resp) if resp.status() == 508),
+            "a Via chain naming this broker with one exclusive source is answered, not forwarded"
+        );
         let deep: String = (0..=MAX_VIA_HOPS)
             .map(|i| format!("1.1 hop{i}"))
             .collect::<Vec<_>>()
             .join(", ");
-        let WritePlan::Answered(resp) = write_plan(
+        let deep_plan = write_plan(
             &st,
             &tenant,
             &spec,
@@ -4866,10 +4913,11 @@ mod tests {
             &hdrs(Some(&deep)),
         )
         .await
-        .expect("plan") else {
-            panic!("a chain past the hop cap is refused outright");
-        };
-        assert_eq!(resp.status(), 508);
+        .expect("plan");
+        assert!(
+            matches!(&deep_plan, WritePlan::Answered(resp) if resp.status() == 508),
+            "a chain past the hop cap is refused outright"
+        );
         // no chain, no early answer: the same registration forwards
         assert!(matches!(
             write_plan(&st, &tenant, &spec, &ctx, &HashMap::new(), &HeaderMap::new()).await.expect("plan"),

@@ -582,6 +582,24 @@ async fn a_list_of_more_than_twenty_outputs_or_a_repeated_name_serves_nobody() {
     );
 }
 
+/// An Entity of several types is no entry of a one-type output: the feed
+/// still answers with the Entities its sources name.
+#[tokio::test]
+async fn an_entity_of_several_types_is_no_entry_and_the_feed_still_answers() {
+    let app = fixture().await;
+    let both = json!({"id": "urn:ngsi-ld:Event:both", "type": ["Event", "Noise"],
+        "name": {"type": "Property", "value": "two types"}});
+    let (status, b) = send(&app, "POST", "/ngsi-ld/v1/entities", &both.to_string()).await;
+    assert_eq!(status, StatusCode::CREATED, "{b}");
+    let (status, body) = send(&app, "GET", "/x/views/every/feed/v1/vsetky/feed.json", "").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let got = ids("feed.json", &body);
+    assert!(
+        got.iter().any(|id| id.ends_with("urn:ngsi-ld:Event:e2")),
+        "{got:?}"
+    );
+}
+
 /// F-ANT5-010: a view of every type pushes the output's types, so a Tenant
 /// holding more Entities of another type than one read may scan still
 /// serves its Events.

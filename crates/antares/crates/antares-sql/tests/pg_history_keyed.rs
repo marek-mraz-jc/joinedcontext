@@ -496,6 +496,104 @@ async fn a_skipped_append_leaves_no_dictionary_row() {
     assert_eq!(rows, 0);
 }
 
+/// The history half of a mixed deployment holds no current state, so a keyed batch append
+/// counts every Entity it carries as live: its dictionary first sights go in first and the
+/// rows land keyed.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_temporal_only_batch_append_writes_its_first_sights_and_keyed_rows() {
+    let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let cut = jc_time::parse_rfc3339(MOVED_FROM).expect("stamp");
+    let mut keyed = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
+    keyed.temporal_only = true;
+    let t = TenantId::new("pgbatchonly").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Tank:batchonly";
+    let _ = keyed.delete(&t, id).await;
+    let probe = "https://example.org/t5243/batchOnly";
+    let shell = json!({"id": id, "type": "Tank",
+        "createdAt": "2026-01-03T00:00:00Z", "modifiedAt": "2026-01-03T00:00:00Z"});
+    let additions = json!({probe: [{"type": "Property", "value": 1,
+        "observedAt": "2026-01-03T00:00:00Z",
+        "instanceId": "urn:ngsi-ld:Instance:00000000-0000-4000-b000-000000000003"}]});
+    keyed
+        .append_many(&[(&t, id, &shell, additions)])
+        .await
+        .expect("append_many");
+    let sights = count(
+        &pool,
+        &t,
+        "SELECT count(*) FROM iri_ids WHERE tenant_id = $1
+          AND iri IN ('urn:ngsi-ld:Tank:batchonly', 'https://example.org/t5243/batchOnly')",
+    )
+    .await;
+    assert_eq!(sights, 2, "the Entity and its Attribute");
+    let rows = count(
+        &pool,
+        &t,
+        "SELECT count(*) FROM attr_rows WHERE tenant_id = $1",
+    )
+    .await;
+    assert_eq!(rows, 1);
+    assert!(keyed.delete(&t, id).await.expect("delete"));
+}
+
+/// A keyed write the database refuses for any reason but a dictionary gone fails as the
+/// database said, and nothing of it lands.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_keyed_write_the_database_refuses_fails_with_its_error() {
+    use sqlx::Executor;
+    let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let cut = jc_time::parse_rfc3339(MOVED_FROM).expect("stamp");
+    let mut keyed = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
+    keyed.temporal_only = true;
+    let t = TenantId::new("pgkeyedrefused").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Tank:refused1";
+    let _ = keyed.delete(&t, id).await;
+    for ddl in [
+        "CREATE OR REPLACE FUNCTION antares_test_refuse_keyed() RETURNS trigger
+           LANGUAGE plpgsql AS $$ BEGIN
+             RAISE EXCEPTION 'keyed row refused' USING ERRCODE = 'P0001';
+           END $$",
+        "DROP TRIGGER IF EXISTS antares_test_refuse_keyed ON attr_rows",
+        "CREATE TRIGGER antares_test_refuse_keyed BEFORE INSERT ON attr_rows FOR EACH ROW
+           WHEN (NEW.tenant_id = 'pgkeyedrefused')
+           EXECUTE FUNCTION antares_test_refuse_keyed()",
+    ] {
+        pool.execute(ddl).await.expect(ddl);
+    }
+    let shell = json!({"id": id, "type": "Tank",
+        "createdAt": "2026-01-03T00:00:00Z", "modifiedAt": "2026-01-03T00:00:00Z"});
+    let additions = json!({SPEED: [{"type": "Property", "value": 1,
+        "observedAt": "2026-01-03T00:00:00Z",
+        "instanceId": "urn:ngsi-ld:Instance:00000000-0000-4000-b000-000000000004"}]});
+    let refused = keyed.append(&t, id, &shell, &additions).await;
+    pool.execute("DROP TRIGGER antares_test_refuse_keyed ON attr_rows")
+        .await
+        .expect("drop trigger");
+    let code = match &refused {
+        Err(sqlx::Error::Database(d)) => d.code().map(|c| c.into_owned()),
+        _ => None,
+    };
+    assert_eq!(code.as_deref(), Some("P0001"), "{refused:?}");
+    let rows = count(
+        &pool,
+        &t,
+        "SELECT count(*) FROM attr_rows WHERE tenant_id = $1",
+    )
+    .await;
+    assert_eq!(rows, 0);
+    let _ = keyed.delete(&t, id).await;
+}
+
 /// A keyed write that finds an IRI its store knows gone from the dictionary
 /// (another pod purged the Tenant) may fail, and the store then forgets what
 /// it knew of the Tenant: the next write of the same history lands and reads

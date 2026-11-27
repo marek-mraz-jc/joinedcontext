@@ -583,6 +583,58 @@ async fn a_dead_letter_is_kept_when_the_cap_cannot_be_checked() {
     .await;
 }
 
+/// A letter past the cap whose oldest letter the store cannot delete is
+/// parked all the same: the eviction is only skipped.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dead_letter_is_kept_when_the_oldest_cannot_be_evicted() {
+    use crate::common::faults::store_down;
+    let (uri, _, _) = receiver(StatusCode::INTERNAL_SERVER_ERROR).await;
+    let t = TenantId::default();
+    let (_st, inner, wrapped) =
+        retrying_broker(&uri, |m, _| (m == "delete").then(store_down), 1_000).await;
+    until(
+        || async { wrapped.faults.calls("delete") >= 1 },
+        "the eviction of the oldest letter",
+    )
+    .await;
+    assert_eq!(
+        inner.list(&t, Kind::DeadLetter).await.expect("list").len(),
+        1_001,
+        "the new letter is kept and the oldest stays"
+    );
+}
+
+/// An exhausted retry whose letter the store refuses parks nothing; the
+/// broker goes on.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_exhausted_retry_the_store_cannot_park_leaves_no_letter() {
+    use crate::common::faults::store_down;
+    use std::sync::atomic::AtomicBool;
+    let (uri, hits, _) = receiver(StatusCode::INTERNAL_SERVER_ERROR).await;
+    let refuse = Arc::new(AtomicBool::new(false));
+    let on = refuse.clone();
+    let (_st, inner, wrapped) = retrying_broker(
+        &uri,
+        move |m, _| (m == "create" && on.load(Ordering::SeqCst)).then(store_down),
+        0,
+    )
+    .await;
+    let before = wrapped.faults.calls("create");
+    refuse.store(true, Ordering::SeqCst);
+    until(|| async { hits.load(Ordering::SeqCst) >= 2 }, "the retry").await;
+    until(
+        || async { wrapped.faults.calls("create") > before },
+        "the refused letter",
+    )
+    .await;
+    let t = TenantId::default();
+    assert!(inner
+        .list(&t, Kind::DeadLetter)
+        .await
+        .expect("list")
+        .is_empty());
+}
+
 /// A retry that succeeds but whose bookkeeping cannot be written back is
 /// still a delivered notification: no dead letter is parked.
 #[tokio::test(flavor = "multi_thread")]

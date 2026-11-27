@@ -309,10 +309,11 @@ pub(super) async fn member_now(
     id: &str,
     held: Option<&Value>,
 ) -> ApiResult<bool> {
-    if !reach_reads_state(filter) {
-        return Ok(true);
-    }
-    let Some(reach) = crate::repr::narrowing(filter).policy_reach else {
+    // reach_reads_state, keeping the reach it reads
+    let Some(reach) = crate::repr::narrowing(filter)
+        .policy_reach
+        .filter(|r| r.q.is_some() || r.scope_q.is_some() || !r.areas.is_empty())
+    else {
         return Ok(true);
     };
     let reach = crate::repr::PolicyReach {

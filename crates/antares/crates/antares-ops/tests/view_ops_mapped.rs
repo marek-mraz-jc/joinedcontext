@@ -174,6 +174,20 @@ fn in_the_target_model(a: &Answer) {
     }
 }
 
+/// A view the table does not hold is no view to a surface, and the handles
+/// of the views it holds are swept once a minute against the table.
+#[tokio::test(start_paused = true)]
+async fn an_unknown_view_is_not_found_and_a_handle_outlives_the_sweep() {
+    let (_b, app) = fixture().await.expect("fixture");
+    let a = get(&app, "/x/mp/nosuch/ngsi-ld/v1/types").await;
+    assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.text);
+    let a = get(&app, &format!("{ROOT}/types")).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+    tokio::time::advance(std::time::Duration::from_secs(61)).await;
+    let a = get(&app, &format!("{ROOT}/types")).await;
+    assert_eq!(a.status, StatusCode::OK, "{}", a.text);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_read_is_inverted_and_its_answer_rebuilt() {
     let (_b, app) = fixture().await.expect("fixture");

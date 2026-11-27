@@ -171,13 +171,6 @@ pub async fn claim_period(
     if !locked {
         return Ok(None);
     }
-    let mut lease = Lease {
-        conn: Some(conn),
-        job: job.to_owned(),
-    };
-    let Some(conn) = lease.conn.as_mut() else {
-        return Ok(None);
-    };
     let won = sqlx::query(
         "INSERT INTO maintenance_jobs (name, last_run) VALUES ($1, now())
          ON CONFLICT (name) DO UPDATE SET last_run = now()
@@ -187,9 +180,14 @@ pub async fn claim_period(
     )
     .bind(job)
     .bind(period.as_secs_f64())
-    .fetch_optional(&mut **conn)
-    .await?;
-    if won.is_none() {
+    .fetch_optional(&mut *conn)
+    .await;
+    // held from here on: an error below drops it, which closes the session
+    let lease = Lease {
+        conn: Some(conn),
+        job: job.to_owned(),
+    };
+    if won?.is_none() {
         lease.release().await;
         return Ok(None);
     }
@@ -2243,6 +2241,18 @@ mod tests {
             "DROP TABLE public.\"a\"\"b\"",
             "a quote in the name closes nothing"
         );
+    }
+
+    /// A lease whose connection is gone holds nothing: it reads as lost, and
+    /// giving it back has nothing to unlock.
+    #[tokio::test]
+    async fn a_lease_without_its_connection_is_lost_and_releases_nothing() {
+        let mut lease = Lease {
+            conn: None,
+            job: "temporal_partitions".to_owned(),
+        };
+        assert!(!lease.alive().await);
+        lease.release().await;
     }
 
     #[test]

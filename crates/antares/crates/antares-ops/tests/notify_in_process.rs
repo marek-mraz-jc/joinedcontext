@@ -99,3 +99,27 @@ async fn an_unmapped_notification_is_a_failed_attempt() {
         .await;
     assert_eq!(posted, Err("the receiver answered 401".to_owned()));
 }
+
+/// Inside the deepest in-process call the router would answer 500, so no
+/// request is made; a path that is no URI makes none either.
+#[tokio::test]
+async fn a_notification_past_the_call_depth_or_to_no_uri_is_not_made() {
+    let witness = Arc::new(Witness::default());
+    let ops = ops(witness.clone()).await;
+    let notification = json!({"id": "urn:ngsi-ld:Car:n1", "type": "Car"});
+    let posted = antares_api::state::at_depth(
+        antares_api::bounds::MAX_IN_PROCESS_CALL_DEPTH,
+        ops.notify_in_process("/ngsi-ld/v1/entities", &notification, &[]),
+    )
+    .await;
+    assert_eq!(posted, Err("in-process call depth exceeded".to_owned()));
+    let posted = ops
+        .notify_in_process("/not a uri", &notification, &[])
+        .await;
+    assert!(posted.is_err(), "{posted:?}");
+    assert!(witness
+        .0
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_empty());
+}

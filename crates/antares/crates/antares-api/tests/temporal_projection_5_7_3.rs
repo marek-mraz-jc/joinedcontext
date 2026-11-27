@@ -140,6 +140,20 @@ async fn clause_5_7_3_5_a_core_only_pick_reduces_the_entity_rather_than_hiding_i
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
 
+/// clause 5.7.4, step 4 with clause 5.7.3, step 5: a core-only pick naming a member the Entity does
+/// not carry reduces it to nothing, and the query leaves it out.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_7_4_4_an_entity_a_pick_reduces_to_nothing_is_left_out() {
+    let st = seeded().await;
+    let (status, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{WINDOW}&pick=scope"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([]), "{body}");
+}
+
 /// 5.7.4 step 4: a `q` that does not parse is BadRequestData, not an empty
 /// answer; one that selects nothing is an empty list.
 #[tokio::test(flavor = "multi_thread")]

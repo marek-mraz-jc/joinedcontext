@@ -92,3 +92,34 @@ async fn a_tool_call_reads_its_answer_under_the_answer_bound() -> Result<(), Str
     );
     Ok(())
 }
+
+/// An answer the broker's buffer pool has no room for within its wait is a
+/// 503 the client retries, not a 413 that says the answer is too large.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tool_call_the_answer_pool_has_no_room_for_fails_with_503() -> Result<(), String> {
+    let broker = antares_ops::test_kit::TestBroker::with_answer_pool(16).await?;
+    let app = broker.serve(antares_mcp::Mcp)?;
+    crate::common::create(
+        &app,
+        "tight",
+        &json!({"id": "urn:ngsi-ld:Car:1", "type": "Car",
+                "note": crate::common::prop(&json!("n".repeat(200)))}),
+    )
+    .await?;
+    crate::common::put_view(
+        &app,
+        &json!({"id": "tight", "tenant": "tight", "selector": ["Car"],
+                "rules": [{"types": ["Car"], "attributes": ["note"]}],
+                "operations": ["query_entities"]}),
+    )
+    .await?;
+    let answer = call(&app, "tight", "query_entities", json!({"type": ["Car"]})).await;
+    assert!(answer.is_error(), "{}", answer.text);
+    assert_eq!(
+        answer.structured().pointer("/error/status"),
+        Some(&json!(503)),
+        "{}",
+        answer.text
+    );
+    Ok(())
+}

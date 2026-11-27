@@ -31,7 +31,7 @@ async fn own_database(url: &str) -> sqlx::PgPool {
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
-        .as_millis();
+        .as_nanos();
     let name = format!("antares_oneindex_{run}");
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
         .execute(&admin)
@@ -99,6 +99,119 @@ async fn a_step_another_pod_holds_is_left_to_it() {
     );
     assert!(present(&pool, "i_attr_instances_lookup").await);
     other_pod.close().await.expect("close");
+}
+
+/// Partitions of `attr_instances` without a valid `{partition}_u_time` index.
+async fn partitions_without_one_index(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_inherits i JOIN pg_class c ON c.oid = i.inhrelid
+          WHERE i.inhparent = 'public.attr_instances'::regclass
+            AND NOT EXISTS (SELECT 1 FROM pg_class ic JOIN pg_index x ON x.indexrelid = ic.oid
+                             WHERE ic.relname = c.relname || '_u_time' AND x.indisvalid)",
+    )
+    .fetch_one(pool)
+    .await
+    .expect("catalog")
+}
+
+/// An index a failed build left on a partition is dropped and built again, and a week created
+/// while the step reads the partition set waits for an index of its own instead of being
+/// swapped onto the one index without one.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invalid_partition_index_is_rebuilt_and_a_late_week_waits_for_its_own() {
+    use sqlx::Executor;
+    let url = require_db!();
+    let pool = own_database(&url).await;
+    let backend = maintenance::detect_temporal_backend(&pool)
+        .await
+        .expect("backend");
+    if backend == TemporalBackend::Hypertable {
+        return;
+    }
+    for ddl in [
+        "DROP INDEX u_attr_instances_time",
+        "CREATE INDEX i_attr_instances_lookup ON attr_instances (tenant_id, entity_id, attr_id, observed_at DESC)",
+        "CREATE UNIQUE INDEX u_attr_instances ON attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at)",
+    ] {
+        pool.execute(ddl).await.expect("legacy shape");
+    }
+    let mut tx = pool.begin().await.expect("begin");
+    sqlx::query("SELECT set_config('antares.service', 'on', true)")
+        .execute(&mut *tx)
+        .await
+        .expect("service");
+    sqlx::query(
+        "INSERT INTO attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at,
+                                     created_at, modified_at, data)
+         SELECT 'oneindex', 'urn:e', 'https://example.org/speed', 'urn:i:' || n,
+                timestamptz '2002-06-01Z' + n * interval '1 second', '2002-06-01Z',
+                '2002-06-01Z', '{\"type\": \"Property\", \"value\": 1}'::jsonb
+           FROM generate_series(1, 2) n",
+    )
+    .execute(&mut *tx)
+    .await
+    .expect("two rows of one Tenant");
+    tx.commit().await.expect("commit");
+    pool.execute(
+        "CREATE UNIQUE INDEX CONCURRENTLY attr_instances_default_u_time
+         ON attr_instances_default (tenant_id)",
+    )
+    .await
+    .expect_err("a build that fails leaves its index invalid");
+
+    let mut lines = Vec::new();
+    for _ in 0..20 {
+        if partitions_without_one_index(&pool).await == 0 {
+            break;
+        }
+        lines.push(
+            maintenance::history_one_index(&pool)
+                .await
+                .expect("one index step")
+                .expect("a partition to build on"),
+        );
+    }
+    assert!(
+        lines.contains(&"history index built on attr_instances_default".to_owned()),
+        "{lines:?}"
+    );
+
+    // a pod creating a week holds the parent while the step reads the partitions
+    let mut week = pool.begin().await.expect("begin");
+    week.execute(
+        "CREATE TABLE attr_instances_2001w02 PARTITION OF attr_instances
+         FOR VALUES FROM ('2001-01-08') TO ('2001-01-15')",
+    )
+    .await
+    .expect("a late week");
+    let stepping = pool.clone();
+    let step = tokio::spawn(async move { maintenance::history_one_index(&stepping).await });
+    let mut waiting = 0i64;
+    for _ in 0..200 {
+        waiting = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("activity");
+        if waiting > 0 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert!(waiting > 0, "the step never waited on the parent");
+    week.commit().await.expect("the week lands");
+    assert_eq!(
+        step.await.expect("step task").expect("one index step"),
+        Some("history index: a new partition waits for its own".to_owned())
+    );
+    assert_eq!(
+        maintenance::history_one_index(&pool)
+            .await
+            .expect("one index step"),
+        Some("history index built on attr_instances_2001w02".to_owned())
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

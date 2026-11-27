@@ -292,11 +292,9 @@ pub(super) fn project_shown(
             let Some(o) = inst.as_object_mut() else {
                 continue;
             };
-            if let Some(j) = o.get("entity") {
+            if let Some(j) = o.get_mut("entity") {
                 if matches!(entity_shown(shown, j), Some(Some(_))) {
-                    if let Some(j) = o.get_mut("entity") {
-                        project_shown(shown, j, key_values);
-                    }
+                    project_shown(shown, j, key_values);
                 } else {
                     o.remove("entity");
                 }

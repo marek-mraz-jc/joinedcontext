@@ -550,7 +550,7 @@ impl Ops {
             id,
             |held| Arc::ptr_eq(&held.view, view),
             |k| table.contains_key(k),
-            std::time::Instant::now(),
+            tokio::time::Instant::now().into_std(),
             view_cache::idle(),
             build,
         );
