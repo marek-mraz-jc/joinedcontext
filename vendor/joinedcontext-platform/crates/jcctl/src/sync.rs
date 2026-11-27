@@ -28,7 +28,7 @@ use crate::loader::{RawManifest, Repository, ResourceId};
 use crate::waves::wave_of;
 use jc_core::envelope::annotations::SYNC_SOURCE;
 use jc_core::kinds::sync::{ConflictPolicy, Schedule, SyncMode, SyncOrigin, SyncSourceSpec};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
