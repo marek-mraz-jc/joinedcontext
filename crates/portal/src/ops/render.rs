@@ -1299,6 +1299,12 @@ mod tests {
         err.to_string()
     }
 
+    #[test]
+    #[should_panic(expected = "a spec:")]
+    fn a_call_that_is_no_query_has_no_query_spec() {
+        query_spec(&json!({ "data": { "dashboard": "air-quality" } }));
+    }
+
     /// The spec of a checked `jc_data_query` call.
     fn query_spec(input: &Value) -> Box<Spec> {
         let Ok(Request::Query(parsed, _)) = spec_of(input) else {
@@ -2240,28 +2246,17 @@ mod tests {
         // What a valid call sets comes through.
         let call = json!({ "title": "Mine", "description": "d", "width": 300, "height": 200,
                            "data": { "widget": widget } });
-        let Ok(Request::Widget {
-            at,
-            title,
-            width,
-            height,
-        }) = spec_of(&call)
-        else {
-            unreachable!("{call}")
-        };
-        assert_eq!(
-            (at.dashboard.as_str(), at.page, at.widget),
-            ("air-quality", 0, 1)
-        );
-        assert_eq!(
-            (title.as_deref(), width, height),
-            (Some("Mine"), Some(300), Some(200))
+        assert!(
+            matches!(spec_of(&call), Ok(Request::Widget { at, title, width, height })
+                if (at.dashboard.as_str(), at.page, at.widget) == ("air-quality", 0, 1)
+                    && (title.as_deref(), width, height) == (Some("Mine"), Some(300), Some(200))),
+            "{call}"
         );
         let whole = json!({ "description": "all", "data": { "dashboard": "air-quality" } });
-        let Ok(Request::Dashboard(name)) = spec_of(&whole) else {
-            unreachable!("a dashboard")
-        };
-        assert_eq!(name, "air-quality");
+        assert!(
+            matches!(spec_of(&whole), Ok(Request::Dashboard(name)) if name == "air-quality"),
+            "a dashboard"
+        );
         // A member put under its place; another error passes as it is.
         let moved = under("/data/query", invalid("/", "whole"));
         assert_eq!(moved.to_string(), "invalid input at /data/query: whole");

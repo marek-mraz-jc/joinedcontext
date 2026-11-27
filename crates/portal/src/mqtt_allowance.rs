@@ -420,10 +420,11 @@ pub(crate) mod tests {
     }
 
     fn refused(mirror: &Mirror, name: &str, spec: &Value) -> String {
-        match check(mirror, "helsinki", name, spec, None) {
-            Err(ApiError::Denied(reason)) => reason,
-            other => panic!("expected a refusal, got {other:?}"),
-        }
+        use ApiError::Denied as D;
+        let got = check(mirror, "helsinki", name, spec, None);
+        assert!(matches!(got, Err(D(_))), "expected a refusal, got {got:?}");
+        let Err(D(reason)) = got else { panic!() };
+        reason
     }
 
     #[test]
@@ -462,6 +463,22 @@ pub(crate) mod tests {
             Err(ApiError::Unprocessable { detail, errors }) => (detail, errors.join("; ")),
             other => panic!("expected the Organization's total, got {other:?}"),
         }
+    }
+
+    /// The helpers above refuse to read an admission as a refusal: a test that expects one and
+    /// gets an admission fails instead of comparing empty text.
+    #[test]
+    #[should_panic(expected = "expected the Organization's total")]
+    fn an_admission_is_not_read_as_the_organizations_total() {
+        let mirror = holding(Some(json!({"enabled": true, "brokers": 3})), None, &[]);
+        past_the_total(&mirror, "helsinki", "one");
+    }
+
+    #[test]
+    #[should_panic(expected = "expected a refusal")]
+    fn an_admission_is_not_read_as_a_refusal() {
+        let mirror = holding(Some(json!({"enabled": true, "brokers": 3})), None, &[]);
+        refused(&mirror, "one", &broker(10));
     }
 
     /// T-7407: a project's own quota narrows inside the Organization's total, never widens it.

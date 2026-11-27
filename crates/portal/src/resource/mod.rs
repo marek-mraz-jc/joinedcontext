@@ -428,12 +428,12 @@ mod tests {
                 "{} is in jc-core now: move its row out of PORTAL_ONLY_KINDS",
                 extra.kind
             );
-            if let Some(clash) = jc_core::KINDS.iter().find(|k| k.plural == extra.plural) {
-                panic!(
-                    "portal-only {} claims the plural '{}' that jc-core gives {}",
-                    extra.kind, extra.plural, clash.kind
-                );
-            }
+            assert!(
+                jc_core::KINDS.iter().all(|k| k.plural != extra.plural),
+                "portal-only {} claims a plural '{}' of jc-core",
+                extra.kind,
+                extra.plural
+            );
         }
     }
 
@@ -441,7 +441,7 @@ mod tests {
     fn a_rendered_path_never_keeps_a_placeholder() {
         for info in kinds() {
             let path = repository_path(info, "ovzdusie", Some("ovzdusie"), "demo")
-                .unwrap_or_else(|e| panic!("{}: {e}", info.kind));
+                .expect(&info.kind);
             assert!(
                 !path.contains('{') && !path.contains('}'),
                 "{} rendered to {path}",

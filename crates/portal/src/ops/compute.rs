@@ -1038,13 +1038,12 @@ mod tests {
     #[tokio::test]
     async fn a_fold_past_the_cap_is_refused_at_q() {
         let server = gateway(KPI_MAX_ENTITIES + 1, 1000).await;
-        match compute(&server, json!({ "attribute": "count", "agg": "avg" })).await {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/q");
-                assert!(message.contains("10001 BikeCounter match"), "{message}");
-            }
-            other => panic!("not refused: {other:?}"),
-        }
+        let got = compute(&server, json!({ "attribute": "count", "agg": "avg" })).await;
+        assert!(
+            matches!(&got, Err(OpError::InvalidInput { path, message })
+                if path == "/q" && message.contains("10001 BikeCounter match")),
+            "not refused: {got:?}"
+        );
     }
 
     /// An empty Endpoint folds no number, and `count` of it is a true 0.

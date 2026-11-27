@@ -631,14 +631,13 @@ mod tests {
             fits[0].clone(),
             { "type": "Vehicle", "attributes": [{ "names": ["colour"], "keep": "every" }] }
         ]);
-        match check(&state, "helsinki", "Pipeline", &spec(misfit.clone())) {
-            Err(ApiError::Invalid { errors, .. }) => {
-                assert_eq!(errors.len(), 1, "{errors:?}");
-                assert!(errors[0].starts_with("spec.history[1]"), "{errors:?}");
-                assert!(errors[0].ends_with("in space vehicles"), "{errors:?}");
-            }
-            other => panic!("not refused by entry: {other:?}"),
-        }
+        let refused = check(&state, "helsinki", "Pipeline", &spec(misfit.clone()));
+        assert!(
+            matches!(&refused, Err(ApiError::Invalid { errors, .. }) if errors.len() == 1
+                && errors[0].starts_with("spec.history[1]")
+                && errors[0].ends_with("in space vehicles")),
+            "not refused by entry: {refused:?}"
+        );
         // Another kind, or a pipeline that writes no modelled space, is not judged here.
         assert!(check(&state, "helsinki", "DataSource", &spec(misfit.clone())).is_ok());
         assert!(check(&state, "oulu", "Pipeline", &spec(misfit)).is_ok());
@@ -704,27 +703,23 @@ mod tests {
                 "spec.attributes[0].rules[0].observedAt",
             ),
         ] {
-            match check_attributes(&state, "helsinki", "Pipeline", &spec(rules.clone())) {
-                Err(ApiError::Invalid { errors, .. }) => {
-                    assert_eq!(errors.len(), 1, "{errors:?}");
-                    assert!(errors[0].starts_with(at), "{errors:?}");
-                    assert!(errors[0].ends_with("in space air"), "{errors:?}");
-                }
-                other => panic!("{rules}: not refused: {other:?}"),
-            }
+            let refused = check_attributes(&state, "helsinki", "Pipeline", &spec(rules.clone()));
+            assert!(
+                matches!(&refused, Err(ApiError::Invalid { errors, .. }) if errors.len() == 1
+                    && errors[0].starts_with(at)
+                    && errors[0].ends_with("in space air")),
+                "{rules}: not refused: {refused:?}"
+            );
         }
         let mut dates = spec(json!([]));
         dates["attributes"][0] =
             json!({ "type": "WeatherObserved", "sourceDates": { "created": "createdAt" } });
-        match check_attributes(&state, "helsinki", "Pipeline", &dates) {
-            Err(ApiError::Invalid { errors, .. }) => {
-                assert!(
-                    errors[0].starts_with("spec.attributes[0].sourceDates.created"),
-                    "{errors:?}"
-                );
-            }
-            other => panic!("not refused: {other:?}"),
-        }
+        let refused = check_attributes(&state, "helsinki", "Pipeline", &dates);
+        assert!(
+            matches!(&refused, Err(ApiError::Invalid { errors, .. })
+                if errors[0].starts_with("spec.attributes[0].sourceDates.created")),
+            "not refused: {refused:?}"
+        );
     }
 
     fn writer_world() -> AppState {

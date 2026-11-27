@@ -518,10 +518,11 @@ mod tests {
             json!({ "id": "r1", "decision": "revoke", "reason": "  " }),
             json!({ "id": "r1", "decision": "approve", "reason": "x" }),
         ] {
-            match decide_validate(&refused) {
-                Err(OpError::InvalidInput { path, .. }) => assert_eq!(path, "/reason"),
-                other => panic!("{refused}: {other:?}"),
-            }
+            let got = decide_validate(&refused);
+            assert!(
+                matches!(&got, Err(OpError::InvalidInput { path, .. }) if path == "/reason"),
+                "{refused}: {got:?}"
+            );
         }
         assert!(decide_validate(&json!({ "id": "r1", "decision": "decline" })).is_err());
     }
@@ -595,13 +596,12 @@ mod tests {
                 Some("/since"),
             ),
         ] {
-            match (organization_validate(&input), path) {
-                (Ok(()), None) => {}
-                (Err(OpError::InvalidInput { path: found, .. }), Some(path)) => {
-                    assert_eq!(found, path, "{input}")
-                }
-                (other, _) => panic!("{input}: {other:?}"),
-            }
+            let got = organization_validate(&input);
+            assert!(
+                matches!((&got, path), (Ok(()), None))
+                    || matches!((&got, path), (Err(OpError::InvalidInput { path: found, .. }), Some(path)) if found == path),
+                "{input}: {got:?}"
+            );
         }
         let schema = organization_schema();
         assert!(jsonschema::validator_for(&schema)

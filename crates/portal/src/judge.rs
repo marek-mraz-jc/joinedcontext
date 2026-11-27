@@ -705,6 +705,12 @@ mod tests {
     }
 
     /// One manifest per check that this check refuses, with what the mirror holds beside it.
+    #[test]
+    #[should_panic(expected = "no fixture for check")]
+    fn a_check_with_no_fixture_fails_its_test() {
+        fixture("no-such-check");
+    }
+
     fn fixture(check: &str) -> (Vec<ResourceEnvelope>, ResourceEnvelope) {
         let org = |spec: Value| envelope("Organization", "hel", ORG_NAMESPACE, spec);
         let project = |quotas: Value| {

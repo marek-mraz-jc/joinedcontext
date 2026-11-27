@@ -285,13 +285,12 @@ mod tests {
                 && found[0].contains("already passed"),
             "{found:?}"
         );
-        match check(&state, "helsinki", "Pipeline", &spec) {
-            Err(ApiError::Invalid { detail, errors }) => {
-                assert!(detail.contains("lifetime"), "{detail}");
-                assert_eq!(errors, found);
-            }
-            other => panic!("expected a 400 with reasons, got {other:?}"),
-        }
+        let refused = check(&state, "helsinki", "Pipeline", &spec);
+        assert!(
+            matches!(&refused, Err(ApiError::Invalid { detail, errors })
+                if detail.contains("lifetime") && *errors == found),
+            "expected a 400 with reasons, got {refused:?}"
+        );
         // Another kind, or a pipeline with no lifetime, passes the door untouched.
         assert!(check(&state, "helsinki", "Endpoint", &spec).is_ok());
         let plain = json!({ "class": "resident", "outputs": [to("ep-vehicles")] });

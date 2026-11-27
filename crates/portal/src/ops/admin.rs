@@ -512,6 +512,12 @@ mod tests {
         (op.run)(&admin(&state), &state, "doprava", input).await
     }
 
+    #[test]
+    #[should_panic(expected = "an input refusal, got")]
+    fn an_answer_is_no_input_refusal() {
+        refused_at(Ok(Value::Null));
+    }
+
     fn refused_at(result: Result<Value, OpError>) -> String {
         let Err(OpError::InvalidInput { path, .. }) = result else {
             panic!("an input refusal, got {result:?}")

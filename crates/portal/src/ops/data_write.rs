@@ -363,6 +363,13 @@ mod tests {
         parse_input(args).expect("input")
     }
 
+    #[test]
+    #[should_panic(expected = "\"bikes\"")]
+    fn a_valid_write_is_no_refusal() {
+        refused_at(json!({ "endpoint": "bikes", "action": "delete",
+                           "ids": ["urn:ngsi-ld:T:1"], "reason": "a duplicate" }));
+    }
+
     fn refused_at(args: Value) -> String {
         let result = validate_write(&args);
         let Err(OpError::InvalidInput { path, .. }) = result else {
@@ -511,13 +518,12 @@ mod tests {
         let answer = answer_of("e", 207, &split, Action::Upsert, ids.clone()).expect("ok");
         assert_eq!(answer["errors"][0]["entityId"], "b");
         let detail = json!({ "detail": "the Policy grants no write of type T" });
-        match answer_of("e", 403, &detail, Action::Upsert, ids.clone()) {
-            Err(OpError::Api(ApiError::Denied(why))) => {
-                assert!(why.contains("no write of type T"), "{why}");
-                assert!(why.contains("the operation upsertBatch"), "{why}");
-            }
-            other => panic!("{other:?}"),
-        }
+        let got = answer_of("e", 403, &detail, Action::Upsert, ids.clone());
+        assert!(
+            matches!(&got, Err(OpError::Api(ApiError::Denied(why)))
+                if why.contains("no write of type T") && why.contains("the operation upsertBatch")),
+            "{got:?}"
+        );
         assert!(matches!(
             answer_of("e", 409, &detail, Action::Upsert, ids.clone()),
             Err(OpError::Api(ApiError::Conflict(_)))
