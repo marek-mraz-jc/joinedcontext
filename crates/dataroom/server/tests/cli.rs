@@ -553,6 +553,28 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
         .await
         .unwrap();
     assert_eq!(run["state"], "succeeded", "{run}");
+    assert_eq!(run["createdCount"], 1, "{run}");
+    // The harvested dataset (its id is the v5 UUID of its IRI) is purged again, so the feed check
+    // above counts one dataset on a database a previous run left behind.
+    let harvested = run_cli(pg(&[
+        "op",
+        "--name",
+        "dataset.get",
+        "--input",
+        r#"{"id":"9fd063eb-fb2f-5641-81d1-efecd1466ae8"}"#,
+    ]))
+    .await
+    .unwrap();
+    let name = harvested["name"].as_str().expect("a name").to_owned();
+    run_cli(pg(&[
+        "op",
+        "--name",
+        "dataset.purge",
+        "--input",
+        &json!({ "name": name }).to_string(),
+    ]))
+    .await
+    .unwrap();
 
     // Started as an operation, the run goes on in a task: the command waits for its end and
     // prints the finished run, failed by the same guard.
