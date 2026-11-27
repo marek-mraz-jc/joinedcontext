@@ -359,6 +359,19 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn a_panel_past_its_deadline_says_reload() {
+        let late = tokio::time::timeout(
+            std::time::Duration::ZERO,
+            std::future::pending::<CrResult<crate::render::PanelView>>(),
+        )
+        .await;
+        assert_eq!(
+            panel_section("<T>", late),
+            "<section><h2>&lt;T&gt;</h2><p>This panel took too long to read. Reload the page to try again.</p></section>"
+        );
+    }
+
     /// The host's reader reads every dashboard of its one organization, read-only; anything
     /// else (a write, another organization, another person, a subject that may write) is
     /// the inner authorizer's, which grants this reader nothing.

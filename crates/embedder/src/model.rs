@@ -576,11 +576,10 @@ mod tests {
             .iter()
             .position(|who| who == "question")
             .expect("answered");
+        let first = &done[..done.len().min(5)];
         assert_eq!(
-            at,
-            3,
-            "only the passage running when it came went before it: {:?}",
-            &done[..5]
+            at, 3,
+            "only the passage running when it came went before it: {first:?}"
         );
         assert!(waited <= Duration::from_millis(10), "waited {waited:?}");
         assert_eq!(done.len(), 501);

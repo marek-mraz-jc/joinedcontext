@@ -1,0 +1,1 @@
+DELETE FROM org_metrics_view; SELECT 1
