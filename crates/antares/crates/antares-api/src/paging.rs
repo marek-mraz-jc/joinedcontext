@@ -1731,17 +1731,12 @@ mod tests {
         assert_eq!(vp.get("orderFrom").map(String::as_str), Some("[1,2]"));
     }
 
-    /// 4.23.3: a collation type the ICU data lacks is a 400, never a panic.
+    /// 4.23.3: a collation type the ICU data lacks never panics: the
+    /// compiled ICU data falls back to the language's root collation.
     #[test]
-    fn collation_with_unknown_type_is_refused_or_built() {
+    fn collation_with_unknown_type_falls_back() {
         let p = params(&[("collation", "de-u-co-zzzz")]);
-        match check_collation(&p) {
-            Ok(()) => {}
-            Err(e) => assert!(
-                matches!(&e, NgsiError::BadRequestData(m) if m.contains("unsupported collation")),
-                "{e:?}"
-            ),
-        }
+        assert!(check_collation(&p).is_ok());
     }
 
     /// 4.23.3: every malformed orderBy spelling and collation is a 400, a

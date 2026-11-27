@@ -3823,7 +3823,7 @@ mod tests {
         assert_eq!((p.offset, p.limit, p.count), (20, 41, false));
     }
 
-    use super::merge_into;
+    use super::{merge_instance, merge_into, merge_with};
     use serde_json::json;
 
     /// 5.5.12 EXAMPLE 1 + the datasetId/type bullets: a merge updates the
@@ -4022,6 +4022,74 @@ mod tests {
             json!([{"type": "Property", "value": "M1020",
                     "createdAt": "2026-10-01T00:00:00Z", "modifiedAt": "2026-10-22T01:00:00Z"}])
         );
+    }
+
+    /// A type change keeps no client stamp and no removal member, and an
+    /// instance stored without `createdAt` gets none from the fragment.
+    #[test]
+    fn a_type_change_drops_client_stamps_and_removals() {
+        let mut target = json!({"type": "Property", "value": 1});
+        merge_instance(
+            &mut target,
+            &json!({"type": "LanguageProperty", "languageMap": {"sk": "a"},
+                    "createdAt": "1999-01-01T00:00:00Z", "modifiedAt": "1999-01-01T00:00:00Z",
+                    "unitCode": null}),
+            "2026-11-27T00:00:00Z",
+        );
+        assert_eq!(target["type"], "LanguageProperty");
+        assert_eq!(target["languageMap"], json!({"sk": "a"}));
+        assert!(target.get("createdAt").is_none(), "{target}");
+        assert!(target.get("unitCode").is_none(), "{target}");
+        assert!(target.get("value").is_none(), "{target}");
+        assert_eq!(target["modifiedAt"], "2026-11-27T00:00:00Z");
+    }
+
+    /// The same type: a client's `createdAt`/`modifiedAt` in the fragment
+    /// are skipped, the stored `createdAt` stays.
+    #[test]
+    fn a_same_type_merge_ignores_client_stamps() {
+        let mut target = json!({"type": "Property", "value": 1,
+                                "createdAt": "2026-01-01T00:00:00Z"});
+        merge_instance(
+            &mut target,
+            &json!({"type": "Property", "value": 2,
+                    "createdAt": "1999-01-01T00:00:00Z", "modifiedAt": "1999-01-01T00:00:00Z"}),
+            "2026-11-27T00:00:00Z",
+        );
+        assert_eq!(target["value"], 2);
+        assert_eq!(target["createdAt"], "2026-01-01T00:00:00Z");
+        assert_eq!(target["modifiedAt"], "2026-11-27T00:00:00Z");
+    }
+
+    /// Neither side an object: nothing to merge, nothing changes.
+    #[test]
+    fn merge_of_non_objects_changes_nothing() {
+        let mut target = json!("stored");
+        merge_instance(&mut target, &json!({"value": 1}), "2026-11-27T00:00:00Z");
+        assert_eq!(target, json!("stored"));
+        let mut doc = json!(["not", "an", "entity"]);
+        merge_with(&mut doc, &json!({"x": []}), "2026-11-27T00:00:00Z", false);
+        assert_eq!(doc, json!(["not", "an", "entity"]));
+    }
+
+    /// An instance that is no JSON object is stored as it came (expansion
+    /// never hands one over; the merge must not lose or stamp it).
+    #[test]
+    fn a_non_object_instance_is_kept_unstamped() {
+        let a = "https://example.org/a";
+        let mut doc = json!({"id": "urn:x", "type": ["T"]});
+        merge_with(
+            &mut doc,
+            &json!({a: ["raw"]}),
+            "2026-11-27T00:00:00Z",
+            false,
+        );
+        assert_eq!(doc[a], json!(["raw"]));
+        // a replace whose new instance is no object leaves the stored one
+        let mut doc = json!({"id": "urn:x", "type": ["T"],
+                             a: [{"type": "Property", "value": 1}]});
+        merge_with(&mut doc, &json!({a: ["raw"]}), "2026-11-27T00:00:00Z", true);
+        assert_eq!(doc[a][0]["value"], 1);
     }
 
     /// The same attribute type still merges key by key (5.5.12).
@@ -4392,6 +4460,48 @@ mod purge_prune {
             .await
             .expect("response")
             .status()
+    }
+
+    /// 5.6.17, step 4: a merge whose ?type selector the stored Entity does not
+    /// match is the 404 of an absent target and writes nothing.
+    #[tokio::test]
+    async fn a_merge_under_another_type_selector_is_not_found() {
+        let st = AppState::new("antares-test".into());
+        let body = json!({"id": "urn:ngsi-ld:Room:sel", "type": "Room",
+                          "temperature": {"type": "Property", "value": 20}});
+        assert_eq!(
+            send(&st, "POST", "/ngsi-ld/v1/entities", Some(body)).await,
+            StatusCode::CREATED
+        );
+        let patch = json!({"temperature": {"type": "Property", "value": 99}});
+        assert_eq!(
+            send(
+                &st,
+                "PATCH",
+                "/ngsi-ld/v1/entities/urn:ngsi-ld:Room:sel?type=Car",
+                Some(patch.clone())
+            )
+            .await,
+            StatusCode::NOT_FOUND
+        );
+        let stored = st
+            .store
+            .get(&TenantId::default(), Kind::Entity, "urn:ngsi-ld:Room:sel")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert!(stored.to_string().contains("20"), "{stored}");
+        assert!(!stored.to_string().contains("99"), "{stored}");
+        assert_eq!(
+            send(
+                &st,
+                "PATCH",
+                "/ngsi-ld/v1/entities/urn:ngsi-ld:Room:sel?type=Room",
+                Some(patch)
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
     }
 
     /// 4.8: a purge that removes an Attribute (`drop`) modifies the Entity it
@@ -4895,7 +5005,9 @@ mod clause_5_6_1_and_5_6_21 {
         let pool = antares_sql::store::pg::connect(&url, 5)
             .await
             .expect("connect");
-        let tenant = TenantId::new("purgepaging").expect("tenant");
+        // a Tenant of its own per run: nothing an earlier run left is in it
+        let name = format!("purgepaging{}", uuid::Uuid::new_v4().simple());
+        let tenant = TenantId::new(&name).expect("tenant");
         antares_sql::store::pg::ensure_tenant(&pool, &tenant)
             .await
             .expect("tenant row");
@@ -4906,14 +5018,6 @@ mod clause_5_6_1_and_5_6_21 {
             )),
             "postgres",
         );
-        for doc in st.store.list(&tenant, Kind::Entity).await.expect("list") {
-            if let Some(id) = doc["id"].as_str() {
-                st.store
-                    .delete(&tenant, Kind::Entity, id)
-                    .await
-                    .expect("clean");
-            }
-        }
         // more than two chunks, and the pattern matches every second id — so
         // no chunk the store pages is full once the pattern filtered it
         let n = PURGE_CHUNK * 2 + 200;
@@ -4922,7 +5026,7 @@ mod clause_5_6_1_and_5_6_21 {
         // header it correctly purges the default tenant's (empty) match set
         // and every seeded row survives (5.5.10)
         let mut headers = HeaderMap::new();
-        headers.insert("NGSILD-Tenant", "purgepaging".parse().expect("header"));
+        headers.insert("NGSILD-Tenant", name.parse().expect("header"));
         let resp = purge_inner(
             &st,
             &purge_params(&[("type", "Purge"), ("idPattern", "[02468]$")]),
@@ -4939,14 +5043,14 @@ mod clause_5_6_1_and_5_6_21 {
             .iter()
             .filter_map(|d| d["id"].as_str().map(str::to_owned))
             .collect();
-        assert!(
-            !left
-                .iter()
-                .any(|id| id.ends_with(['0', '2', '4', '6', '8'])),
-            "{} of {} pattern matches survived the chunked walk",
-            left.iter()
-                .filter(|id| id.ends_with(['0', '2', '4', '6', '8']))
-                .count(),
+        let survived = left
+            .iter()
+            .filter(|id| id.ends_with(['0', '2', '4', '6', '8']))
+            .count();
+        assert_eq!(
+            survived,
+            0,
+            "{survived} of {} pattern matches survived the chunked walk",
             n / 2
         );
         assert_eq!(
