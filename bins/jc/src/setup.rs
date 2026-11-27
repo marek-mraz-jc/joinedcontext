@@ -810,6 +810,32 @@ pub fn add_assistant_audience(files: &mut [(String, Value)]) {
 mod tests {
     use super::*;
 
+    /// A secret file that cannot be created names the path; a dangling link where the file goes
+    /// is never followed to write a value, and reading it then fails with the path named.
+    #[cfg(unix)]
+    #[test]
+    fn a_secret_file_that_cannot_be_created_or_is_a_dangling_link_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("no-such-dir").join("kek");
+        let why = read_or_create(&missing, Secret::KaisatsuKek)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            why.contains("cannot create") && why.contains("no-such-dir"),
+            "{why}"
+        );
+        let link = dir.path().join("kek");
+        std::os::unix::fs::symlink(dir.path().join("gone"), &link).unwrap();
+        let why = read_or_create(&link, Secret::KaisatsuKek)
+            .unwrap_err()
+            .to_string();
+        assert!(why.contains("kek"), "{why}");
+        assert!(
+            !dir.path().join("gone").exists(),
+            "nothing written through the link"
+        );
+    }
+
     /// T-7283: an Organization realm's first administrator's one-time password is its own per
     /// realm, never the installation's, and the file names it only by reference.
     #[test]

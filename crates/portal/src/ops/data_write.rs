@@ -642,4 +642,44 @@ mod tests {
             "{answer:?}"
         );
     }
+
+    /// A public Endpoint of another project is read, never written, and one the caller may only
+    /// read as shared answers as missing: neither write reaches the gateway.
+    #[tokio::test]
+    async fn a_public_or_shared_endpoint_is_never_written() {
+        let state = crate::ops::testkit::state();
+        let public = "zt4qm7ge2xdv6ksb3ncf5arw2y";
+        let shared = "q7m2kd9x4wpz8nhr3vbt6cfy5a";
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Endpoint",
+            "stops",
+            "helsinki",
+            json!({ "slug": public, "audience": "public" }),
+        ));
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Endpoint",
+            "staff",
+            "espoo",
+            json!({ "slug": shared, "audience": "project" }),
+        ));
+        let caller = crate::ops::testkit::caller(
+            crate::ops::testkit::person("ana", &[]),
+            crate::ops::Via::Mcp,
+        );
+        let write = |endpoint: &str| {
+            input(json!({ "endpoint": endpoint, "action": "delete",
+                          "ids": ["urn:ngsi-ld:T:1"], "reason": "a duplicate" }))
+        };
+        let err = run(&caller, &state, "espoo", write(public))
+            .await
+            .expect_err("public");
+        assert!(err.to_string().contains("is read, never written"), "{err}");
+        let err = run(&caller, &state, "espoo", write("staff"))
+            .await
+            .expect_err("shared");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::NotFound(why)) if why.starts_with("no Endpoint staff in project espoo")),
+            "{err:?}"
+        );
+    }
 }

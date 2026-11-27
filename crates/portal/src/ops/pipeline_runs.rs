@@ -449,11 +449,10 @@ mod tests {
         assert_eq!(all["run"], runs[0]["run"], "{all}");
         assert!(all.get("next").is_none(), "{all}");
         let newest = all["run"].as_str().unwrap_or_default().to_owned();
-        let (other, lines_of_other) = if newest.starts_with("2026-11-01T11") {
-            ("2026-11-01T10:00:00Z", 1)
-        } else {
-            ("2026-11-01T11:00:00Z", 2)
-        };
+        let (other, lines_of_other) = [("2026-11-01T10:00:00Z", 1), ("2026-11-01T11:00:00Z", 2)]
+            .into_iter()
+            .find(|(run, _)| !newest.starts_with(&run[..13]))
+            .expect("the run that is not the newest");
         let one = logs(&state, json!({ "name": "counters", "run": other }))
             .await
             .expect("one run");
@@ -476,6 +475,37 @@ mod tests {
             (lines[0]["recordId"].as_str(), lines[0]["message"].as_str()),
             (Some("b"), Some("speed is no number"))
         );
+    }
+
+    /// A run longer than one page answers its first page and the cursor of the rest (T-7921).
+    #[tokio::test]
+    async fn a_long_run_answers_one_page_and_the_cursor_of_the_rest() {
+        let state = logged().await;
+        let lines: Vec<NewLine> = (0..LOG_LINES + 50)
+            .map(|n| NewLine {
+                record_id: format!("r{n}"),
+                step: None,
+                outcome: Outcome::Sent,
+                message: String::new(),
+            })
+            .collect();
+        state
+            .pipeline_log
+            .append("doprava", "counters", "2026-11-01T12:00:00Z", &lines)
+            .await
+            .expect("logged");
+        let page = logs(
+            &state,
+            json!({ "name": "counters", "run": "2026-11-01T12:00:00Z" }),
+        )
+        .await
+        .expect("a page");
+        assert_eq!(
+            page["lines"].as_array().map(Vec::len),
+            Some(LOG_LINES),
+            "{page}"
+        );
+        assert!(page["next"].is_number(), "{page}");
     }
 
     /// A pipeline that never ran answers no run and no lines; an unknown pipeline and a caller

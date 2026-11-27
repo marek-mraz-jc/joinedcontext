@@ -160,6 +160,42 @@ async fn scrapes_the_runner_of_the_project_in_the_path() {
     );
 }
 
+/// The MCP door's jc_pipeline_metrics reads the counters the route reads (T-7921).
+#[tokio::test]
+async fn the_metrics_operation_reads_the_routes_counters() {
+    use joinedcontext_portal::ops::{self, Caller, Via};
+    let runner = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/ovzdusie/metrics"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(RUNNER_BODY))
+        .mount(&runner)
+        .await;
+    let mut config = Config::for_tests();
+    config.pipeline_runner_url = Some(format!("{}/{{project}}", runner.uri()));
+    let state = AppState::new(config, None).with_mirror(mirror_with_pipeline());
+    let steward = Identity {
+        client: None,
+        subject: "f:1:demo.steward".into(),
+        username: "demo.steward".into(),
+        email: None,
+        name: None,
+        roles: Vec::new(),
+        groups: vec!["portal-approver".into()],
+        second_factor: false,
+    };
+    let metrics = ops::call(
+        ops::find("jc_pipeline_metrics").expect("registered"),
+        &Caller::new(steward, Via::Mcp),
+        &state,
+        "ovzdusie",
+        serde_json::json!({ "name": "aq-mqtt-ingest" }),
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+    .expect("the counters");
+    assert_eq!(metrics["received"], 128401, "{metrics}");
+}
+
 #[tokio::test]
 async fn without_a_configured_runner_the_route_answers_503() {
     let (status, body) = get(

@@ -541,6 +541,20 @@ mod tests {
         assert_eq!(map["clean_session"], true);
     }
 
+    /// An MQTT input with no topic list, or one that is no list, is only given a clean session.
+    #[test]
+    fn an_mqtt_input_without_a_topic_list_only_gets_a_clean_session() {
+        for topics in [None, Some(json!("$share/live/hfp/#"))] {
+            let mut map = serde_json::Map::new();
+            if let Some(topics) = topics.clone() {
+                map.insert("topics".into(), topics);
+            }
+            isolated_mqtt(&mut map);
+            assert_eq!(map["clean_session"], true);
+            assert_eq!(map.get("topics"), topics.as_ref());
+        }
+    }
+
     /// An input with no kind is refused; a kind whose config is no object has no field to drop.
     #[test]
     fn an_input_is_one_kind_and_its_config() {

@@ -369,3 +369,44 @@ async fn removal_is_the_owners_alone_refused_while_a_portal_answers_and_audited(
         ]
     );
 }
+
+/// T-7917: a portal host the installation's configuration seeded is the operator's to remove:
+/// its Organization's administrator is told so, and the registry keeps it.
+#[tokio::test]
+async fn a_portal_host_the_configuration_seeded_is_refused_to_its_administrator() {
+    let (state, _) = world().await;
+    let a = run("c");
+    let admin = organization(&state, &a).await;
+    let host = format!("seeded.{a}.{BASE}");
+    seed(
+        state.db.as_ref().expect("db"),
+        &[SeedHost {
+            host: host.clone(),
+            organization: a.clone(),
+            organization_id: None,
+            role: "portal-site".into(),
+        }],
+    )
+    .await
+    .expect("a seeded portal host");
+    let listed = send(&state, admin.clone(), "GET", HOSTS, None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    let listed: Value = serde_json::from_str(&listed.text).expect("a list");
+    assert_eq!(
+        listed["items"][0]["sites"][0]["removable"],
+        json!(false),
+        "{listed}"
+    );
+    let refused = send(&state, admin, "DELETE", &format!("{HOSTS}/{host}"), None).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
+    assert!(
+        refused.text.contains("an operator removes it"),
+        "{}",
+        refused.text
+    );
+    assert_eq!(
+        row(&state, &host).await.map(|r| r.2),
+        Some("served".into()),
+        "the seeded host stays"
+    );
+}

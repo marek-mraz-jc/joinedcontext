@@ -853,20 +853,15 @@ pub async fn run(
             .pointer("/metadata/name")
             .and_then(Value::as_str)
             .unwrap_or("source");
-        let stored = put_draft(caller, state, project, "DataSource", name, m.clone()).await?;
-
-        let v = Some(
-            datasource_verdict(caller, state, project, &m, input.url.is_some(), ds_findings).await,
-        );
-        let final_v = if let Some(verdict) = v {
-            store
-                .set_verdict(project, "DataSource", name, verdict)
-                .await
-                .map_err(ops::drafts::draft_error)?
-                .verdict
-        } else {
-            stored.verdict
-        };
+        put_draft(caller, state, project, "DataSource", name, m.clone()).await?;
+        let verdict =
+            datasource_verdict(caller, state, project, &m, input.url.is_some(), ds_findings).await;
+        // The verdict is always checked here, so the stored draft's own is replaced.
+        let final_v = store
+            .set_verdict(project, "DataSource", name, verdict)
+            .await
+            .map_err(ops::drafts::draft_error)?
+            .verdict;
         drafts.push(CompletedDraft {
             kind: "DataSource".into(),
             name: name.into(),
@@ -1546,18 +1541,28 @@ fn no_credential_in(
     Ok(())
 }
 
-/// The first http(s) address a README names, as the source it describes.
-fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
+/// The first http(s) address a README names, as the source it describes. Public for the
+/// `space_described_source` fuzz target: the README is an uploaded file.
+pub fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
     content
         .split_whitespace()
-        .map(|word| word.trim_matches(|c| matches!(c, '(' | ')' | '<' | '>' | '"' | '\'')))
+        // A sentence's own punctuation around the address is no part of it: `<https://x>.`
+        .map(|word| {
+            word.trim_matches(|c| {
+                matches!(
+                    c,
+                    '(' | ')' | '<' | '>' | '"' | '\'' | '.' | ',' | ';' | ':' | '!' | '?'
+                )
+            })
+        })
         .find(|word| word.starts_with("http://") || word.starts_with("https://"))
         .map(http_source)
 }
 
 /// The source a `.env` file describes: `URL`, or an MQTT host and topic, or Kafka brokers and a
 /// topic. A password, secret or token in it becomes a `secretRef` to fill in, never a value.
-fn source_in_env(content: &str, space_name: &str) -> Option<(String, Value, Vec<Finding>)> {
+/// Public for the `space_described_source` fuzz target: the file is uploaded.
+pub fn source_in_env(content: &str, space_name: &str) -> Option<(String, Value, Vec<Finding>)> {
     let mut env_map = BTreeMap::new();
     for line in content.lines() {
         let trimmed = line.trim();
@@ -2035,6 +2040,43 @@ mod tests {
     use serde_json::json;
 
     /// T-4470: the parts `run` was cut into that read nothing but their input.
+    /// A map of a class with no measure and no name draws plain circles with no popup; a map of
+    /// a class with both colours by the measure and shows both; a taken name drafts no map.
+    #[test]
+    fn a_map_colours_and_names_only_what_its_class_has() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let plain = super::map_of(
+            &state,
+            "p",
+            "benches",
+            "Bench",
+            "benches-read",
+            "slots:\n  material:\n    range: string\nclasses:\n  Bench:\n    slots: [material]\n",
+        );
+        let layer = &plain[0]["spec"];
+        assert!(
+            layer.get("colorBy").is_none() && layer.get("popupProperties").is_none(),
+            "{layer}"
+        );
+        let rich = super::map_of(
+            &state,
+            "p",
+            "benches",
+            "Bench",
+            "benches-read",
+            "slots:\n  name:\n    range: string\n  seats:\n    range: integer\nclasses:\n  Bench:\n    slots: [name, seats]\n",
+        );
+        assert_eq!(rich[0]["spec"]["colorBy"], json!({ "property": "seats" }));
+        assert_eq!(rich[0]["spec"]["popupProperties"], json!(["name", "seats"]));
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Dashboard",
+            "benches",
+            "p",
+            json!({}),
+        ));
+        assert!(super::map_of(&state, "p", "benches", "Bench", "benches-read", "").is_empty());
+    }
+
     #[test]
     fn the_space_is_named_as_asked_else_after_the_feed_else_after_the_first_file() {
         let name = |input: serde_json::Value| {
@@ -2103,6 +2145,14 @@ mod tests {
             ("http", &json!("https://x.example/feed"))
         );
         assert!(super::source_in_readme("no address here").is_none());
+        // The sentence's punctuation after an address is no part of it.
+        for text in [
+            "Read it at <https://x.example/feed.csv>.",
+            "Read it at https://x.example/feed.csv, daily",
+        ] {
+            let (_, spec, _) = super::source_in_readme(text).expect("a source");
+            assert_eq!(spec["http"]["url"], "https://x.example/feed.csv", "{text}");
+        }
 
         let env =
             "# comment\nMQTT_HOST=tcp://broker:1883\nMQTT_TOPIC=t\nMQTT_PASSWORD=\"hunter2\"\n";
@@ -2430,5 +2480,154 @@ mod tests {
         assert!(out.get("status").is_none());
         let space = serde_json::json!({ "kind": "ContextSpace", "spec": { "source": "kept" } });
         assert_eq!(super::committed(&space)["spec"]["source"], "kept");
+    }
+
+    fn draft(kind: &str, spec: serde_json::Value) -> super::CompletedDraft {
+        super::CompletedDraft {
+            kind: kind.into(),
+            name: "n".into(),
+            inferred: true,
+            manifest: json!({ "kind": kind, "spec": spec }),
+            verdict: None,
+        }
+    }
+
+    /// A manifest with no metadata map takes no description; an empty description changes
+    /// nothing; a class entry that is no map keeps the source as it was.
+    #[test]
+    fn a_description_lands_only_where_a_map_takes_it() {
+        let mut bare = json!({ "kind": "Endpoint" });
+        describe(&mut bare, Some("Bikes"));
+        assert_eq!(bare, json!({ "kind": "Endpoint" }));
+        let mut listed = json!({ "metadata": [] });
+        describe(&mut listed, Some("Bikes"));
+        assert_eq!(listed, json!({ "metadata": [] }));
+        let mut kept = json!({ "metadata": {} });
+        describe(&mut kept, Some("   "));
+        assert_eq!(kept, json!({ "metadata": {} }));
+        let source = "classes:\n  Bike: plain\n";
+        assert_eq!(describe_class(source, "Bike", "A bike"), source);
+        assert_eq!(describe_class(source, "Car", "A car"), source);
+        assert_eq!(describe_class(": [", "Bike", "A bike"), ": [");
+    }
+
+    /// The repository copy: no status, a DataModel without its inline source, and a manifest
+    /// that is no map or a DataModel whose spec is no map passed through as they are.
+    #[test]
+    fn the_committed_copy_drops_status_and_a_model_source() {
+        let model = json!({ "kind": "DataModel", "status": {}, "spec": { "source": "x", "linkml": "./m.yaml" } });
+        assert_eq!(
+            super::committed(&model),
+            json!({ "kind": "DataModel", "spec": { "linkml": "./m.yaml" } })
+        );
+        assert_eq!(super::committed(&json!("text")), json!("text"));
+        let odd = json!({ "kind": "DataModel", "spec": "x" });
+        assert_eq!(super::committed(&odd), odd);
+    }
+
+    /// The bundle's lane is its riskiest draft's: a public Endpoint is red whatever comes
+    /// after it, a model yellow, Pipelines alone green.
+    #[test]
+    fn the_bundle_takes_its_riskiest_drafts_lane() {
+        use crate::change::Lane;
+        let lane = |drafts: &[super::CompletedDraft]| super::riskiest_lane(drafts);
+        assert_eq!(lane(&[]), Lane::Green);
+        assert_eq!(lane(&[draft("Pipeline", json!({}))]), Lane::Green);
+        assert_eq!(
+            lane(&[draft("Pipeline", json!({})), draft("DataModel", json!({}))]),
+            Lane::Yellow
+        );
+        assert_eq!(
+            lane(&[
+                draft("Endpoint", json!({ "audience": "public" })),
+                draft("Pipeline", json!({})),
+                draft("Layer", json!({}))
+            ]),
+            Lane::Red
+        );
+        assert_eq!(
+            lane(&[
+                draft("Endpoint", json!({ "audience": "organization" })),
+                draft("Pipeline", json!({}))
+            ]),
+            Lane::Yellow
+        );
+    }
+
+    /// A `.env` names an HTTP feed by URL, an MQTT feed by host and topic with each credential
+    /// as a secret to fill in, and nothing without either; comments and blank lines are read past.
+    #[test]
+    fn an_env_file_names_an_http_or_mqtt_source_or_none() {
+        let http = super::source_in_env("# feed\n\nURL=\"https://x.example/a.json\"\n", "bikes")
+            .expect("an http source");
+        assert_eq!(http.0, "http");
+        let (kind, spec, findings) = super::source_in_env(
+            "MQTT_HOST=mqtt://broker.example\nMQTT_TOPIC=bikes/#\nMQTT_PASSWORD='x'\nOTHER=1\n",
+            "bikes",
+        )
+        .expect("an mqtt source");
+        assert_eq!(kind, "mqtt", "{spec}");
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert!(findings[0].message.contains("bikes-mqtt-password"));
+        assert!(
+            !spec.to_string().contains("'x'"),
+            "the value never reaches the draft"
+        );
+        assert!(super::source_in_env("MQTT_HOST=h\nnot a pair\n", "bikes").is_none());
+        let kafka =
+            super::source_in_env("KAFKA_BROKERS=a:9092, b:9092\nKAFKA_TOPIC=bikes\n", "bikes")
+                .expect("a kafka source");
+        assert!(kafka.1.to_string().contains("b:9092"), "{}", kafka.1);
+    }
+
+    /// A space whose map or dashboard exists already gets no new one.
+    #[test]
+    fn a_map_is_drafted_once() {
+        let state = crate::ops::testkit::state();
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Layer",
+            "bikes-map",
+            "doprava",
+            json!({}),
+        ));
+        assert!(
+            super::map_of(&state, "doprava", "bikes", "Bike", "bikes", "classes: {}").is_empty()
+        );
+    }
+
+    /// A DataSource check that is refused is a red verdict holding the refusal beside what the
+    /// drafting found.
+    #[tokio::test]
+    async fn a_refused_datasource_check_is_a_red_verdict() {
+        use crate::ops::verdict::{Finding, Level};
+        let state = crate::ops::testkit::state();
+        let caller = crate::ops::testkit::caller(
+            crate::ops::testkit::person("nobody", &[]),
+            crate::ops::Via::Mcp,
+        );
+        let manifest = json!({ "apiVersion": crate::resource::API_VERSION, "kind": "DataSource",
+            "metadata": { "name": "bikes", "namespace": "doprava" }, "spec": {} });
+        let drafted = vec![Finding {
+            level: Level::Warning,
+            path: "spec".into(),
+            message: "drafted".into(),
+        }];
+        for from_url in [false, true] {
+            let verdict = super::datasource_verdict(
+                &caller,
+                &state,
+                "doprava",
+                &manifest,
+                from_url,
+                drafted.clone(),
+            )
+            .await;
+            assert!(verdict.findings.iter().any(|f| f.message == "drafted"));
+            assert!(
+                verdict.findings.iter().any(|f| f.level == Level::Error),
+                "{:?}",
+                verdict.findings
+            );
+        }
     }
 }

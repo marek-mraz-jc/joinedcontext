@@ -27,6 +27,11 @@ fn prefix() -> String {
 /// A Portal with App `road-defects` (a `ui` App with `files` and a 1 MiB quota) whose store is
 /// `store`.
 fn state(store: &MockServer, services: Value) -> AppState {
+    state_at(store.uri(), services)
+}
+
+/// [`state`] with its store at `endpoint`.
+fn state_at(endpoint: String, services: Value) -> AppState {
     let config = Config::from_vars(|key| {
         match key {
             "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
@@ -54,7 +59,7 @@ fn state(store: &MockServer, services: Value) -> AppState {
         store: std::sync::Arc::new(
             joinedcontext_portal::artifact_store::Client::new(
                 joinedcontext_portal::artifact_store::Settings {
-                    endpoint: store.uri(),
+                    endpoint,
                     bucket: "jc-artifacts".into(),
                     region: "us-east-1".into(),
                     root_access_key: "root".into(),
@@ -216,7 +221,35 @@ async fn a_key_outside_the_prefix_never_reaches_the_store() {
     }
     let (status, _, text) = call(&state, "GET", "?prefix=../", Vec::new()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    // A delete and a URL of such a key are refused alike.
+    let (status, _, text) = call(&state, "DELETE", "/a%5Cb", Vec::new()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    let (status, _, text) = call(
+        &state,
+        "POST",
+        "/a%5Cb:url",
+        br#"{"method":"GET"}"#.to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
     assert!(asked(&store, "PUT").await.is_empty());
+    assert!(asked(&store, "DELETE").await.is_empty());
+}
+
+/// A store nobody answers at is the 503 of a store that did not answer, never a missing file
+/// (T-7921).
+#[tokio::test]
+async fn a_store_that_is_not_there_is_unavailable() {
+    // A socket bound and never listening: every connection to it is refused.
+    let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+    closed
+        .bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+        .expect("bind");
+    let port = closed.local_addr().expect("address").port();
+    let state = state_at(format!("http://127.0.0.1:{port}"), json!(["files"]));
+    let (status, body, text) = call(&state, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(body["detail"], "the file store did not answer", "{text}");
 }
 
 #[tokio::test]
@@ -588,4 +621,71 @@ async fn concurrent_puts_never_pass_files_mib_together() {
     assert_eq!(created, 2, "{} / {} / {}", one.2, two.2, three.2);
     let total: usize = held.lock().expect("held").values().sum();
     assert!(total <= 1024 * 1024, "{total} bytes stored past filesMiB 1");
+}
+
+/// An installation with no App store answers 503 in words, and a project registry that does
+/// not answer is a 503 too: neither guesses a prefix to write under.
+#[tokio::test]
+async fn no_store_or_no_registry_is_unavailable() {
+    let store = store(0).await;
+    let mut bare = state(&store, json!(["files"]));
+    bare.wasm_apps = None;
+    let (status, body, _) = call(&bare, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body["detail"], "this installation stores no App files");
+
+    let mut dead = state(&store, json!(["files"]));
+    let connect: sqlx::postgres::PgConnectOptions = "postgres://nobody@127.0.0.1:1/none"
+        .parse()
+        .expect("options");
+    dead.db = Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy_with(connect),
+    );
+    let (status, _, text) = call(&dead, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(
+        asked(&store, "GET").await.is_empty(),
+        "the store is not asked"
+    );
+}
+
+/// TEN-15: a keyed project's App writes under the keyed prefix and reads the old one until its
+/// files moved, so a GET URL names the old key while only that prefix holds the file.
+#[tokio::test]
+async fn a_keyed_project_writes_keyed_and_hands_out_the_old_key_it_still_reads() {
+    let store = store(4).await;
+    let state = common::on_database(state(&store, json!(["files"]))).await;
+    let pool = state.db.clone().expect("a pool");
+    common::keyed_project(&state, &pool, PROJECT, "helsinki").await;
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, PROJECT)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    let keyed = joinedcontext_portal::apps::files::keyed_prefix(&key, &app_id(PROJECT, APP));
+
+    let (status, body, text) = call(
+        &state,
+        "POST",
+        "/old.txt:url",
+        json!({ "method": "GET" }).to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(
+        body["url"]
+            .as_str()
+            .is_some_and(|url| url.contains(&format!("/apps/{}old.txt?", prefix()))),
+        "{text}"
+    );
+    let (status, _, text) = call(&state, "PUT", "/new.txt", b"new".to_vec()).await;
+    assert_eq!(status, StatusCode::CREATED, "{text}");
+    assert!(
+        asked(&store, "PUT")
+            .await
+            .contains(&format!("/apps/{keyed}new.txt")),
+        "{:?}",
+        asked(&store, "PUT").await
+    );
 }

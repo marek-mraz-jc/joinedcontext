@@ -1956,6 +1956,11 @@ mod tests {
         panel
     }
 
+    /// Every Endpoint answers by the name `open`.
+    fn open(_: &str) -> Option<String> {
+        Some("open".into())
+    }
+
     pub(crate) fn board() -> Board {
         let mut series = panel(1, PanelKind::Timeseries, 0);
         series.aggregation = Aggregation::Avg;
@@ -2119,6 +2124,14 @@ mod tests {
     #[test]
     fn every_shape_refusal_names_its_field() {
         let cases: Breaks = vec![
+            (
+                "variables[0].label",
+                Box::new(|b| b.variables[0].label = "x".repeat(10_000)),
+            ),
+            (
+                "panels[0].title",
+                Box::new(|b| b.panels[0].title = " ".into()),
+            ),
             ("title", Box::new(|b| b.title = " ".into())),
             ("title", Box::new(|b| b.title = "x".repeat(MAX_TITLE + 1))),
             ("from", Box::new(|b| b.from = "yesterday".into())),
@@ -2414,7 +2427,7 @@ mod tests {
         let mut file = compile("jcd-0123456789abcdef", &board, &sources(&board), &[vec![]]);
         assert_eq!(file["panels"][5]["type"], "piechart");
         file["panels"][5]["options"]["pieType"] = json!("rose");
-        let refused = decompile(&file, &|_| Some("open".into())).expect_err("a rose");
+        let refused = decompile(&file, &open).expect_err("a rose");
         assert!(refused.contains("pieType"), "{refused}");
         assert_eq!(
             parse_path("dashboards/zilina/jcd-0123456789abcdef.json"),
@@ -2429,10 +2442,10 @@ mod tests {
         let file = compile("jcd-0123456789abcdef", &board, &sources(&board), &[vec![]]);
         let mut extra = file.clone();
         extra["panels"][0]["targets"][0]["customQuery"] = json!("pm25>5|id~=.*");
-        assert!(decompile(&extra, &|_| Some("open".into())).is_err());
+        assert!(decompile(&extra, &open).is_err());
         let mut foreign = file.clone();
         foreign["folderUid"] = json!("project-other");
-        assert!(decompile(&foreign, &|_| Some("open".into())).is_err());
+        assert!(decompile(&foreign, &open).is_err());
         assert!(read_file("jcd-0123456789abcdef", &foreign.to_string()).is_err());
         assert!(
             read_file("jcd-ffffffffffffffff", &file.to_string()).is_err(),
@@ -2566,7 +2579,7 @@ mod tests {
             "../tests/fixtures/grafana-builder/dev-assistant.json"
         ))
         .expect("the dev dashboard");
-        let why = decompile(&dev, &|_| Some("open".into())).expect_err("made by hand");
+        let why = decompile(&dev, &open).expect_err("made by hand");
         assert!(why.contains("prometheus datasource prometheus"), "{why}");
         let why = read_file("jc-assistant", &dev.to_string()).expect_err("made by hand");
         assert!(why.contains("prometheus datasource"), "{why}");
@@ -2579,7 +2592,7 @@ mod tests {
         assert_eq!(bargauges.len(), 2, "dev's two bar gauges");
         for one in bargauges {
             let alone = json!({ "uid": "jc-assistant", "title": "x", "panels": [one] });
-            let why = decompile(&alone, &|_| Some("open".into())).expect_err("prometheus");
+            let why = decompile(&alone, &open).expect_err("prometheus");
             assert!(why.starts_with(&format!("panel {}", one["id"])), "{why}");
             assert!(why.contains("prometheus"), "{why}");
         }

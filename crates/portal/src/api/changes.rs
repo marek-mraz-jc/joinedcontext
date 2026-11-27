@@ -349,9 +349,11 @@ pub fn parse_change_ref(id: &str) -> Result<(bool, u64), ApiError> {
     {
         return Err(invalid());
     }
+    // Eight hex digits always fit a u64, so `ok()` never drops a number.
     u64::from_str_radix(hex, 16)
+        .ok()
         .map(|number| (organization, number))
-        .map_err(|_| invalid())
+        .ok_or_else(invalid)
 }
 
 /// The forge a Change id is read, approved and rejected in, and its merge request number: the
@@ -936,7 +938,9 @@ async fn load_manifest_data(
     let kind_info =
         crate::resource::kinds().find(|k| k.kind.to_ascii_lowercase() == branch_info.kind_lower);
 
-    let (base_envelope, head_envelope) = match branch_info.operation {
+    // Each side names the kind and the name from the manifest it read: a deletion its base, a
+    // create or update its head.
+    let (kind, name, base_envelope, head_envelope) = match branch_info.operation {
         Operation::Delete => {
             // A kind that lives in either place has two candidate paths; the one the base
             // branch actually carries is the manifest (PF-68).
@@ -992,7 +996,7 @@ async fn load_manifest_data(
             let env: ResourceEnvelope = serde_norway::from_str(&base_file.content)
                 .map_err(|e| ApiError::Internal(format!("failed to parse base manifest: {e}")))?;
 
-            (Some(env), None)
+            (env.kind.clone(), env.metadata.name.clone(), Some(env), None)
         }
         Operation::Create | Operation::Update => {
             let direct = kind_info.and_then(|info| {
@@ -1065,25 +1069,14 @@ async fn load_manifest_data(
             let base_env = base_file
                 .and_then(|file| serde_norway::from_str::<ResourceEnvelope>(&file.content).ok());
 
-            (base_env, Some(head_env))
+            (
+                head_env.kind.clone(),
+                head_env.metadata.name.clone(),
+                base_env,
+                Some(head_env),
+            )
         }
     };
-
-    let kind = head_envelope
-        .as_ref()
-        .map(|e| e.kind.clone())
-        .or_else(|| base_envelope.as_ref().map(|e| e.kind.clone()))
-        .unwrap_or_else(|| {
-            kind_info
-                .map(|k| k.kind.to_string())
-                .unwrap_or_else(|| branch_info.kind_lower.clone())
-        });
-
-    let name = head_envelope
-        .as_ref()
-        .map(|e| e.metadata.name.clone())
-        .or_else(|| base_envelope.as_ref().map(|e| e.metadata.name.clone()))
-        .unwrap_or(branch_info.resource_name);
 
     Ok(Some(ManifestData {
         kind,
@@ -2670,49 +2663,45 @@ pub async fn approve_change_as(
         data.kind.as_str(),
         "Role" | "RoleBinding" | "ServiceAccount" | "Group"
     ) {
-        match (data.operation, &data.head_envelope) {
-            (Operation::Delete, _) => {
-                let base = data
-                    .base_envelope
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .map_err(|e| ApiError::Internal(e.to_string()))?;
-                crate::permissions::for_request(state, identity, project).check(
-                    &data.kind,
-                    jc_core::kinds::Verb::Delete,
-                    base.as_ref(),
-                )?;
-                // PF-03: what was fine when proposed may be the last administrator by now.
-                if let Some(base) = &data.base_envelope {
-                    crate::permissions::keeps_an_administrator(
-                        &state.mirror,
-                        crate::permissions::AccessChange::Remove {
-                            kind: &data.kind,
-                            namespace: base.metadata.namespace.as_deref().unwrap_or(project),
-                            name: &base.metadata.name,
-                        },
-                    )?;
-                }
-            }
-            (_, Some(head)) => {
-                let manifest =
-                    serde_json::to_value(head).map_err(|e| ApiError::Internal(e.to_string()))?;
-                let base = data
-                    .base_envelope
-                    .as_ref()
-                    .map(serde_json::to_value)
-                    .transpose()
-                    .map_err(|e| ApiError::Internal(e.to_string()))?;
-                crate::permissions::within_own_rights(
-                    state,
-                    identity,
-                    &manifest,
-                    base.as_ref(),
-                    "approver",
+        if data.operation == Operation::Delete {
+            let base = data
+                .base_envelope
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            crate::permissions::for_request(state, identity, project).check(
+                &data.kind,
+                jc_core::kinds::Verb::Delete,
+                base.as_ref(),
+            )?;
+            // PF-03: what was fine when proposed may be the last administrator by now.
+            if let Some(base) = &data.base_envelope {
+                crate::permissions::keeps_an_administrator(
+                    &state.mirror,
+                    crate::permissions::AccessChange::Remove {
+                        kind: &data.kind,
+                        namespace: base.metadata.namespace.as_deref().unwrap_or(project),
+                        name: &base.metadata.name,
+                    },
                 )?;
             }
-            (_, None) => {}
+        } else if let Some(head) = &data.head_envelope {
+            let manifest =
+                serde_json::to_value(head).map_err(|e| ApiError::Internal(e.to_string()))?;
+            let base = data
+                .base_envelope
+                .as_ref()
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+            crate::permissions::within_own_rights(
+                state,
+                identity,
+                &manifest,
+                base.as_ref(),
+                "approver",
+            )?;
         }
     }
 
@@ -5278,5 +5267,921 @@ mod tests {
             approve_every_file(&state, &person("air@hel.fi"), "hel-mobility", &shako, &pr).await,
             Err(ApiError::Denied(_))
         ));
+    }
+
+    const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+
+    fn forge_at(server: &MockServer) -> ShakoClient {
+        ShakoClient::new(
+            server.uri().parse().expect("a url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("a forge client")
+    }
+
+    /// Every file the forge is asked for, on any ref, holds `content`.
+    async fn every_file_is(server: &MockServer, content: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "blob-1",
+                "Content": base64::engine::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    content.as_bytes(),
+                )
+            })))
+            .mount(server)
+            .await;
+    }
+
+    /// The merge request `number` on `head`, opened by `email` (none when `None`).
+    async fn one_pr(server: &MockServer, number: u64, head: &str, email: Option<&str>) {
+        let mut row = json!({
+            "Number": number,
+            "HtmlUrl": format!("https://shako.example.sk/pulls/{number}"),
+            "State": "open",
+            "Title": format!("change {number}"),
+            "Head": head,
+            "Base": "main",
+            "CreatedAt": "2026-09-06T09:14:22Z",
+            "Author": "other.user",
+            "AuthorName": "Other User"
+        });
+        if let Some(email) = email {
+            row["AuthorEmail"] = json!(email);
+        }
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PullRequests({number})")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(row))
+            .mount(server)
+            .await;
+    }
+
+    /// The files of merge request `number`, as `(path, status)`.
+    async fn pr_files(server: &MockServer, number: u64, files: &[(&str, &str)]) {
+        let rows: Vec<Value> = files
+            .iter()
+            .map(|(path, status)| json!({ "Filename": path, "Status": status }))
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PullRequests({number})/Files")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": rows })))
+            .mount(server)
+            .await;
+    }
+
+    /// A rejection's review and close land.
+    async fn closes(server: &MockServer, number: u64) {
+        for action in ["Shako.Review", "Shako.Close"] {
+            Mock::given(method("POST"))
+                .and(path(format!("{REPO}/PullRequests({number})/{action}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .mount(server)
+                .await;
+        }
+    }
+
+    fn open_pr(number: u64, head: &str) -> PullRequest {
+        PullRequest {
+            number,
+            state: "open".into(),
+            head_branch: head.into(),
+            base_branch: "main".into(),
+            ..PullRequest::default()
+        }
+    }
+
+    fn changed(path: &str, deleted: bool, added: bool) -> crate::forge::shako::ChangedFile {
+        crate::forge::shako::ChangedFile {
+            path: path.into(),
+            deleted,
+            added,
+        }
+    }
+
+    /// A member of the bootstrap group of `state`'s configuration.
+    fn admin_of(state: &AppState, email: &str) -> Identity {
+        Identity {
+            groups: vec![state.config.bootstrap_admins.clone()],
+            ..person(email)
+        }
+    }
+
+    fn org_envelope(kind: &str, name: &str, spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec,
+            status: None,
+        }
+    }
+
+    const SPACE: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: mobility\n  namespace: ovzdusie\nspec:\n  isSandbox: true\n";
+
+    #[test]
+    fn a_seed_path_outside_the_seed_folder_is_no_seed() {
+        assert!(seed_envelope("projects/p/spaces/air", "{}").is_none());
+        assert!(seed_envelope("projects/p/spaces/air/entities/other/x.json", "{}").is_none());
+        assert!(seed_envelope("projects/p/spaces/air/entities/seed/x.json/y", "{}").is_none());
+        assert!(seed_envelope("projects/p/spaces/air/entities/seed/x.json", "not json").is_none());
+    }
+
+    /// T-3433: in a project repository a fork, or an author the forge names no e-mail for, is
+    /// no writer's Change; nothing is asked of the forge to say so.
+    #[tokio::test]
+    async fn a_fork_or_an_email_less_author_is_outside_a_project_repository() {
+        let server = MockServer::start().await;
+        let state = state_on(&server);
+        let repo = forge_at(&server).for_project("ovzdusie_config", "ovzdusie");
+        let fork = PullRequest {
+            head_branch: "feature/air".into(),
+            base_branch: "main".into(),
+            same_repository: false,
+            author_email: Some("jana@example.sk".into()),
+            ..PullRequest::default()
+        };
+        assert!(matches!(
+            standing(&state, &repo, "ovzdusie", &fork).await.expect("a standing"),
+            Standing::Outside(why) if why.contains("fork")
+        ));
+        for email in [None, Some("  ".to_owned())] {
+            let nameless = PullRequest {
+                same_repository: true,
+                author_email: email,
+                ..fork.clone()
+            };
+            assert!(matches!(
+                standing(&state, &repo, "ovzdusie", &nameless).await.expect("a standing"),
+                Standing::Outside(why) if why.contains("not a writer of the project 'ovzdusie'")
+            ));
+        }
+        assert!(forge_paths(&server).await.is_empty());
+    }
+
+    /// A Portal branch that is no bundle and names nothing has no headline; a person's removal
+    /// is headed by their file under `users/`, and a change with nothing there by nothing.
+    #[tokio::test]
+    async fn an_odd_branch_names_nothing_and_an_org_removal_is_headed_by_its_user_file() {
+        let server = MockServer::start().await;
+        let shako = forge_at(&server);
+        let odd = open_pr(4, "portal/odd");
+        assert!(load_manifest_data(&shako, &odd, "ovzdusie", Some(&[]))
+            .await
+            .expect("read")
+            .is_none());
+        every_file_is(
+            &server,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: User\nmetadata:\n  name: jana\n  namespace: org\nspec: {}\n",
+        )
+        .await;
+        let removal = open_pr(5, "portal/remove-person-jana-12345678");
+        let org = crate::permissions::ORG_NAMESPACE;
+        let files = [
+            changed("projects/ovzdusie/spaces/air/space.yaml", false, false),
+            changed("users/jana.yaml", true, false),
+        ];
+        let data = load_manifest_data(&shako, &removal, org, Some(&files))
+            .await
+            .expect("read")
+            .expect("a headline");
+        assert_eq!(
+            (data.kind.as_str(), data.name.as_str(), data.operation),
+            ("User", "jana", Operation::Delete)
+        );
+        assert!(data.head_envelope.is_none());
+        assert_eq!(
+            data.base_envelope.map(|base| base.metadata.name),
+            Some("jana".to_owned())
+        );
+        let elsewhere = [changed(
+            "projects/ovzdusie/spaces/air/space.yaml",
+            false,
+            false,
+        )];
+        assert!(load_manifest_data(&shako, &removal, org, Some(&elsewhere))
+            .await
+            .expect("read")
+            .is_none());
+    }
+
+    /// A secret's change is a delete, an update or a create as the forge lists its file, and
+    /// its file is never read.
+    #[tokio::test]
+    async fn a_secret_change_is_named_by_how_its_file_changes() {
+        let server = MockServer::start().await;
+        let shako = forge_at(&server);
+        let pr = open_pr(9, "portal/secret-hel-mobility-github-token");
+        let file = "projects/hel-mobility/secrets/github-token.enc.yaml";
+        for (deleted, added, operation) in [
+            (true, false, Operation::Delete),
+            (false, false, Operation::Update),
+            (false, true, Operation::Create),
+        ] {
+            let data = load_manifest_data(
+                &shako,
+                &pr,
+                "hel-mobility",
+                Some(&[changed(file, deleted, added)]),
+            )
+            .await
+            .expect("read")
+            .expect("a headline");
+            assert_eq!(
+                (data.kind.as_str(), data.name.as_str(), data.operation),
+                (SECRET, "github-token", operation)
+            );
+        }
+        assert!(forge_paths(&server).await.is_empty(), "no file is read");
+    }
+
+    /// A deletion whose manifest is on no candidate path and nowhere in the base tree heads
+    /// nothing.
+    #[tokio::test]
+    async fn a_deletion_whose_manifest_is_nowhere_heads_nothing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "tree-1",
+                "Tree": [{ "Path": "projects/ovzdusie/spaces/other/space.yaml", "Type": "blob" }],
+                "Truncated": false
+            })))
+            .mount(&server)
+            .await;
+        let pr = open_pr(6, "portal/delete-contextspace-ghost-12345678");
+        assert!(
+            load_manifest_data(&forge_at(&server), &pr, "ovzdusie", Some(&[]))
+                .await
+                .expect("read")
+                .is_none()
+        );
+        let asked = forge_paths(&server).await;
+        assert!(
+            asked
+                .iter()
+                .any(|p| p.ends_with("Shako.File(Path=@p,Ref=@r)")),
+            "{asked:?}"
+        );
+        assert!(asked.iter().any(|p| p.contains("Shako.Tree")), "{asked:?}");
+    }
+
+    /// The manifest a merge request lists is refused when its side does not hold it, or holds
+    /// something that is no manifest.
+    #[tokio::test]
+    async fn a_listed_manifest_gone_or_unreadable_on_its_side_is_refused() {
+        let file = "projects/ovzdusie/spaces/air/endpoints/air-quality.yaml";
+        for (head, deleted, side) in [
+            ("portal/delete-endpoint-air-quality-12345678", true, "base"),
+            ("portal/update-endpoint-air-quality-12345678", false, "head"),
+        ] {
+            let pr = open_pr(7, head);
+            let files = [changed(file, deleted, false)];
+            let gone = MockServer::start().await;
+            let refused = load_manifest_data(&forge_at(&gone), &pr, "ovzdusie", Some(&files))
+                .await
+                .err()
+                .expect("refused");
+            assert!(
+                matches!(&refused, ApiError::NotFound(m)
+                    if m.contains(&format!("'{file}' not found on {side} branch"))),
+                "{refused:?}"
+            );
+            let garbage = MockServer::start().await;
+            every_file_is(&garbage, "just text\n").await;
+            let refused = load_manifest_data(&forge_at(&garbage), &pr, "ovzdusie", Some(&files))
+                .await
+                .err()
+                .expect("refused");
+            assert!(
+                matches!(&refused, ApiError::Internal(m)
+                    if m.contains(&format!("failed to parse {side} manifest"))),
+                "{refused:?}"
+            );
+        }
+    }
+
+    /// A branch naming a kind this platform does not serve finds no manifest: no direct path,
+    /// and a tree the forge does not answer.
+    #[tokio::test]
+    async fn a_create_of_an_unknown_kind_heads_nothing() {
+        let server = MockServer::start().await;
+        let pr = open_pr(8, "portal/create-gizmo-thing-12345678");
+        assert!(
+            load_manifest_data(&forge_at(&server), &pr, "ovzdusie", Some(&[]))
+                .await
+                .expect("read")
+                .is_none()
+        );
+        let asked = forge_paths(&server).await;
+        assert!(
+            asked
+                .iter()
+                .all(|p| !p.ends_with("Shako.File(Path=@p,Ref=@r)")),
+            "{asked:?}"
+        );
+    }
+
+    /// T-6535: the proposer is the head commit's author; a forge that fails names nobody.
+    #[tokio::test]
+    async fn a_proposer_is_the_head_commits_author_and_a_failing_forge_names_nobody() {
+        let pr = PullRequest {
+            number: 1,
+            head_branch: "portal/update-endpoint-air-quality-12345678".into(),
+            head_sha: "head-1".into(),
+            author_email: Some("portal@example.sk".into()),
+            ..PullRequest::default()
+        };
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+            .respond_with(author_commit())
+            .mount(&server)
+            .await;
+        let shako = forge_at(&server);
+        assert!(proposed_by(&shako, &pr, &person("jana@example.sk")).await);
+        assert!(!proposed_by(&shako, &pr, &person("portal@example.sk")).await);
+        let failing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.History(Ref=@r,Path=@p,Top=@n)")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&failing)
+            .await;
+        assert!(!proposed_by(&forge_at(&failing), &pr, &person("jana@example.sk")).await);
+        assert!(!same_email(None, Some("jana@example.sk")));
+        assert!(!same_email(Some("jana@example.sk"), None));
+        assert!(!same_email(Some(" "), Some(" ")));
+    }
+
+    /// A closed change of the Organization is headed by its `users/` file's branch, and a
+    /// closed secret change by its file, without reading either.
+    #[tokio::test]
+    async fn a_closed_org_or_secret_change_is_headed_by_its_branch_or_its_file() {
+        let server = MockServer::start().await;
+        let shako = forge_at(&server);
+        let mut person_change = open_pr(3, "portal/update-user-jana-12345678");
+        person_change.state = "closed".into();
+        let data = closed_headline(
+            &shako,
+            &person_change,
+            crate::permissions::ORG_NAMESPACE,
+            &[changed("users/jana.yaml", false, false)],
+        )
+        .await
+        .expect("read")
+        .expect("a headline");
+        assert!(data.kind.eq_ignore_ascii_case("user"), "{}", data.kind);
+        assert_eq!(
+            (data.name.as_str(), data.operation),
+            ("jana", Operation::Update)
+        );
+        let mut secret = open_pr(9, "portal/secret-hel-mobility-github-token");
+        secret.state = "closed".into();
+        let data = closed_headline(
+            &shako,
+            &secret,
+            "hel-mobility",
+            &[changed(
+                "projects/hel-mobility/secrets/github-token.enc.yaml",
+                false,
+                true,
+            )],
+        )
+        .await
+        .expect("read")
+        .expect("a headline");
+        assert_eq!(
+            (data.kind.as_str(), data.name.as_str(), data.operation),
+            (SECRET, "github-token", Operation::Create)
+        );
+        assert!(forge_paths(&server).await.is_empty());
+    }
+
+    /// A merge the forge names no merge commit for names no approver, and asks nothing.
+    #[tokio::test]
+    async fn a_merge_without_its_commit_names_no_decider() {
+        let server = MockServer::start().await;
+        let pr = PullRequest {
+            merged: true,
+            ..PullRequest::default()
+        };
+        assert!(decision_of(&forge_at(&server), &pr)
+            .await
+            .expect("read")
+            .is_none());
+        assert!(forge_paths(&server).await.is_empty());
+    }
+
+    /// The kept reads start over once full, and a poisoned lock keeps and gives nothing.
+    #[test]
+    fn the_kept_change_reads_start_over_when_full_and_a_poisoned_lock_keeps_nothing() {
+        let reads = ChangeReads::default();
+        let read = || {
+            Arc::new(ChangeRead {
+                carried: Vec::new(),
+                data: None,
+                author: ChangeAuthor {
+                    name: "Jana".into(),
+                    email: None,
+                },
+            })
+        };
+        let key = |n: u64| {
+            (
+                "p".to_owned(),
+                "r".to_owned(),
+                n,
+                "head".to_owned(),
+                "base".to_owned(),
+            )
+        };
+        for n in 0..CHANGE_READS_HELD as u64 {
+            reads.keep(key(n), read());
+        }
+        assert!(reads.get(&key(0)).is_some());
+        reads.keep(key(10_000), read());
+        assert!(reads.get(&key(0)).is_none(), "cleared when full");
+        assert!(reads.get(&key(10_000)).is_some());
+        let poisoned = reads.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = poisoned.0.lock();
+            panic!("poisons the lock");
+        })
+        .join();
+        reads.keep(key(1), read());
+        assert!(
+            reads.get(&key(1)).is_none(),
+            "a poisoned lock keeps nothing"
+        );
+    }
+
+    /// A listed file missing on its ref is the forge contradicting itself; an organization
+    /// model is never approved with a token (PF-58, DM-77).
+    #[tokio::test]
+    async fn a_listed_file_missing_on_its_ref_or_an_org_model_approved_by_a_token_is_refused() {
+        let server = MockServer::start().await;
+        pr_files(
+            &server,
+            9,
+            &[(
+                "projects/ovzdusie/spaces/air/endpoints/ghost.yaml",
+                "modified",
+            )],
+        )
+        .await;
+        let state = state_on(&server);
+        let shako = state.forge_for("ovzdusie").expect("a forge");
+        let pr = PullRequest {
+            number: 9,
+            head_sha: "head-9".into(),
+            base_branch: "main".into(),
+            ..PullRequest::default()
+        };
+        let refused = approve_every_file(&state, &person("ana@hel.fi"), "ovzdusie", &shako, &pr)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Internal(m)
+                if m.contains("is in change proposal 9 but not on head-9")),
+            "{refused:?}"
+        );
+
+        let server = MockServer::start().await;
+        pr_files(
+            &server,
+            9,
+            &[("projects/ovzdusie/datamodels/air.yaml", "added")],
+        )
+        .await;
+        every_file_is(
+            &server,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: org\nspec: {}\n",
+        )
+        .await;
+        let state = state_on(&server);
+        let shako = state.forge_for("ovzdusie").expect("a forge");
+        let token = Identity {
+            client: Some("air-sync".into()),
+            ..admin_of(&state, "ana@hel.fi")
+        };
+        let refused = approve_every_file(&state, &token, "ovzdusie", &shako, &pr)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Denied(m) if m.contains("organization data model")),
+            "{refused:?}"
+        );
+    }
+
+    /// PF-58, T-5563: a Policy grants its caller through a group they hold or are a member of,
+    /// or their service account; a Group change grants only when it adds them.
+    #[test]
+    fn a_policy_grants_its_caller_by_group_or_client_and_a_group_only_when_it_adds_them() {
+        let state = AppState::new(Config::for_tests(), None);
+        let policy = |kind: &str, id: &str| ResourceEnvelope {
+            metadata: crate::resource::ObjectMeta::new("open-air", "ovzdusie"),
+            ..org_envelope(
+                "Policy",
+                "open-air",
+                json!({ "assignee": { "kind": kind, "id": id } }),
+            )
+        };
+        let ana = Identity {
+            groups: vec!["stewards".into()],
+            ..person("ana@hel.fi")
+        };
+        assert!(grants_its_caller(
+            &state,
+            &ana,
+            &policy("group", "stewards")
+        ));
+        assert!(!grants_its_caller(
+            &state,
+            &ana,
+            &policy("group", "air-team")
+        ));
+        state.mirror.upsert(org_envelope(
+            "Group",
+            "air-team",
+            json!({ "members": [{ "user": "ana@hel.fi" }] }),
+        ));
+        assert!(grants_its_caller(
+            &state,
+            &ana,
+            &policy("group", "air-team")
+        ));
+        let agent = Identity {
+            client: Some("air-sync".into()),
+            ..person("bot@hel.fi")
+        };
+        assert!(grants_its_caller(
+            &state,
+            &agent,
+            &policy("serviceAccount", "ovzdusie/air-sync")
+        ));
+        assert!(!grants_its_caller(
+            &state,
+            &agent,
+            &policy("serviceAccount", "ovzdusie/other")
+        ));
+        assert!(
+            !grants_its_caller(&state, &ana, &policy("serviceAccount", "ovzdusie/air-sync")),
+            "a person holds no client"
+        );
+        assert!(!grants_its_caller(
+            &state,
+            &ana,
+            &policy("team", "stewards")
+        ));
+
+        let grown = org_envelope(
+            "Group",
+            "air-team",
+            json!({ "members": [{ "user": "ana@hel.fi" }, { "user": "bo@hel.fi" }] }),
+        );
+        assert!(
+            !grants_its_caller(&state, &ana, &grown),
+            "already a member: nothing granted"
+        );
+        assert!(grants_its_caller(&state, &person("bo@hel.fi"), &grown));
+    }
+
+    /// PF-03: removing a binding that leaves an administrator passes the access check and goes
+    /// on to the red lane's typed confirmation.
+    #[tokio::test]
+    async fn a_binding_removal_that_keeps_an_administrator_goes_on_to_the_red_lane_confirm() {
+        let server = MockServer::start().await;
+        let head = "portal/delete-rolebinding-viewers-12345678";
+        one_pr(&server, 3, head, Some("other@example.sk")).await;
+        pr_files(
+            &server,
+            3,
+            &[("projects/ovzdusie/rolebindings/viewers.yaml", "deleted")],
+        )
+        .await;
+        every_file_is(
+            &server,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: RoleBinding\nmetadata:\n  name: viewers\n  namespace: ovzdusie\nspec:\n  role: viewer\n  subjects:\n    - user: eva@hel.fi\n",
+        )
+        .await;
+        let state = state_on(&server);
+        let admin = admin_of(&state, "approver@example.sk");
+        let refused = approve_change_for(
+            &state,
+            &admin,
+            "ovzdusie",
+            "chg-00000003",
+            None,
+            ApprovedBy::Person,
+        )
+        .await
+        .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("confirm to be 'viewers'")),
+            "{refused:?}"
+        );
+        let merged = forge_paths(&server)
+            .await
+            .iter()
+            .any(|p| p.ends_with("/Shako.Merge"));
+        assert!(!merged);
+    }
+
+    /// An author the forge names no e-mail for counts as the approver (T-6706); an approver
+    /// with a blank e-mail leaves no proposer line in the merge commit.
+    #[tokio::test]
+    async fn an_administrators_own_removal_with_no_email_on_either_side_merges_without_a_proposer()
+    {
+        let server = MockServer::start().await;
+        let head = "portal/delete-contextspace-mobility-12345678";
+        one_pr(&server, 2, head, None).await;
+        pr_files(
+            &server,
+            2,
+            &[("projects/ovzdusie/spaces/mobility/space.yaml", "deleted")],
+        )
+        .await;
+        every_file_is(&server, SPACE).await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/PullRequests(2)/Shako.Merge")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        let state = state_on(&server);
+        state.mirror.upsert(org_envelope(
+            "Role",
+            "space-admin",
+            json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["approve", "delete"] }] }),
+        ));
+        state.mirror.upsert(org_envelope(
+            "RoleBinding",
+            "space-admin-jana",
+            json!({ "subjects": [{ "user": "jana" }], "role": "space-admin",
+                    "scope": { "project": "ovzdusie" } }),
+        ));
+        let jana = Identity {
+            username: "jana".into(),
+            email: Some(String::new()),
+            ..person("jana")
+        };
+        let change = approve_change_for(
+            &state,
+            &jana,
+            "ovzdusie",
+            "chg-00000002",
+            Some("mobility"),
+            ApprovedBy::Person,
+        )
+        .await
+        .expect("merged");
+        assert_eq!(change.status.phase, ChangePhase::Deploying);
+        let requests = server.received_requests().await.expect("requests");
+        let merge = requests
+            .iter()
+            .find(|r| r.url.path().ends_with("/Shako.Merge"))
+            .expect("a merge");
+        let body = String::from_utf8_lossy(&merge.body);
+        assert!(body.contains("its author"), "{body}");
+        assert!(!body.contains(PROPOSED_BY), "{body}");
+    }
+
+    /// A Change of a kind without an object page is said without `object`; a feed that is down
+    /// loses the event and nothing else.
+    #[tokio::test]
+    async fn a_pageless_kind_is_said_without_an_object_and_a_down_feed_loses_only_the_event() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let data = ManifestData {
+            kind: "NoSuchKind".into(),
+            name: "thing".into(),
+            operation: Operation::Update,
+            base_envelope: None,
+            head_envelope: None,
+        };
+        say_merged(
+            &state,
+            "ovzdusie",
+            "chg-00000006",
+            &data,
+            "eva@bb.sk",
+            None,
+            false,
+        )
+        .await;
+        say_rejected(
+            &state,
+            "ovzdusie",
+            "chg-00000007",
+            &data,
+            "eva@bb.sk",
+            None,
+            false,
+        )
+        .await;
+        let filter = crate::activity::ActivityFilter {
+            kinds: vec!["change.merged".into(), "change.rejected".into()],
+            limit: 10,
+            ..Default::default()
+        };
+        let page = state
+            .activity
+            .list("ovzdusie", &filter)
+            .await
+            .expect("feed");
+        assert_eq!(page.items.len(), 2);
+        assert!(page.items.iter().all(|e| e.details.get("object").is_none()));
+        state.activity = crate::activity::ActivityStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("ovzdusie"),
+        );
+        say_merged(
+            &state,
+            "ovzdusie",
+            "chg-00000008",
+            &data,
+            "eva@bb.sk",
+            None,
+            false,
+        )
+        .await;
+        say_rejected(
+            &state,
+            "ovzdusie",
+            "chg-00000009",
+            &data,
+            "eva@bb.sk",
+            None,
+            false,
+        )
+        .await;
+    }
+
+    /// A revoke on a Portal that cannot resolve its Change comes back pending, as it went in.
+    #[tokio::test]
+    async fn a_revoke_without_a_forge_stays_pending() {
+        let state = AppState::new(Config::for_tests(), None);
+        let change = Change::new(
+            ChangeMeta::from_merge_request(4, "ovzdusie"),
+            ChangeStatus::new(
+                Lane::Yellow,
+                ChangePhase::PendingApproval,
+                crate::change::PlanSummary::new(0, 1, 0),
+            ),
+        );
+        let name = change.metadata.name.clone();
+        let kept = merge_if_narrowing(&state, "ovzdusie", change, "revoke", |_, _| true).await;
+        assert_eq!(kept.status.phase, ChangePhase::PendingApproval);
+        assert_eq!(kept.metadata.name, name);
+    }
+
+    #[tokio::test]
+    async fn a_rejection_body_that_is_no_json_object_is_a_bad_request() {
+        let state = AppState::new(Config::for_tests(), None);
+        for body in ["[", "7", "\"no\""] {
+            let refused = reject_change(
+                test_user("approver@example.sk", vec!["portal-approver"]),
+                State(state.clone()),
+                Path(("ovzdusie".into(), "chg-00000001".into())),
+                Bytes::from(body),
+            )
+            .await
+            .expect_err("refused");
+            assert!(
+                matches!(&refused, ApiError::BadRequest(m) if m.contains("invalid json body")),
+                "{body}: {refused:?}"
+            );
+        }
+    }
+
+    /// A rejected deletion is Red, a rejected secret change (no manifest read) Yellow.
+    #[tokio::test]
+    async fn a_rejected_deletion_is_red_and_a_rejected_secret_change_yellow() {
+        let server = MockServer::start().await;
+        one_pr(
+            &server,
+            5,
+            "portal/delete-contextspace-mobility-12345678",
+            Some("other@example.sk"),
+        )
+        .await;
+        every_file_is(&server, SPACE).await;
+        closes(&server, 5).await;
+        let state = state_on(&server);
+        let admin = admin_of(&state, "approver@example.sk");
+        let change = reject_change_for(&state, &admin, "ovzdusie", "chg-00000005", Some("no"))
+            .await
+            .expect("rejected");
+        assert_eq!(
+            (change.status.lane, change.status.phase),
+            (Lane::Red, ChangePhase::Rejected)
+        );
+
+        let server = MockServer::start().await;
+        one_pr(
+            &server,
+            9,
+            "portal/secret-hel-mobility-github-token",
+            Some("other@example.sk"),
+        )
+        .await;
+        pr_files(
+            &server,
+            9,
+            &[(
+                "projects/hel-mobility/secrets/github-token.enc.yaml",
+                "added",
+            )],
+        )
+        .await;
+        closes(&server, 9).await;
+        let state = state_on(&server);
+        let admin = admin_of(&state, "approver@example.sk");
+        let change = reject_change_for(&state, &admin, "hel-mobility", "chg-00000009", None)
+            .await
+            .expect("rejected");
+        assert_eq!(
+            (change.status.lane, change.status.phase),
+            (Lane::Yellow, ChangePhase::Rejected)
+        );
+    }
+
+    /// T-3015: rejecting a run's App without a reason posts the rejecter alone and lets the run
+    /// know, whether or not it is still waiting.
+    #[tokio::test]
+    async fn a_rejected_app_of_a_run_without_a_reason_names_the_rejecter_alone() {
+        let server = MockServer::start().await;
+        one_pr(
+            &server,
+            6,
+            "portal/update-app-bikes-12345678",
+            Some("other@example.sk"),
+        )
+        .await;
+        every_file_is(
+            &server,
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: bikes\n  namespace: ovzdusie\n  annotations:\n    joinedcontext.com/agent-run: run-1\nspec:\n  kind: static\n",
+        )
+        .await;
+        closes(&server, 6).await;
+        let state = state_on(&server);
+        let admin = admin_of(&state, "approver@example.sk");
+        let change = reject_change_for(&state, &admin, "ovzdusie", "chg-00000006", Some("  "))
+            .await
+            .expect("rejected");
+        assert_eq!(change.status.phase, ChangePhase::Rejected);
+        let requests = server.received_requests().await.expect("requests");
+        let review = requests
+            .iter()
+            .find(|r| r.url.path().ends_with("/Shako.Review"))
+            .expect("a review");
+        let body: Value = serde_json::from_slice(&review.body).expect("json");
+        assert_eq!(
+            body["Body"],
+            json!("Change proposal rejected in the Portal by approver@example.sk")
+        );
+    }
+
+    /// MF-48: a change waited on that the forge no longer knows is Rejected; a forge that fails
+    /// fails the read.
+    #[tokio::test]
+    async fn a_lost_change_waited_on_is_rejected_and_a_failing_forge_fails_the_read() {
+        let pr = PullRequest {
+            body: "Waits-On: #2 (chg-00000002)\nWaits-On: #3 (chg-00000003)".into(),
+            ..PullRequest::default()
+        };
+        let server = MockServer::start().await;
+        one_pr(&server, 3, "portal/create-contextspace-air-12345678", None).await;
+        let state = state_on(&server);
+        let shako = state.forge_for("ovzdusie").expect("a forge");
+        let awaited = awaited_changes(&state, &shako, &pr, "ovzdusie")
+            .await
+            .expect("read");
+        assert_eq!(
+            awaited,
+            vec![
+                AwaitedChange {
+                    name: "chg-00000002".into(),
+                    phase: ChangePhase::Rejected,
+                },
+                AwaitedChange {
+                    name: "chg-00000003".into(),
+                    phase: ChangePhase::PendingApproval,
+                },
+            ]
+        );
+        let failing = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PullRequests(2)")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&failing)
+            .await;
+        let state = state_on(&failing);
+        let shako = state.forge_for("ovzdusie").expect("a forge");
+        assert!(awaited_changes(&state, &shako, &pr, "ovzdusie")
+            .await
+            .is_err());
     }
 }

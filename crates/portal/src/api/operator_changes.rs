@@ -2486,6 +2486,604 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// The second operator of these tests; `sub-ops-a` proposed every stored Change.
+    fn ops(state: &AppState) -> Identity {
+        Identity {
+            subject: "sub-ops-b".into(),
+            username: "ops-b".into(),
+            email: Some("ops-b@ops.example".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: vec![state.config.bootstrap_admins.clone()],
+            client: None,
+            second_factor: true,
+        }
+    }
+
+    fn user(identity: Identity) -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity,
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// The installation realm as a mock: its token, the operators' group `g-ops`, and the
+    /// proposer `sub-ops-a` in it. Each test mounts what else it asks.
+    async fn realm(state: &mut AppState) -> MockServer {
+        let kc = MockServer::start().await;
+        let group = state.config.bootstrap_admins.clone();
+        Mock::given(method("POST"))
+            .and(path("/realms/ops/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .mount(&kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/groups"))
+            .and(query_param("search", group.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "g-ops", "name": group, "path": format!("/{group}"), "subGroups": [] }
+            ])))
+            .mount(&kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/users/sub-ops-a/groups"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!([{ "path": format!("/{group}") }])),
+            )
+            .mount(&kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/admin/realms/ops/users/sub-ops-a/role-mappings/realm/composite",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&kc)
+            .await;
+        state.people = crate::people::People::new(
+            &format!("{}/realms/ops", kc.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .map(Arc::new);
+        kc
+    }
+
+    /// The first error a 422 names.
+    fn first_error(err: &ApiError) -> &str {
+        match err {
+            ApiError::Unprocessable { errors, .. } => errors.first().map_or("", String::as_str),
+            _ => "",
+        }
+    }
+
+    /// A stored Change written by hand, as `sub-ops-a` proposed it.
+    async fn stored(
+        pool: &sqlx::PgPool,
+        kind: &str,
+        target: &str,
+        payload: Value,
+        sealed: Option<&str>,
+    ) -> String {
+        sqlx::query_scalar(
+            "INSERT INTO operator_changes (kind, target, payload, proposed_by, sealed_secret) \
+             VALUES ($1, $2, $3, 'sub-ops-a', $4) RETURNING id::text",
+        )
+        .bind(kind)
+        .bind(target)
+        .bind(payload)
+        .bind(sealed)
+        .fetch_one(pool)
+        .await
+        .expect("a stored Change")
+    }
+
+    /// A row of an unknown kind or a payload of another shape is the store's fault, named so.
+    #[test]
+    fn a_stored_change_of_an_unknown_kind_or_payload_is_an_internal_error() {
+        let row = |kind: &str, payload: Value| -> Row {
+            (
+                "id-1".into(),
+                kind.into(),
+                payload,
+                "proposed".into(),
+                "sub-ops-a".into(),
+                0,
+                None,
+                None,
+            )
+        };
+        assert!(matches!(
+            change(row("HostWipe", json!({}))),
+            Err(ApiError::Internal(m)) if m.contains("unknown kind HostWipe")
+        ));
+        assert!(matches!(
+            change(row("HostAdd", json!({ "host": 7 }))),
+            Err(ApiError::Internal(m)) if m.starts_with("operator change id-1: ")
+        ));
+        let read = change(row("HostAdd", json!({ "host": "a.example" }))).expect("a Change");
+        assert_eq!(read.payload.host.as_deref(), Some("a.example"));
+    }
+
+    /// The test e-mail goes to the operator's own address; without a usable one it is refused
+    /// before the realm is asked.
+    #[tokio::test]
+    async fn a_test_email_to_an_operator_without_an_address_has_nowhere_to_go() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.db = Some(crate::test_db::dead_pool());
+        for email in [None, Some("not-an-address".to_owned())] {
+            let who = Identity {
+                email,
+                ..ops(&state)
+            };
+            let refused = test_email(user(who), State(state.clone()), None)
+                .await
+                .expect_err("refused");
+            assert!(
+                first_error(&refused).starts_with("to: your account has no e-mail address"),
+                "{refused:?}"
+            );
+        }
+    }
+
+    /// A move plan asked without the Organization is a 400 naming the missing field.
+    #[tokio::test]
+    async fn a_move_plan_without_its_organization_is_a_bad_request() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let uri: axum::http::Uri = "/api/v1/operator/project-moves/plan?project=air"
+            .parse()
+            .expect("a uri");
+        let query = axum::extract::Query::<MovePlanQuery>::try_from_uri(&uri);
+        assert!(query.is_err());
+        let refused = project_move_plan(user(ops(&state)), State(state.clone()), query)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("organization")),
+            "{refused:?}"
+        );
+    }
+
+    /// Names are asked only for person ids, and only of a realm that lets the Portal in.
+    #[tokio::test]
+    async fn names_are_read_only_for_person_ids_and_from_a_realm_that_answers() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let ids = |list: &[&str]| {
+            list.iter()
+                .map(|id| (*id).to_owned())
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        assert!(names_of(&state, ids(&["reconciler", "ops-a"]))
+            .await
+            .is_empty());
+        let kc = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/ops/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&kc)
+            .await;
+        state.people = crate::people::People::new(
+            &format!("{}/realms/ops", kc.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .map(Arc::new);
+        assert!(
+            names_of(&state, ids(&["3f2a9c1e-7b4d-4e8a-9c61-0d5e2b7f8a14"]))
+                .await
+                .is_empty()
+        );
+        let asked = kc.received_requests().await.expect("requests");
+        assert_eq!(asked.len(), 1, "the token alone");
+    }
+
+    /// An operator Change stops at a realm that fails; an e-mail Change needs its smtp, and a
+    /// user without a new password stands on the password the realm keeps; one with a new
+    /// password is sealed, which a Portal without its age key cannot.
+    #[tokio::test]
+    async fn operator_and_e_mail_changes_hold_only_what_the_realm_and_the_key_allow() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let kc = realm(&mut state).await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/users/sub-broken"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&kc)
+            .await;
+        let pool = crate::test_db::dead_pool();
+        let add = ChangePayload {
+            subject: Some("sub-broken".into()),
+            ..ChangePayload::default()
+        };
+        let refused = holds(
+            &state,
+            &pool,
+            OperatorKind::OperatorAdd,
+            &add,
+            "sub-ops-a",
+            false,
+        )
+        .await
+        .expect_err("the realm failed");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("(500)")),
+            "{refused:?}"
+        );
+        assert!(matches!(
+            holds(&state, &pool, OperatorKind::SmtpSet, &ChangePayload::default(), "sub-ops-a", false).await,
+            Err(ApiError::Internal(m)) if m.contains("without smtp")
+        ));
+
+        // No server stored yet: a new password is sealed, and there is no key to seal with.
+        let request: ChangeRequest = serde_json::from_value(json!({
+            "kind": "SmtpSet",
+            "smtp": { "host": "smtp.example.org", "port": 587, "tls": "starttls",
+                      "from": "noreply@example.org", "user": "mailer", "password": "app-password" }
+        }))
+        .expect("a request");
+        state.db = Some(pool.clone());
+        let refused = propose(
+            user(ops(&state)),
+            State(state.clone()),
+            None,
+            Ok(Json(request)),
+        )
+        .await
+        .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("no age key")),
+            "{refused:?}"
+        );
+
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/smtp-server"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "host": "smtp.example.org", "port": 587, "tls": "starttls",
+                "from": "noreply@example.org", "user": "mailer", "passwordSet": true
+            })))
+            .mount(&kc)
+            .await;
+        let kept = ChangePayload {
+            smtp: Some(SmtpSettings {
+                host: "smtp.example.org".into(),
+                port: 587,
+                tls: "starttls".into(),
+                from: "noreply@example.org".into(),
+                user: "mailer".into(),
+                new_password: false,
+            }),
+            ..ChangePayload::default()
+        };
+        holds(
+            &state,
+            &pool,
+            OperatorKind::SmtpSet,
+            &kept,
+            "sub-ops-a",
+            false,
+        )
+        .await
+        .expect("the stored password stands");
+    }
+
+    /// The registry's refusals, each named: a mark to clear that is not there, a move of no
+    /// live project, an id never minted, an apply of a move the registry no longer holds, a
+    /// store that refuses the proposal; and a plan with no open Change waits on none.
+    #[tokio::test]
+    async fn the_registry_names_each_refusal_of_a_mark_a_move_an_id_and_a_proposal() {
+        let scratch = crate::test_db::scratch().await;
+        let _ = scratch.placed("air").await;
+        let pool = scratch.pool.clone();
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_db(pool.clone());
+
+        let clear = ChangePayload {
+            organization: Some("somewhere".into()),
+            subject: Some("bot".into()),
+            automation: Some(false),
+            ..ChangePayload::default()
+        };
+        let refused = automation_holds(&state, &pool, &clear)
+            .await
+            .expect_err("nothing to clear");
+        assert_eq!(
+            first_error(&refused),
+            "subject: 'bot' is no automation login of 'somewhere'"
+        );
+
+        let ghost = ChangePayload {
+            project: Some("ghost".into()),
+            organization: Some("somewhere".into()),
+            ..ChangePayload::default()
+        };
+        let refused = move_holds(&state, &pool, &ghost, false)
+            .await
+            .expect_err("no such project");
+        assert_eq!(
+            first_error(&refused),
+            "project: 'ghost' is no live project of the registry"
+        );
+
+        let refused = txt_holds(&state, &pool, "sk_never")
+            .await
+            .expect_err("never minted");
+        assert_eq!(
+            first_error(&refused),
+            "organizationId: 'sk_never' is not a minted Organization id"
+        );
+
+        // A recorded project with no open Change on the forge waits on none.
+        crate::project_ids::ensure(&pool, &["airmove".to_owned()])
+            .await
+            .expect("recorded");
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&forge)
+            .await;
+        let shako = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("a url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("a forge client");
+        let with_forge = state.clone().with_shako(Arc::new(shako));
+        let plan = move_plan(&with_forge, &pool, "airmove", "somewhere")
+            .await
+            .expect("a plan")
+            .expect("a live project");
+        assert!(
+            plan.waits.iter().all(|wait| !wait.contains("open Changes")),
+            "{:?}",
+            plan.waits
+        );
+
+        // The operators' view of a registry whose forge holds no Organization: no drift.
+        let list = organizations(user(ops(&state)), State(state.clone()))
+            .await
+            .expect("the Organizations")
+            .0;
+        assert_eq!(list.drift, host_registry::OrganizationDrift::default());
+        assert!(list.items.iter().any(|org| org.name == "somewhere"));
+
+        // An approved move of a project the registry holds under no Organization is refused.
+        let found = OperatorChange {
+            id: "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d23".into(),
+            kind: OperatorKind::ProjectMove,
+            payload: ghost.clone(),
+            state: "proposed".into(),
+            proposed_by: "sub-ops-a".into(),
+            proposed_by_name: None,
+            proposed_at: TimestampTz::now(),
+            decided_by: None,
+            decided_by_name: None,
+            decided_at: None,
+        };
+        let tx = pool.begin().await.expect("a transaction");
+        let refused = apply_move(&state, tx, &found, "sub-ops-b", None)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Conflict(m) if m.contains("'ghost' is no project of the registry")),
+            "{refused:?}"
+        );
+
+        // A store that refuses the proposal's row: 503, never the database's words.
+        scratch.refuse("operator_changes", "INSERT").await;
+        let request: ChangeRequest = serde_json::from_value(json!({
+            "kind": "BrandingSet", "branding": { "instanceName": "Smart City" }
+        }))
+        .expect("a request");
+        let refused = propose(
+            user(ops(&state)),
+            State(state.clone()),
+            None,
+            Ok(Json(request)),
+        )
+        .await
+        .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
+            "{refused:?}"
+        );
+
+        // A registry the move cannot read is the store's failure.
+        scratch.drop_table("project_ids").await;
+        let tx = pool.begin().await.expect("a transaction");
+        let refused = apply_move(&state, tx, &found, "sub-ops-b", None)
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
+            "{refused:?}"
+        );
+        scratch.remove().await;
+    }
+
+    /// A Portal without its own TXT lookup asks the system's resolver; a name nobody serves
+    /// never proves the id.
+    #[tokio::test]
+    async fn a_minted_id_is_proven_only_by_dns_the_system_resolver_answers() {
+        let scratch = crate::test_db::scratch().await;
+        let pool = scratch.pool.clone();
+        sqlx::query(
+            "INSERT INTO organization_ids (id, domain, challenge, requested_by, minted_by, minted_at) \
+             VALUES ('sk_lookup', 'lookup.invalid', 'c1', 'test', 'test', now())",
+        )
+        .execute(&pool)
+        .await
+        .expect("a minted id");
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_db(pool.clone());
+        assert!(state.txt_records.is_none());
+        let refused = txt_holds(&state, &pool, "sk_lookup")
+            .await
+            .expect_err("unproven");
+        // A host without a resolver configuration cannot ask at all, and says so.
+        assert!(
+            first_error(&refused).starts_with("organizationId: ")
+                || matches!(&refused, ApiError::Unavailable(m) if m.contains("DNS cannot be asked")),
+            "{refused:?}"
+        );
+        scratch.remove().await;
+    }
+
+    /// Each approval that fails after its checks leaves the Change open: a host removed since,
+    /// a seal without its key, a realm that refuses the e-mail server, and a commit that fails
+    /// after the realm changed, which an operator Change undoes in the realm.
+    #[tokio::test]
+    async fn an_approval_that_fails_late_leaves_the_change_open_and_undoes_the_realm() {
+        let scratch = crate::test_db::scratch().await;
+        let pool = scratch.pool.clone();
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(pool.clone());
+        let kc = realm(&mut state).await;
+        let approve_it = |id: String| {
+            let state = state.clone();
+            async move {
+                approve(user(ops(&state)), State(state.clone()), Path(id), None)
+                    .await
+                    .expect_err("refused")
+            }
+        };
+
+        // The host is removed between the check and the write.
+        let host = "gone.jcdev.example";
+        sqlx::query(
+            "INSERT INTO organization_hosts (host, organization, role, state, created_by) \
+             VALUES ($1, 'somewhere', 'working', 'served', 'test')",
+        )
+        .bind(host)
+        .execute(&pool)
+        .await
+        .expect("a served host");
+        let removal = stored(&pool, "HostRemove", host, json!({ "host": host }), None).await;
+        for statement in [
+            "CREATE FUNCTION jc_skip_hosts() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RETURN NULL; END $$",
+            "CREATE TRIGGER jc_skip_hosts BEFORE UPDATE ON organization_hosts \
+             FOR EACH ROW EXECUTE FUNCTION jc_skip_hosts()",
+        ] {
+            sqlx::query(statement)
+                .execute(&pool)
+                .await
+                .expect("the trigger");
+        }
+        let refused = approve_it(removal.clone()).await;
+        assert!(
+            matches!(&refused, ApiError::Conflict(m) if m.contains("was removed since")),
+            "{refused:?}"
+        );
+
+        // The e-mail server: one stored, so the audit shows it before.
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/smtp-server"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "host": "smtp.old.example", "port": 465, "tls": "ssl",
+                "from": "old@old.example", "user": "", "passwordSet": true
+            })))
+            .mount(&kc)
+            .await;
+        let settings = |new_password: bool| {
+            json!({ "smtp": { "host": "smtp.example.org", "port": 587, "tls": "starttls",
+                              "from": "noreply@example.org", "user": "",
+                              "newPassword": new_password } })
+        };
+        let sealed = stored(
+            &pool,
+            "SmtpSet",
+            "smtp-sealed",
+            settings(true),
+            Some("not-a-seal"),
+        )
+        .await;
+        let refused = approve_it(sealed).await;
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("no age key")),
+            "{refused:?}"
+        );
+
+        let smtp = stored(&pool, "SmtpSet", "smtp", settings(false), None).await;
+        Mock::given(method("PUT"))
+            .and(path("/admin/realms/ops/smtp-server"))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .mount(&kc)
+            .await;
+        Mock::given(method("PUT"))
+            .and(path("/admin/realms/ops/smtp-server"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&kc)
+            .await;
+        let refused = approve_it(smtp.clone()).await;
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("(500)")),
+            "{refused:?}"
+        );
+
+        // From here on every commit that wrote a Change fails.
+        let subject = "5f1c2b9e-0d3a-4c7e-9a41-2b6f8e0c1d24";
+        let add = stored(
+            &pool,
+            "OperatorAdd",
+            subject,
+            json!({ "subject": subject }),
+            None,
+        )
+        .await;
+        scratch.refuse_commit("operator_changes").await;
+        let refused = approve_it(smtp.clone()).await;
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
+            "{refused:?}"
+        );
+
+        Mock::given(method("GET"))
+            .and(path(format!("/admin/realms/ops/users/{subject}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "id": subject, "username": "new-op", "enabled": true })),
+            )
+            .mount(&kc)
+            .await;
+        for verb in ["PUT", "DELETE"] {
+            Mock::given(method(verb))
+                .and(path(format!(
+                    "/admin/realms/ops/users/{subject}/groups/g-ops"
+                )))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&kc)
+                .await;
+        }
+        let refused = approve_it(add.clone()).await;
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
+            "{refused:?}"
+        );
+
+        for id in [removal, smtp, add] {
+            let state: String =
+                sqlx::query_scalar("SELECT state FROM operator_changes WHERE id = $1::uuid")
+                    .bind(&id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("the Change");
+            assert_eq!(state, "proposed", "{id}");
+        }
+        drop(kc);
+        scratch.remove().await;
+    }
+
     /// T-7129 §7 (critic row 10): a token in the operators' group, a service account's or an
     /// agent's, is no operator; neither is a person without a second factor.
     #[test]

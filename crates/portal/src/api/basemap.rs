@@ -392,34 +392,35 @@ pub async fn get_tile(
     let cache_path = basemap.cache_dir.join(&cache_key);
 
     if let Ok(metadata) = tokio::fs::metadata(&cache_path).await {
-        if let Ok(modified) = metadata.modified() {
-            if let Ok(elapsed) = modified.elapsed() {
-                if elapsed.as_secs() < basemap.cache_ttl_secs {
-                    if let Ok(bytes) = tokio::fs::read(&cache_path).await {
-                        metrics::counter!("jc_basemap_tiles_total", "result" => "hit").increment(1);
-                        let content_type = if ext == "jpg" || ext == "jpeg" {
-                            "image/jpeg"
-                        } else {
-                            "image/png"
-                        };
-                        return (
-                            StatusCode::OK,
-                            [
-                                (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
-                                (
-                                    header::CACHE_CONTROL,
-                                    HeaderValue::from_static("public, max-age=3600"),
-                                ),
-                                (
-                                    header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                                    HeaderValue::from_static("*"),
-                                ),
-                            ],
-                            bytes,
-                        )
-                            .into_response();
-                    }
-                }
+        let fresh = metadata
+            .modified()
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|elapsed| elapsed.as_secs() < basemap.cache_ttl_secs);
+        if fresh {
+            if let Ok(bytes) = tokio::fs::read(&cache_path).await {
+                metrics::counter!("jc_basemap_tiles_total", "result" => "hit").increment(1);
+                let content_type = if ext == "jpg" || ext == "jpeg" {
+                    "image/jpeg"
+                } else {
+                    "image/png"
+                };
+                return (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, HeaderValue::from_static(content_type)),
+                        (
+                            header::CACHE_CONTROL,
+                            HeaderValue::from_static("public, max-age=3600"),
+                        ),
+                        (
+                            header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                            HeaderValue::from_static("*"),
+                        ),
+                    ],
+                    bytes,
+                )
+                    .into_response();
             }
         }
     }
@@ -516,12 +517,10 @@ pub async fn get_tile(
         basemap.cache_max_bytes,
         bytes.clone(),
     );
-    if let Err(err) =
+    note_cache_write(
         tokio::task::spawn_blocking(move || save_and_evict(&dir, &cache_path, &stored, max_bytes))
-            .await
-    {
-        tracing::warn!(error = %err, "basemap cache write did not finish");
-    }
+            .await,
+    );
     metrics::counter!("jc_basemap_tiles_total", "result" => "fetch").increment(1);
 
     let final_ct = if content_type.starts_with("image/jpeg") {
@@ -548,6 +547,13 @@ pub async fn get_tile(
         .into_response()
 }
 
+/// Logs a cache write that did not finish; the tile is served either way.
+fn note_cache_write(done: Result<(), tokio::task::JoinError>) {
+    if let Err(err) = done {
+        tracing::warn!(error = %err, "basemap cache write did not finish");
+    }
+}
+
 fn save_and_evict(cache_dir: &Path, file_path: &Path, bytes: &[u8], max_bytes: u64) {
     if let Err(e) = std::fs::create_dir_all(cache_dir) {
         tracing::warn!("failed to create basemap cache dir: {e}");
@@ -564,25 +570,20 @@ fn save_and_evict(cache_dir: &Path, file_path: &Path, bytes: &[u8], max_bytes: u
         modified: SystemTime,
     }
 
-    let mut entries = Vec::new();
-    let mut total_size = 0u64;
-
-    if let Ok(read_dir) = std::fs::read_dir(cache_dir) {
-        for entry in read_dir.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if meta.is_file() {
-                    let size = meta.len();
-                    total_size += size;
-                    let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                    entries.push(Entry {
-                        path: entry.path(),
-                        size,
-                        modified,
-                    });
-                }
-            }
-        }
-    }
+    let mut entries: Vec<Entry> = std::fs::read_dir(cache_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let meta = entry.metadata().ok()?;
+            meta.is_file().then(|| Entry {
+                path: entry.path(),
+                size: meta.len(),
+                modified: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+            })
+        })
+        .collect();
+    let mut total_size: u64 = entries.iter().map(|entry| entry.size).sum();
 
     if total_size > max_bytes {
         entries.sort_by_key(|e| e.modified);
@@ -713,5 +714,88 @@ mod tests {
     fn a_request_without_the_edge_header_shares_the_in_cluster_bucket() {
         assert_eq!(client_ip(&HeaderMap::new()), "127.0.0.1");
         assert_eq!(client_ip(&forwarded(" ")), "127.0.0.1");
+    }
+
+    /// T-7917: an old tile the cache cannot remove (its folder is read-only) stays, the walk
+    /// goes on, and the tile just fetched is still written.
+    #[test]
+    fn an_old_tile_that_cannot_be_removed_stays_and_the_new_one_is_kept() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "jc-bm-stuck-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let cache = base.join("cache");
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir_all(&cache).expect("cache");
+        std::fs::create_dir_all(&elsewhere).expect("elsewhere");
+        std::fs::write(cache.join("old.png"), [0u8; 64]).expect("old");
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).expect("lock");
+        // A process that may write into a read-only folder (root) can remove the tile too.
+        let privileged = std::fs::write(cache.join("probe"), b"").is_ok();
+        let _ = std::fs::remove_file(cache.join("probe"));
+
+        save_and_evict(&cache, &elsewhere.join("new.png"), &[1u8; 64], 10);
+
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        assert!(elsewhere.join("new.png").is_file(), "the new tile is kept");
+        assert_eq!(
+            cache.join("old.png").is_file(),
+            !privileged,
+            "the old tile stays exactly when it cannot be removed"
+        );
+        std::fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    /// T-7917: a cache write that panicked is logged and does not stop the tile being served.
+    #[tokio::test]
+    async fn a_cache_write_that_did_not_finish_is_only_logged() {
+        let panicked = tokio::task::spawn_blocking(|| {
+            panic!("the test makes the cache write fail");
+        })
+        .await;
+        assert!(panicked.is_err());
+        note_cache_write(panicked);
+        note_cache_write(Ok(()));
+    }
+
+    /// T-7917: a cache folder that cannot be listed (no read permission) evicts nothing, and the
+    /// tile just written stays.
+    #[test]
+    fn a_cache_folder_that_cannot_be_listed_evicts_nothing() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!(
+            "jc-bm-unlisted-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        let cache = base.join("cache");
+        std::fs::create_dir_all(&cache).expect("cache");
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o300)).expect("lock");
+
+        save_and_evict(&cache, &cache.join("new.png"), &[1u8; 64], 10);
+
+        std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).expect("unlock");
+        assert!(cache.join("new.png").is_file(), "the tile is written");
+        std::fs::remove_dir_all(&base).expect("cleanup");
+    }
+
+    /// T-7917: when every bucket is fresh and the map is full, the longest-idle one makes room
+    /// for a new address.
+    #[test]
+    fn a_full_map_of_fresh_buckets_drops_its_longest_idle_one() {
+        let mut map = HashMap::new();
+        let start = Instant::now();
+        for n in 0..MAX_BUCKETS {
+            assert!(admit(&mut map, &format!("ip-{n}"), start));
+        }
+        assert!(admit(&mut map, "newcomer", start));
+        assert_eq!(map.len(), MAX_BUCKETS);
+        assert!(map.contains_key("newcomer"));
     }
 }

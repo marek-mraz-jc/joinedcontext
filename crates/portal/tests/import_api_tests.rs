@@ -904,6 +904,87 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
     );
 }
 
+/// A file `main` already holds as uploaded is unchanged and written nowhere; a file beside a
+/// manifest is no manifest; an upload of nothing new is a 400 after its dry run; a file that
+/// does not parse, a manifest of another project and a Portal with no forge are refused.
+#[tokio::test]
+async fn a_files_import_of_what_main_holds_changes_nothing() {
+    use wiremock::matchers::query_param;
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/{FILES_PIPELINE_PATH}'"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-pipeline",
+            "Content": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                FILES_PIPELINE,
+            ),
+        })))
+        .mount(&server)
+        .await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files");
+    let dry = format!("{uri}&dryRun=All");
+
+    let (content_type, body) = multipart(
+        &archive(&[
+            (FILES_PIPELINE_PATH, FILES_PIPELINE),
+            ("pipelines/aq/bento.yaml", BENTO),
+        ]),
+        &[],
+    );
+    let (status, report) = send(state.clone(), &cookie, &content_type, body, &dry).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        report["unchanged"],
+        json!([format!("projects/{PROJECT}/{FILES_PIPELINE_PATH}")])
+    );
+    assert_eq!(
+        report["created"],
+        json!([format!("projects/{PROJECT}/pipelines/aq/bento.yaml")])
+    );
+
+    let (content_type, body) = multipart(&archive(&[(FILES_PIPELINE_PATH, FILES_PIPELINE)]), &[]);
+    let (status, report) = send(state.clone(), &cookie, &content_type, body.clone(), &dry).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let (status, problem) = send(state.clone(), &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem.to_string().contains("nothing to change"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+
+    let elsewhere = FILES_PIPELINE.replace("namespace: banskabystrica", "namespace: helsinki");
+    for (files, says) in [
+        (
+            vec![("spaces/ovzdusie/broken.yaml", "kind: [")],
+            "did not parse",
+        ),
+        (
+            vec![(FILES_PIPELINE_PATH, elsewhere.as_str())],
+            "is not a resource of project",
+        ),
+    ] {
+        let (content_type, body) = multipart(&archive(&files), &[]);
+        let (status, problem) = send(state.clone(), &cookie, &content_type, body, &dry).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{says}: {problem}");
+        assert!(problem.to_string().contains(says), "{says}: {problem}");
+    }
+
+    let mut bare = state;
+    bare.shako = None;
+    let (content_type, body) = multipart(&archive(&[(FILES_PIPELINE_PATH, FILES_PIPELINE)]), &[]);
+    let (status, problem) = send(bare, &cookie, &content_type, body, &dry).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(problem.to_string().contains("git forge"), "{problem}");
+}
+
 /// T-7458: the files door answers the same 409 for a project with no Organization (barcelona's
 /// door move on jc-prod got 200, then 409 verdict_absent with no reason).
 #[tokio::test]
@@ -1374,6 +1455,18 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
         .expect("a 412 names the project's ETag")
         .to_owned();
 
+    // Each conflict policy plans the same new manifest (MF-23, T-7921).
+    for policy in ["fail", "skip", "replace", "rename"] {
+        let input = json!({ "manifests": [manifest], "dryRun": true, "conflictPolicy": policy });
+        let (status, _, plan) = call(input, Some(etag.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{policy}: {plan}");
+        assert_eq!(
+            plan["value"]["created"],
+            json!(["ovzdusie"]),
+            "{policy}: {plan}"
+        );
+    }
+    // The plain check last: the change below carries its verdict.
     let (status, _, plan) = call(input, Some(etag.clone())).await;
     assert_eq!(status, StatusCode::OK, "{plan}");
     assert_eq!(plan["value"]["created"], json!(["ovzdusie"]), "{plan}");
@@ -2738,4 +2831,80 @@ async fn an_import_inside_the_organizations_upload_size_is_imported() {
     let (status, answer, server) = post_padded_space(2).await;
     assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
     assert_eq!(written(&server).await.len(), 1);
+}
+
+// --- T-7917: what the coverage run found no test for ------------------------------------
+
+/// T-7917, MF-20: a JSON import whose options do not parse (`dryRun` is a boolean) is a 400
+/// naming the options, and nothing is written.
+#[tokio::test]
+async fn a_json_import_whose_options_do_not_parse_is_a_bad_request() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let body = json!({ "manifests": [], "dryRun": "yes please" });
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/json",
+        serde_json::to_vec(&body).expect("body"),
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("the import options did not parse"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
+/// T-7917, CC-08: a body past the import limit is refused as an upload that could not be read,
+/// before anything is parsed, and nothing is written.
+#[tokio::test]
+async fn a_body_past_the_import_limit_is_refused_unread() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let body = vec![0u8; 64 * 1024 * 1024 + 64 * 1024 + 1];
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/octet-stream",
+        body,
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem.to_string().contains("the upload could not be read"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
+/// T-7917, MF-23: a bundle every resource of which the project already holds, imported with
+/// `skip`, has nothing to write: a 400 saying so, and no branch or merge request.
+#[tokio::test]
+async fn a_bundle_that_skip_leaves_empty_is_refused_as_holding_nothing() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![SPACE]);
+    let manifest: Value = serde_norway::from_str(SPACE).expect("the space parses");
+    let body = json!({ "manifests": manifest, "conflictPolicy": "skip" });
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/json",
+        serde_json::to_vec(&body).expect("body"),
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("the bundle holds nothing to import"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
 }

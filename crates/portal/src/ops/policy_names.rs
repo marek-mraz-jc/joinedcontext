@@ -331,6 +331,26 @@ classes:
         serde_norway::from_str(MODEL).expect("the test model parses")
     }
 
+    /// A model source that does not parse judges nothing, and a space whose model cannot be read
+    /// has none to judge by (T-7921).
+    #[tokio::test]
+    async fn an_unreadable_model_judges_nothing() {
+        let spec = json!({
+            "contextSpaceRef": "air",
+            "information": [{ "entities": [{"type": "OnStreetParking"}], "propertyNames": ["x"] }],
+        });
+        assert!(of_model(&spec, "parking", "classes: [unclosed").is_empty());
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("air", "doprava"),
+            spec: json!({ "dataModelRef": { "name": "parking" } }),
+            status: None,
+        });
+        assert!(space_model(&state, "doprava", &spec).await.is_none());
+    }
+
     #[test]
     fn a_name_the_class_lacks_is_an_error_on_its_field() {
         let spec = json!({
@@ -591,5 +611,56 @@ classes:
         plain["actions"] = json!([]);
         assert!(!needs_model(&plain));
         assert_eq!(of_model(&plain, "parking", source), Vec::new());
+    }
+
+    /// A Policy of a space whose model the forge holds is judged against that model's file: a
+    /// name it lacks is one finding; a space naming no model, or a model the forge does not
+    /// answer, judges nothing.
+    #[tokio::test]
+    async fn a_policy_is_judged_against_its_spaces_published_model() {
+        use base64::Engine;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Encoding": "base64", "Sha": "s1",
+                "Path": "parking/parking.linkml.yaml",
+                "Content": base64::engine::general_purpose::STANDARD.encode(MODEL),
+            })))
+            .mount(&forge)
+            .await;
+        let shako =
+            crate::forge::ShakoClient::new(forge.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = crate::ops::testkit::state().with_shako(std::sync::Arc::new(shako));
+        for (kind, name, spec) in [
+            (
+                "ContextSpace",
+                "street",
+                json!({ "dataModelRef": "parking" }),
+            ),
+            ("ContextSpace", "bare", json!({})),
+            (
+                "DataModel",
+                "parking",
+                json!({ "contextSpaceRef": "street", "linkml": "./parking.linkml.yaml" }),
+            ),
+        ] {
+            state
+                .mirror
+                .upsert(crate::ops::testkit::envelope(kind, name, "parking", spec));
+        }
+        let policy = |space: &str| {
+            json!({ "kind": "Policy", "spec": {
+                "contextSpaceRef": space,
+                "information": [{ "entities": [{ "type": "OnStreetParking" }], "propertyNames": ["typo"] }],
+            } })
+        };
+        let found = findings(&state, "parking", &policy("street")).await;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(findings(&state, "parking", &policy("bare"))
+            .await
+            .is_empty());
     }
 }

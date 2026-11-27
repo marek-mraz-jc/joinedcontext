@@ -81,6 +81,7 @@ pub(super) fn truncate(w: &mut Windowed, timeprop: &str, descending: bool, limit
 /// `observedAt` and `datasetId` (ADR-N-054 2.4); a value written without
 /// `observedAt` is its own row, by `instanceId` (2.9). An instance the store
 /// keeps no version of stays as it is.
+#[cfg(any(feature = "jc", test))]
 pub(super) fn with_versions(w: &mut Windowed, chains: &Map<String, Value>) {
     let key = |i: &Value| {
         (

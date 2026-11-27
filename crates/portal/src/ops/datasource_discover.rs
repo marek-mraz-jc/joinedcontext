@@ -685,4 +685,38 @@ mod tests {
         assert!(found.skipped.is_some());
         assert_eq!(found.field, "organization");
     }
+
+    /// A WFS that answers JSON is no capabilities document; a read that answered no sample says the
+    /// service answered nothing; the operation itself refuses a caller who may not propose a
+    /// DataSource before anything is fetched.
+    #[tokio::test]
+    async fn a_json_wfs_lists_nothing_and_an_empty_read_says_so() {
+        let found = choices(HttpPresetKind::Wfs, &json!({ "types": [] }), true);
+        assert!(
+            matches!(&found, Err(why) if why.contains("WFS capabilities document")),
+            "{found:?}"
+        );
+        let url = Url::parse("https://data.example/api/3/action/organization_list").expect("url");
+        let mut trace = TestTrace::default();
+        trace.input.events = 1;
+        let found = discovery_of(HttpPresetKind::Ckan, &url, trace);
+        assert!(found.choices.is_empty());
+        assert!(found.skipped.is_some(), "{found:?}");
+        let tool = super::super::find("jc_datasource_discover").expect("registered");
+        let state = crate::ops::testkit::state();
+        let nobody = crate::ops::testkit::caller(
+            crate::ops::testkit::person("nobody", &[]),
+            crate::ops::Via::Mcp,
+        );
+        let refused = (tool.run)(
+            &nobody,
+            &state,
+            "doprava",
+            json!({ "kind": "ckan", "url": "https://data.example" }),
+        )
+        .await;
+        assert!(refused.is_err(), "{refused:?}");
+        let bad = (tool.run)(&nobody, &state, "doprava", json!({ "kind": "gopher" })).await;
+        assert!(bad.is_err(), "{bad:?}");
+    }
 }

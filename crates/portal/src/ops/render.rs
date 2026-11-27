@@ -1238,6 +1238,20 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
 
+    /// A chart of aggregated history reads the broker's aggregated values and keeps its format
+    /// as `jc_data_query` sets it (T-7921).
+    #[test]
+    fn an_aggregated_history_keeps_its_own_format() {
+        let query = query_of(
+            &json!({ "endpoint": "air", "type": "AirQualityObserved", "attrs": ["pm10"],
+                     "temporal": { "timerel": "after", "timeAt": "2026-11-13T00:00:00Z",
+                                   "aggrMethods": ["avg"], "aggrPeriodDuration": "PT1H" } }),
+            "/data/query",
+        )
+        .expect("a query");
+        assert_eq!(query.format, None);
+    }
+
     /// A drawn chart: the PNG, the categories it numbered and what the chart view draws.
     #[derive(Debug)]
     struct Drawn {

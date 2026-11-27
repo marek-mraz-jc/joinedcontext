@@ -731,6 +731,45 @@ slots:
         serde_json::from_value::<Catalog>(draft.catalog).expect("a valid spec.catalog");
     }
 
+    /// A declared `ckan` that is no object is kept as written; a model naming no domain and no
+    /// class drafts no theme and no keyword.
+    #[test]
+    fn a_ckan_that_is_no_object_is_kept_and_an_empty_model_drafts_the_licence() {
+        let mut known = known();
+        known.endpoint["publish"] = json!({ "ckan": "bbsk" });
+        assert_eq!(draft("bbsk-kpi", &known).publish, json!({ "ckan": "bbsk" }));
+        let bare = Known {
+            endpoint: json!({ "audience": "public" }),
+            linkml: Some("classes: {}".to_owned()),
+            language: "en".into(),
+            ..Known::default()
+        };
+        assert_eq!(
+            draft("x", &bare).catalog,
+            json!({ "license": DEFAULT_LICENCE })
+        );
+    }
+
+    /// A project with a title publishes under it, not under its name.
+    #[tokio::test]
+    async fn a_titled_project_is_its_own_publisher() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(
+            serde_json::from_value(json!({
+                "apiVersion": crate::resource::API_VERSION,
+                "kind": "Project",
+                "metadata": { "name": "town", "namespace": ORG_NAMESPACE, "title": "Mesto" },
+                "spec": {},
+            }))
+            .expect("a project"),
+        );
+        let known = super::known(&state, "town", &json!({})).await;
+        assert_eq!(
+            known.publisher,
+            BTreeMap::from([("en".to_owned(), "Mesto".to_owned())])
+        );
+    }
+
     #[test]
     fn what_the_endpoint_already_declares_is_kept_as_it_is() {
         let mut known = known();

@@ -42,21 +42,31 @@ fn file() -> Value {
 /// `totalSlotNumber`). Ema proposes Apps and reads `mobility`; Peter reads the project and its
 /// Apps and proposes nothing; Olga proposes Apps but reads no space.
 async fn world() -> (MockServer, AppState) {
+    world_with(Some(file())).await
+}
+
+/// T-7917: the same world with the App's dashboard file as given, or none (`None`: the forge
+/// answers 404 for it).
+async fn world_with(dashboard: Option<Value>) -> (MockServer, AppState) {
     let server = forge().await;
     mount_repository(&server, PROJECT).await;
     mount_repository(&server, APP_REPO).await;
-    let text = serde_json::to_string_pretty(&file()).expect("json") + "\n";
-    Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
-        .and(query_param("@p", "'src/dashboard.json'"))
-        .and(query_param("@r", "'main'"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "Sha": "d1",
-            "Content": STANDARD.encode(text)
-        })))
-        .with_priority(1)
-        .mount(&server)
-        .await;
+    let text = serde_json::to_string_pretty(&dashboard.clone().unwrap_or(Value::Null))
+        .expect("json")
+        + "\n";
+    if dashboard.is_some() {
+        Mock::given(method("GET"))
+            .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", "'src/dashboard.json'"))
+            .and(query_param("@r", "'main'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "d1",
+                "Content": STANDARD.encode(text)
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
 
     let state = state_on(&server);
     state.mirror.set_layout(2);
@@ -609,4 +619,224 @@ async fn an_approved_app_change_merges_the_dashboard_branch_at_its_commit_and_no
         .filter(|r| r.url.path().ends_with("/Shako.Merge"))
         .count();
     assert_eq!(count, 1);
+}
+
+/// T-7917: a forge answer of 503 for one route, ahead of the fixture's own.
+async fn refuse(server: &MockServer, verb: &str, route: String) {
+    Mock::given(method(verb))
+        .and(path(route))
+        .respond_with(ResponseTemplate::new(503).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+/// T-7917: an App that keeps no dashboard file is read with the reason, and an edit of it is a
+/// 409 that writes nothing.
+#[tokio::test]
+async fn an_app_without_a_dashboard_file_is_read_with_the_reason_and_cannot_be_edited() {
+    let (server, state) = world_with(None).await;
+    let answer = send(&state, person("ema"), "GET", ROUTE, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let read = body(&answer.text);
+    assert_eq!(read["config"], Value::Null);
+    assert_eq!(read["edit"]["allowed"], false);
+    assert!(
+        read["edit"]["reason"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("keeps no"),
+        "{read}"
+    );
+    let edit = send(
+        &state,
+        person("ema"),
+        "POST",
+        ROUTE,
+        Some(json!({ "config": edited() })),
+    )
+    .await;
+    assert_eq!(edit.status, StatusCode::CONFLICT, "{}", edit.text);
+    assert_eq!(writes(&server).await, Vec::<String>::new());
+}
+
+/// T-7917: a forge that does not answer for the default branch is a 503 on read and on edit.
+#[tokio::test]
+async fn a_forge_that_does_not_name_the_default_branch_is_a_503() {
+    let (server, state) = world().await;
+    refuse(&server, "GET", APP_REPO.to_owned()).await;
+    let read = send(&state, person("ema"), "GET", ROUTE, None).await;
+    assert_eq!(
+        read.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        read.text
+    );
+    let edit = send(
+        &state,
+        person("ema"),
+        "POST",
+        ROUTE,
+        Some(json!({ "config": edited() })),
+    )
+    .await;
+    assert_eq!(
+        edit.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        edit.text
+    );
+}
+
+/// T-7917: a forge that refuses the branch, or the commit, is a 503 naming the App, and no
+/// Change is proposed.
+#[tokio::test]
+async fn a_forge_that_refuses_the_branch_or_the_commit_is_a_503_and_proposes_nothing() {
+    for route in ["Shako.CreateBranch", "Shako.CommitFiles"] {
+        let (server, state) = world().await;
+        refuse(&server, "POST", format!("{APP_REPO}/{route}")).await;
+        let edit = send(
+            &state,
+            person("ema"),
+            "POST",
+            ROUTE,
+            Some(json!({ "config": edited() })),
+        )
+        .await;
+        assert_eq!(
+            edit.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{route}: {}",
+            edit.text
+        );
+        assert!(edit.text.contains("board"), "{route}: {}", edit.text);
+        let project_writes = writes(&server)
+            .await
+            .into_iter()
+            .filter(|w| w.contains(&format!("{PROJECT}/")))
+            .count();
+        assert_eq!(project_writes, 0, "{route}: no Change was proposed");
+    }
+}
+
+/// T-7917: a config over the file cap is a 422, and nothing is written.
+#[tokio::test]
+async fn a_config_over_the_file_cap_is_a_422() {
+    let (server, state) = world().await;
+    let mut config = edited();
+    config["title"] = json!("x".repeat(70 * 1024));
+    let answer = send(
+        &state,
+        person("ema"),
+        "POST",
+        ROUTE,
+        Some(json!({ "config": config })),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
+    assert!(answer.text.contains("holds at most"), "{}", answer.text);
+    assert_eq!(writes(&server).await, Vec::<String>::new());
+}
+
+/// T-7917: an App whose manifest names no commit to pin cannot be proposed at one: 409.
+#[tokio::test]
+async fn an_app_that_names_no_git_ref_cannot_be_proposed_at_a_commit() {
+    let (_server, state) = world().await;
+    let mut app = state
+        .mirror
+        .get("sharing", "App", "board")
+        .expect("the App");
+    app.spec["source"]["git"]
+        .as_object_mut()
+        .expect("git source")
+        .remove("ref");
+    state.mirror.upsert(app);
+    let answer = send(
+        &state,
+        person("ema"),
+        "POST",
+        ROUTE,
+        Some(json!({ "config": edited() })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+}
+
+/// T-7917: a type whose model the space no longer holds offers no attribute and no Edit.
+#[tokio::test]
+async fn a_type_the_space_holds_no_model_for_reads_no_attributes() {
+    let (_server, state) = world().await;
+    state.model_schemas.replace(HashMap::new());
+    let read = body(&send(&state, person("ema"), "GET", ROUTE, None).await.text);
+    assert_eq!(read["attributes"], json!([]));
+    assert_eq!(read["edit"]["allowed"], false);
+}
+
+/// T-7917: an approved Change merges nothing when the Portal has no forge, when the forge will
+/// not list the open merge requests, or when it refuses the merge; the approval stands.
+#[tokio::test]
+async fn an_approved_edit_is_left_alone_when_the_forge_cannot_list_or_merge() {
+    let (server, state) = world().await;
+    let mut approved = state
+        .mirror
+        .get("sharing", "App", "board")
+        .expect("the App");
+    approved.spec["source"]["git"]["ref"] = json!("bbb");
+
+    // No forge at all.
+    let bare = AppState::new(joinedcontext_portal::config::Config::for_tests(), None);
+    joinedcontext_portal::api::app_dashboard::merge_approved_edit(
+        &bare,
+        "sharing",
+        Some(&approved),
+        "anna",
+    )
+    .await;
+
+    // The list is refused.
+    refuse(&server, "GET", format!("{APP_REPO}/PullRequests")).await;
+    joinedcontext_portal::api::app_dashboard::merge_approved_edit(
+        &state,
+        "sharing",
+        Some(&approved),
+        "anna",
+    )
+    .await;
+    assert_eq!(writes(&server).await, Vec::<String>::new());
+
+    // The list holds the branch, the merge is refused.
+    let (server, state) = world().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{APP_REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 6, "HtmlUrl": "", "State": "open", "Title": "t", "Body": "",
+            "Head": "dashboard/2", "HeadSha": "bbb", "Base": "main", "BaseSha": "b"
+        }]})))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    refuse(
+        &server,
+        "POST",
+        format!("{APP_REPO}/PullRequests(6)/Shako.Merge"),
+    )
+    .await;
+    joinedcontext_portal::api::app_dashboard::merge_approved_edit(
+        &state,
+        "sharing",
+        Some(&approved),
+        "anna",
+    )
+    .await;
+    let merges = writes(&server)
+        .await
+        .into_iter()
+        .filter(|w| w.ends_with("/Shako.Merge"))
+        .count();
+    assert_eq!(merges, 1, "the merge was tried once and its refusal logged");
 }

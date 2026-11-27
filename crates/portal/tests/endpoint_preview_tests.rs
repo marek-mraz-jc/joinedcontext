@@ -232,6 +232,30 @@ async fn a_member_previews_the_draft_as_themselves() {
     );
 }
 
+/// The MCP door's jc_endpoint_preview reads the page the route reads (T-7921).
+#[tokio::test]
+async fn the_preview_operation_reads_the_routes_page() {
+    use joinedcontext_portal::ops::{self, Caller, Via};
+    let r = rig(true).await;
+    let op = ops::find("jc_endpoint_preview").expect("registered");
+    let mut input = draft();
+    input["name"] = json!("air-staff");
+    let page = ops::call(
+        op,
+        &Caller::new(member(), Via::Mcp),
+        &r.state,
+        "city",
+        input,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+    .expect("the page");
+    assert_eq!(
+        page,
+        json!({"count": 7, "entities": [{"id": "urn:ngsi-ld:Car:1", "type": "Car"}]})
+    );
+}
+
 /// EP-16: a public Endpoint's draft is read as the anonymous caller, never as the person.
 #[tokio::test]
 async fn a_public_endpoints_draft_is_read_as_the_public() {
@@ -545,6 +569,17 @@ async fn a_calendar_preview_limit_is_1_to_50_and_needs_a_broker() {
         );
         assert!(answer.text.contains("1 to 50"), "{}", answer.text);
     }
+    // A body that does not read as a preview request is a 400 naming the member.
+    let unread = send(
+        &r.state,
+        member(),
+        "POST",
+        &ical_route("air-staff"),
+        Some(json!({ "output": 7 })),
+    )
+    .await;
+    assert_eq!(unread.status, StatusCode::BAD_REQUEST, "{}", unread.text);
+    assert!(unread.text.contains("output"), "{}", unread.text);
     let bare = rig(false).await;
     let answer = send(
         &bare.state,

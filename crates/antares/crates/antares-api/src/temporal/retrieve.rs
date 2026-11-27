@@ -94,16 +94,6 @@ fn versions_of(
     Ok(Some(granted))
 }
 
-/// Vanilla: nothing asks for versions.
-#[cfg(not(feature = "jc"))]
-fn versions_of(
-    _granted: Option<&[String]>,
-    _selected: Option<&Vec<String>>,
-    _ctx: &antares_jsonld::Context,
-) -> ApiResult<Option<Vec<String>>> {
-    Ok(None)
-}
-
 /// Vanilla: `check_params` already refused `versions` as unknown.
 #[cfg(not(feature = "jc"))]
 pub(super) fn versions_asked(
@@ -180,6 +170,8 @@ pub(super) async fn retrieve_temporal_inner(
     let doc = crate::history::as_recorded(st, &tenant, &doc, versions.is_some()).into_owned();
     let attrs_filter = selection(&trepr);
     check_selection(&doc, &trepr, attrs_filter.as_ref(), id)?;
+    // vanilla: `versions_asked` always answers None, so no version code is built
+    #[cfg(feature = "jc")]
     let versions = match &versions {
         Some(granted) => Some(versions_of(
             granted.as_deref(),
@@ -207,6 +199,7 @@ pub(super) async fn retrieve_temporal_inner(
             page_n.size(st.temporal_default_instances, st.temporal_instance_limit),
         );
         // after the cut: lastN counts measurements, never versions (DM-119)
+        #[cfg(feature = "jc")]
         if let Some(only) = versions {
             let mut chains = st.temporal.versions(&tenant, id).await?;
             if let Some(only) = only {

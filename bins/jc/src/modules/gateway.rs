@@ -1156,12 +1156,8 @@ fn session_slug(req: &Request) -> Option<String> {
     {
         return None;
     }
-    let slug = req
-        .uri()
-        .path()
-        .strip_prefix("/api/endpoint/")?
-        .split('/')
-        .next()?;
+    let rest = req.uri().path().strip_prefix("/api/endpoint/")?;
+    let slug = rest.split_once('/').map_or(rest, |(slug, _)| slug);
     let named = !slug.is_empty()
         && slug.len() <= 64
         && slug
@@ -2245,36 +2241,38 @@ mod tests {
     /// A forge holding `main` at [`SHA`] with `archive` as its zip; counts the archive reads and
     /// refuses a request without the jc credential.
     fn forge(archive: Vec<u8>) -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-        use axum::http::{HeaderMap, StatusCode};
+        use axum::http::StatusCode;
+        use axum::response::IntoResponse as _;
         use std::sync::atomic::{AtomicUsize, Ordering};
         let reads = std::sync::Arc::new(AtomicUsize::new(0));
         let counted = reads.clone();
         let want = "token forge-token-not-secret".to_owned();
-        let authorized = move |headers: &HeaderMap| {
-            headers.get("authorization").and_then(|v| v.to_str().ok()) == Some(want.as_str())
-        };
-        let check = authorized.clone();
         let router = Router::new()
             .route(
                 "/api/v1/repos/city/conf/branches/main",
-                axum::routing::get(move |headers: HeaderMap| async move {
-                    if !check(&headers) {
-                        return (StatusCode::UNAUTHORIZED, String::new());
-                    }
-                    let body = serde_json::json!({"name": "main", "commit": {"id": SHA}});
-                    (StatusCode::OK, body.to_string())
+                axum::routing::get(|| async {
+                    serde_json::json!({"name": "main", "commit": {"id": SHA}}).to_string()
                 }),
             )
             .route(
                 &format!("/api/v1/repos/city/conf/archive/{SHA}.zip"),
-                axum::routing::get(move |headers: HeaderMap| async move {
-                    if !authorized(&headers) {
-                        return (StatusCode::UNAUTHORIZED, Vec::new());
-                    }
+                axum::routing::get(move || async move {
                     counted.fetch_add(1, Ordering::SeqCst);
-                    (StatusCode::OK, archive)
+                    archive
                 }),
-            );
+            )
+            .route_layer(axum::middleware::from_fn(
+                move |req: axum::extract::Request, next: axum::middleware::Next| {
+                    let header = req.headers().get("authorization");
+                    let ok = header.and_then(|v| v.to_str().ok()) == Some(want.as_str());
+                    async move {
+                        if !ok {
+                            return StatusCode::UNAUTHORIZED.into_response();
+                        }
+                        next.run(req).await
+                    }
+                },
+            ));
         (serve(router), reads)
     }
 
@@ -2472,14 +2470,11 @@ mod tests {
     fn a_redirect_is_refused_and_not_followed() {
         use axum::http::StatusCode;
         use jc_manifest::assemble::Resolver as _;
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let hits = std::sync::Arc::new(AtomicUsize::new(0));
-        let seen = hits.clone();
-        let elsewhere = serve(Router::new().fallback(move || async move {
-            seen.fetch_add(1, Ordering::SeqCst);
-            "{}"
-        }));
-        let target = format!("{elsewhere}/api/v1/repos/city/conf/branches/main");
+        // Bound and never listening: a followed redirect would fail to connect, not name it.
+        let closed = tokio::net::TcpSocket::new_v4().unwrap();
+        closed.bind(([127, 0, 0, 1], 0).into()).unwrap();
+        let elsewhere = closed.local_addr().unwrap();
+        let target = format!("http://{elsewhere}/api/v1/repos/city/conf/branches/main");
         let base = serve(Router::new().fallback(move || async move {
             (StatusCode::FOUND, [(axum::http::header::LOCATION, target)])
         }));
@@ -2489,7 +2484,7 @@ mod tests {
             .checkout("org", &spec)
             .unwrap_err();
         assert!(why.contains("redirect"), "{why}");
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        drop(closed);
     }
 
     #[test]
@@ -2583,13 +2578,12 @@ mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            if let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let _ = socket.read(&mut request);
-                let _ = socket.write_all(
-                    b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nconnection: close\r\n\r\nshort",
-                );
-            }
+            let (mut socket, _) = listener.accept().expect("the forge's connection");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request);
+            let _ = socket.write_all(
+                b"HTTP/1.1 200 OK\r\ncontent-length: 1000\r\nconnection: close\r\n\r\nshort",
+            );
         });
         let dir = tempfile::tempdir().unwrap();
         let forge = archives(&format!("http://{addr}"), dir.path());

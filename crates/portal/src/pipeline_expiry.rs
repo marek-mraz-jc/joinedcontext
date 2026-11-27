@@ -190,7 +190,7 @@ fn problems(
             .collect();
         if !missing.is_empty() {
             let extend = pipeline_policy(&policies, &space, &account)
-                .map_or_else(|| "a Policy".to_owned(), |name| format!("Policy {name}"));
+                .map_or("a Policy".to_owned(), |name| format!("Policy {name}"));
             problems.push(format!(
                 "no Policy grants the pipelines account {wire} on {} in space {space}: add it \
                  to {extend} in the same change, knowing that it lets the pipeline delete",
@@ -255,7 +255,7 @@ fn source_delete_grants(
                 continue;
             }
             let extend = pipeline_policy(&policies, &space, &account)
-                .map_or_else(|| "a Policy".to_owned(), |name| format!("Policy {name}"));
+                .map_or("a Policy".to_owned(), |name| format!("Policy {name}"));
             problems.push(format!(
                 "no Policy grants the pipelines account {wire} on {} in space {space}: add it \
                  to {extend} in the same change, knowing that it lets the pipeline delete what \

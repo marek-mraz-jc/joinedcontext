@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, LazyLock, Mutex, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, PoisonError, RwLock};
 use std::time::Instant;
 
 use axum::extract::{Path, Query, State};
@@ -101,7 +101,7 @@ static DESK: RwLock<Option<Arc<dyn SourceDesk>>> = RwLock::new(None);
 /// Hands the catalogues' desk to the Portal from now on. One Portal runs per process; a host that
 /// starts a new one replaces the desk of the stopped one.
 pub fn hand_desk_to(desk: Arc<dyn SourceDesk>) {
-    *DESK.write().unwrap_or_else(|e| e.into_inner()) = Some(desk);
+    *DESK.write().unwrap_or_else(PoisonError::into_inner) = Some(desk);
 }
 
 fn desk() -> Result<Arc<dyn SourceDesk>, ApiError> {
@@ -514,6 +514,25 @@ mod tests {
         );
     }
 
+    /// A Portal manifest whose spec is no PortalSpec answers like none: 404.
+    #[test]
+    fn a_portal_whose_spec_does_not_parse_is_not_found() {
+        let state = crate::ops::testkit::state();
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Portal",
+            "broken-spec",
+            ORG_NAMESPACE,
+            serde_json::json!({ "path": 5, "organizationRef": ["not", "a", "name"] }),
+        ));
+        let admin = crate::ops::testkit::admin(&state);
+        let refused =
+            portal_for(&state, &admin.identity, "broken-spec", Verb::Read).expect_err("no portal");
+        assert!(
+            matches!(&refused, ApiError::NotFound(m) if m.contains("broken-spec")),
+            "{refused:?}"
+        );
+    }
+
     /// A full bucket table drops the buckets idle for a minute before a new person gets one; a
     /// poisoned table is still used.
     #[test]
@@ -521,7 +540,7 @@ mod tests {
         let now = Instant::now() + Duration::from_secs(600);
         let idle = now - Duration::from_secs(120);
         {
-            let mut map = TEST_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
+            let mut map = TEST_BUCKETS.lock().unwrap_or_else(PoisonError::into_inner);
             for n in map.len()..MAX_BUCKETS {
                 map.insert(
                     format!("idle-{n}"),

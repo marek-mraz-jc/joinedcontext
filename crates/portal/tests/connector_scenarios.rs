@@ -768,7 +768,8 @@ async fn model_tools_and_broker(server: &MockServer) {
 /// each file read at the commit the change was cut from (`base-N`), at its merge (`merge-N`) and
 /// on `main`. 53 (`chg-00000035`) flipped `doprava` to a sandbox and main still holds it; 54
 /// labelled it, and main has moved since; 55 deleted `archiv`, itself the revert of its creation;
-/// 56 changed another project's file; 57 came from a branch the Portal did not open.
+/// 56 changed another project's file; 57 came from a branch the Portal did not open; 58 changed
+/// a file of the project that is no manifest.
 async fn merged_changes(server: &MockServer) {
     use base64::Engine;
     const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
@@ -782,6 +783,7 @@ async fn merged_changes(server: &MockServer) {
     let archiv = "projects/t-scn-53/spaces/archiv/space.yaml";
     let labelled = space("doprava", true, "  labels:\n    team: doprava\n");
     let elsewhere = "projects/t-scn-other/spaces/doprava/space.yaml";
+    let notes = "projects/t-scn-53/NOTES.md";
     let changes = [
         (
             53,
@@ -809,9 +811,18 @@ async fn merged_changes(server: &MockServer) {
         ),
         (56, "portal", elsewhere, "modified", None, None),
         (57, "hand", doprava, "modified", None, None),
+        (
+            58,
+            "portal",
+            notes,
+            "modified",
+            Some("old notes\n".to_owned()),
+            Some("new notes\n".to_owned()),
+        ),
     ];
     let mut main = BTreeMap::new();
     main.insert(doprava, space("doprava", true, ""));
+    main.insert(notes, "new notes\n".to_owned());
     for (number, prefix, file, status, before, after) in changes {
         let pull = json!({
             "Number": number,
@@ -2699,7 +2710,9 @@ async fn a_revert_plans_the_inverse_of_a_merged_change_and_opens_it_for_approval
         revert("chg-00000038", json!({ "proves": "deny", "refused": true,
             "contains": ["\"status\":422", "projects/t-scn-other/spaces/doprava/space.yaml", "outside project t-scn-53"] })),
         revert("chg-00000039", json!({ "proves": "deny", "refused": true,
-            "contains": ["\"status\":404", "chg-00000039"] }))
+            "contains": ["\"status\":404", "chg-00000039"] })),
+        revert("chg-0000003a", json!({ "proves": "deny", "refused": true,
+            "contains": ["\"status\":422", "projects/t-scn-53/NOTES.md: no manifest"] }))
     ]);
     assert_eq!(harness.run(&scenario(script), &own).await, Ok(()));
 }

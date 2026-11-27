@@ -2156,6 +2156,343 @@ mod tests {
         }
     }
 
+    fn who(id: &str, email: &str) -> Who {
+        Who {
+            id: id.to_owned(),
+            email: email.to_owned(),
+        }
+    }
+
+    fn envelope(kind: &str, name: &str, namespace: &str, spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: crate::resource::ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        }
+    }
+
+    /// A Policy assignee of another kind (a ServiceAccount) never names a person.
+    #[test]
+    fn an_assignee_of_another_kind_names_nobody() {
+        let ola = who("ola-id", "ola@hel.fi");
+        let realm = (vec!["stewards".to_owned()], vec!["auditor".to_owned()]);
+        let named =
+            |kind: &str, id: &str| names(&json!({ "kind": kind, "id": id }), &ola, &[], &realm);
+        assert!(named("user", "ola-id"));
+        assert!(named("group", "stewards"));
+        assert!(named("role", "auditor"));
+        assert!(!named("serviceAccount", "ola-id"));
+        assert!(!named("user", ""));
+    }
+
+    /// PF-93: a removal edits a binding of the organization; one in a project's own repository
+    /// is named back and nothing is written; a Group with no member list is passed over.
+    #[test]
+    fn a_reference_in_a_projects_own_repository_holds_the_removal_back() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(envelope("Group", "empty", ORG_NAMESPACE, json!({})));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            "readers",
+            "bus",
+            json!({
+                "subjects": [{ "user": "jana@hel.fi" }, { "user": "eva@hel.fi" }],
+                "role": "r"
+            }),
+        ));
+        state.mirror.upsert(envelope(
+            "RoleBinding",
+            "jana-alone",
+            "air",
+            json!({ "subjects": [{ "user": "jana-id" }], "role": "r" }),
+        ));
+        let jana = [who("jana-id", "jana@hel.fi")];
+        let free = removal(&state, &jana).expect("nothing lives elsewhere");
+        let names = |list: &[ResourceEnvelope]| {
+            list.iter()
+                .map(|e| e.metadata.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(&free.edited), ["readers"]);
+        assert_eq!(names(&free.removed), ["jana-alone"]);
+
+        state.mirror.set_repositories(BTreeMap::from([
+            ("air".to_owned(), "jc-air".to_owned()),
+            ("bus".to_owned(), "jc-bus".to_owned()),
+        ]));
+        let held = removal(&state, &jana).err().expect("held back");
+        let named = "RoleBinding jana-alone in project air, RoleBinding readers in project bus";
+        assert!(
+            matches!(&held, ApiError::Conflict(reason) if reason.contains(named)),
+            "{held:?}"
+        );
+    }
+
+    /// A realm at `kc` whose ola holds the bootstrap group and whose bad's groups are not read.
+    async fn admin_at(kc: &wiremock::MockServer) -> Admin {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .mount(kc)
+            .await;
+        for id in ["ola-id", "bad-id"] {
+            Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/hel/users/{id}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "id": id, "username": format!("{id}@hel.fi"), "email": format!("{id}@hel.fi"),
+                    "enabled": true
+                })))
+                .mount(kc)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/hel/users/ola-id/groups"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "name": "portal-approver", "path": "/portal-approver" }
+            ])))
+            .mount(kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/admin/realms/hel/users/ola-id/role-mappings/realm/composite",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/hel/users/bad-id/groups"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(kc)
+            .await;
+        People::new(
+            &format!("{}/realms/hel", kc.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .expect("people")
+        .admin()
+        .await
+        .expect("an admin")
+    }
+
+    /// PF-93: a new person who would hold the bootstrap group is said to hold more than the
+    /// caller may change; a realm that cannot say what they hold is its own error.
+    #[tokio::test]
+    async fn a_new_person_holding_more_is_named_and_an_unread_realm_fails() {
+        let kc = wiremock::MockServer::start().await;
+        let admin = admin_at(&kc).await;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let pia = Identity {
+            client: None,
+            subject: "sub-pia".into(),
+            username: "pia".into(),
+            email: Some("pia@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let why = held_beyond(&state, &pia, &admin, "ola-id")
+            .await
+            .expect("an answer")
+            .expect("a reason");
+        assert!(
+            why.contains("is in portal-approver") && !why.ends_with("(PF-93)"),
+            "{why}"
+        );
+        let failed = held_beyond(&state, &pia, &admin, "bad-id").await;
+        assert!(
+            !matches!(failed, Ok(_) | Err(ApiError::Denied(_))),
+            "{failed:?}"
+        );
+    }
+
+    /// A realm at `kc` that deletes `deleted` and fails to delete `stuck`.
+    async fn realm_deleting(kc: &wiremock::MockServer, token: u16) -> People {
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(token).set_body_json(json!({ "access_token": "t" })),
+            )
+            .mount(kc)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path("/admin/realms/hel/users/stuck"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(kc)
+            .await;
+        Mock::given(method("DELETE"))
+            .and(path_regex("^/admin/realms/hel/users/[a-z]+$"))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(kc)
+            .await;
+        People::new(
+            &format!("{}/realms/hel", kc.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .expect("people")
+    }
+
+    /// A forge whose pull requests 1 and 3 are merged, 2 closed unmerged, and 4 unreadable.
+    async fn forge_of_removals() -> (wiremock::MockServer, crate::forge::ShakoClient) {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let shako = wiremock::MockServer::start().await;
+        for (number, state, merged) in [
+            (1, "closed", true),
+            (2, "closed", false),
+            (3, "closed", true),
+        ] {
+            Mock::given(method("GET"))
+                .and(path_regex(format!(r"PullRequests\({number}\)$")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "Number": number, "HtmlUrl": "https://shako.example/pulls/1",
+                    "State": state, "Merged": merged
+                })))
+                .mount(&shako)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path_regex(r"PullRequests\(4\)$"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&shako)
+            .await;
+        let client = crate::forge::ShakoClient::new(
+            shako.uri().parse().expect("a url"),
+            "o",
+            "r",
+            "a-forge-token",
+        )
+        .expect("a client");
+        (shako, client)
+    }
+
+    async fn waiting(pool: &sqlx::PgPool) -> Vec<String> {
+        crate::db::person_deletions(pool)
+            .await
+            .expect("the removals")
+            .into_iter()
+            .map(|row| row.person_id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// PF-93: a merged removal deletes the person, one closed unmerged keeps them; one whose
+    /// delete failed, whose Change cannot be read or whose number is no pull request waits.
+    #[tokio::test]
+    async fn the_reconciler_finishes_the_removals_it_can_decide() {
+        let scratch = crate::test_db::scratch().await;
+        let pool = scratch.pool.clone();
+        for (id, number) in [("deleted", 1), ("kept", 2), ("stuck", 3), ("unread", 4)] {
+            crate::db::insert_person_deletion(&pool, id, number, &format!("c-{id}"), "ada")
+                .await
+                .expect("a removal");
+        }
+        sqlx::query(
+            "INSERT INTO person_deletions (person_id, pull_request, change_name, requested_by) \
+             VALUES ('odd', -1, 'c-odd', 'ada')",
+        )
+        .execute(&pool)
+        .await
+        .expect("a row of no pull request");
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.db = Some(pool.clone());
+        assert_eq!(pending(&state, "kept").await.as_deref(), Some("c-kept"));
+        assert_eq!(pending(&state, "nobody").await, None);
+
+        let kc = wiremock::MockServer::start().await;
+        let people = realm_deleting(&kc, 200).await;
+        let (_shako, forge) = forge_of_removals().await;
+        finish_deletions(&people, &pool, &forge).await;
+        assert_eq!(waiting(&pool).await, ["odd", "stuck", "unread"]);
+        let mut deletes: Vec<String> = kc
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|r| r.method.as_str() == "DELETE")
+            .map(|r| r.url.path().to_owned())
+            .collect();
+        deletes.sort();
+        assert_eq!(
+            deletes,
+            [
+                "/admin/realms/hel/users/deleted",
+                "/admin/realms/hel/users/stuck"
+            ]
+        );
+        scratch.remove().await;
+    }
+
+    /// A realm that refuses the admin client leaves every removal waiting; a removal whose
+    /// records cannot be cleared stays recorded.
+    #[tokio::test]
+    async fn a_removal_the_portal_cannot_finish_stays_recorded() {
+        let scratch = crate::test_db::scratch().await;
+        let pool = scratch.pool.clone();
+        crate::db::insert_person_deletion(&pool, "deleted", 1, "c-deleted", "ada")
+            .await
+            .expect("a removal");
+        let (shako, forge) = forge_of_removals().await;
+
+        let refusing = wiremock::MockServer::start().await;
+        finish_deletions(&realm_deleting(&refusing, 401).await, &pool, &forge).await;
+        assert_eq!(waiting(&pool).await, ["deleted"]);
+        assert!(shako
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+
+        scratch.refuse("person_invitations", "DELETE").await;
+        scratch.refuse("person_deletions", "DELETE").await;
+        let kc = wiremock::MockServer::start().await;
+        finish_deletions(&realm_deleting(&kc, 200).await, &pool, &forge).await;
+        assert_eq!(waiting(&pool).await, ["deleted"]);
+        assert_eq!(
+            kc.received_requests()
+                .await
+                .unwrap_or_default()
+                .iter()
+                .filter(|r| r.method.as_str() == "DELETE")
+                .count(),
+            1
+        );
+        scratch.remove().await;
+    }
+
+    /// Without a database to read, a person shows no pending removal, a list no expiry, and an
+    /// invitation goes out all the same; a list of nobody waiting asks nothing.
+    #[tokio::test]
+    async fn a_database_that_does_not_answer_never_fails_a_read() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.db = Some(crate::test_db::dead_pool());
+        assert_eq!(pending(&state, "ola-id").await, None);
+        let user = |actions: Value| -> KcUser {
+            serde_json::from_value(json!({ "id": "ola-id", "requiredActions": actions }))
+                .expect("a user")
+        };
+        let mut accepted = [person(&user(json!([])), None, None)];
+        with_invitations(&state, &mut accepted).await;
+        assert_eq!(accepted[0].invitation_expires, None);
+        let mut invited = [person(&user(json!(["VERIFY_EMAIL"])), None, None)];
+        with_invitations(&state, &mut invited).await;
+        assert_eq!(invited[0].invitation_expires, None);
+        remember_invitation(&state, "ola-id", Some("air")).await;
+        forget_invitation(&state, "ola-id").await;
+    }
+
     #[test]
     fn a_name_and_a_locale_are_checked() {
         assert!(name("firstName", "  ").is_err());

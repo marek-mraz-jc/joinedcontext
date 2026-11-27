@@ -391,3 +391,131 @@ pub async fn revert(
         .collect();
     propose(&state, &user, &name, manifest, texts).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::session::{Identity, Session};
+
+    fn administrator() -> CurrentUser {
+        CurrentUser(Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-pia".into(),
+                username: "pia".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec!["portal-approver".to_owned()],
+                second_factor: false,
+            },
+            expires_at: 0,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 0,
+            refresh_token: None,
+        })
+    }
+
+    fn organization_manifest(spec: Value) -> crate::resource::ResourceEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Organization",
+            "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE },
+            "spec": spec,
+        }))
+        .expect("an Organization manifest")
+    }
+
+    /// T-7918: an administrator of an Organization whose manifest is not loaded (the host names
+    /// it, the mirror lacks it) gets 404 naming the Organization, not a 403 and not a panic.
+    #[tokio::test]
+    async fn an_organization_that_is_not_loaded_is_not_found_by_name() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let pin = crate::organization_host::OrganizationHost {
+            organization: "ghost".to_owned(),
+            base: "https://portal.ghost.example".parse().expect("url"),
+        };
+        let user = administrator();
+        let error = crate::organization_host::scope(pin, async { organization(&state, &user) })
+            .await
+            .expect_err("not loaded");
+        assert!(
+            matches!(&error, ApiError::NotFound(m) if m.contains("Organization ghost is not loaded")),
+            "{error:?}"
+        );
+    }
+
+    /// T-7918: a caller of no group and no binding is refused with the administrators' hint
+    /// before the manifest is looked at.
+    #[tokio::test]
+    async fn a_stranger_is_denied_with_the_administrators_hint() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(organization_manifest(serde_json::json!({})));
+        let mut user = administrator();
+        user.0.identity.groups.clear();
+        let error = organization(&state, &user).expect_err("denied");
+        assert!(
+            matches!(&error, ApiError::Denied(m) if m.contains("for the Organization's administrators")),
+            "{error:?}"
+        );
+    }
+
+    /// T-7918: a manifest with no `spec` object cannot carry pages: the proposal is an internal
+    /// error naming the missing spec, and nothing is sent to the door.
+    #[tokio::test]
+    async fn a_manifest_without_a_spec_is_not_proposed() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let manifest: crate::resource::ResourceEnvelope =
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Organization",
+                "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE },
+            }))
+            .expect("a manifest without spec");
+        let user = administrator();
+        let error = propose(&state, &user, "bbsk", manifest, Vec::new())
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&error, ApiError::Internal(m) if m.contains("has no spec")),
+            "{error:?}"
+        );
+    }
+
+    /// T-7918: the list shows the title of every page for a language the Organization names that
+    /// has no text of its own (it falls back to the English built-in), and an own text with no
+    /// heading shows the built-in title.
+    #[tokio::test]
+    async fn the_list_titles_every_page_in_every_language() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(organization_manifest(serde_json::json!({
+            "locales": ["de-AT", "xyz", "EN"], "defaultLocale": "de",
+            "appearance": { "pages": [{ "page": "terms", "lang": "de", "markdown": "no heading here" }] },
+        })));
+        let Json(listed) = list_pages(administrator(), State(state))
+            .await
+            .expect("pages");
+        assert_eq!(listed.organization, "bbsk");
+        assert_eq!(listed.languages, vec!["de".to_owned(), "en".to_owned()]);
+        assert_eq!(listed.pages.len(), PAGES.len() * 2);
+        assert!(
+            listed.pages.iter().all(|p| !p.title.is_empty()),
+            "{listed:?}"
+        );
+        let terms = listed
+            .pages
+            .iter()
+            .find(|p| p.page == "terms" && p.lang == "de")
+            .expect("terms in de");
+        assert_eq!(terms.markdown.as_deref(), Some("no heading here"));
+        let english = listed
+            .pages
+            .iter()
+            .find(|p| p.page == "terms" && p.lang == "en")
+            .expect("terms in en");
+        assert_eq!(terms.title, english.title, "the built-in title shows");
+    }
+}

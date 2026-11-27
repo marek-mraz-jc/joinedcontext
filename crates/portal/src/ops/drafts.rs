@@ -1332,6 +1332,23 @@ mod tests {
         scratch.remove().await;
     }
 
+    /// On the database a draft that was never kept drops as nothing, and one that was drops once
+    /// (T-7921).
+    #[tokio::test]
+    async fn dropping_on_the_database_drops_only_a_kept_draft() {
+        let scratch = crate::test_db::scratch().await;
+        let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
+        assert!(!store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+        store
+            .put("hel", "Endpoint", "air", manifest, None, "ana", "person")
+            .await
+            .expect("kept");
+        assert!(store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        assert!(!store.drop("hel", "Endpoint", "air").await.expect("a drop"));
+        scratch.remove().await;
+    }
+
     /// T-7817: each store error is the answer a client can act on, and a first put that expects
     /// a version the draft never had is a conflict at 0.
     #[tokio::test]
@@ -1579,5 +1596,77 @@ mod tests {
         assert!(here.received(r#"{"origin":"x"}"#).is_none());
         // The manifest never rides on the channel.
         assert!(!notice(&there.origin).contains("manifest"));
+    }
+
+    /// A list line carries a checked draft's verdict as its outcome and count, not its trace.
+    #[test]
+    fn a_line_of_a_checked_draft_carries_its_verdict_count() {
+        let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+        let verdict = crate::ops::verdict::Verdict::red(
+            &manifest,
+            vec![crate::ops::verdict::Finding {
+                level: crate::ops::verdict::Level::Error,
+                path: "spec".into(),
+                message: "x".into(),
+            }],
+            None,
+        );
+        let draft = Draft {
+            project: "hel".into(),
+            kind: "Endpoint".into(),
+            name: "air".into(),
+            workspace: None,
+            manifest,
+            verdict: Some(verdict.clone()),
+            touched_by: "ana".into(),
+            touched_kind: "person".into(),
+            version: 3,
+            updated_at: TimestampTz::now(),
+        };
+        let line = DraftLine::from(&draft);
+        let shown = line.verdict.expect("a verdict line");
+        assert!(!shown.ok);
+        assert_eq!(shown.findings, 1);
+        assert_eq!(shown.checked_at, verdict.checked_at);
+    }
+
+    /// A literal secret is the caller's 400 naming the field and the fix.
+    #[test]
+    fn a_literal_secret_names_its_field() {
+        let err = draft_error(DraftError::Secret(crate::api::mutate::LiteralSecret {
+            path: "spec.password".into(),
+            rule: "password",
+        }));
+        assert!(
+            matches!(&err, OpError::Api(ApiError::BadRequest(why))
+                if why.contains("spec.password") && why.contains("secretRef")),
+            "{err:?}"
+        );
+    }
+
+    /// EP-75: a draft put through MCP with a slug the caller typed is refused at the slug.
+    #[tokio::test]
+    async fn a_typed_slug_in_a_draft_put_is_refused_at_the_slug() {
+        let state = crate::ops::testkit::state();
+        let caller = crate::ops::testkit::caller(
+            crate::ops::testkit::person("ana", &[]),
+            crate::ops::Via::Mcp,
+        );
+        let op = crate::ops::find("jc_draft_put").expect("registered");
+        let got = (op.run)(
+            &caller,
+            &state,
+            "hel",
+            json!({ "kind": "Endpoint", "name": "air", "manifest": {
+                "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+                "metadata": { "name": "air", "namespace": "hel" },
+                "spec": { "contextSpaceRef": "air", "audience": "public",
+                          "slug": "aaaaaaaaaaaaaaaaaaaaaaaaaa" } } }),
+        )
+        .await;
+        assert!(
+            matches!(&got, Err(OpError::InvalidInput { path, .. }) if path == "/manifest/spec/slug"),
+            "{got:?}"
+        );
     }
 }

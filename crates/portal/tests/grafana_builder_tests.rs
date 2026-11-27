@@ -1796,6 +1796,119 @@ async fn a_variables_values_are_read_as_the_person_and_each_failure_says_why() {
 /// A panel on a closed Endpoint the dashboards service holds no datasource for is refused by its
 /// field before anything is written; one it holds previews with the person's token, which a
 /// session without one does not carry: the panel says so instead of failing the request.
+/// Answers as `answer` and takes `key` out of the mirror on the way: the Endpoint the request
+/// checked is gone when a later step looks it up again.
+struct Removing {
+    mirror: Arc<joinedcontext_portal::store::Mirror>,
+    key: joinedcontext_portal::resource::ResourceKey,
+    answer: ResponseTemplate,
+}
+
+impl wiremock::Respond for Removing {
+    fn respond(&self, _: &wiremock::Request) -> ResponseTemplate {
+        self.mirror.remove(&self.key);
+        self.answer.clone()
+    }
+}
+
+/// A dashboards service that removes `bikes-open` from `state`'s mirror when `at` is asked.
+async fn removing_at(state: &AppState, grafana: &MockServer, at: &str) {
+    let key = state
+        .mirror
+        .get(PROJECT, "Endpoint", "bikes-open")
+        .expect("the public Endpoint")
+        .key();
+    let answers = [
+        (
+            "/grafana/api/orgs/name/helsinki",
+            ResponseTemplate::new(200).set_body_json(json!({ "id": 2 })),
+        ),
+        (
+            "/grafana/api/datasources",
+            ResponseTemplate::new(200).set_body_json(json!([
+                { "uid": DATASOURCE, "type": "ngsild-grafana-datasource",
+                  "url": format!("http://gateway:8080/api/endpoint/{PUBLIC_SLUG}") },
+            ])),
+        ),
+    ];
+    for (route, answer) in answers {
+        let mock = Mock::given(method("GET")).and(path(route));
+        if route == at {
+            mock.respond_with(Removing {
+                mirror: Arc::clone(&state.mirror),
+                key: key.clone(),
+                answer,
+            })
+            .mount(grafana)
+            .await;
+        } else {
+            mock.respond_with(answer).mount(grafana).await;
+        }
+    }
+    Mock::given(method("POST"))
+        .and(path("/grafana/api/ds/query"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "results": { "A": {
+                "frames": [{ "fields": [{ "name": "status", "values": ["open"] }] }]
+            }}})),
+        )
+        .mount(grafana)
+        .await;
+}
+
+/// An Endpoint removed while a builder request runs: the step that reads it again answers the
+/// 404 of an unknown one, and a read past its datasource goes on without a person's token.
+#[tokio::test]
+async fn an_endpoint_removed_mid_request_is_not_found_by_the_step_that_reads_it_again() {
+    let shako = common::forge().await;
+    let values = format!(
+        "{BUILDER}/values?endpoint=bikes-open&type=BikeHireDockingStation&attribute=status"
+    );
+
+    let grafana = MockServer::start().await;
+    let state = world(&shako, &grafana);
+    removing_at(&state, &grafana, "/grafana/api/orgs/name/helsinki").await;
+    let answer = send(&state, person("eva"), "GET", &values, None).await;
+    assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.text);
+    assert!(
+        answer
+            .text
+            .contains("dashboard 'bikes-open' not found in helsinki"),
+        "{}",
+        answer.text
+    );
+
+    let grafana = MockServer::start().await;
+    let state = world(&shako, &grafana);
+    removing_at(&state, &grafana, "/grafana/api/datasources").await;
+    let answer = send(&state, person("eva"), "GET", &values, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(
+        body(&answer)["options"],
+        json!([{ "text": "open", "value": "open" }])
+    );
+
+    let grafana = MockServer::start().await;
+    let state = world(&shako, &grafana);
+    removing_at(&state, &grafana, "/grafana/api/orgs/name/helsinki").await;
+    let answer = send(
+        &state,
+        person("eva"),
+        "POST",
+        &format!("{BUILDER}/preview"),
+        Some(json!({ "board": board(), "panel": 1 })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::NOT_FOUND, "{}", answer.text);
+    assert!(
+        answer
+            .text
+            .contains("dashboard 'bikes-open' not found in helsinki"),
+        "{}",
+        answer.text
+    );
+}
+
 #[tokio::test]
 async fn a_closed_endpoint_needs_its_datasource_and_previews_with_the_persons_token() {
     let shako = common::forge().await;

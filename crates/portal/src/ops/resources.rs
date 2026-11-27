@@ -865,4 +865,44 @@ mod tests {
         // Read in another project is not read here.
         assert!(readable_kinds(&reader, &state, "elsewhere").is_empty());
     }
+
+    /// A name not found where the kind has nothing says the project has none; with objects of
+    /// the kind there it lists them.
+    #[tokio::test]
+    async fn a_missing_object_names_what_its_project_holds_of_the_kind() {
+        let state = state();
+        grant(&state, "readers", "doprava", &["Endpoint"], &["read"]);
+        let reader = person_via(person("eva", &["readers"]), super::super::Via::Session);
+        let get = super::super::find("jc_resource_get").expect("registered");
+        let missing = (get.run)(
+            &reader,
+            &state,
+            "doprava",
+            json!({ "kind": "Endpoint", "name": "air" }),
+        )
+        .await;
+        assert!(
+            matches!(&missing, Err(super::super::OpError::Api(crate::error::ApiError::NotFound(why)))
+                if why.ends_with("which has none")),
+            "{missing:?}"
+        );
+        state.mirror.upsert(super::super::testkit::envelope(
+            "Endpoint",
+            "parking",
+            "doprava",
+            json!({ "contextSpaceRef": "parking" }),
+        ));
+        let missing = (get.run)(
+            &reader,
+            &state,
+            "doprava",
+            json!({ "kind": "Endpoint", "name": "air" }),
+        )
+        .await;
+        assert!(
+            matches!(&missing, Err(super::super::OpError::Api(crate::error::ApiError::NotFound(why)))
+                if why.ends_with("it has parking")),
+            "{missing:?}"
+        );
+    }
 }

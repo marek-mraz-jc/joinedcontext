@@ -197,4 +197,67 @@ mod tests {
         assert_eq!(val["lane"], "green");
         assert_eq!(val["annotations"]["readOnlyHint"], true);
     }
+
+    fn administrator() -> CurrentUser {
+        let now = crate::auth::session::now_unix();
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 3600,
+            refresh_token: None,
+        })
+    }
+
+    async fn run(project: &str, name: &str, body: &'static [u8]) -> Result<Response, ApiError> {
+        run_op(
+            administrator(),
+            Front::Portal,
+            State(AppState::new(crate::config::Config::for_tests(), None)),
+            Path((project.to_owned(), name.to_owned())),
+            Bytes::from_static(body),
+        )
+        .await
+    }
+
+    /// T-7917: an operation run with no body takes `{}` as its input, so the two answer alike;
+    /// a body that is no JSON, an operation nobody registered and a project that is no name
+    /// are each refused before anything runs.
+    #[tokio::test]
+    async fn an_empty_body_is_an_empty_input_and_a_bad_request_is_refused_first() {
+        let empty = run("helsinki", "jc_catalog_search", b"")
+            .await
+            .expect("answered");
+        let braces = run("helsinki", "jc_catalog_search", b"{}")
+            .await
+            .expect("answered");
+        assert_eq!(empty.status(), braces.status());
+        let garbled = run("helsinki", "jc_catalog_search", b"{not json").await;
+        assert!(
+            matches!(&garbled, Err(ApiError::BadRequest(why)) if why.contains("invalid json body")),
+            "{garbled:?}"
+        );
+        let unknown = run("helsinki", "jc_no_such_operation", b"{}").await;
+        assert!(
+            matches!(&unknown, Err(ApiError::NotFound(why)) if why.contains("jc_no_such_operation")),
+            "{unknown:?}"
+        );
+        let nameless = run("Not A Project", "jc_catalog_search", b"{}").await;
+        assert!(
+            matches!(&nameless, Err(ApiError::NotFound(_))),
+            "{nameless:?}"
+        );
+    }
 }

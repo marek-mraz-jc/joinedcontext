@@ -686,6 +686,36 @@ async fn the_people_of_an_organizations_realm_are_managed_in_that_realm_alone() 
         "ba's people on ba's host"
     );
     assert_eq!(people(&w.state, HEL, &own).await, StatusCode::UNAUTHORIZED);
+    // A person of ba's realm bound only in one of ba's projects belongs to ba but is refused
+    // ba's people, by name of ba, and ba's realm is not asked.
+    w.state.mirror.upsert(envelope(
+        "RoleBinding",
+        "ba-nobody-bratislava",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ba-nobody@example.test" }], "role": "reader",
+                "scope": { "project": "bratislava" } }),
+    ));
+    let nobody = token(&w.ba, "ba", BA_REALM, "ba-nobody", &[]);
+    let refused = server::app(w.state.clone())
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/organization/people")
+                .header(header::HOST, BA)
+                .header(header::AUTHORIZATION, format!("Bearer {nobody}"))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    let text = axum::body::to_bytes(refused.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    let text = String::from_utf8_lossy(&text);
+    assert!(
+        text.contains("read on the people of ba needs a binding at that Organization"),
+        "{text}"
+    );
     let hel = token(
         &w.installation,
         "installation",

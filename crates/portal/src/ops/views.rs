@@ -724,3 +724,43 @@ pub fn operations() -> Vec<Operation> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    /// An activity log that cannot be read is the 503 a person can retry, never an empty page
+    /// (T-7921).
+    #[tokio::test]
+    async fn an_unreadable_activity_log_is_unavailable() {
+        let mirror = crate::test_db::placed_mirror("p");
+        let mut state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_mirror(mirror.clone());
+        state.activity =
+            crate::activity::ActivityStore::new(Some(crate::test_db::dead_pool()), mirror);
+        let caller = crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:x".into(),
+                username: "x".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            crate::ops::Via::Session,
+        );
+        let op = crate::ops::find("jc_activity_list").expect("registered");
+        let refused = crate::ops::call(op, &caller, &state, "p", json!({}))
+            .await
+            .expect_err("no log to read");
+        assert!(
+            matches!(
+                refused,
+                crate::ops::OpError::Api(crate::error::ApiError::Unavailable(_))
+            ),
+            "{refused:?}"
+        );
+    }
+}

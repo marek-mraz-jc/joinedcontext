@@ -1201,9 +1201,12 @@ fn changed_fields<T: Serialize>(
     skip: &[&str],
     derived: &[&str],
 ) -> Vec<String> {
-    let as_map = |v: &T| match serde_json::to_value(v) {
-        Ok(Value::Object(m)) => m,
-        _ => Map::new(),
+    // A record serializes to an object; anything else compares as empty.
+    let as_map = |v: &T| {
+        let value = serde_json::to_value(v).ok();
+        value
+            .and_then(|v| v.as_object().cloned())
+            .unwrap_or_default()
     };
     let (prev, next) = (as_map(prev), as_map(next));
     let keys: BTreeSet<&String> = prev.keys().chain(next.keys()).collect();

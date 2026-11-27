@@ -1989,4 +1989,75 @@ mod target_tests {
             .expect("read")
             .is_none());
     }
+
+    /// T-7918: an entry whose stored bytes fail their checksum is not a readable bundle: refused
+    /// as such, never unpacked half way.
+    #[test]
+    fn an_entry_that_fails_its_checksum_is_not_a_configuration_bundle() {
+        let payload = b"the bundle's index, as it was written";
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        writer.start_file("index.yaml", options).expect("a file");
+        writer.write_all(payload).expect("written");
+        let mut bytes = writer.finish().expect("a zip").into_inner();
+        let at = bytes
+            .windows(payload.len())
+            .position(|window| window == &payload[..])
+            .expect("the stored payload");
+        bytes[at] ^= 0xff;
+        let err = unpack(&bytes).expect_err("a bad checksum");
+        assert!(
+            matches!(&err, ApiError::Unprocessable { detail, .. } if detail.contains("not a configuration bundle")),
+            "{err:?}"
+        );
+    }
+
+    /// T-7918: a bundle whose files together unpack past the cap is 413, each file within it.
+    #[test]
+    fn a_bundle_that_unpacks_past_the_cap_is_too_large() {
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated)
+            .compression_level(Some(1));
+        let chunk = vec![0u8; 1024 * 1024];
+        let per_file = s3::MAX_OBJECT_BYTES / 2 + chunk.len();
+        for name in ["a.bin", "b.bin"] {
+            writer.start_file(name, options).expect("a file");
+            let mut written = 0;
+            while written < per_file {
+                writer.write_all(&chunk).expect("written");
+                written += chunk.len();
+            }
+        }
+        let bytes = writer.finish().expect("a zip").into_inner();
+        let err = unpack(&bytes).expect_err("past the cap");
+        assert!(
+            matches!(&err, ApiError::TooLarge(detail) if detail.contains("256 MiB")),
+            "{err:?}"
+        );
+    }
+
+    /// T-7918: a manifest the Organization does not hold is created by a restore, one that
+    /// differs is changed, and one that is as it was is counted unchanged.
+    #[test]
+    fn a_manifest_is_created_changed_or_unchanged_against_the_live_one() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let manifest = |slug: &str| {
+            crate::store::envelope_of(&format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e\n  \
+                 namespace: p\nspec:\n  slug: {slug}\n"
+            ))
+            .expect("an Endpoint")
+        };
+        let mut group = PlanGroup::default();
+        compare(&state, &manifest("one"), "p", &mut group);
+        assert_eq!(group.created, ["Endpoint/e"]);
+        state.mirror.upsert(manifest("one"));
+        compare(&state, &manifest("one"), "p", &mut group);
+        assert_eq!(group.unchanged, 1);
+        compare(&state, &manifest("two"), "p", &mut group);
+        assert_eq!(group.changed, ["Endpoint/e"]);
+        assert_eq!(group.created.len(), 1);
+    }
 }

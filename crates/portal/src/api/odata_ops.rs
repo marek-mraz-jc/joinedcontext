@@ -479,10 +479,8 @@ pub(crate) async fn answer(
     context: &str,
 ) -> Response {
     let caller = caller_of(user, front);
-    let response = match respond(op, ops::call(op, &caller, state, project, input).await) {
-        Ok(response) => response,
-        Err(refused) => return refused.into_response(),
-    };
+    // A `Result` of two answers is the answer it holds.
+    let response = respond(op, ops::call(op, &caller, state, project, input).await).into_response();
     if !response.status().is_success() {
         return response;
     }
@@ -552,6 +550,23 @@ mod tests {
             let call = format!("f(a={word})");
             assert!(function_call(&call, "").is_err(), "{call}");
         }
+    }
+
+    /// T-7917 (API/13 §2b): `$metadata` declares the operations a function or an action carries,
+    /// and none an entity set answers or an entity binds.
+    #[test]
+    fn the_metadata_declares_only_what_a_function_or_an_action_carries() {
+        let hidden = ops::registry()
+            .iter()
+            .find(|op| form(op.name).is_none())
+            .expect("an operation a set answers");
+        assert_eq!(xml(&[hidden]), "");
+        let shown = ops::find("jc_schema_get").expect("a registered function");
+        let declared = xml(&[shown]);
+        assert!(
+            declared.contains(r#"<Function Name="jc_schema_get" IsBound="true">"#),
+            "{declared}"
+        );
     }
 
     #[test]

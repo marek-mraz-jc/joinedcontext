@@ -124,16 +124,20 @@ async fn ui_build(ui_url: Option<&str>) -> Option<Build> {
         }
         None => {
             let bytes = crate::assets::Assets::get("version.json")?.data;
-            let mut build: Build = serde_json::from_slice(&bytes).ok()?;
-            // The embedded bundle was built with this binary: a bundle that names no commit
-            // (the jc image keeps version.json commit-free, bins/jc/Dockerfile) is this one's.
-            if build.commit.is_empty() {
-                build.commit = built_commit();
-            }
-            return Some(build);
+            return embedded_build(&bytes);
         }
     };
     serde_json::from_slice(&bytes).ok()
+}
+
+/// The embedded bundle's `version.json`. It was built with this binary: a bundle that names no
+/// commit (the jc image keeps version.json commit-free, bins/jc/Dockerfile) is this one's.
+fn embedded_build(bytes: &[u8]) -> Option<Build> {
+    let mut build: Build = serde_json::from_slice(bytes).ok()?;
+    if build.commit.is_empty() {
+        build.commit = built_commit();
+    }
+    Some(build)
 }
 
 /// The commit this binary was built from: the `JC_PORTAL_COMMIT` build argument (the Portal's own
@@ -192,7 +196,21 @@ pub fn router() -> axum::Router<crate::state::AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::{commit_of, ui_build};
+    use super::{built_commit, commit_of, embedded_build, ui_build};
+
+    /// The embedded bundle's build: its own commit when it names one, this binary's when not,
+    /// and no build for a file that is no JSON.
+    #[test]
+    fn the_embedded_bundle_names_this_binarys_commit_when_it_names_none() {
+        let named = embedded_build(br#"{"commit":"abc123","openapi":"ff"}"#).expect("a build");
+        assert_eq!(
+            (named.commit.as_str(), named.openapi.as_str()),
+            ("abc123", "ff")
+        );
+        let bare = embedded_build(br#"{"openapi":"ff"}"#).expect("a build");
+        assert_eq!(bare.commit, built_commit());
+        assert!(embedded_build(b"not json").is_none());
+    }
 
     #[test]
     fn the_build_argument_wins_and_the_environment_fills_in() {

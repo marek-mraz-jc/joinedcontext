@@ -2186,7 +2186,8 @@ mod tests {
             .expect("a port");
         let addr = listener.local_addr().expect("an address");
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 tokio::spawn(async move {
                     let _ = socket.read(&mut [0u8; 2048]).await;
                     let _ = socket.write_all(head.as_bytes()).await;
@@ -2282,6 +2283,19 @@ mod tests {
         .await;
         let read = action_with(&reqwest::Client::new(), &base, "package_search", &[]).await;
         assert!(matches!(read, Err(Failure::Unreachable(reason)) if reason.contains("more than")));
+    }
+
+    /// A catalogue that closes the connection before the length it announced is an answer that
+    /// broke off.
+    #[tokio::test]
+    async fn an_answer_cut_short_broke_off() {
+        let base = answering(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 4096\r\n\r\n",
+            16,
+        )
+        .await;
+        let read = action_with(&reqwest::Client::new(), &base, "package_search", &[]).await;
+        assert!(matches!(read, Err(Failure::Unreachable(reason)) if reason.contains("broke off")));
     }
 
     fn dataset(name: &str, org: &str, extras: Value, formats: &[&str], private: bool) -> Value {
@@ -2474,6 +2488,13 @@ mod tests {
                 json!({ "slug": slug, "audience": audience }),
             );
         }
+        // An Endpoint that names no slug places no dataset.
+        put(
+            "Endpoint",
+            "unslugged",
+            "helsinki",
+            json!({ "audience": "public" }),
+        );
         let ours = |slug: &str| endpoint_url(&state.config.api_base_url(), slug);
         let all = vec![
             dataset(
@@ -2618,7 +2639,7 @@ mod tests {
         let (cache, page) = ask(Err(ApiError::Unauthorized)).await;
         assert!(cache.starts_with("public"), "{cache}");
         assert_eq!((page.total, page.unanswered), (0, 0));
-        assert!(page.datasets.iter().all(|d| d.endpoint.is_none()));
+        assert!(page.datasets.is_empty());
         assert!(page.facets.publisher.is_empty());
         let session = crate::auth::session::Session {
             identity: crate::auth::session::Identity {
@@ -3706,6 +3727,63 @@ classes:
         );
     }
 
+    /// With a basemap configured, a dataset's map names the project whose basemap draws under it.
+    #[tokio::test]
+    async fn a_map_names_its_projects_basemap_when_one_is_configured() {
+        use wiremock::matchers::{method, path, query_param};
+        let gateway = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/types")))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "typeList": ["Tree"] })),
+            )
+            .mount(&gateway)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities")))
+            .and(query_param("type", "Tree"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!([air(
+                    "urn:ngsi-ld:Tree:1",
+                    Some(json!({"type": "Point", "coordinates": [24.9, 60.1]})),
+                )])),
+            )
+            .mount(&gateway)
+            .await;
+        let host = "https://cat-basemap.example.invalid";
+        let probe = installation(
+            host,
+            &format!("http://{}:9", std::net::Ipv4Addr::LOCALHOST),
+            None,
+            public_spec(),
+        );
+        let ckan = ckan_showing("basemap-t7919", published(&probe, "basemap-t7919")).await;
+        let base = installation(host, &ckan.uri(), Some(&gateway.uri()), public_spec());
+        let mut config = (*base.config).clone();
+        config.basemap = Some(crate::config::BasemapConfig::for_tests(
+            "http://tiles.example.invalid/{z}/{x}/{y}.png".to_owned(),
+            "test tiles".to_owned(),
+            std::env::temp_dir().join(format!("jc-catalogue-basemap-{}", std::process::id())),
+        ));
+        let state = AppState::new(config, None).with_mirror(base.mirror.clone());
+        // A language of its own, so no map another test cached answers this one.
+        let (status, map) = answer(
+            get_map(
+                State(state),
+                HeaderMap::new(),
+                Path("basemap-t7919".into()),
+                axum::extract::Query(MapQuery {
+                    lang: Some("xbm".into()),
+                }),
+            )
+            .await,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{map}");
+        assert_eq!(map["basemap"], "helsinki", "{map}");
+        assert_eq!(map["features"].as_array().map(Vec::len), Some(1), "{map}");
+    }
+
     /// A count header that is no number leaves the total unknown.
     #[tokio::test]
     async fn a_count_that_is_no_number_leaves_the_total_unknown() {
@@ -3889,6 +3967,18 @@ classes:
         );
         assert_eq!(extra(&json!({ "extras": "no list" }), "endpoint"), None);
         assert_eq!(extra(&json!({}), "endpoint"), None);
+    }
+
+    /// An organization with no title keeps its name alone, and is credited by that name.
+    #[test]
+    fn an_organization_without_a_title_is_named_by_its_slug() {
+        let untitled = json!({ "name": "d", "organization": { "name": "hel" } });
+        assert_eq!(slim(&untitled)["organization"], json!({ "name": "hel" }));
+        let credited = publisher(&untitled).expect("a publisher");
+        assert_eq!(
+            (credited.name.as_str(), credited.title.as_str()),
+            ("hel", "hel")
+        );
     }
 
     /// A model the display order cannot parse orders by the heuristic, as a type without one.

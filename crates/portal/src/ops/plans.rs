@@ -2058,6 +2058,61 @@ mod tests {
 
     /// S-10: a breaking change counts the stored entities of the class it touches, also for a
     /// top-level slot a class lists.
+    /// A breaking change's stored entities are not counted when the model names no space or the
+    /// space's broker cannot count them, and the row says why; an additive change, or one of a
+    /// class the published model does not hold, carries no count at all.
+    #[tokio::test]
+    async fn a_breaking_change_says_why_its_entities_were_not_counted() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let held = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Content": "Y2xhc3NlczoKICBQYXJraW5nOgogICAgc2xvdHM6IFtzcGFjZXNdCnNsb3RzOgogIHNwYWNlczoKICAgIHJhbmdlOiBpbnRlZ2VyCg==", "Encoding": "base64",
+                "Sha": "s1", "Path": "doprava/parking.linkml.yaml"
+            })))
+            .mount(&held)
+            .await;
+        let state = on_forge(&held).await;
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("parking", "doprava"),
+            spec: json!({ "contextSpaceRef": "mobility", "linkml": "./parking.linkml.yaml" }),
+            status: None,
+        });
+        let change = |severity: &str, subject: &str| datamodels::ModelChange {
+            severity: severity.into(),
+            subject: subject.into(),
+            reason: "r".into(),
+        };
+        let changes = [
+            change("breaking", "Parking.spaces"),
+            change("additive", "Parking.name"),
+            change("breaking", "Kiosk.name"),
+        ];
+        for (manifest, why) in [
+            (json!({ "spec": {} }), "the model names no contextSpaceRef"),
+            (
+                json!({ "spec": { "contextSpaceRef": "mobility" } }),
+                "could not be counted",
+            ),
+        ] {
+            let rows = affected(&state, "doprava", "parking", &manifest, &changes).await;
+            assert!(rows[0]["affectedEntities"].is_null(), "{rows:?}");
+            assert!(
+                rows[0]["notCounted"]
+                    .as_str()
+                    .is_some_and(|text| text.contains(why)),
+                "{rows:?}"
+            );
+            for row in &rows[1..] {
+                assert!(row.get("notCounted").is_none(), "{row}");
+            }
+        }
+    }
+
     #[test]
     fn a_change_touches_its_class_or_every_class_listing_its_slot() {
         let published = json!({ "classes": {
@@ -2176,6 +2231,12 @@ mod tests {
             refused(elsewhere),
             "invalid input at /changes/0/manifest/metadata/namespace: Endpoint lives in \
              namespace 'doprava', not 'kosice': set metadata.namespace to 'doprava' or leave it out"
+        );
+        let mut carried = with(Op::Patch, "held");
+        carried.patch = Some(json!({}));
+        assert_eq!(
+            refused(carried),
+            "invalid input at /changes/0/patch: op patch takes patch alone"
         );
         let mut merge = bare(Op::Patch, "held");
         merge.patch = Some(json!({ "spec": { "audience": "organization" } }));
@@ -2511,9 +2572,38 @@ mod tests {
         assert!(why.starts_with("autonomous:"), "{why}");
         // Allowed, it reaches the approval path, which has no forge to merge on here.
         state.mirror.upsert(policy(true));
-        let waiting = applied(state.clone(), connector).await;
+        let waiting = applied(state.clone(), connector.clone()).await;
         let why = waiting[0]["waits"].as_str().expect("waits");
         assert!(!why.starts_with("autonomous:"), "{why}");
+        // A row that opened no change (it carries no id) has nothing to approve.
+        let mut opened = vec![json!({ "error": "refused" })];
+        let waiting =
+            approve_autonomously(&state, &caller(None), "doprava", &connector, &mut opened).await;
+        assert!(waiting.is_empty(), "{waiting:?}");
+        assert_eq!(opened, [json!({ "error": "refused" })]);
+    }
+
+    /// T-5979: a notice the approvers' inbox cannot take is logged; the change stays opened and
+    /// the apply goes on (T-7921).
+    #[tokio::test]
+    async fn an_approvers_notice_that_cannot_be_written_leaves_the_apply_going() {
+        let mirror = crate::test_db::placed_mirror("doprava");
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_mirror(mirror.clone());
+        state.comments = std::sync::Arc::new(crate::entity_comments::CommentStore::new(
+            Some(crate::test_db::dead_pool()),
+            mirror,
+        ));
+        let opened = [
+            json!({ "id": "chg-00000001" }),
+            json!({ "error": "refused" }),
+        ];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            notify_approvers(&state, &caller(None), "doprava", "auto", &opened),
+        )
+        .await
+        .expect("the notice gives up instead of holding the apply");
     }
 
     /// T-6302: create or edit is judged from the forge, never from the client's `op`; a
@@ -2583,12 +2673,11 @@ mod tests {
         )
         .await;
         // (The test person holds no role, so the person's own check refuses it next.)
-        if let Err(OpError::Api(ApiError::Denied(why))) = &fresh {
-            assert!(
-                !why.contains("may not"),
-                "a create was refused as a verb: {why}"
-            );
-        }
+        let why = format!("{fresh:?}");
+        assert!(
+            !why.contains("may not"),
+            "a create was refused as a verb: {why}"
+        );
         // A kind the list leaves out is read only.
         let why = denied(
             plan(
@@ -2655,8 +2744,8 @@ mod tests {
         let server = MockServer::start().await;
         let mut pull = json!({ "Number": 7, "Head": "portal/air-1", "HeadSha": "h1", "Base": "main",
                                "Merged": true, "MergeBase": "b1", "MergeCommitSha": "m1" });
-        if let (Some(pull), Value::Object(row)) = (pull.as_object_mut(), row) {
-            pull.extend(row);
+        for (key, value) in row.as_object().into_iter().flatten() {
+            pull[key] = value.clone();
         }
         Mock::given(method("GET"))
             .and(path(
@@ -2778,6 +2867,47 @@ mod tests {
             .mount(&server)
             .await;
         server
+    }
+
+    /// A dry run of an inline manifest that names no draft answers its verdict from the forge
+    /// (T-7921).
+    #[tokio::test]
+    async fn an_inline_dry_run_answers_its_verdict() {
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        let space = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "parks", "namespace": "doprava" },
+            "spec": { "isSandbox": true }
+        });
+        let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
+        let checked = (op.run)(&steward(), &state, "doprava", json!({ "manifest": space }))
+            .await
+            .map_err(|err| format!("{err:?}"))
+            .expect("a verdict");
+        assert_eq!(checked["valid"], true, "{checked}");
+        assert_eq!(checked["verdict"]["ok"], true, "{checked}");
+    }
+
+    /// A revert asked by someone who does not read the project is the same 404 as a change
+    /// that is not there (T-7921).
+    #[tokio::test]
+    async fn a_revert_for_an_outsider_is_a_change_not_found() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let op = crate::ops::find("jc_change_revert_plan").expect("registered");
+        let refused = (op.run)(
+            &caller(None),
+            &state,
+            "doprava",
+            json!({ "id": "chg-00000035" }),
+        )
+        .await
+        .expect_err("refused");
+        assert!(
+            matches!(&refused, OpError::Api(ApiError::NotFound(why))
+                if why == "change 'chg-00000035' not found in project 'doprava'"),
+            "{refused:?}"
+        );
     }
 
     fn steward() -> Caller {
@@ -2996,10 +3126,232 @@ mod tests {
         assert!(why.contains("DataModel 'parking' is already open"), "{why}");
         assert!(why.contains("nothing of the plan was opened"), "{why}");
         let requests = server.received_requests().await.expect("requests");
+        let written: Vec<&str> = requests
+            .iter()
+            .filter_map(|r| (r.method.as_str() != "GET").then_some(r.url.path()))
+            .collect();
+        assert!(written.is_empty(), "nothing written: {written:?}");
+    }
+
+    fn scoped_connector(writes: bool) -> crate::connectors::Connector {
+        crate::connectors::Connector {
+            id: "c9".into(),
+            name: "doprava-in-claude".into(),
+            owner: "sub-jana".into(),
+            segments: vec!["context".into()],
+            scope: vec![],
+            kinds: None,
+            writes,
+            autonomous: false,
+            expires_at: TimestampTz::now() + jiff::SignedDuration::from_hours(24),
+            allowed_clients: vec![],
+            client_is_boundary: false,
+            state: "active".into(),
+            created_at: TimestampTz::now(),
+            granted_at: TimestampTz::now(),
+            over: vec![],
+            last_used_at: None,
+            url: "https://portal.test/c/c9".into(),
+            limits: crate::connectors::DEFAULT_LIMITS,
+            above_ceiling: vec![],
+            approval: None,
+            narrowed_by: vec![],
+        }
+    }
+
+    /// A connector reaching nothing of the project is refused a change there, as a denial (AG-144);
+    /// a person's own call passes the connector's half untouched.
+    #[test]
+    fn a_connector_reaching_nothing_is_denied_the_change() {
+        let through = caller(Some(scoped_connector(true).access()));
+        let err = through_connector(&through, "doprava", "Endpoint", "air", None, true)
+            .expect_err("no scope item");
         assert!(
-            requests.iter().all(|r| r.method.as_str() == "GET"),
-            "nothing written: {:?}",
-            requests.iter().map(|r| r.url.path()).collect::<Vec<_>>()
+            matches!(&err, OpError::Api(ApiError::Denied(why)) if why.contains("does not reach Endpoint air")),
+            "{err:?}"
         );
+        assert!(through_connector(&caller(None), "doprava", "Endpoint", "air", None, true).is_ok());
+    }
+
+    /// A model's published file: `absent` while no model of that name is mirrored or the forge
+    /// holds no file, its hash once it does, and an unreachable forge an error, never `absent`.
+    #[tokio::test]
+    async fn a_model_source_etag_is_absent_hashed_or_an_error() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let bare = AppState::new(crate::config::Config::for_tests(), None);
+        assert_eq!(
+            source_etag(&bare, "doprava", "parking")
+                .await
+                .expect("absent"),
+            "absent"
+        );
+        let model = crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("parking", "doprava"),
+            spec: json!({ "contextSpaceRef": "mobility", "linkml": "./parking.linkml.yaml" }),
+            status: None,
+        };
+        bare.mirror.upsert(model.clone());
+        assert!(
+            source_etag(&bare, "doprava", "parking").await.is_err(),
+            "no forge: the file cannot be read, so its etag is not guessed"
+        );
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        state.mirror.upsert(model.clone());
+        assert_eq!(
+            source_etag(&state, "doprava", "parking")
+                .await
+                .expect("absent"),
+            "absent",
+            "the forge holds no file"
+        );
+        let held = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Content": "aWQ6IHgK", "Encoding": "base64",
+                "Sha": "s1", "Path": "doprava/parking.linkml.yaml"
+            })))
+            .mount(&held)
+            .await;
+        let state = on_forge(&held).await;
+        state.mirror.upsert(model);
+        let etag = source_etag(&state, "doprava", "parking")
+            .await
+            .expect("a held file is hashed");
+        assert_eq!(etag.len(), 64, "a sha256: {etag}");
+    }
+
+    /// The 422's lines: a finding's `at` wins over its dotted path, a path-less finding names the
+    /// manifest, warnings and notes are left out, and a red diff with no finding still says the
+    /// check failed.
+    #[test]
+    fn a_red_diff_lists_its_findings_or_says_the_check_failed() {
+        let diff = json!({ "verdict": { "findings": [
+            { "level": "error", "path": "spec.slug", "message": "taken" },
+            { "level": "error", "at": "/source/classes", "message": "unknown" },
+            { "level": "error", "path": "" },
+            { "level": "warning", "path": "spec", "message": "w" },
+            { "level": "info", "message": "i" }
+        ] } });
+        assert_eq!(
+            findings_of("/changes/0", &diff),
+            vec![
+                "/changes/0/manifest/spec/slug: taken",
+                "/changes/0/source/classes: unknown",
+                "/changes/0/manifest: the check failed",
+            ]
+        );
+        for empty in [
+            json!({}),
+            json!({ "verdict": { "findings": [{ "level": "info" }] } }),
+        ] {
+            assert_eq!(
+                findings_of("/changes/2", &empty),
+                vec!["/changes/2/manifest: the check failed"]
+            );
+        }
+    }
+
+    /// Without a forge a bundled plan opens nothing and says the forge is missing.
+    #[tokio::test]
+    async fn a_bundled_plan_without_a_forge_is_unavailable() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let err = opened_together(&state, &model_and_space())
+            .await
+            .expect_err("no forge");
+        assert!(
+            err.to_string().contains("git forge is not configured"),
+            "{err}"
+        );
+    }
+
+    /// An item with no manifest is passed over and an object that exists is proposed as an
+    /// update; a forge that deletes the refused branch leaves no warning behind.
+    #[tokio::test]
+    async fn a_bundle_skips_a_removal_proposes_an_update_and_removes_a_refused_branch() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        let mut plan = model_and_space();
+        let mut removal = plan.items[1].clone();
+        removal.manifest = None;
+        plan.items.insert(0, removal);
+        let opened = opened_together(&state, &plan).await;
+        assert!(
+            opened.is_ok(),
+            "a bundle passes over its removal: {opened:?}"
+        );
+
+        let server = empty_forge(None).await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0ffee" })))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.DeleteBranch")))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let state = on_forge(&server).await;
+        let mut plan = model_and_space();
+        plan.items[1].base = "e1".into();
+        let why = opened_together(&state, &plan)
+            .await
+            .expect_err("the second write is refused")
+            .to_string();
+        assert!(why.contains("ContextSpace mobility was refused"), "{why}");
+    }
+
+    /// A model in a bundle is refused to a person who may not propose models, and a model whose
+    /// manifest is no manifest is refused as a bad request; nothing is opened either way.
+    #[tokio::test]
+    async fn a_bundled_model_is_refused_to_a_non_approver_and_when_malformed() {
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        let plan = model_and_space();
+        let manifests = plan
+            .items
+            .iter()
+            .filter_map(|i| i.manifest.clone())
+            .collect();
+        let why = crate::references::BUNDLE
+            .scope(manifests, open_together(&caller(None), &state, "p1", &plan))
+            .await
+            .expect_err("no propose right")
+            .to_string();
+        assert!(why.contains("DataModel parking was refused"), "{why}");
+        let mut plan = model_and_space();
+        plan.items[0].manifest = Some(json!({ "kind": "DataModel", "spec": {} }));
+        let err = model_proposal(
+            &steward(),
+            &state,
+            &plan.items[0],
+            &json!({ "kind": "DataModel" }),
+        );
+        assert!(
+            matches!(&err, Err(ApiError::BadRequest(why)) if why.contains("invalid DataModel manifest")),
+            "{:?}",
+            err.as_ref().err()
+        );
+        let why = propose_source(&steward(), &state, &plan.items[1], &json!({}))
+            .await
+            .expect_err("a space has no model half")
+            .to_string();
+        assert!(why.contains("a model change without its source"), "{why}");
     }
 }

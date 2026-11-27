@@ -480,3 +480,82 @@ async fn an_archive_streams_through_and_is_cut_at_the_limit() {
         "cut early at {received}"
     );
 }
+
+/// T-7918: an Organization that is not the installation's lists its projects and Apps and no
+/// configuration repository, even when the forge holds it.
+#[tokio::test]
+async fn a_non_installation_organization_lists_no_configuration_repository() {
+    let forge = forge_with_every_repository().await;
+    let state = world(&forge.uri());
+    // bob administers bravo, which is not the installation's Organization, on bravo's host.
+    let bravo = joinedcontext_portal::organization_host::OrganizationHost {
+        organization: "bravo".to_owned(),
+        base: "https://portal.bravo.example".parse().expect("url"),
+    };
+    let answer = joinedcontext_portal::organization_host::scope(
+        bravo,
+        send(&state, person("bob"), "GET", DOOR, None),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    let names: Vec<&str> = body["repositories"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    assert!(!names.contains(&"org"), "{names:?}");
+    assert!(names.contains(&"bravo-town"), "{names:?}");
+    assert!(
+        names.iter().all(|n| n.starts_with("bravo-town")),
+        "{names:?}"
+    );
+}
+
+/// T-7918: a repository the mirror names but the forge lost (404) is left out of the list, and
+/// the list still answers 200 with the others.
+#[tokio::test]
+async fn a_repository_the_forge_lost_is_left_out_of_the_list() {
+    let forge = forge_with_every_repository().await;
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories(Owner='jc',Name='alfa-city')"))
+        .respond_with(ResponseTemplate::new(404))
+        .with_priority(1)
+        .mount(&forge)
+        .await;
+    let state = world(&forge.uri());
+    let answer = send(&state, person("ada"), "GET", DOOR, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    let names: Vec<&str> = body["repositories"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .filter_map(|r| r["name"].as_str())
+        .collect();
+    assert_eq!(names, ["org", "alfa-city_air-map"]);
+}
+
+/// T-7918: a download whose audit row cannot be written (the activity store's database is down)
+/// still streams the archive: the warning is the only trace, the answer is 200.
+#[tokio::test]
+async fn a_download_is_served_when_its_audit_row_cannot_be_written() {
+    let forge = forge_with_every_repository().await;
+    let mut state = world(&forge.uri());
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    state.activity =
+        joinedcontext_portal::activity::ActivityStore::new(Some(pool), state.mirror.clone());
+    let response = download(&state, "alfa-city").await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response
+        .into_body()
+        .collect()
+        .await
+        .expect("body")
+        .to_bytes();
+    assert_eq!(&body[..], ARCHIVE);
+}

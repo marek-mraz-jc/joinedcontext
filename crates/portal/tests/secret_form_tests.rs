@@ -315,6 +315,91 @@ async fn a_typed_secret_lands_encrypted_in_a_change_and_only_the_portal_reads_it
     );
 }
 
+/// A name another file of the folder declares is a 409 naming that file; a listed file the
+/// forge no longer has is skipped; a change of the secret already open is a 409 naming it.
+#[tokio::test]
+async fn a_name_held_elsewhere_or_an_open_change_of_it_is_a_conflict() {
+    let world = world().await;
+    let bundle = joinedcontext_portal::secret_files::encrypt(
+        "bundled",
+        &[(
+            "token".to_owned(),
+            zeroize::Zeroizing::new("old".to_owned()),
+        )]
+        .into(),
+        &[world.identity.to_public().to_string()],
+        "2026-10-28T00:00:00Z",
+    )
+    .expect("bundle file");
+    let bundle_path = "projects/ovzdusie/secrets/bundle.enc.yaml";
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "tree-2", "Truncated": false, "Tree": [
+                { "Path": "projects/ovzdusie/secrets/feed.enc.yaml", "Type": "blob", "Sha": "b1" },
+                { "Path": bundle_path, "Type": "blob", "Sha": "b4" },
+                { "Path": "projects/ovzdusie/secrets/gone.enc.yaml", "Type": "blob", "Sha": "b5" }
+            ] })))
+        .with_priority(1)
+        .mount(&world._forge)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{bundle_path}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "b4",
+            "Content": base64::engine::general_purpose::STANDARD.encode(&bundle),
+        })))
+        .with_priority(1)
+        .mount(&world._forge)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 12, "State": "open", "Head": "portal/secret-ovzdusie-counters-api"
+        }] })))
+        .with_priority(1)
+        .mount(&world._forge)
+        .await;
+
+    let (status, listed) = world.send("pia@hel.fi", "GET", None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let names: Vec<String> = serde_json::from_str::<Value>(&listed).expect("json")["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["name"].as_str().map(str::to_owned))
+        .collect();
+    assert_eq!(names, ["bundled", "feed"], "the gone file is skipped");
+
+    let (status, answer) = world
+        .send(
+            "pia@hel.fi",
+            "POST",
+            Some(json!({ "name": "bundled", "values": { "token": TYPED } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert!(answer.contains(bundle_path), "{answer}");
+
+    let (status, answer) = world
+        .send(
+            "pia@hel.fi",
+            "POST",
+            Some(json!({ "name": "counters-api", "values": { "apiKey": TYPED } })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{answer}");
+    assert!(answer.contains("is open already"), "{answer}");
+    assert!(!answer.contains(TYPED));
+    assert!(
+        world.writes.lock().expect("lock").is_empty(),
+        "nothing written"
+    );
+}
+
 #[tokio::test]
 async fn the_form_refuses_a_bad_field_a_taken_name_and_a_reader() {
     let world = world().await;

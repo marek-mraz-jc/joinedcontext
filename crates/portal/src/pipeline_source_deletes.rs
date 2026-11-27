@@ -1783,6 +1783,46 @@ pub fn overview(
 mod tests {
     use super::*;
 
+    /// A panic while the in-memory ledger was held poisons its lock; every later call still
+    /// reads and writes the ledger instead of failing every pipeline run after it.
+    #[tokio::test]
+    async fn a_poisoned_memory_ledger_still_keeps_its_books() {
+        let ledger = Ledger::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = ledger.memory();
+                    panic!("poison the ledger's lock on purpose");
+                })
+                .join();
+        });
+        assert!(matches!(&ledger.inner, Inner::Memory(map) if map.is_poisoned()));
+        let ids = vec![
+            "urn:ngsi-ld:Garden:1".to_owned(),
+            "urn:ngsi-ld:Garden:2".to_owned(),
+        ];
+        ledger
+            .seen("p", "pl", "r1", &ids, true)
+            .await
+            .expect("seen");
+        let (rows, _) = ledger.book("p", "pl").await.expect("book");
+        assert_eq!(rows.len(), 2);
+        ledger
+            .settle("p", "pl", &[(ids[0].clone(), 1)], None)
+            .await
+            .expect("settle");
+        ledger.keep("p", "pl").await.expect("keep");
+        ledger.completed("p", "pl", "r1").await.expect("completed");
+        ledger
+            .removed("p", "space", "pl", ("r1", Cause::Snapshot), &ids[1..])
+            .await
+            .expect("removed");
+        ledger.forget("p", "pl", &ids[..1]).await.expect("forget");
+        let (rows, _) = ledger.book("p", "pl").await.expect("book");
+        // The forgotten id is gone; the removed one waits for its run's outcome.
+        assert_eq!(rows.keys().collect::<Vec<_>>(), [&ids[1]]);
+    }
+
     /// An id of `len` bytes, distinct per `n`.
     fn id_of(len: usize, n: usize) -> String {
         let head = format!("urn:ngsi-ld:Garden:{n}:");
@@ -1941,12 +1981,14 @@ mod tests {
     fn more_than_the_share_is_held_and_deletes_nothing() {
         let rows = fifty(&[1, 2, 3, 4, 5, 6], "r2", 1);
         let (misses, verdict) = judge(&rows, "r2", &rule(2, 10));
-        assert!(matches!(verdict, Verdict::Held(_)), "{verdict:?}");
-        if let Verdict::Held(hold) = verdict {
-            assert_eq!(hold.reason, HoldReason::ShareExceeded);
-            assert_eq!((hold.would, hold.ledger), (6, 50));
-            assert!(hold.detail().contains("would delete 6 of 50"));
-        }
+        let hold = Hold {
+            run: "r2".into(),
+            reason: HoldReason::ShareExceeded,
+            would: 6,
+            ledger: 50,
+        };
+        assert!(hold.detail().contains("would delete 6 of 50"));
+        assert_eq!(verdict, Verdict::Held(hold));
         // The misses still count, so the next complete run is judged the same way.
         assert_eq!(misses.iter().filter(|(_, m)| *m == 2).count(), 6);
         // Five of fifty is the share exactly and goes.
@@ -2133,9 +2175,8 @@ mod tests {
             "/tests/fixtures/source-deletes/stream.json"
         );
         let text = serde_json::to_string_pretty(&stream).expect("json") + "\n";
-        if std::env::var_os("JC_UPDATE_GOLDEN").is_some() {
-            std::fs::write(golden, &text).expect("golden written");
-        }
+        let update = std::env::var_os("JC_UPDATE_GOLDEN").is_some();
+        let _ = update.then(|| std::fs::write(golden, &text).expect("golden written"));
         assert_eq!(std::fs::read_to_string(golden).expect("golden"), text);
     }
 
@@ -3283,9 +3324,7 @@ mod tests {
                     tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(2)))
                         .await
                         .expect("the wait");
-                    if hung_up.load(Ordering::SeqCst) {
-                        after += 1;
-                    }
+                    after += usize::from(hung_up.load(Ordering::SeqCst));
                 }
                 started
             })
