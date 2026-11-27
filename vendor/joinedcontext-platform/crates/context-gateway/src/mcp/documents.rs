@@ -785,7 +785,7 @@ mod tests {
         value.as_object().cloned().unwrap_or_default()
     }
 
-    /// An assistant on 127.0.0.1 that answers every call `500`.
+    /// An assistant on the loopback address that answers every call `500`.
     async fn failing_assistant() -> String {
         let app = axum::Router::new()
             .fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR });

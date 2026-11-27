@@ -734,7 +734,7 @@ mod tests {
             .expect("a request")
     }
 
-    /// RFC 7591 §3.2.2, RFC 6749 §3.1.2.3 and §5.2: a registration that is no JSON is
+    /// RFC 7591 §3.2.2, RFC 6749 §3.1.2 and §5.2: a registration that is no JSON is
     /// `invalid_client_metadata`, an authorize without `redirect_uri` goes to the one URI the
     /// client registered, and a token refusal is 401 for the client and 400 otherwise.
     #[tokio::test]
