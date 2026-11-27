@@ -189,6 +189,49 @@ fn request_state_key(
     Ok(None)
 }
 
+/// `[antares.database]` over the broker's environment: Postgres as the store (memory turns into
+/// postgres, another store is refused), the request, owner and maintenance logins with their
+/// passwords, and the pool size. `one_process` is `ANTARES_ALLOW_SHARED_LOCAL`.
+fn use_database(
+    broker_cfg: &mut antares_broker::BrokerConfig,
+    db: &crate::pg::DatabaseSection,
+    one_process: bool,
+) -> Result<(), StartError> {
+    match broker_cfg.store_name.as_str() {
+        "memory" => broker_cfg.store_name = "postgres".into(),
+        "postgres" | "timescale" => {}
+        other => {
+            return Err(err(format!(
+                "[antares.database] is set but ANTARES_STORE={other}; unset it or use postgres"
+            )));
+        }
+    }
+    // As standalone (`config_from_env`): bus=local over a shared database double-fires
+    // notifications when a second process serves it, unless the deployment says it runs one.
+    if broker_cfg.bus_mode == "local" && !one_process {
+        return Err(err(
+            "[antares.database] with ANTARES_BUS=local double-fires notifications when more \
+             than one jc shares the database; use ANTARES_BUS=nats, or set \
+             ANTARES_ALLOW_SHARED_LOCAL=1 for a single jc process",
+        ));
+    }
+    let url = db.app_url_with_password().map_err(err)?;
+    broker_cfg.database_url = Some(antares_broker::Secret::new(url.expose().to_owned()));
+    // The owner migrates and builds the weekly partitions; the request role then owns
+    // nothing, and the maintenance role runs the cross-Tenant work (T-7310).
+    if let Some(owner) = db.migrate_url_with_password().map_err(err)? {
+        broker_cfg.migration_database_url =
+            Some(antares_broker::Secret::new(owner.expose().to_owned()));
+    }
+    if let Some(maint) = db.maintenance_url_with_password().map_err(err)? {
+        broker_cfg.maintenance_database_url =
+            Some(antares_broker::Secret::new(maint.expose().to_owned()));
+    }
+    // Unset: ANTARES_PG_POOL (default 20), as standalone.
+    broker_cfg.pg_pool = db.max_connections;
+    Ok(())
+}
+
 pub async fn build(
     cfg: &AntaresSection,
     setup: &crate::setup::Setup,
@@ -211,40 +254,9 @@ pub async fn build(
     broker_cfg.admin_token_file = None;
     broker_cfg.admin_token = Some(antares_broker::AdminToken(token.to_owned()));
     if let Some(db) = &cfg.database {
-        match broker_cfg.store_name.as_str() {
-            "memory" => broker_cfg.store_name = "postgres".into(),
-            "postgres" | "timescale" => {}
-            other => {
-                return Err(err(format!(
-                    "[antares.database] is set but ANTARES_STORE={other}; unset it or use postgres"
-                )));
-            }
-        }
-        // As standalone (`config_from_env`): bus=local over a shared database double-fires
-        // notifications when a second process serves it, unless the deployment says it runs one.
         let one_process = crate::config::antares_env("ANTARES_ALLOW_SHARED_LOCAL")
             .is_some_and(|v| matches!(v.as_str(), "1" | "true"));
-        if broker_cfg.bus_mode == "local" && !one_process {
-            return Err(err(
-                "[antares.database] with ANTARES_BUS=local double-fires notifications when more \
-                 than one jc shares the database; use ANTARES_BUS=nats, or set \
-                 ANTARES_ALLOW_SHARED_LOCAL=1 for a single jc process",
-            ));
-        }
-        let url = db.app_url_with_password().map_err(err)?;
-        broker_cfg.database_url = Some(antares_broker::Secret::new(url.expose().to_owned()));
-        // The owner migrates and builds the weekly partitions; the request role then owns
-        // nothing, and the maintenance role runs the cross-Tenant work (T-7310).
-        if let Some(owner) = db.migrate_url_with_password().map_err(err)? {
-            broker_cfg.migration_database_url =
-                Some(antares_broker::Secret::new(owner.expose().to_owned()));
-        }
-        if let Some(maint) = db.maintenance_url_with_password().map_err(err)? {
-            broker_cfg.maintenance_database_url =
-                Some(antares_broker::Secret::new(maint.expose().to_owned()));
-        }
-        // Unset: ANTARES_PG_POOL (default 20), as standalone.
-        broker_cfg.pg_pool = db.max_connections;
+        use_database(&mut broker_cfg, db, one_process)?;
     }
     if let Some(url) = &broker_cfg.database_url {
         refuse_shared_login(
@@ -371,6 +383,48 @@ async fn serve_hop(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `[antares.database]` over the broker's environment: an explicit postgres store is kept,
+    /// another store and a local bus without `ANTARES_ALLOW_SHARED_LOCAL` are refused, and a
+    /// section without owner or maintenance login sets only the request login.
+    #[test]
+    fn the_database_section_takes_over_the_store_and_refuses_what_it_cannot_serve() {
+        let dir = tempfile::tempdir().unwrap();
+        let pw = dir.path().join("pw");
+        std::fs::write(&pw, "pw-request").unwrap();
+        let db = crate::pg::DatabaseSection {
+            url: "postgres://antares@db:5432/antares".into(),
+            password_file: pw,
+            max_connections: Some(4),
+            migrate_url: None,
+            migrate_password_file: None,
+            maintenance_url: None,
+            maintenance_password_file: None,
+        };
+        let base = antares_broker::config_from_env().expect("the broker's own defaults");
+        let broker = |store: &str, bus: &str| antares_broker::BrokerConfig {
+            store_name: store.into(),
+            bus_mode: bus.into(),
+            ..base.clone()
+        };
+        let mut cfg = broker("postgres", "nats");
+        use_database(&mut cfg, &db, false).expect("postgres over nats");
+        assert_eq!(cfg.store_name, "postgres");
+        assert!(cfg.database_url.is_some());
+        assert!(cfg.migration_database_url.is_none() && cfg.maintenance_database_url.is_none());
+        assert_eq!(cfg.pg_pool, Some(4));
+        let mut cfg = broker("memory", "local");
+        use_database(&mut cfg, &db, true).expect("one process on the local bus");
+        assert_eq!(cfg.store_name, "postgres");
+        let e = use_database(&mut broker("sqlite", "nats"), &db, false)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("ANTARES_STORE=sqlite"), "{e}");
+        let e = use_database(&mut broker("postgres", "local"), &db, false)
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("ANTARES_ALLOW_SHARED_LOCAL"), "{e}");
+    }
 
     /// T-7422: the self URLs hold the broker address the Portal is handed
     /// (`JC_PORTAL_BROKER_URL`), so a registration it writes naming that address is served in
