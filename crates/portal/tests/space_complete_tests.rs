@@ -599,6 +599,20 @@ async fn a_feed_url_without_a_type_names_the_class_after_the_space_never_entity(
     assert!(draft(&body, "DataModel")["manifest"]["metadata"]["description"].is_null());
 }
 
+/// A feed address that is not http(s) infers no model and says so at `url`; nothing is fetched.
+#[tokio::test]
+async fn a_feed_address_that_is_not_http_says_so_at_its_field() {
+    let (status, body) = complete_as_steward(json!({
+        "space": "ftp-feed",
+        "url": "ftp://data.example/stations.json"
+    }))
+    .await;
+    assert!(
+        body.to_string().contains("the URL is not an http(s) URL"),
+        "{status}: {body}"
+    );
+}
+
 #[tokio::test]
 async fn a_type_name_that_is_not_pascal_case_or_a_description_too_long_is_refused() {
     for payload in [

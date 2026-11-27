@@ -313,6 +313,43 @@ async fn a_space_completed_from_a_url_infers_its_model_from_the_probed_records()
     );
 }
 
+/// A model inferred from a public address is inferred from the records the runner fetched there.
+#[tokio::test]
+async fn a_model_is_inferred_from_the_records_a_public_address_answers() {
+    let runner = runner().await;
+    let model_tools = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex("^/infer-schema$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "linkml": "id: https://example.com/stops\nclasses:\n  BusStop:\n    is_a: Entity\n"
+        })))
+        .mount(&model_tools)
+        .await;
+    let mut config = config(Some(&runner));
+    config.model_tools_url = Some(model_tools.uri());
+    let state = AppState::new(config, None).with_mirror(mirror("infer"));
+    let feed = json!({ "data": { "stops": [{ "id": "1", "name": "Rautatientori" }] } });
+    let probed = [json!({ "input": feed.to_string(), "output": feed, "error": null })];
+    let uri = op("infer", "jc_model_infer");
+    let (inferred, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &uri,
+            Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+        ),
+        play_runner(&runner, &state, 0, &probed),
+    );
+    assert_eq!(inferred.status, StatusCode::OK, "{}", inferred.text);
+    assert!(inferred.text.contains("BusStop"), "{}", inferred.text);
+    let sent = model_tools.received_requests().await.expect("recorded");
+    assert!(
+        String::from_utf8_lossy(&sent[0].body).contains("Rautatientori"),
+        "the records the runner fetched are inferred from"
+    );
+}
+
 #[tokio::test]
 async fn a_source_with_a_credential_a_stream_or_no_name_says_what_to_give_instead() {
     let state = state("refusals", None);
@@ -401,6 +438,51 @@ async fn trying_a_mapping_answers_what_the_pipeline_test_answers() {
     assert_eq!(tried["input"], tested["input"]);
     assert_eq!(tried["errors"][0]["line"], 3);
     assert_eq!(tried["errors"][0]["step"], 0);
+}
+
+/// A pipeline test is red at the output type the model lacks and at each record the model
+/// refuses, and with `steps` it names each step it ran.
+#[tokio::test]
+async fn a_pipeline_test_is_red_at_a_type_the_model_lacks_and_a_record_it_refuses() {
+    let runner = runner().await;
+    let state = state("tested", Some(&runner));
+    let pipeline = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Pipeline",
+        "metadata": { "name": "stations" },
+        "spec": {
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "stations-csv" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:bikes:bikes-write",
+            "output": { "type": "Bench", "mode": "upsert" }
+        }
+    });
+    let captured = [json!({ "input": "{}", "error": null, "output": {
+        "id": "urn:ngsi-ld:BikeStation:hel.fi:bikes:01", "type": "BikeStation",
+        "capacity": "twelve" } })];
+    let body = json!({ "pipeline": pipeline, "steps": true,
+        "sample": { "text": "station,capacity\n01,twelve\n", "format": "csv" } });
+    let uri = op("tested", "jc_pipeline_test");
+    let (tested, _) = tokio::join!(
+        send(&state, person("dev"), "POST", &uri, Some(body)),
+        play_runner(&runner, &state, 0, &captured),
+    );
+    assert_eq!(tested.status, StatusCode::OK, "{}", tested.text);
+    let answer = json_of(&tested.text);
+    assert_eq!(answer["verdict"]["ok"], false, "{answer}");
+    let paths: Vec<&str> = answer["verdict"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"spec.output.type"), "{paths:?}");
+    assert!(
+        paths.iter().any(|p| p.starts_with("validation[")),
+        "{paths:?}"
+    );
+    assert!(answer["steps"].is_array(), "{answer}");
 }
 
 #[tokio::test]
