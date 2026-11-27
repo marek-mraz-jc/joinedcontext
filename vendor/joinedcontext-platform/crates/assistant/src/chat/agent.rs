@@ -1417,6 +1417,214 @@ mod tests {
     use crate::chat::clock::{now_line, Zone};
     use time::macros::datetime;
 
+    /// The tool events sent to `rx` so far, as (name, endpoint, status); other events are passed.
+    fn tools_sent(
+        rx: &mut tokio::sync::mpsc::Receiver<Event>,
+    ) -> Vec<(String, Option<String>, &'static str)> {
+        let mut out = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Event::Tool {
+                name,
+                endpoint,
+                status,
+            } = event
+            {
+                out.push((name, endpoint, status));
+            }
+        }
+        out
+    }
+
+    /// A search without a query is refused in words, and one the index cannot answer says the
+    /// search is not available; neither cites anything.
+    #[tokio::test]
+    async fn a_search_without_a_query_or_an_index_fails_in_words() {
+        let parts = crate::chat::test_world::Parts::new();
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&[]);
+        ask.sources = &sources;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (mut citations, mut kept) = (Vec::new(), HashMap::new());
+        for (arguments, said) in [
+            (
+                "{}",
+                "search takes {\"query\": \"…\"}, at most 500 characters.",
+            ),
+            (
+                r#"{"query": "zber odpadu"}"#,
+                "The search is not available right now. Answer without it, and say so.",
+            ),
+        ] {
+            let answer = run_tool(&ask, "search", arguments, &mut citations, &mut kept, &tx).await;
+            assert_eq!(answer, said);
+        }
+        let statuses: Vec<&str> = tools_sent(&mut rx).iter().map(|t| t.2).collect();
+        assert_eq!(statuses, ["started", "failed", "started", "failed"]);
+        assert!(citations.is_empty());
+    }
+
+    /// `run_script` names the cut result it needs and the length of code it takes, and a model
+    /// token that cannot be had is the script's failure, shown to the person too.
+    #[tokio::test]
+    async fn a_script_without_its_result_code_or_token_is_refused_in_words() {
+        let parts = crate::chat::test_world::Parts::new();
+        let mut ask = parts.ask(&[]);
+        ask.functions = Some("http://127.0.0.1:9");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let mut citations = Vec::new();
+        let mut kept = HashMap::from([(1, "[1, 2, 3]".to_owned())]);
+        let mut said = Vec::new();
+        for arguments in [
+            json!({"code": "data.length"}),
+            json!({"result": 1, "code": " "}),
+            json!({"result": 1, "code": "data.length"}),
+        ] {
+            let arguments = arguments.to_string();
+            said.push(
+                run_tool(
+                    &ask,
+                    "run_script",
+                    &arguments,
+                    &mut citations,
+                    &mut kept,
+                    &tx,
+                )
+                .await,
+            );
+        }
+        assert_eq!(
+            said[0],
+            "run_script reads a tool result that was cut; name its number in `result`."
+        );
+        assert!(
+            said[1].starts_with("run_script takes code of 1 to "),
+            "{}",
+            said[1]
+        );
+        assert!(
+            said[2].ends_with(". Fix the script or answer without it."),
+            "{}",
+            said[2]
+        );
+        let script = rx.try_recv().expect("the script event");
+        assert!(
+            matches!(&script, Event::Script { code, output: Err(_) } if code == "data.length"),
+            "the person sees the failed script"
+        );
+    }
+
+    /// A read of a failing Endpoint says so to the model and the person; `count_across` counts
+    /// on each Endpoint it names, each cited, and refuses a list of one.
+    #[tokio::test]
+    async fn a_count_across_endpoints_cites_each_and_a_failing_one_is_said() {
+        use wiremock::matchers::{method, path};
+        let gateway = wiremock::MockServer::start().await;
+        let counted = json!({"entities": [], "total": 4}).to_string();
+        let answer = json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": counted}]}});
+        for slug in ["a", "b"] {
+            wiremock::Mock::given(method("POST"))
+                .and(path(format!("/api/endpoint/{slug}/mcp")))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(answer.clone()))
+                .mount(&gateway)
+                .await;
+        }
+        wiremock::Mock::given(method("POST"))
+            .and(path("/api/endpoint/down/mcp"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&gateway)
+            .await;
+        let tools = [("query_entities", json!({"type": "object"}))];
+        let connectors = ["a", "b", "down"]
+            .map(|slug| crate::chat::test_world::connector(&gateway.uri(), slug, &tools, None));
+        let parts = crate::chat::test_world::Parts::new();
+        let ask = parts.ask(&connectors);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let (mut citations, mut kept) = (Vec::new(), HashMap::new());
+        let failed = run_tool(
+            &ask,
+            "query_entities",
+            r#"{"endpoint": "hronov/down", "type": "Event"}"#,
+            &mut citations,
+            &mut kept,
+            &tx,
+        )
+        .await;
+        assert!(failed.starts_with("The tool did not answer ("), "{failed}");
+        assert!(citations.is_empty());
+        let counts = run_across(
+            &ask,
+            r#"{"endpoints": ["hronov/a", "hronov/b"], "type": "Event"}"#,
+            &mut citations,
+            &mut kept,
+            &tx,
+        )
+        .await;
+        let counts: Value = serde_json::from_str(&counts).expect("the counts as JSON");
+        assert_eq!(counts["tool"], super::super::across::TOOL);
+        assert_eq!(counts["counts"][1]["endpoint"], "hronov/b");
+        assert_eq!(counts["counts"][0]["answer"]["n"], 1);
+        assert_eq!(citations.len(), 2);
+        let refused = run_across(
+            &ask,
+            r#"{"endpoints": ["hronov/a"], "type": "Event"}"#,
+            &mut citations,
+            &mut kept,
+            &tx,
+        )
+        .await;
+        assert!(refused.starts_with("The call was not made"), "{refused}");
+        let sent = tools_sent(&mut rx);
+        assert_eq!(
+            sent[..2],
+            [
+                (
+                    "query_entities".to_owned(),
+                    Some("hronov/down".to_owned()),
+                    "started"
+                ),
+                (
+                    "query_entities".to_owned(),
+                    Some("hronov/down".to_owned()),
+                    "failed"
+                ),
+            ]
+        );
+    }
+
+    /// A read of an Endpoint the manifests no longer name keeps its citation; one of an Endpoint
+    /// with a dataset and no title cites the dataset under its own name; with the store down
+    /// naming the sources fails and leaves them as they are.
+    #[tokio::test]
+    async fn the_manifest_names_what_it_knows_and_a_store_that_is_down_leaves_the_rest() {
+        let mut lent = crate::chat::test_world::connector("http://127.0.0.1:9", "d", &[], None);
+        lent.dataset = Some("https://data.example/dataset/d".into());
+        let read = |endpoint: &str| Citation {
+            n: 1,
+            url: None,
+            tool: Some("query_entities".into()),
+            endpoint: Some(endpoint.into()),
+            title: Some("Event".into()),
+            cards: Vec::new(),
+            dates: Default::default(),
+        };
+        let mut citations = vec![read("hronov/gone"), read("hronov/d")];
+        let connectors = [lent];
+        by_manifest(&connectors, &mut citations);
+        assert_eq!(citations[0].url, None);
+        assert_eq!(
+            citations[1].url.as_deref(),
+            Some("https://data.example/dataset/d")
+        );
+        assert_eq!(citations[1].title.as_deref(), Some("Event"));
+        let parts = crate::chat::test_world::Parts::new();
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&connectors);
+        ask.sources = &sources;
+        name_sources(&ask, &mut citations).await;
+        assert_eq!(citations[0].url, None);
+        assert_eq!(citations[1].title.as_deref(), Some("Event"));
+    }
+
     /// T-3314: the refusal names the place and the rule, never the value the model wrote.
     #[test]
     fn arguments_are_checked_against_the_tools_schema() {

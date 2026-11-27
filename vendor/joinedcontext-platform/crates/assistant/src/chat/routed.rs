@@ -4853,13 +4853,157 @@ mod tests {
         cache.keep_page("d#true|narrowing", PageKept::Missed(9, Instant::now()));
         drop(Miss::new(&cache, "d#true|narrowing", 9));
         let kept = cache.pages.lock().unwrap().get("d#true|narrowing").cloned();
-        let until = match kept {
-            Some(PageKept::Missed(10, until)) => Some(until),
-            _ => None,
-        }
-        .expect("a tenth miss");
+        assert!(matches!(kept, Some(PageKept::Missed(10, _))), "{kept:?}");
+        let until = match kept.expect("a tenth miss") {
+            PageKept::Answered(until, _) | PageKept::Missed(_, until) => until,
+        };
         assert!(until <= Instant::now() + BACKOFF_MAX);
         assert!(until > Instant::now() + BACKOFF_MAX - Duration::from_secs(5));
+    }
+
+    /// Poisons `lock` as a thread that panics while it holds it would.
+    fn poison<T: Send>(lock: &Mutex<T>) {
+        std::thread::scope(|s| {
+            let held = s.spawn(|| {
+                let _held = lock.lock();
+                std::panic::resume_unwind(Box::new("poisoned on purpose"));
+            });
+            assert!(held.join().is_err(), "the holder panicked");
+        });
+        assert!(lock.is_poisoned());
+    }
+
+    /// A cache whose locks a panic poisoned keeps nothing and answers nothing, and asking it
+    /// never panics: every question is answered as if it were empty.
+    #[test]
+    fn a_poisoned_cache_keeps_nothing_and_answers_as_if_empty() {
+        let cache = AnswerCache::default();
+        poison(&cache.types);
+        poison(&cache.languages);
+        poison(&cache.reading_languages);
+        poison(&cache.pages);
+        poison(&cache.tools);
+        poison(&cache.backoff);
+        poison(&cache.missed);
+        poison(&cache.models);
+        poison(&cache.publishers);
+        cache.keep_types("a", vec!["Event".into()]);
+        assert_eq!(cache.types_of("a"), None);
+        cache.keep_publishers("a", Vec::new());
+        assert!(cache.publishers_of("a").is_empty());
+        assert!(!cache.publishers_within("a", Duration::MAX));
+        cache.keep_listing("a", vec![json!({"name": "query_entities"})]);
+        assert_eq!(cache.listing_within("a", Duration::MAX), None);
+        cache.failed("a");
+        assert!(!cache.waits("a"));
+        cache.miss("a");
+        assert!(!cache.skipped("a"));
+        cache.keep_model("d/a", None);
+        assert_eq!(cache.model_of("d/a"), None);
+        cache.keep_page("k", PageKept::Answered(Instant::now(), None));
+        assert_eq!(cache.page_of("k"), Err(Some(0)));
+        cache.forget_page("k");
+        assert_eq!(cache.languages_of("d#public"), (None, false));
+        assert!(Reading::start(&cache.reading_languages, "d#public").is_none());
+        // A read that started before the poison still ends without a panic.
+        let keys = std::sync::Arc::new(Mutex::new(HashSet::new()));
+        let reading = Reading::start(&keys, "d#public").expect("the first read");
+        poison(&keys);
+        drop(reading);
+    }
+
+    /// Past [`CACHE_ENTRIES`] page lookups the answers past their life and the misses go, the
+    /// fresh answers stay.
+    #[test]
+    fn a_full_page_cache_drops_the_answers_past_their_life() {
+        let pages = Mutex::new(HashMap::new());
+        let old = Instant::now().checked_sub(PAGE_LIFE + Duration::from_secs(1));
+        for i in 0..CACHE_ENTRIES {
+            let kept = match (i, old) {
+                (0, Some(old)) => PageKept::Answered(old, None),
+                (1, _) => PageKept::Missed(1, Instant::now()),
+                _ => PageKept::Answered(Instant::now(), Some(format!("p{i}"))),
+            };
+            keep_page_in(&pages, &format!("k{i}"), kept);
+        }
+        keep_page_in(&pages, "new", PageKept::Answered(Instant::now(), None));
+        let pages = pages.lock().expect("the pages");
+        // A host up for less than an hour has no instant that old: nothing went then.
+        let went = usize::from(old.is_some());
+        assert_eq!(pages.len(), CACHE_ENTRIES - went);
+        assert_eq!(pages.contains_key("k0"), old.is_none());
+        assert!(!pages.contains_key("k1") && pages.contains_key("new"));
+    }
+
+    /// The LinkML of an Endpoint `slug` the gateway serves to the person's token: `reporterEmail`
+    /// of a `Record` is personal data.
+    async fn personal_model(gateway: &wiremock::MockServer, slug: &str, document: &str) {
+        use wiremock::matchers::{body_string_contains, method, path};
+        wiremock::Mock::given(method("POST"))
+            .and(path(format!("/api/endpoint/{slug}/mcp")))
+            .and(body_string_contains("describe_schema"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text",
+                    "text": json!({"format": "linkml", "document": document}).to_string()}]}
+            })))
+            .mount(gateway)
+            .await;
+    }
+
+    /// AG-158: an answer read with the person's token keeps no personal attribute: a cut answer
+    /// naming one is refused, one naming none passes, an entity list without one passes as it
+    /// came, a bare array loses the attribute without a `withheld` member, and a model that is
+    /// no LinkML refuses the answer.
+    #[tokio::test]
+    async fn a_persons_answer_loses_its_personal_attributes_whatever_its_shape() {
+        let gateway = wiremock::MockServer::start().await;
+        let linkml = "slots:\n  reporterEmail:\n    annotations: { personalData: true }\nclasses:\n  Record:\n    slots: [open, reporterEmail]\n";
+        personal_model(&gateway, "zaznamy", linkml).await;
+        personal_model(&gateway, "rozbite", "slots: [").await;
+        let token = format!("person-{}", std::process::id());
+        let records = connector(&gateway.uri(), "zaznamy", &[], Some(&token));
+        let broken = connector(&gateway.uri(), "rozbite", &[], Some(&token));
+        let parts = Parts::new();
+        let connectors = [records.clone(), broken.clone()];
+        let ask = parts.ask(&connectors);
+
+        let cut = "[{\"id\": \"urn:ngsi-ld:Record:1\", \"reporterEmail\": \"jana@ex";
+        let refused = without_personal(&ask, &records, Ok(cut.into())).await;
+        assert!(
+            refused
+                .as_ref()
+                .is_err_and(|why| why.starts_with("the answer was too large")),
+            "{refused:?}"
+        );
+        let plain = "[{\"id\": \"urn:ngsi-ld:Record:1\", \"open\": 3";
+        assert_eq!(
+            without_personal(&ask, &records, Ok(plain.into())).await,
+            Ok(plain.to_owned())
+        );
+        let clean =
+            json!({"entities": [{"id": "urn:ngsi-ld:Record:1", "type": "Record", "open": 3}]})
+                .to_string();
+        assert_eq!(
+            without_personal(&ask, &records, Ok(clean.clone())).await,
+            Ok(clean)
+        );
+        let bare = json!([{"id": "urn:ngsi-ld:Record:1", "type": "Record", "open": 3, "reporterEmail": "jana@example.org"}])
+            .to_string();
+        let kept = without_personal(&ask, &records, Ok(bare))
+            .await
+            .expect("the rows");
+        assert!(
+            !kept.contains("jana@example.org") && !kept.contains("withheld"),
+            "{kept}"
+        );
+        assert!(kept.contains("\"open\":3"), "{kept}");
+        let unread = without_personal(&ask, &broken, Ok(plain.into())).await;
+        assert!(
+            unread
+                .as_ref()
+                .is_err_and(|why| why.contains("could not be read")),
+            "{unread:?}"
+        );
     }
 
     /// T-7772: a page lookup past its deadline goes on in the background and keeps its page, so
@@ -7580,6 +7724,90 @@ classes:
         assert!(asked_of(&json!({})).is_empty());
     }
 
+    /// An attribute tested twice is one column; two words of one measured type are one read; a
+    /// dated text is metadata and a text of its length without the date's shape is not; a unit
+    /// Rec 20 gives no symbol is named.
+    #[test]
+    fn a_repeated_test_or_word_counts_once_and_a_unit_without_a_symbol_is_named() {
+        assert_eq!(asked_of(&json!({"q": "pm10>20;pm10<50"})), ["pm10"]);
+        let live = [shown("meteo", &["WeatherObserved"], &[])];
+        let reads = measured_reads("weather and temperature today", &live);
+        assert_eq!(reads.len(), 1);
+        assert_eq!(reads[0].kind, "WeatherObserved");
+        assert!(metadata("taken", &json!("2026-10-18T16:00:00Z")));
+        assert!(!metadata("taken", &json!("2026-10-18 16:00 local")));
+        assert!(!metadata("taken", &json!("a long plain sentence")));
+        let piece = jc_core::units::lookup("H87").expect("Rec 20's piece");
+        assert!(piece.symbol.is_empty(), "{}", piece.symbol);
+        assert_eq!(
+            unit_of(&json!({"unitCode": "H87"})).as_deref(),
+            Some(piece.name)
+        );
+    }
+
+    /// A route that reads and searches is noted as `both`; the catalogue rule follows a catalogue
+    /// route's rules.
+    #[tokio::test]
+    async fn a_route_that_reads_and_searches_is_both_and_a_catalogue_carries_its_rule() {
+        let parts = Parts::new();
+        let ask = parts.ask(&[]);
+        let mut routing = routing_of(true, &["mosty"]);
+        routing.data = true;
+        note_route(&ask, &routing);
+        assert_eq!(ask.trace.route(), "both");
+        routing.catalogue = true;
+        let rules = routed_rules(&routing, 1, true, &[], &[], &[]);
+        assert!(rules.ends_with(CATALOGUE_RULE), "{rules}");
+    }
+
+    /// The sentence that stands for a source that did not answer, in German and Finnish too.
+    #[test]
+    fn a_source_that_did_not_answer_is_said_in_german_and_finnish() {
+        assert_eq!(
+            could_not_check("de", ""),
+            "Einige Datenquellen konnten gerade nicht geprüft werden. Bitte versuchen Sie es gleich noch einmal."
+        );
+        assert_eq!(
+            could_not_check("fi", "Ilma"),
+            "Näiden lähteiden tietoja ei juuri nyt voitu tarkistaa: Ilma. Yritä hetken kuluttua uudelleen."
+        );
+    }
+
+    /// The placeholders go last in a table without a map too.
+    #[test]
+    fn placeholders_go_last_in_a_table_without_places() {
+        let text = include_str!("../../tests/fixtures/bbsk_bridges_oldest.json");
+        let (columns, rows, units, ..) =
+            table_of(text, READ_ROWS, &["yearBuilt".to_owned()], None).expect("a table");
+        let mut table = Table {
+            entity_type: "Bridge".into(),
+            columns,
+            rows,
+            units,
+            ..Table::default()
+        };
+        placeholders_last(&mut table);
+        let code = table
+            .columns
+            .iter()
+            .position(|c| c == "bridgeCode")
+            .expect("a code");
+        assert_eq!(table.rows[0][code], json!("M6925"));
+        assert!(table.geometries.is_empty());
+    }
+
+    /// A profile without a count keeps its type; a number too large to round stays as it came.
+    #[test]
+    fn a_profile_without_a_count_and_a_number_too_large_to_round() {
+        let profile =
+            json!({"type": "Bridge", "attributes": {"span": {"max": 1.0e307, "mean": 2.346}}});
+        let slim = profile_for_model(&profile.to_string(), &["span".to_owned()]);
+        assert_eq!(
+            slim,
+            json!({"type": "Bridge", "attributes": {"span": {"max": 1.0e307, "mean": 2.35}}})
+        );
+    }
+
     #[test]
     fn the_cap_drops_metadata_before_any_value() {
         let mut entity = serde_json::Map::new();
@@ -8170,13 +8398,26 @@ classes:
                 page("https://data.example/dataset/mosty"),
                 page("https://api.example/api/endpoint/bb6/"),
                 page("https://data.example/dataset/cyklotrasy"),
+                page("https://api.example/api/endpoint/bb7/ngsi-ld/v1/entities?type=Event"),
+                page("https://api.example/api/endpoint/inde/"),
             ],
         );
         assert_eq!(
             out.len(),
-            12,
-            "the two pages of listed Endpoints are not listed twice"
+            13,
+            "the three pages of listed Endpoints are not listed twice"
         );
         assert_eq!(out[11].url, "https://data.example/dataset/cyklotrasy");
+        assert_eq!(out[12].url, "https://api.example/api/endpoint/inde/");
+        // A blank publisher is no Publisher line.
+        let unlabelled = Connected {
+            label: Some("  ".into()),
+            ..lent_connector("bez", Some("Bez vydavateľa"), false)
+        };
+        let held = holdings(&[unlabelled], &[], &base);
+        assert_eq!(
+            held[0].1.text,
+            "Live data the assistant reads: Bez vydavateľa"
+        );
     }
 }
