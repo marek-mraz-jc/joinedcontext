@@ -724,6 +724,22 @@ async fn the_dashboard_page_escapes_what_a_dashboard_holds() {
         page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
         "{page}"
     );
+    // Without orgId the organization the X-Grafana-Org-Id header names holds the page.
+    let req = Request::builder()
+        .uri("/d/hostile")
+        .header("authorization", basic(USER, PASSWORD))
+        .header("x-grafana-org-id", org.to_string())
+        .body(Body::empty())
+        .expect("request");
+    let res = grafana.app.clone().oneshot(req).await.expect("answer");
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.expect("body").to_bytes();
+    let by_header = String::from_utf8_lossy(&bytes).into_owned();
+    assert!(!by_header.contains("<script>"), "{by_header}");
+    assert!(
+        by_header.contains("&lt;script&gt;alert(1)&lt;/script&gt;"),
+        "{by_header}"
+    );
 }
 
 /// PORTAL-CALLS.md G-5: a browser carries the host's session, no credential. The host's page

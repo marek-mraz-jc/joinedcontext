@@ -1179,6 +1179,29 @@ async fn operations_by_name_refuse_what_they_cannot_serve() {
         matches!(listed, Err(ShakoError::BadRequest(_))),
         "{listed:?}"
     );
+    // An action the registry finds under another spelling is not run through this surface,
+    // and a name it does not hold is unknown.
+    for name in ["Shako.CreateRepository", "MERGE"] {
+        let other = shako_api::exec_odata_operation(
+            &w.state,
+            &ctx,
+            &mount,
+            name,
+            Some("site"),
+            json!({ "Name": "never-made" }),
+        )
+        .await;
+        assert!(
+            matches!(&other, Err(ShakoError::NotImplemented(m)) if m.contains("not served")),
+            "{name}: {other:?}"
+        );
+    }
+    let unknown =
+        shako_api::exec_odata_operation(&w.state, &ctx, &mount, "NoSuchOp", None, json!({})).await;
+    assert!(
+        matches!(&unknown, Err(ShakoError::NotFound(m)) if m.contains("NoSuchOp")),
+        "{unknown:?}"
+    );
 }
 
 /// An archived repository refuses a write naming why; reads go on.
