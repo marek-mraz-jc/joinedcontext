@@ -1783,6 +1783,48 @@ pub fn overview(
 mod tests {
     use super::*;
 
+    /// A panic while the in-memory ledger was held poisons its lock; every later call still
+    /// reads and writes the ledger instead of failing every pipeline run after it.
+    #[tokio::test]
+    async fn a_poisoned_memory_ledger_still_keeps_its_books() {
+        let ledger = Ledger::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = ledger.memory();
+                    panic!("poison the ledger's lock on purpose");
+                })
+                .join();
+        });
+        let Inner::Memory(map) = &ledger.inner else {
+            panic!("a ledger without a database is in memory");
+        };
+        assert!(map.is_poisoned());
+        let ids = vec![
+            "urn:ngsi-ld:Garden:1".to_owned(),
+            "urn:ngsi-ld:Garden:2".to_owned(),
+        ];
+        ledger
+            .seen("p", "pl", "r1", &ids, true)
+            .await
+            .expect("seen");
+        let (rows, _) = ledger.book("p", "pl").await.expect("book");
+        assert_eq!(rows.len(), 2);
+        ledger
+            .settle("p", "pl", &[(ids[0].clone(), 1)], None)
+            .await
+            .expect("settle");
+        ledger.keep("p", "pl").await.expect("keep");
+        ledger.completed("p", "pl", "r1").await.expect("completed");
+        ledger
+            .removed("p", "space", "pl", ("r1", Cause::Snapshot), &ids[1..])
+            .await
+            .expect("removed");
+        ledger.forget("p", "pl", &ids[..1]).await.expect("forget");
+        let (rows, _) = ledger.book("p", "pl").await.expect("book");
+        assert!(rows.is_empty(), "{:?}", rows.keys().collect::<Vec<_>>());
+    }
+
     /// An id of `len` bytes, distinct per `n`.
     fn id_of(len: usize, n: usize) -> String {
         let head = format!("urn:ngsi-ld:Garden:{n}:");
