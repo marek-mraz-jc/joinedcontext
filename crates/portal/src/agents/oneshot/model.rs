@@ -1062,7 +1062,7 @@ pub(super) fn merge_anthropic_messages(messages: &[Value]) -> Vec<Value> {
             other => vec![json!({ "type": "text", "text": other.to_string() })],
         }
     };
-    let mut merged: Vec<Value> = Vec::new();
+    let mut merged: Vec<(&str, Vec<Value>)> = Vec::new();
     for message in messages {
         let role = message
             .get("role")
@@ -1070,15 +1070,14 @@ pub(super) fn merge_anthropic_messages(messages: &[Value]) -> Vec<Value> {
             .unwrap_or("user");
         let content = blocks(message.get("content").unwrap_or(&Value::Null));
         match merged.last_mut() {
-            Some(last) if last.get("role").and_then(Value::as_str) == Some(role) => {
-                if let Some(parts) = last.get_mut("content").and_then(Value::as_array_mut) {
-                    parts.extend(content);
-                }
-            }
-            _ => merged.push(json!({ "role": role, "content": content })),
+            Some((last, parts)) if *last == role => parts.extend(content),
+            _ => merged.push((role, content)),
         }
     }
     merged
+        .into_iter()
+        .map(|(role, content)| json!({ "role": role, "content": content }))
+        .collect()
 }
 
 /// The model's own turn, appended so the next call sees what it asked for.
@@ -1462,6 +1461,65 @@ mod transport_tests {
         driver.proxy_base = server.uri();
         driver.provider = provider.into();
         driver
+    }
+
+    /// T-7916: an Anthropic answer's text part without text and a part of another type (a
+    /// thinking block) are skipped; the text and the tool call stand.
+    #[tokio::test]
+    async fn parts_the_tool_answer_does_not_read_are_skipped() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "content": [
+                    { "type": "thinking", "thinking": "hm" },
+                    { "type": "text" },
+                    { "type": "text", "text": "Reading." },
+                    { "type": "tool_use", "id": "c1", "name": "read_file", "input": { "path": "a" } }
+                ],
+                "usage": { "input_tokens": 3, "output_tokens": 2 }
+            })))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "anthropic").await;
+        let answer = driver
+            .complete_tools(
+                "rules",
+                &[json!({ "role": "user", "content": "hi" })],
+                &[],
+                100,
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(answer.text.as_deref(), Some("Reading."));
+        assert_eq!(answer.calls.len(), 1);
+        assert_eq!(answer.calls[0].name, "read_file");
+    }
+
+    /// T-7916: no user message, or one already in blocks, is left as it is; turns of one role
+    /// in a row are one Anthropic message, whatever shape their content has.
+    #[test]
+    fn the_cache_mark_and_the_merge_keep_what_they_do_not_change() {
+        let system_only = vec![json!({ "role": "system", "content": "rules" })];
+        assert_eq!(cache_marked(&system_only), system_only);
+        let blocks = vec![json!({ "role": "user", "content": [{ "type": "text", "text": "hi" }] })];
+        assert_eq!(cache_marked(&blocks), blocks);
+        let merged = merge_anthropic_messages(&[
+            json!({ "role": "user", "content": "a" }),
+            json!({ "role": "user", "content": [{ "type": "text", "text": "b" }] }),
+            json!({ "content": 7 }),
+            json!({ "role": "assistant", "content": "c" }),
+        ]);
+        assert_eq!(
+            merged,
+            vec![
+                json!({ "role": "user", "content": [
+                    { "type": "text", "text": "a" },
+                    { "type": "text", "text": "b" },
+                    { "type": "text", "text": "7" }
+                ] }),
+                json!({ "role": "assistant", "content": [{ "type": "text", "text": "c" }] }),
+            ]
+        );
     }
 
     async fn calls(server: &MockServer) -> Vec<Value> {

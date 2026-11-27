@@ -2789,3 +2789,410 @@ mod store_edge_tests {
         assert!(after.first_version_ms.is_some());
     }
 }
+
+#[cfg(test)]
+mod drive_tests {
+    //! The code run's event loop (T-7916): the completing pass in each of its outcomes, a first
+    //! pass that changes nothing, a message before any version is on screen, a message waiting
+    //! behind an observation or a test result, a lagging or closed inbox, the lease and the
+    //! check made on the errors alone when no observation follows them.
+
+    use super::*;
+    use crate::state::AppState;
+    use std::time::Duration;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    /// A page reaching for a package the SDK does not allow (SDK-12): it never builds.
+    const AXIOS: &str = "import axios from \"axios\";\n\nexport function Hello() {\n  return <p>{String(axios)}</p>;\n}";
+    const PAGE: &str = "export function Hello() {\n  return <p>hello</p>;\n}";
+
+    /// One answer in the patch protocol: the prose, then a block per `(path, search, replace)`.
+    fn answer(prose: &str, blocks: &[(&str, &str, &str)]) -> String {
+        let mut text = format!("{prose}\n\n```text\n");
+        for (file, search, replace) in blocks {
+            text.push_str(&format!(
+                "{file}\n<<<<<<< SEARCH\n{search}=======\n{replace}\n>>>>>>> REPLACE\n"
+            ));
+        }
+        text.push_str("```\n");
+        text
+    }
+
+    /// The model's answers in order; `None` is a provider that fails the call.
+    async fn script(server: &MockServer, answers: &[Option<String>]) {
+        for text in answers {
+            let response = match text {
+                Some(text) => ResponseTemplate::new(200)
+                    .set_body_json(json!({ "content": [{ "type": "text", "text": text }] })),
+                None => ResponseTemplate::new(400).set_body_string("bad request"),
+            };
+            Mock::given(method("POST"))
+                .and(path("/v1/llm/messages"))
+                .respond_with(response)
+                .up_to_n_times(1)
+                .mount(server)
+                .await;
+        }
+    }
+
+    async fn driver(server: &MockServer) -> (AppState, Driver) {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.kind = "application".to_owned();
+        state.agents.create_run(&run).await.expect("a run");
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = server.uri();
+        driver.kind = "application".into();
+        driver.prompt = "A page that says hello".into();
+        (state, driver)
+    }
+
+    /// The bodies of the model calls, in order (the types render is no model call).
+    async fn asked(server: &MockServer) -> Vec<String> {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|request| request.url.path() == "/v1/llm/messages")
+            .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+            .collect()
+    }
+
+    fn event(kind: &str, payload: Value) -> AgentRunEvent {
+        AgentRunEvent {
+            run_id: "test-run".into(),
+            seq: 0,
+            kind: kind.into(),
+            payload,
+            created_at: String::new(),
+        }
+    }
+
+    fn message(text: &str) -> AgentRunEvent {
+        event("message", json!({ "sentBy": "test-user", "text": text }))
+    }
+
+    fn cancelled() -> AgentRunEvent {
+        event("status", json!({ "status": "cancelled" }))
+    }
+
+    async fn thoughts(state: &AppState) -> Vec<String> {
+        state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == "thought")
+            .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
+            .collect()
+    }
+
+    async fn previews(state: &AppState) -> usize {
+        state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|event| event.kind == "preview")
+            .count()
+    }
+
+    fn far() -> tokio::time::Instant {
+        tokio::time::Instant::now() + Duration::from_secs(60)
+    }
+
+    #[tokio::test]
+    async fn a_completing_pass_that_writes_is_the_second_version_and_a_terminal_status_ends_it() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer(
+                    "**Hello board** A greeting.",
+                    &[("src/pages/Hello.tsx", "", PAGE)],
+                )),
+                Some(answer(
+                    "The second page.",
+                    &[(
+                        "src/pages/Bye.tsx",
+                        "",
+                        "export function Bye() {\n  return <p>bye</p>;\n}",
+                    )],
+                )),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(16);
+        // An event of no kind the loop answers, an agent's own message and an observation of a
+        // version that is not on screen change nothing; the terminal status ends the loop.
+        for next in [
+            event("thought", json!({ "text": "x" })),
+            event("message", json!({ "sentBy": AGENT, "text": "mine" })),
+            event("preview_observation", json!({ "version": 99 })),
+            cancelled(),
+        ] {
+            tx.send(next).expect("sent");
+        }
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 2);
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert_eq!(run.title.as_deref(), Some("Hello board"));
+        assert_eq!(asked(&server).await.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_completing_pass_that_fails_keeps_the_first_version_and_a_closed_inbox_ends_it() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                None,
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
+        drop(tx);
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 1);
+        let said = thoughts(&state).await;
+        assert!(
+            said.iter()
+                .any(|t| t.starts_with("The first version stays on screen; completing it failed")),
+            "{said:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_completing_pass_that_does_not_build_twice_keeps_the_first_version() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some(answer("Axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
+                Some(answer(
+                    "Still axios.",
+                    &[("src/pages/Hello.tsx", "", AXIOS)],
+                )),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
+        drop(tx);
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 1);
+        assert_eq!(asked(&server).await.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn a_first_pass_that_changes_nothing_says_so_and_the_lease_expires_the_run() {
+        let server = MockServer::start().await;
+        let template = preview::template_files();
+        let app = template["src/App.tsx"].trim_end_matches('\n').to_owned();
+        script(
+            &server,
+            &[Some(answer(
+                "It already says hello.",
+                &[("src/App.tsx", "", &app)],
+            ))],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (_tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
+        let lapsed = tokio::time::Instant::now();
+        driver
+            .drive_code(&mut inbox, lapsed)
+            .await
+            .expect("the lease ends it");
+        assert_eq!(previews(&state).await, 0);
+        assert!(thoughts(&state)
+            .await
+            .contains(&"It already says hello.".to_owned()));
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert_eq!(run.status, AgentRunStatus::Expired.as_str());
+    }
+
+    #[tokio::test]
+    async fn a_lagging_inbox_reads_on_and_a_failed_first_pass_keeps_the_template() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[Some("No code.".into()), Some("No code again.".into())],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(1);
+        tx.send(message("lost")).expect("sent");
+        tx.send(cancelled()).expect("sent");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 0);
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert!(run.files.get("src/App.tsx").is_some(), "{:?}", run.files);
+    }
+
+    #[tokio::test]
+    async fn messages_before_and_after_the_first_version_each_take_their_pass() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                // The first pass fails twice: no version is on screen.
+                Some("No code.".into()),
+                Some("No code again.".into()),
+                // A message with nothing on screen is one more whole pass: unchanged, failed,
+                // refused by the provider, then built.
+                Some(answer(
+                    "Nothing to change.",
+                    &[(
+                        "src/App.tsx",
+                        "",
+                        preview::template_files()["src/App.tsx"].trim_end_matches('\n'),
+                    )],
+                )),
+                Some(answer("Axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
+                Some(answer(
+                    "Still axios.",
+                    &[("src/pages/Hello.tsx", "", AXIOS)],
+                )),
+                None,
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                // With a version on screen a message is an edit turn: one that ends at once and
+                // one the provider refuses.
+                Some("Done.".into()),
+                None,
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(32);
+        for next in [
+            message("unchanged"),
+            message("failed"),
+            message("refused"),
+            message("built"),
+            // The observation of version 1 and the test result each wait for the message
+            // queued behind them.
+            event("preview_observation", json!({ "version": 1, "pages": [] })),
+            event(
+                "message",
+                json!({ "sentBy": "test-user", "text": "edit", "scope": "src/pages/Hello.tsx:2" }),
+            ),
+            event("tests", json!({ "version": 1, "status": "failed" })),
+            message("refused edit"),
+            cancelled(),
+        ] {
+            tx.send(next).expect("sent");
+        }
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 1);
+        let said = thoughts(&state).await;
+        for part in [
+            "Nothing to change.",
+            "The pass failed: ",
+            "The turn failed: ",
+        ] {
+            assert!(said.iter().any(|t| t.starts_with(part)), "{part}: {said:?}");
+        }
+        assert_eq!(asked(&server).await.len(), 9);
+    }
+
+    /// An error the frame reports with no observation after it is checked on the errors alone,
+    /// once the observation wait is over (`OBSERVATION_WAIT`).
+    #[tokio::test]
+    async fn an_error_without_an_observation_is_checked_on_its_own() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some("Nothing to add.".into()),
+                Some("Fixed.".into()),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        let feed = async {
+            for _ in 0..200 {
+                if previews(&state).await > 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            driver
+                .state
+                .agents
+                .append_event(
+                    "test-run",
+                    "preview_error",
+                    json!({ "message": "x is undefined" }),
+                )
+                .await
+                .expect("stored");
+            tx.send(event(
+                "preview_error",
+                json!({ "message": "x is undefined" }),
+            ))
+            .expect("sent");
+            // A second error leaves the wait where the first set it.
+            tx.send(event("preview_error", json!({ "message": "y" })))
+                .expect("sent");
+            tokio::time::sleep(OBSERVATION_WAIT + Duration::from_secs(1)).await;
+            for _ in 0..200 {
+                if asked(&server).await.len() > 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+            tx.send(cancelled()).expect("sent");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
+        ended.expect("the loop ends");
+        let asked = asked(&server).await;
+        assert!(
+            asked.len() > 2,
+            "the check asked the model: {}",
+            asked.len()
+        );
+        assert!(asked[2].contains("x is undefined"), "{}", asked[2]);
+    }
+}
