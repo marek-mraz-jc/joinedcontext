@@ -340,3 +340,43 @@ fn a_portal_whose_realm_does_not_answer_keeps_jc_serving() {
     assert!(child.try_wait().unwrap().is_none(), "jc stopped");
     sigterm_and_wait(&mut child);
 }
+
+/// A Portal without a dataroom beside it, in this process or another, builds with no
+/// installation publisher: it serves its health route and stops cleanly on SIGTERM.
+#[cfg(unix)]
+#[test]
+fn a_portal_without_a_dataroom_serves_and_stops() {
+    let mut child = jc()
+        .args([
+            "--role",
+            "portal",
+            "--listen",
+            "127.0.0.1:0",
+            "--log-format",
+            "text",
+        ])
+        .env("JCBIN_PORTAL_SIBLINGS", "false")
+        .env("RUST_LOG", "info")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn jc");
+    let mut lines = BufReader::new(child.stderr.take().unwrap()).lines();
+    let addr = listening_addr(&mut lines);
+    std::thread::spawn(move || lines.map_while(Result::ok).for_each(drop));
+    let healthy = block_on(async {
+        for _ in 0..240 {
+            let status = reqwest::get(format!("http://{addr}/portal/api/v1/health"))
+                .await
+                .map(|r| r.status());
+            if matches!(status, Ok(s) if s.is_success()) {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        false
+    });
+    assert!(healthy, "the Portal answers its health route");
+    assert!(child.try_wait().unwrap().is_none(), "jc stopped");
+    sigterm_and_wait(&mut child);
+}
