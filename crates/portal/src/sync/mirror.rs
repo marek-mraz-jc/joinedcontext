@@ -501,6 +501,53 @@ fn rfc3339(now: u64) -> String {
 mod tests {
     use super::*;
 
+    /// A record whose lock a panicking thread poisoned forgets instead of failing the tick: no
+    /// fetch is remembered, so the reference is fetched again.
+    #[test]
+    fn a_poisoned_record_remembers_nothing() {
+        let last = LastFetch::default();
+        let _ = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = last.0.lock().expect("the lock");
+                std::panic::panic_any("a panic while holding the record");
+            })
+            .join()
+        });
+        last.set("bb/peer", 10);
+        last.failed("bb/peer", 20);
+        assert_eq!(last.get("bb/peer"), None);
+    }
+
+    /// A file `write` did not produce, or one that is no text, is refused naming its path; a
+    /// text file is read back under its slash path.
+    #[test]
+    fn a_missing_or_binary_file_is_refused_naming_it() {
+        let root = crate::reconciler::staging::Scratch::new("mirror-collect").expect("a directory");
+        std::fs::create_dir(root.path().join("models")).expect("a folder");
+        std::fs::write(root.path().join("models/air.yaml"), "id: air\n").expect("written");
+        std::fs::write(root.path().join("models/blob.bin"), [0xff, 0xfe, 0x00]).expect("written");
+        let mut files = BTreeMap::new();
+        collect(root.path(), Path::new("models/air.yaml"), &mut files).expect("read back");
+        assert_eq!(files["models/air.yaml"], "id: air\n");
+        let missing = collect(root.path(), Path::new("models/gone.yaml"), &mut files)
+            .expect_err("not written")
+            .to_string();
+        assert!(missing.contains("models/gone.yaml"), "{missing}");
+        let binary = collect(root.path(), Path::new("models/blob.bin"), &mut files)
+            .expect_err("no text")
+            .to_string();
+        assert!(binary.contains("models/blob.bin is not UTF-8"), "{binary}");
+    }
+
+    /// The fetch time is dropped at every depth, inside lists too.
+    #[test]
+    fn the_fetch_time_is_dropped_inside_lists() {
+        let a = "items:\n- name: x\n  fetchedAt: '2026-10-05'\n";
+        let b = "items:\n- name: x\n  fetchedAt: '2026-10-06'\n";
+        assert_eq!(without_fetch_time(a), without_fetch_time(b));
+        assert_ne!(without_fetch_time(a), without_fetch_time("items:\n- name: y\n"));
+    }
+
     #[test]
     fn a_reference_has_one_branch_whatever_the_day_fetched() {
         // T-3158: the name was a digest of files that carry the day's `fetchedAt`, so every day

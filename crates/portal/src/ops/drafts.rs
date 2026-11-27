@@ -1280,6 +1280,46 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// On the database each failing step of a put is a database error and writes nothing: the
+    /// read of the current version, the update, the insert and the commit; a first put expecting
+    /// a version the draft never had is a conflict at 0.
+    #[tokio::test]
+    async fn each_failing_step_of_a_put_on_the_database_is_a_database_error() {
+        let put = |store: DraftStore, expected: Option<i64>| async move {
+            let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+            store
+                .put("hel", "Endpoint", "air", manifest, expected, "ana", "person")
+                .await
+        };
+        let failed = |got: Result<Draft, DraftError>| matches!(got, Err(DraftError::Db(_)));
+
+        let scratch = crate::test_db::scratch().await;
+        let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
+        assert!(matches!(
+            put(store.clone(), Some(2)).await,
+            Err(DraftError::Conflict { current: 0 })
+        ));
+        scratch.refuse("drafts", "INSERT").await;
+        assert!(failed(put(store.clone(), None).await));
+        scratch.remove().await;
+
+        let scratch = crate::test_db::scratch().await;
+        let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
+        assert_eq!(put(store.clone(), None).await.expect("the first put").version, 1);
+        scratch.refuse("drafts", "UPDATE").await;
+        assert!(failed(put(store.clone(), Some(1)).await));
+        scratch.drop_table("drafts").await;
+        assert!(failed(put(store, None).await));
+        scratch.remove().await;
+
+        let scratch = crate::test_db::scratch().await;
+        let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
+        scratch.refuse_commit("drafts").await;
+        assert!(failed(put(store.clone(), None).await));
+        assert!(store.get("hel", "Endpoint", "air").await.expect("a read").is_none());
+        scratch.remove().await;
+    }
+
     /// T-7817: each store error is the answer a client can act on, and a first put that expects
     /// a version the draft never had is a conflict at 0.
     #[tokio::test]

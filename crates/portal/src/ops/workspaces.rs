@@ -384,8 +384,7 @@ impl WorkspaceStore {
                 Ok(workspace)
             }
             Inner::Db(pool, mirror, names) => {
-                let scope = serde_json::to_value(&workspace.scope)
-                    .map_err(|e| WorkspaceError::Db(e.to_string()))?;
+                let scope = sqlx::types::Json(&workspace.scope);
                 let mut tx = crate::project_ids::tx_of(pool, mirror, &workspace.project)
                     .await
                     .map_err(db)?
@@ -2080,4 +2079,55 @@ pub fn operations() -> Vec<crate::ops::Operation> {
             },
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The name memory starts over once it holds KNOWN_NAMES names, so it never grows without
+    /// bound, and keeps the name it learned last.
+    #[test]
+    fn a_full_name_memory_starts_over_with_the_newest_name() {
+        let names = std::sync::Mutex::default();
+        let now = TimestampTz::now();
+        let workspace = |n: usize| Workspace {
+            name: format!("w{n}"),
+            title: None,
+            project: "helsinki".into(),
+            owner: "demo.steward@hel.fi".into(),
+            base_revision: "8c56954a".into(),
+            scope: Scope::Project {},
+            preview_state: PreviewState::None,
+            preview: None,
+            created_at: now,
+            expires_at: now,
+        };
+        let many: Vec<Workspace> = (0..=KNOWN_NAMES).map(workspace).collect();
+        learn(&names, &many);
+        let known = known(&names);
+        assert_eq!(known.len(), 1);
+        assert_eq!(known.get(&format!("w{KNOWN_NAMES}")).map(String::as_str), Some("helsinki"));
+    }
+
+    /// A database that is down fails a create as a database error, never as an unplaced project.
+    #[tokio::test]
+    async fn a_database_that_is_down_fails_a_create() {
+        let store = WorkspaceStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let got = store
+            .create(Opening {
+                name: "bikes",
+                title: None,
+                project: "helsinki",
+                owner: "demo.steward@hel.fi",
+                base_revision: "8c56954a",
+                scope: Scope::Project {},
+                ttl_hours: 1,
+            })
+            .await;
+        assert!(matches!(got, Err(WorkspaceError::Db(_))), "{got:?}");
+    }
 }

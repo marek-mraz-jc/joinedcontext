@@ -1244,6 +1244,37 @@ mod tests {
         }
     }
 
+    /// A state the runner reports for a pipeline the queue no longer holds, or for one that is
+    /// queued and not running, ends nothing; and a queue whose lock a panicking thread poisoned
+    /// still ticks and starts its runs.
+    #[tokio::test]
+    async fn a_stray_state_ends_nothing_and_a_poisoned_queue_still_ticks() {
+        let now = at("2026-10-17T05:00:00Z");
+        let mut q = RunQueue::new(2, 1);
+        q.plan([(key("a"), planned(Clock::Once))].into_iter().collect(), now);
+        let states = vec![(key("gone"), RunState::Finished), (key("a"), RunState::Finished)];
+        let (ended, starts) = q.settle(states, now);
+        assert!(ended.is_empty(), "{ended:?}");
+        assert_eq!(starts.len(), 1, "{starts:?}");
+
+        let queue = Mutex::new(RunQueue::new(2, 1));
+        queue
+            .lock()
+            .expect("the lock")
+            .plan([(key("b"), planned(Clock::Once))].into_iter().collect(), now);
+        let _ = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = queue.lock().expect("the lock");
+                std::panic::panic_any("a panic while holding the queue");
+            })
+            .join()
+        });
+        assert!(queue.is_poisoned());
+        let fake = Fake::default();
+        tick(&queue, &fake, now).await;
+        assert_eq!(fake.log(), ["start b"]);
+    }
+
     /// A snapshot pipeline judges its deletes on the run that ended, by the id its log names it
     /// under, and only a run the runner finished counts as complete (T-4891).
     #[tokio::test]
@@ -2020,9 +2051,8 @@ mod tests {
         step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(fake.log(), ["delete loop", "delete ok"]);
         let outcome = queue.lock().unwrap().outcome(&key("loop"));
-        let Some(StreamOutcome::Error(said)) = outcome else {
-            panic!("a stuck run is an error, got {outcome:?}");
-        };
+        use StreamOutcome::Error as E;
+        let Some(E(said)) = outcome else { panic!() };
         assert!(said.contains("could not stop it"), "{said}");
         assert!(said.contains("no further run until it changes"), "{said}");
         assert_eq!(

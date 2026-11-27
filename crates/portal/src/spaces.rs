@@ -544,12 +544,12 @@ mod tests {
             "{missing}"
         );
         // Under the scheme the environment names, whichever it is: a tenant, or the reason why not.
-        match repo_tenant(&repo, "ovzdusie", "mhd") {
-            Ok(tenant) => assert!(!tenant.is_empty()),
-            Err(reason) => assert!(
-                reason.starts_with("the space ovzdusie/mhd has no broker tenant yet:"),
-                "{reason}"
-            ),
-        }
+        let named = repo_tenant(&repo, "ovzdusie", "mhd");
+        let why = "the space ovzdusie/mhd has no broker tenant yet:";
+        let (Ok(text) | Err(text)) = &named;
+        assert!(
+            !text.is_empty() && (named.is_ok() || text.starts_with(why)),
+            "{named:?}"
+        );
     }
 }

@@ -2229,10 +2229,7 @@ mod tests {
     /// T-7494: a trim that fails is said and costs the write nothing: the run is kept.
     #[tokio::test]
     async fn a_trim_that_fails_is_logged_and_the_run_is_kept() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
         sqlx::query(
             "INSERT INTO organizations (name, host, state, created_by) \

@@ -875,10 +875,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_store_that_fails_a_create_fails_the_move_and_keeps_the_old_list() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let (state, reader) = scratch_world(&scratch).await;
         scratch.refuse("connectors", "INSERT").await;
         let failed = move_one(&state, &reader).await;
@@ -892,10 +889,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_organization_removed_while_moving_keeps_the_old_list_where_it_is() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let (state, reader) = scratch_world(&scratch).await;
         // The connector's insert removes the Organization, so the write-back finds no key.
         for statement in [
@@ -926,10 +920,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_document_that_is_no_object_moves_nothing() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let (state, reader) = scratch_world(&scratch).await;
         let mut tx = crate::api::preferences::person_tx(&state)
             .await

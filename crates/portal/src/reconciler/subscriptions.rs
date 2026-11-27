@@ -774,14 +774,14 @@ mod tests {
             .converge(&mirror, &previous, Path::new("/nonexistent"), None)
             .await;
         let error = |name: &str| {
-            outcomes
+            let outcome = outcomes
                 .iter()
                 .find(|(_, n, _)| n == name)
-                .map(|(_, _, outcome)| match outcome {
-                    SubscriptionOutcome::Error(reason) => reason.clone(),
-                    written => panic!("{name}: {written:?}"),
-                })
-                .expect("each manifest has an outcome")
+                .map(|(_, _, outcome)| outcome.clone())
+                .expect("each manifest has an outcome");
+            use SubscriptionOutcome::Error as E;
+            let E(why) = outcome else { panic!() };
+            why
         };
         assert_eq!(
             error("secret"),

@@ -326,6 +326,36 @@ async fn a_workspace_moves_through_every_state_and_an_unknown_one_is_not_found()
     }
 }
 
+/// A workspace another replica deleted after this one learned its project is not found by any
+/// write here, and a delete of a name no project holds is not found either (CC-81).
+#[tokio::test]
+async fn a_workspace_gone_meanwhile_is_not_found_by_the_replica_that_knew_it() {
+    for (store, fresh) in stores().await.into_iter().skip(1) {
+        let name = format!("g{}", &unique::unique()[7..]);
+        store.create(opening(&name, "helsinki", 1)).await.unwrap();
+        assert_eq!(fresh.delete(&name).await.unwrap().name, name);
+        let gone = |got: Result<(), WorkspaceError>| {
+            matches!(got, Err(WorkspaceError::NotFound(n)) if n == name)
+        };
+        assert!(gone(
+            store
+                .set_preview_state(&name, PreviewState::Running)
+                .await
+        ));
+        let access = PreviewAccess {
+            salt: "s4lt".into(),
+            author: "demo.steward@hel.fi".into(),
+        };
+        assert!(gone(store.start_preview(&name, access).await));
+        assert!(gone(store.set_base_revision(&name, "0a1b2c3d").await));
+        assert!(gone(store.delete(&name).await.map(drop)));
+        assert!(matches!(
+            fresh.delete("held-by-no-project").await,
+            Err(WorkspaceError::NotFound(n)) if n == "held-by-no-project"
+        ));
+    }
+}
+
 /// A workspace of a project the database holds no key for is refused as unplaced, before
 /// anything is written (STO-07).
 #[tokio::test]
