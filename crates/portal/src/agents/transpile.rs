@@ -546,6 +546,30 @@ mod tests {
         assert!(named[2].starts_with("src/bad.json:1:"), "{named:#?}");
     }
 
+    /// T-7924: TypeScript that parses and checks but that the transform refuses, a namespace
+    /// exporting a `let`, is named on its file and line and gives no module; its neighbour
+    /// still transpiles.
+    #[test]
+    fn typescript_the_transform_refuses_is_named_on_its_file() {
+        let project = transpile(&files(&[
+            (
+                "src/Counter.ts",
+                "namespace Counter {\n  export let count = 0;\n}\nexport default Counter;\n",
+            ),
+            ("src/Fine.ts", "export const value = 1;\n"),
+        ]));
+        let named: Vec<String> = project.problems.iter().map(ToString::to_string).collect();
+        assert_eq!(named.len(), 1, "{named:#?}");
+        assert!(
+            named[0].starts_with("src/Counter.ts:2:14: Namespaces exporting non-const"),
+            "{named:#?}"
+        );
+        assert!(!project
+            .modules
+            .contains_key(&format!("{APP}src/Counter.ts")));
+        assert!(project.modules.contains_key(&format!("{APP}src/Fine.ts")));
+    }
+
     #[test]
     fn an_import_out_of_the_project_a_bound_stylesheet_and_a_redeclaration_are_named() {
         let project = transpile(&files(&[

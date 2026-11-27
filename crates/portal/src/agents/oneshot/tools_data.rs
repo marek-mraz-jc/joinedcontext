@@ -823,6 +823,127 @@ mod tests {
         assert!(tools.is_empty());
     }
 
+    /// T-7924: an endpoint the store cannot record on the run is not opened: the open is an
+    /// error, nothing reaches the log, and no tool of it is offered.
+    #[tokio::test]
+    async fn an_open_the_store_cannot_record_is_an_error() {
+        let (mut driver, state, _proxy) = world().await;
+        driver.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        ));
+        let (mut chosen, mut tools) = (Vec::new(), Vec::new());
+        let refused = driver.open_endpoint(&mut chosen, &mut tools, "a").await;
+        assert!(refused.is_err(), "{refused:?}");
+        assert!(tools.is_empty());
+        assert!(logged(&state, "endpoints").await.is_empty());
+    }
+
+    /// T-7924: drafts that cannot be read leave a name to the plain refusal: never a claim
+    /// that it is a draft, and never a failure of the turn.
+    #[tokio::test]
+    async fn a_name_whose_drafts_cannot_be_read_is_refused_plainly() {
+        let (mut driver, _state, _proxy) = world().await;
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let refused = driver
+            .open_endpoint(&mut Vec::new(), &mut Vec::new(), "drafted-somewhere")
+            .await
+            .expect_err("not openable");
+        assert!(
+            refused.starts_with(
+                "'drafted-somewhere' is not an endpoint the person may read in this project"
+            ),
+            "{refused}"
+        );
+        assert!(!refused.contains("draft,"), "{refused}");
+    }
+
+    /// T-7924, T-2763: an endpoint whose Change waits for approval on the forge is "not live
+    /// yet", naming that change, never a query that failed for no reason.
+    #[tokio::test]
+    async fn an_endpoint_whose_change_waits_is_not_live_yet() {
+        use wiremock::matchers::{path, query_param};
+        let forge = MockServer::start().await;
+        let manifest_path = "projects/ovzdusie/spaces/air/endpoints/air-quality.yaml";
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests",
+            ))
+            .and(query_param("$filter", "State eq 'open'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{
+                    "Number": 7,
+                    "HtmlUrl": "https://shako.example.sk/pulls/7",
+                    "State": "open",
+                    "Title": "update Endpoint air-quality",
+                    "Head": "portal/update-endpoint-air-quality-12345678",
+                    "Base": "main",
+                    "CreatedAt": "2026-09-06T09:14:22Z",
+                    "Author": "author",
+                    "AuthorName": "Author",
+                    "AuthorEmail": "author@example.sk"
+                }]
+            })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='test-owner',Name='test-repo')/PullRequests(7)/Files",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "value": [{ "Filename": manifest_path, "Status": "modified" }]
+            })))
+            .mount(&forge)
+            .await;
+        let manifest = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: air-quality\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: air\n";
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)"))
+            .and(query_param("@p", format!("'{manifest_path}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "blob-7",
+                "Content": base64::engine::Engine::encode(
+                    &base64::engine::general_purpose::STANDARD,
+                    manifest.as_bytes(),
+                )
+            })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(wiremock::matchers::path_regex(r"/Branches\('"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head-7" })))
+            .mount(&forge)
+            .await;
+        let client = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("a forge client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let mut driver = Driver::for_tests(state.clone(), "ovzdusie");
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let refused = driver
+            .open_endpoint(&mut Vec::new(), &mut Vec::new(), "air-quality")
+            .await
+            .expect_err("not live");
+        assert!(
+            refused.contains("the endpoint 'air-quality' is not live yet: its change chg-00000007"),
+            "{refused}"
+        );
+        assert!(refused.contains("nothing was tested"), "{refused}");
+        // Another name has no change to wait on, and gets the plain refusal.
+        let other = driver
+            .open_endpoint(&mut Vec::new(), &mut Vec::new(), "trams")
+            .await
+            .expect_err("unknown");
+        assert!(other.starts_with("'trams' is not an endpoint"), "{other}");
+    }
+
     /// T-2515: an endpoint the conversation already reads is its index again: nothing stored,
     /// logged or asked of the proxy. Two opens at once cannot race: `chosen` is `&mut`, so the
     /// borrow checker serialises them (the `two_concurrent_opens…` case is struck).
@@ -1035,6 +1156,117 @@ mod tests {
         assert!(!section.contains("`b`"), "{section}");
     }
 
+    /// T-7924: a card the gateway answers with something that is not JSON is no card, and the
+    /// endpoint is left with none for the turn.
+    #[tokio::test]
+    async fn a_card_that_is_not_json_is_none() {
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&proxy)
+            .await;
+        let mut driver = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        driver.proxy_base = proxy.uri();
+        let mut cards = BTreeMap::new();
+        driver.read_cards(&[run_endpoint("a")], &mut cards).await;
+        assert_eq!(cards.get("a"), Some(&None));
+    }
+
+    /// T-7924: an endpoint whose `tools/list` does not answer offers nothing, and the log says
+    /// which endpoint of the conversation it was.
+    #[tokio::test]
+    async fn an_endpoint_that_lists_no_tools_offers_nothing_and_is_logged() {
+        let mut driver = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        driver.proxy_base = "http://127.0.0.1:9".into();
+        let chosen = [run_endpoint("a")];
+        let (lists, log) = crate::reconciler::logged(driver.data_tools(&chosen)).await;
+        assert_eq!(lists, vec![Vec::<Value>::new()]);
+        assert!(
+            log.contains("an endpoint of the conversation did not list its tools"),
+            "{log}"
+        );
+        assert!(
+            log.contains(r#"endpoint="a""#) || log.contains("endpoint=a"),
+            "{log}"
+        );
+    }
+
+    /// T-7924: an endpoint whose tool list is a JSON-RPC error is one that could not be read
+    /// just now, which the model is told never to call "no data"; one that answers without the
+    /// tool asked for says the tools it does offer.
+    #[tokio::test]
+    async fn a_relisted_endpoint_says_why_a_tool_is_not_there() {
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/v1/data/mcp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "error": { "code": -32603, "message": "broken" }
+            })))
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/v1/data/endpoints/slug-b/mcp"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "result": { "tools": [
+                    { "name": "get_entity", "annotations": { "readOnlyHint": true } }
+                ] }
+            })))
+            .mount(&proxy)
+            .await;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = proxy.uri();
+        let chosen = [run_endpoint("a"), run_endpoint("b")];
+        let call = |endpoint: &str| data_query::QueryCall {
+            endpoint: endpoint.into(),
+            name: "query_entities".into(),
+            arguments: json!({}),
+        };
+        let broken = driver
+            .query_endpoint(&chosen, &call("a"), &[])
+            .await
+            .expect("an answer");
+        assert!(
+            broken.contains("endpoint 'a' could not be read just now: the endpoint answered"),
+            "{broken}"
+        );
+        assert!(broken.contains("do not say it offers no data"), "{broken}");
+        let other = driver
+            .query_endpoint(&chosen, &call("b"), &[])
+            .await
+            .expect("an answer");
+        assert!(other.starts_with("error: "), "{other}");
+        assert!(other.contains("get_entity"), "{other}");
+        let failed = logged(&state, "tool").await;
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert!(failed.iter().all(|step| step["status"] == "failed"));
+    }
+
+    /// T-7924: a call the proxy never takes is the problem document every door answers.
+    #[tokio::test]
+    async fn an_endpoint_call_the_proxy_never_takes_is_a_problem_document() {
+        let mut driver = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        driver.proxy_base = "http://127.0.0.1:9".into();
+        let down = driver
+            .call_endpoint(&[run_endpoint("a")], 0, &json!({}))
+            .await;
+        assert_eq!(down["error"]["status"], 503, "{down}");
+        let detail = down["error"]["detail"].as_str().unwrap_or_default();
+        assert!(
+            detail.starts_with("the call did not go through the proxy"),
+            "{detail}"
+        );
+    }
+
     /// JC1-03, AG-158: an endpoint's answer reaches the model provider only after the
     /// attributes its project's models mark personal leave it; when those models cannot be
     /// read, the answer is refused whole and its values reach neither the model nor the log.
@@ -1090,6 +1322,213 @@ mod tests {
         let last = logged(&state, "tool").await.pop().expect("logged");
         assert_eq!("failed", last["status"], "{last}");
         assert!(!last.to_string().contains("jana@example.org"), "{last}");
+    }
+
+    /// A forge that serves every DataModel source as `linkml`, as the forge of a project.
+    async fn forge_serving(linkml: &'static str) -> MockServer {
+        use wiremock::matchers::path;
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "s",
+                "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, linkml)
+            })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&forge)
+            .await;
+        forge
+    }
+
+    /// T-7924, JC1-03, AG-158: an attribute the project's model marks personal leaves the
+    /// answer before the model reads it, its text is rewritten from what is left, and the note
+    /// names what left. An endpoint whose slug the mirror does not hold is read by the
+    /// conversation's own project's models.
+    #[tokio::test]
+    async fn a_personal_attribute_leaves_the_answer_and_the_note_names_it() {
+        const LINKML: &str = "id: https://example.org/reports\nname: reports\nclasses:\n  PotholeReport:\n    attributes:\n      contactEmail:\n        annotations:\n          personalData: true\n      description: {}\n";
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "result": {
+                    "content": [{ "type": "text", "text": "jana@example.org" }],
+                    "structuredContent": { "entities": [{
+                        "id": "urn:ngsi-ld:PotholeReport:1",
+                        "type": "PotholeReport",
+                        "description": { "type": "Property", "value": "a deep one" },
+                        "contactEmail": { "type": "Property", "value": "jana@example.org" }
+                    }] }
+                }
+            })))
+            .mount(&proxy)
+            .await;
+        let forge = forge_serving(LINKML).await;
+        let client = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "org",
+            "manifests",
+            "t",
+        )
+        .expect("a forge client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: ObjectMeta::new("reports", "helsinki"),
+            spec: json!({ "linkml": "reports.linkml.yaml" }),
+            status: None,
+        });
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = proxy.uri();
+        // Not in the mirror: its project is the conversation's.
+        let chosen = vec![run_endpoint("elsewhere")];
+        let tools = vec![vec![json!({ "name": "query_entities" })]];
+        let call = data_query::QueryCall {
+            endpoint: "elsewhere".into(),
+            name: "query_entities".into(),
+            arguments: json!({ "type": "PotholeReport" }),
+        };
+        let read = driver
+            .query_endpoint(&chosen, &call, &tools)
+            .await
+            .expect("read");
+        assert!(!read.contains("jana@example.org"), "{read}");
+        assert!(read.contains("a deep one"), "{read}");
+        assert!(
+            read.contains("withheld personal attributes") && read.contains("contactEmail"),
+            "{read}"
+        );
+        let last = logged(&state, "tool").await.pop().expect("logged");
+        assert_eq!(last["status"], "ok", "{last}");
+        assert!(!last.to_string().contains("jana@example.org"), "{last}");
+    }
+
+    /// The proxy answering the grants and the entities of a `write_entities` preview: the
+    /// person may update `bikes` of a Bike, `urn:ngsi-ld:Bike:gone` cannot be read.
+    async fn write_proxy() -> MockServer {
+        use wiremock::matchers::body_string_contains;
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("urn:ngsi-ld:Bike:gone"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "error": { "code": -32602, "message": "no such entity" }
+            })))
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("describe_access"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "result": { "structuredContent": {
+                    "permissions": [{ "resource": { "type": "Bike" }, "actions": ["updateAttrs"] }]
+                } }
+            })))
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("get_entity"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0", "id": 1, "result": { "structuredContent": {
+                    "id": "urn:ngsi-ld:Bike:1", "type": "Bike",
+                    "bikes": { "type": "Property", "value": 3 }
+                } }
+            })))
+            .mount(&proxy)
+            .await;
+        proxy
+    }
+
+    fn bikes_change(id: &str) -> entity_write::WriteEntities {
+        let mut attrs = serde_json::Map::new();
+        attrs.insert("bikes".into(), json!(4));
+        entity_write::WriteEntities {
+            endpoint: "a".into(),
+            entities: vec![entity_write::EntityChange {
+                id: id.into(),
+                attrs,
+            }],
+        }
+    }
+
+    /// T-7924, AG-78: a change the grants allow is previewed as it is and as it would be, and
+    /// a model answer with no words of its own still tells the person what to do.
+    #[tokio::test]
+    async fn a_change_the_grants_allow_is_previewed_with_a_default_sentence() {
+        let proxy = write_proxy().await;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = proxy.uri();
+        let (mut chosen, mut tools) = (vec![run_endpoint("a")], vec![Vec::new()]);
+        let prose = driver
+            .write_entities(
+                Ok(bikes_change("urn:ngsi-ld:Bike:1")),
+                "",
+                &mut chosen,
+                &mut tools,
+                false,
+            )
+            .await
+            .expect("no store failure")
+            .done()
+            .expect("ends");
+        assert_eq!(prose, "Review the values and apply the change.");
+        let step = logged(&state, "tool").await.pop().expect("logged");
+        assert_eq!(step["status"], "ok", "{step}");
+        let change = &step["output"]["entities"][0]["changes"][0];
+        assert_eq!(change["attribute"], "bikes", "{step}");
+        assert_eq!(change["before"], 3, "{step}");
+        assert_eq!(change["after"], 4, "{step}");
+        assert_eq!(step["output"]["slug"], "slug-a", "{step}");
+    }
+
+    /// T-7924: a call the model wrote wrong goes back to it to try again, or, on its last
+    /// pass, ends the tool with the reason; an entity that cannot be read is named in the
+    /// refusal and nothing is previewed.
+    #[tokio::test]
+    async fn a_wrong_call_goes_back_and_an_unreadable_entity_is_named() {
+        let proxy = write_proxy().await;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = proxy.uri();
+        let (mut chosen, mut tools) = (vec![run_endpoint("a")], vec![Vec::new()]);
+        let again = driver
+            .write_entities(Err("bad call".into()), "", &mut chosen, &mut tools, false)
+            .await
+            .expect("no store failure")
+            .again()
+            .expect("back to the model");
+        assert_eq!(again, "error: bad call");
+        let last = driver
+            .write_entities(Err("bad call".into()), "", &mut chosen, &mut tools, true)
+            .await
+            .expect("no store failure")
+            .done()
+            .expect("ends");
+        assert_eq!(last, "The change could not be prepared: bad call");
+
+        let unread = driver
+            .prepared_write(
+                &bikes_change("urn:ngsi-ld:Bike:gone"),
+                &mut chosen,
+                &mut tools,
+            )
+            .await
+            .expect_err("unreadable");
+        assert!(
+            unread.starts_with("urn:ngsi-ld:Bike:gone could not be read: "),
+            "{unread}"
+        );
+        let failed = logged(&state, "tool").await;
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert!(failed.iter().all(|step| step["status"] == "failed"));
     }
 
     /// JC1-57: an endpoint call that reached no answer comes back as the problem document every

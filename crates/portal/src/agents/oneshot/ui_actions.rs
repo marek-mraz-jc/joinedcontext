@@ -362,9 +362,10 @@ pub(crate) fn mcp_tools(projects: &[&str]) -> Vec<Value> {
                 "enum": projects,
                 "description": "The project whose page the person's tab opens",
             });
-            if let Some(required) = input["required"].as_array_mut() {
-                required.push(json!("project"));
-            }
+            // Every action's schema names what it requires (`ui_specs`); the project joins it.
+            let mut required = input["required"].as_array().cloned().unwrap_or_default();
+            required.push(json!("project"));
+            input["required"] = json!(required);
             json!({
                 "name": spec.name,
                 "title": spec.name,
@@ -491,7 +492,8 @@ impl Asker<'_> {
                 });
             }
             (Some(envelope), false) => (
-                serde_json::to_value(&envelope).map_err(|e| e.to_string())?,
+                // A manifest of strings and JSON values always serializes.
+                serde_json::to_value(&envelope).unwrap_or_default(),
                 crate::agents::change::route(self.project, info.kind, info.plural, &name, false),
             ),
         };
@@ -640,6 +642,117 @@ mod tests {
             .await
             .expect("an answer");
         assert!(refused.contains("\"status\":422"), "{refused}");
+    }
+
+    /// T-7924: a plan that creates opens the kind's create form with the planned manifest as
+    /// its values, never the page of an object that is not there yet.
+    #[tokio::test]
+    async fn a_create_plan_opens_the_create_form_on_the_planned_manifest() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::testkit::admin(&state);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity = caller.identity.clone();
+        let plan = crate::ops::find(crate::connectors::PLAN).expect("the plan op");
+        let planned = crate::ops::call(
+            plan,
+            &caller,
+            &state,
+            "helsinki",
+            json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "fresh",
+                "manifest": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "DataSource",
+                    "metadata": { "name": "fresh", "namespace": "helsinki" },
+                    "spec": { "type": "http", "http": {
+                        "url": "https://93.184.215.14/fresh.csv", "format": "csv" } } } }] }),
+        )
+        .await
+        .expect("planned");
+        let (frame, payload) = driver
+            .asker()
+            .show_diff(&json!({ "planId": planned["planId"] }))
+            .expect("opened");
+        assert_eq!(frame, "navigate");
+        assert_eq!(
+            payload["route"],
+            json!(crate::agents::change::create_route(
+                "helsinki",
+                "DataSource",
+                crate::resource::by_kind("DataSource")
+                    .expect("a kind")
+                    .plural
+            )),
+            "{payload}"
+        );
+        assert!(
+            payload["prefill"].to_string().contains("93.184.215.14"),
+            "{payload}"
+        );
+        // Another person's plan, or none, is not there for them.
+        let unknown = driver.asker().show_diff(&json!({ "planId": "plan-nope" }));
+        assert!(unknown.is_err_and(|why| why.starts_with("no plan 'plan-nope' of yours")),);
+    }
+
+    /// T-7924: a connector steering the tab opens an editor only on what its scope reaches:
+    /// another project's connector is refused before anything is read, its own project's
+    /// passes on to the object's own check.
+    #[test]
+    fn a_connector_opens_only_the_editors_its_scope_reaches() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let elsewhere = crate::connectors::of_conversation("r1", "sub", "espoo", "data-read");
+        let asker = Asker {
+            state: &state,
+            identity: &driver.identity,
+            project: "helsinki",
+            connector: Some(&elsewhere),
+        };
+        let refused = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters" }))
+            .expect_err("out of reach");
+        assert!(
+            refused.contains("this connector does not reach Endpoint counters of project helsinki"),
+            "{refused}"
+        );
+        let here = crate::connectors::of_conversation("r1", "sub", "helsinki", "data-read");
+        let asker = Asker {
+            connector: Some(&here),
+            ..asker
+        };
+        let missing = asker
+            .open_form(&json!({ "kind": "Endpoint", "name": "counters" }))
+            .expect_err("no such endpoint");
+        assert_eq!(
+            missing,
+            "Endpoint 'counters' does not exist; the project has none"
+        );
+    }
+
+    /// T-7924: a kind the Portal serves without a manifest schema has no form to open.
+    #[test]
+    fn a_kind_without_a_schema_has_no_form() {
+        let refused = kind_schema("Entity").err();
+        assert_eq!(refused.as_deref(), Some("'Entity' has no schema"));
+        let refused = highlight(&json!({ "kind": "Entity", "field": "spec", "message": "m" }));
+        assert!(refused.is_err());
+    }
+
+    /// T-7924: every action a paired connector lists requires the project beside its own
+    /// fields.
+    #[test]
+    fn every_connector_action_requires_its_project_and_its_own_fields() {
+        let tools = mcp_tools(&["helsinki"]);
+        for (tool, spec) in tools.iter().zip(ui_specs()) {
+            let required = tool["inputSchema"]["required"]
+                .as_array()
+                .expect("required");
+            assert_eq!(required.last(), Some(&json!("project")), "{tool}");
+            let own = spec.input_schema["required"].as_array().expect("required");
+            assert_eq!(required.len(), own.len() + 1, "{tool}");
+            assert_eq!(
+                tool["inputSchema"]["properties"]["project"]["enum"],
+                json!(["helsinki"])
+            );
+        }
     }
 
     /// A person bound to space `a` reads Endpoints there, and helsinki has one Endpoint in

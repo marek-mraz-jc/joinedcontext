@@ -870,6 +870,27 @@ mod tests {
             .is_empty());
     }
 
+    /// T-7924: a registry with no host on its way to being served moves nothing and asks the
+    /// cluster nothing, not even for the edge every moving host is copied from.
+    #[tokio::test]
+    async fn a_registry_with_no_host_on_its_way_asks_the_cluster_nothing() {
+        let scratch = crate::test_db::scratch().await;
+        let server = MockServer::start().await;
+        let hosts = wave(&server, scratch.pool.clone(), Canned(Default::default()));
+        let ((), log) = super::super::logged(hosts.converge(false)).await;
+        assert!(
+            !log.contains("the host registry was not read"),
+            "the empty registry was read: {log}"
+        );
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+        drop(hosts);
+        scratch.remove().await;
+    }
+
     /// Each way DNS keeps a host waiting is said: no edge host to compare, an edge that does not
     /// resolve, and a lookup with no answer.
     #[tokio::test]

@@ -429,6 +429,162 @@ mod tests {
         assert_eq!(completion_file("noext", "json", "[]")["name"], "noext.json");
     }
 
+    fn event(kind: &str, payload: Value) -> crate::agents::run::AgentRunEvent {
+        crate::agents::run::AgentRunEvent {
+            run_id: "r".into(),
+            seq: 0,
+            kind: kind.into(),
+            payload,
+            created_at: String::new(),
+        }
+    }
+
+    fn driver() -> Driver {
+        Driver::for_tests(
+            crate::state::AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        )
+    }
+
+    /// T-7924: an answer this path cannot read without the run's events is a failure the turn
+    /// reports, never an answer taken from nothing: a store that is down says so.
+    #[tokio::test]
+    async fn an_answer_on_a_store_that_is_down_is_a_failure() {
+        let mut dead = driver();
+        dead.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        ));
+        let answer = event("answer", json!({ "questionId": "q-1", "answers": {} }));
+        assert!(dead.integrate_answer(&answer).await.is_err());
+    }
+
+    /// T-7924: an answer to a question this path never asked, or to none, is the model's.
+    #[tokio::test]
+    async fn an_answer_to_no_question_of_this_path_is_the_models() {
+        let driver = driver();
+        for payload in [
+            json!({}),
+            json!({ "questionId": "q-unknown", "answers": {} }),
+        ] {
+            let taken = driver
+                .integrate_answer(&event("answer", payload.clone()))
+                .await
+                .expect("no store failure");
+            assert!(taken.is_none(), "{payload}");
+        }
+    }
+
+    /// T-7924: a source answer with neither a file nor an address is words for the model, and
+    /// nothing is asked next.
+    #[tokio::test]
+    async fn a_source_answer_without_a_file_or_an_address_is_the_models() {
+        let driver = driver();
+        for answers in [json!({}), json!({ "answer": "bikes" }), json!({ "url": 7 })] {
+            let taken = driver.source_taken(&answers).await.expect("no failure");
+            assert!(taken.is_none(), "{answers}");
+        }
+        let all = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        assert!(all.iter().all(|event| event.kind != "question"));
+    }
+
+    /// T-7924: in a project with no space to pick, the address still leads on to the target
+    /// question, which offers the new space alone and chooses it by default.
+    #[tokio::test]
+    async fn with_no_space_to_pick_the_target_question_offers_a_new_one() {
+        let driver = driver();
+        let taken = driver
+            .source_taken(&json!({ "url": "https://feed.example/a.json" }))
+            .await
+            .expect("no failure");
+        assert!(
+            matches!(&taken, Some(Taken::Done(prose)) if prose == "The data is read from https://feed.example/a.json."),
+        );
+        let questions: Vec<Value> = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "question")
+            .map(|event| event.payload)
+            .collect();
+        assert_eq!(questions.len(), 1, "{questions:?}");
+        assert_eq!(questions[0]["step"], TARGET_STEP);
+        let options = questions[0]["options"].as_array().expect("options");
+        assert_eq!(options.len(), 1, "{options:?}");
+        assert_eq!(options[0]["value"], NEW_SPACE);
+        assert_eq!(questions[0]["default"], NEW_SPACE);
+    }
+
+    /// T-7924: a target answer without a chosen option is the model's.
+    #[tokio::test]
+    async fn a_target_answer_without_an_option_is_the_models() {
+        let driver = driver();
+        for answers in [json!({}), json!({ "answer": 3 })] {
+            let taken = driver
+                .target_taken(&answers, &[])
+                .await
+                .expect("no failure");
+            assert!(taken.is_none(), "{answers}");
+        }
+    }
+
+    /// T-7924: the feed question takes an address or "no feed": anything else is the model's,
+    /// an address that is no URL is refused, and a feed for a source that was no file is
+    /// refused, never drafted from nothing.
+    #[tokio::test]
+    async fn the_feed_answer_takes_an_address_or_no_feed() {
+        let driver = driver();
+        for answers in [json!({}), json!({ "answer": "later" }), json!({ "url": 1 })] {
+            let taken = driver.feed_taken(&answers, &[]).await.expect("no failure");
+            assert!(taken.is_none(), "{answers}");
+        }
+        let not_a_url = driver
+            .feed_taken(&json!({ "url": "no address" }), &[])
+            .await
+            .err()
+            .expect("refused");
+        assert!(
+            not_a_url.starts_with("the feed's address is not a URL"),
+            "{not_a_url}"
+        );
+        let nothing = driver
+            .feed_taken(&json!({ "answer": NO_FEED }), &[])
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(nothing, "nothing was handed over to draft a space from");
+        let address_only = [
+            event(
+                "question",
+                json!({ "questionId": "q-1", "step": SOURCE_STEP }),
+            ),
+            event(
+                "answer",
+                json!({ "questionId": "q-1", "answers": { "url": "https://feed.example/a.json" } }),
+            ),
+        ];
+        let no_file = driver
+            .feed_taken(
+                &json!({ "url": "https://feed.example/b.json" }),
+                &address_only,
+            )
+            .await
+            .err()
+            .expect("refused");
+        assert_eq!(
+            no_file,
+            "the feed question follows a file, and no file was handed over"
+        );
+    }
+
     #[test]
     fn what_was_handed_over_is_the_answer_to_the_source_question() {
         let event = |kind: &str, payload: Value| crate::agents::run::AgentRunEvent {

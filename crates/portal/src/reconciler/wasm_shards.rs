@@ -762,6 +762,43 @@ mod tests {
         );
     }
 
+    /// Poisons `lock`: a holder panics while holding it.
+    fn poison<T>(lock: &Mutex<T>) {
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = lock.lock().expect("not poisoned yet");
+            panic!("T-7924: a holder of the lock panics");
+        }));
+        assert!(caught.is_err());
+        assert!(lock.is_poisoned());
+    }
+
+    /// T-7924: with the record of each shard's last answer poisoned, an answer is not kept and
+    /// nothing is answered from it: the runs come back empty, and no shard is said to have failed.
+    #[tokio::test]
+    async fn a_poisoned_record_of_the_last_runs_answers_none() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let hosts = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jobs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "jobs": [
+                { "app": "a1", "job": "hourly", "lastRun": "2026-10-10T00:00:00Z", "outcome": "ok" }
+            ]})))
+            .expect(2)
+            .mount(&hosts)
+            .await;
+        let mut wasm = shards("http://127.0.0.1:9");
+        wasm.http = reqwest::Client::builder()
+            .proxy(reqwest::Proxy::http(hosts.uri()).expect("a proxy"))
+            .build()
+            .expect("a client");
+        poison(&wasm.last_runs);
+        let (runs, problems) = wasm.runs().await;
+        assert!(runs.is_empty(), "{runs:?}");
+        assert!(problems.is_empty(), "{problems:?}");
+        hosts.verify().await;
+    }
+
     /// AP-154: each shard's `/jobs` on its admin port; a shard that answers an error or does not
     /// answer is said, and keeps the runs it answered before.
     #[tokio::test]

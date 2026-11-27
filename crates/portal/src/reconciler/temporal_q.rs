@@ -123,11 +123,12 @@ pub(super) fn intersect(projection: &str, own: Option<&str>) -> Result<String, S
     };
     let from = pick(from_a, from_b, true)?;
     let to = pick(to_a, to_b, false)?;
+    // `window` gives `projection` a start or an end, and `pick` keeps it, so `to` is all a
+    // window without a start can have.
     Ok(match (from, to) {
         (Some((_, f)), Some((_, t))) => format!("timerel=between;timeAt={f};endTimeAt={t}"),
         (Some((_, f)), None) => format!("timerel=after;timeAt={f}"),
-        (None, Some((_, t))) => format!("timerel=before;timeAt={t}"),
-        (None, None) => return Err("no timeAt".into()),
+        (None, to) => format!("timerel=before;timeAt={}", to.ok_or("no timeAt")?.1),
     })
 }
 

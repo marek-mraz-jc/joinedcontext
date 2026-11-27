@@ -453,7 +453,8 @@ impl Driver {
                     }),
                 )
                 .await?;
-                Ok(serde_json::to_string(&output).unwrap_or_else(|_| "{}".to_owned()))
+                // A Value always serializes: its Display is the same compact JSON.
+                Ok(output.to_string())
             }
             Err(err) => {
                 let reason = err.to_string();
@@ -1053,10 +1054,8 @@ fn describe_option(state: &AppState, project: &str, kind: &str, item: &Value) ->
     if kind == "Endpoint" {
         let name = item.get("name").and_then(Value::as_str)?;
         if let Some(endpoint) = state.mirror.get(project, kind, name) {
-            let representations = crate::api::catalogue::served_representations(&endpoint.spec);
-            if !representations.is_empty() {
-                parts.push(representations.join(", "));
-            }
+            // Never empty: every endpoint serves NGSI-LD.
+            parts.push(crate::api::catalogue::served_representations(&endpoint.spec).join(", "));
             if let Some(audience) = endpoint.spec["audience"].as_str() {
                 parts.push(audience.to_owned());
             }
@@ -1401,6 +1400,27 @@ mod tests {
         assert_eq!(answer["maxItems"], 2);
         assert_eq!(answer["uniqueItems"], true);
         assert_eq!(answer["items"]["oneOf"][1]["const"], "b");
+    }
+
+    /// T-7924: a default naming one option twice chooses it once, and the fill up to `min`
+    /// passes over what is already chosen; several answers without bounds carry none.
+    #[test]
+    fn a_repeated_default_is_chosen_once_and_the_fill_skips_it() {
+        let call = parse_ask(&json!({ "question": "Which?", "options": ["a", "b", "c"],
+            "multiple": true, "min": 2, "default": ["a", "a"] }))
+        .expect("a question");
+        let settled = settle(call).expect("settled");
+        assert_eq!(settled.default, Some(json!(["a", "b"])));
+
+        let open = parse_ask(&json!({ "question": "Which?", "options": ["a", "b"],
+            "multiple": true }))
+        .expect("a question");
+        let open = settle(open).expect("settled");
+        assert_eq!(open.default, Some(json!([])));
+        let answer = &question_schema(&open)["properties"]["answer"];
+        assert_eq!(answer["type"], "array");
+        assert!(answer.get("minItems").is_none(), "{answer}");
+        assert!(answer.get("maxItems").is_none(), "{answer}");
     }
 
     #[test]
@@ -2299,6 +2319,224 @@ mod driver_tests {
             describe_option(&driver.state, "helsinki", "Endpoint", &json!({})),
             None
         );
+    }
+
+    /// T-7924: an endpoint option the mirror does not hold says nothing about it; one listing no
+    /// representation still serves NGSI-LD (and MCP unless turned off), then to whom.
+    #[test]
+    fn an_endpoint_option_says_only_what_its_manifest_holds() {
+        let driver = driver();
+        assert_eq!(
+            describe_option(
+                &driver.state,
+                "helsinki",
+                "Endpoint",
+                &json!({ "name": "ghost" })
+            ),
+            None
+        );
+        driver.state.mirror.upsert(endpoint(
+            "silent",
+            json!({ "audience": "public", "enabledRepresentations": [], "mcp": false }),
+        ));
+        assert_eq!(
+            describe_option(
+                &driver.state,
+                "helsinki",
+                "Endpoint",
+                &json!({ "name": "silent", "space": "air" })
+            ),
+            Some("space air · ngsi-ld · public".to_owned())
+        );
+        driver
+            .state
+            .mirror
+            .upsert(endpoint("open", json!({ "enabledRepresentations": [] })));
+        assert_eq!(
+            describe_option(
+                &driver.state,
+                "helsinki",
+                "Endpoint",
+                &json!({ "name": "open" })
+            ),
+            Some("ngsi-ld, mcp".to_owned())
+        );
+    }
+
+    /// A forge that serves every DataModel source as `linkml`.
+    async fn forge_serving(linkml: &'static str) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "s",
+                "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, linkml)
+            })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&forge)
+            .await;
+        forge
+    }
+
+    /// A DataSource whose manifest holds an entity with a personal attribute, and the model
+    /// that marks it.
+    fn personal_world(driver: &Driver) {
+        driver.state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "DataSource".into(),
+            metadata: ObjectMeta::new("reports", "helsinki"),
+            spec: json!({ "sample": {
+                "id": "urn:ngsi-ld:PotholeReport:1",
+                "type": "PotholeReport",
+                "contactEmail": "jana@example.org"
+            } }),
+            status: None,
+        });
+        driver.state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: ObjectMeta::new("reports", "helsinki"),
+            spec: json!({ "linkml": "reports.linkml.yaml" }),
+            status: None,
+        });
+    }
+
+    fn get_reports() -> RegistryCall {
+        RegistryCall {
+            name: "jc_resource_get".into(),
+            arguments: json!({ "kind": "DataSource", "name": "reports" }),
+        }
+    }
+
+    /// T-7924, AG-158, JC1-03: an operation's answer carrying entities reaches the model only
+    /// without the attributes the project's models mark personal, named beside it; when the
+    /// models cannot be read, the answer is refused whole and its values reach neither the
+    /// model nor the log.
+    #[tokio::test]
+    async fn an_operation_answer_leaves_its_personal_attributes_behind() {
+        const LINKML: &str = "id: https://example.org/reports\nname: reports\nclasses:\n  PotholeReport:\n    attributes:\n      contactEmail:\n        annotations:\n          personalData: true\n";
+        let mut unread = driver();
+        admin(&mut unread);
+        personal_world(&unread);
+        let refused = unread
+            .registry_call(&get_reports())
+            .await
+            .expect("an answer");
+        assert!(
+            refused.starts_with("error: the data model reports of project helsinki"),
+            "{refused}"
+        );
+        let events = tool_events(&unread).await;
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_eq!(events[0]["status"], "failed");
+        assert!(!events[0].to_string().contains("jana@example.org"));
+
+        let forge = forge_serving(LINKML).await;
+        let client = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "org",
+            "manifests",
+            "t",
+        )
+        .expect("a forge client");
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let mut read = Driver::for_tests(state, "helsinki");
+        admin(&mut read);
+        personal_world(&read);
+        let answer = read.registry_call(&get_reports()).await.expect("an answer");
+        assert!(!answer.contains("jana@example.org"), "{answer}");
+        let answer: Value = serde_json::from_str(&answer).expect("JSON");
+        assert_eq!(
+            answer["withheldPersonalAttributes"],
+            json!(["PotholeReport.contactEmail"]),
+            "{answer}"
+        );
+        assert_eq!(answer["answer"]["metadata"]["name"], "reports", "{answer}");
+        let events = tool_events(&read).await;
+        assert_eq!(events[0]["status"], "ok", "{events:?}");
+    }
+
+    fn draft_page(name: &str) -> NavigateCall {
+        NavigateCall {
+            page: "draft".into(),
+            name: Some(name.into()),
+            plural: None,
+            endpoint: None,
+            entity_type: None,
+            q: None,
+            color: None,
+        }
+    }
+
+    /// T-7924, T-2845: from a project, a draft kept under `org` counts only when its kind lives
+    /// on an Organization tab; a conversation of the organization itself reads `org` once.
+    #[tokio::test]
+    async fn an_organization_draft_opens_on_its_tab_and_a_project_kind_under_org_does_not() {
+        let mut driver = driver();
+        admin(&mut driver);
+        let by = driver.created_by.clone();
+        let org = crate::permissions::ORG_NAMESPACE;
+        for kind in ["Blueprint", "Endpoint"] {
+            driver
+                .state
+                .drafts
+                .put(org, kind, "weather", json!({}), None, &by, "assistant")
+                .await
+                .expect("a draft");
+        }
+        assert_eq!(
+            driver
+                .open_page(&draft_page("weather"))
+                .await
+                .expect("an answer"),
+            "opened /organization/blueprints?draft=weather"
+        );
+
+        let mut at_org = Driver::for_tests(driver.state.clone(), org);
+        admin(&mut at_org);
+        at_org.created_by = by;
+        let opened = at_org
+            .open_page(&draft_page("weather"))
+            .await
+            .expect("an answer");
+        // Both drafts are the organization's own here, each read once: the name alone does
+        // not say which.
+        assert_eq!(
+            opened,
+            "error: drafts of more than one kind are named 'weather' (Blueprint, Endpoint); \
+             name the plural of the one to open"
+        );
+    }
+
+    /// T-7924: drafts that cannot be read are said as such, never as a draft that is not there.
+    #[tokio::test]
+    async fn drafts_that_cannot_be_read_are_said_so() {
+        let mut driver = driver();
+        admin(&mut driver);
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let refused = driver
+            .open_page(&draft_page("weather"))
+            .await
+            .expect("an answer");
+        assert!(
+            refused.starts_with("error: the drafts cannot be read now: "),
+            "{refused}"
+        );
+        assert!(!refused.contains("127.0.0.1"), "{refused}");
     }
 
     /// AG-80, T-2694: the question event carries the options, a disabled one with its reason,

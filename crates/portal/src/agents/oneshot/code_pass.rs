@@ -78,7 +78,8 @@ impl Driver {
         let look = crate::agents::theme::tokens(&self.state.branding(), &self.app_name, &others);
         files.insert(
             crate::agents::theme::PATH.to_owned(),
-            serde_json::to_string_pretty(&look).unwrap_or_else(|_| look.to_string()),
+            // A Value always serializes.
+            serde_json::to_string_pretty(&look).unwrap_or_default(),
         );
         match self.jc_types().await {
             Ok(types) => {
@@ -1029,7 +1030,8 @@ impl Driver {
                 let bearer = self.bearer.clone();
                 tokio::spawn(async move {
                     let report = sandbox.run(&run_id, version, &files).await;
-                    let mut payload = serde_json::to_value(&report).unwrap_or_else(|_| json!({}));
+                    // A report always serializes; `null` takes `version` as an empty object would.
+                    let mut payload = serde_json::to_value(&report).unwrap_or_default();
                     payload["version"] = json!(version);
                     // A test may print what the application was given; the ticket never lands.
                     let text = redact(&bearer, &payload.to_string());
@@ -1361,6 +1363,111 @@ fn repair_instruction(request: &str, found: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T-7924: a message after the opening is the person's words with the instruction to change
+    /// the application and test what changes, not the first version's brief.
+    #[tokio::test]
+    async fn a_later_message_is_the_persons_words_to_change_the_application() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.prompt = "A list of bikes".into();
+        let conversation = vec![("A list of bikes".to_owned(), "Ready.".to_owned())];
+        let pack = driver
+            .code_pack(
+                &json!({}),
+                &BTreeMap::new(),
+                &conversation,
+                "add a filter by station",
+                None,
+            )
+            .await;
+        assert!(
+            pack.contains("The person says: add a filter by station\n\nChange the application accordingly, with tests"),
+            "{pack}"
+        );
+        assert!(!pack.contains("FIRST VERSION"), "{pack}");
+    }
+
+    /// T-7924: a service name the catalogue does not know is never on, whatever the layers say.
+    #[test]
+    fn an_unknown_service_is_off() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state, "helsinki");
+        assert!(!driver.service_on("no-such-service"));
+        assert!(!driver.service_on(""));
+    }
+
+    /// T-7924, SDK-09: an application that may write is given the attributes its endpoint's
+    /// space model declares for the types it writes, read from the forge.
+    #[tokio::test]
+    async fn a_writing_application_reads_the_attributes_of_its_spaces_model() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        const LINKML: &str = "id: https://hel.fi/models/bikes\nname: bikes\nclasses:\n  BikeHireDockingStation:\n    slots: [id, name, availableBikeNumber]\nslots:\n  id: {}\n  name: { range: string }\n  availableBikeNumber: { range: integer }\n";
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)",
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "s",
+                "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, LINKML)
+            })))
+            .mount(&forge)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&forge)
+            .await;
+        let client = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("url"),
+            "org",
+            "manifests",
+            "t",
+        )
+        .expect("a forge client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let put = |kind: &str, name: &str, spec: Value| {
+            state.mirror.upsert(
+                serde_json::from_value(json!({
+                    "apiVersion": "joinedcontext.com/v1alpha1", "kind": kind,
+                    "metadata": { "name": name, "namespace": "helsinki" }, "spec": spec,
+                }))
+                .expect("an envelope"),
+            );
+        };
+        put("ContextSpace", "bikes", json!({ "dataModelRef": "bikes" }));
+        put(
+            "DataModel",
+            "bikes",
+            json!({ "contextSpaceRef": "bikes", "linkml": "bikes.linkml.yaml" }),
+        );
+        put(
+            "Endpoint",
+            "bikes-open",
+            json!({ "contextSpaceRef": "bikes", "slug": "test-slug", "audience": "public" }),
+        );
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.allows_write = true;
+        driver.data_needs =
+            json!([{ "types": ["BikeHireDockingStation"], "operations": ["write"] }]);
+        let pack = driver
+            .code_pack(&json!({}), &BTreeMap::new(), &[], "A form", None)
+            .await;
+        assert!(pack.contains("The application MAY write"), "{pack}");
+        let declared =
+            crate::agents::fields::field_schema(LINKML, &["BikeHireDockingStation".to_owned()]);
+        assert_eq!(
+            declared["BikeHireDockingStation"]["properties"]["availableBikeNumber"]["type"],
+            "integer"
+        );
+        let declared = serde_json::to_string_pretty(&declared).expect("json");
+        assert!(pack.contains(&declared), "{pack}");
+    }
 
     #[tokio::test]
     async fn the_completing_call_keeps_a_narrowed_list_in_a_type_grid() {
@@ -1926,6 +2033,95 @@ mod repository_tests {
         );
     }
 
+    /// T-7924: a file of the last commit the branch no longer holds is nothing to delete: the
+    /// commit carries only what changed.
+    #[tokio::test]
+    async fn a_file_the_branch_no_longer_holds_is_not_deleted() {
+        let server = a_forge_for_a_later_pass().await;
+        let (_, driver) = driver(&server);
+        let mut committed = files();
+        committed.insert("src/Vanished.tsx".into(), "x".into());
+        let mut next = files();
+        next.insert("src/App.tsx".into(), "export default 3".into());
+        driver
+            .commit_files(&next, &mut committed, "Third version")
+            .await
+            .expect("committed");
+        assert_eq!(
+            commit_of(&server).await,
+            vec![("upload".into(), "src/App.tsx".into(), None)]
+        );
+        assert_eq!(committed, next);
+    }
+
+    /// T-7924, AP-76: the README of a run's first commit is headed by the title the run chose.
+    #[tokio::test]
+    async fn the_first_readme_is_headed_by_the_runs_title() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(REPO))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Branches('{}')",
+                BRANCH.replace('/', "%2F")
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head1" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Truncated": false,
+                "Tree": []
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c1" })))
+            .mount(&server)
+            .await;
+        let (state, driver) = driver(&server);
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.title = Some("Helsinki City Bikes".into());
+        state.agents.create_run(&run).await.expect("a run");
+        let mut committed = BTreeMap::new();
+        driver
+            .commit_files(&files(), &mut committed, "First version")
+            .await
+            .expect("committed");
+        let commit: Value = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .find(|request| request.url.path() == format!("{REPO}/Shako.CommitFiles"))
+            .map(|request| serde_json::from_slice(&request.body).expect("json"))
+            .expect("one commit");
+        let readme = commit["Files"]
+            .as_array()
+            .expect("files")
+            .iter()
+            .find(|file| file["path"] == "README.md")
+            .and_then(|file| file["content"].as_str())
+            .expect("the README");
+        let text = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, readme)
+            .expect("base64");
+        assert!(
+            String::from_utf8_lossy(&text).starts_with("# Helsinki City Bikes\n"),
+            "{}",
+            String::from_utf8_lossy(&text)
+        );
+    }
+
     /// AP-100: a pass that would add, change or delete anything under `.gitea/` reaches the
     /// forge not at all, and the run is told why, so only a workflow a reviewer merged runs.
     #[tokio::test]
@@ -2411,6 +2607,212 @@ mod tests_repair {
             .collect()
     }
 
+    /// A stored run whose model gives `answers` in order (`None`: the provider refuses the call).
+    async fn scripted(answers: &[Option<String>]) -> (wiremock::MockServer, Driver) {
+        let server = wiremock::MockServer::start().await;
+        for text in answers {
+            let response = match text {
+                Some(text) => wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({ "content": [{ "type": "text", "text": text }] })),
+                None => wiremock::ResponseTemplate::new(400).set_body_string("bad request"),
+            };
+            wiremock::Mock::given(wiremock::matchers::method("POST"))
+                .and(wiremock::matchers::path("/v1/llm/messages"))
+                .respond_with(response)
+                .up_to_n_times(1)
+                .mount(&server)
+                .await;
+        }
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.kind = "application".to_owned();
+        state.agents.create_run(&run).await.expect("a run");
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = server.uri();
+        driver.kind = "application".into();
+        driver.prompt = "A desk of today's alerts".into();
+        (server, driver)
+    }
+
+    /// An answer in the patch protocol writing `content` as the new file `file`.
+    fn writes(prose: &str, file: &str, content: &str) -> Option<String> {
+        Some(format!(
+            "{prose}\n\n```text\n{file}\n<<<<<<< SEARCH\n=======\n{content}\n>>>>>>> REPLACE\n```\n"
+        ))
+    }
+
+    const PAGE: &str = "export function Hello() {\n  return <p>hello</p>;\n}";
+    /// A page reaching for a package the SDK does not allow (SDK-12): it never builds.
+    const AXIOS: &str = "import axios from \"axios\";\n\nexport function Hello() {\n  return <p>{String(axios)}</p>;\n}";
+
+    /// `tests_failed` for version 3 on screen, with what it published.
+    async fn repaired(driver: &Driver, edited: bool) -> Option<Shown> {
+        let conversation = vec![("A desk of today's alerts".to_owned(), "Ready.".to_owned())];
+        let check = Check {
+            samples: &json!({}),
+            conversation: &conversation,
+            instruction: "add a filter by district",
+            edited,
+        };
+        let on_screen = Shown {
+            version: 3,
+            seq: 0,
+            observed: true,
+        };
+        let mut files = preview::template_files();
+        driver
+            .tests_failed(
+                check,
+                &mut files,
+                &mut BTreeMap::new(),
+                &on_screen,
+                &failed(3),
+                &mut None,
+            )
+            .await
+            .expect("the repair ends")
+    }
+
+    /// T-7924: a fix pass the provider refuses is said and the version on screen stands, for
+    /// the editing agent and for a pass over the project alike.
+    #[tokio::test]
+    async fn a_fix_pass_the_provider_refuses_is_said_and_the_version_stands() {
+        for edited in [true, false] {
+            let (_server, driver) = scripted(&[None]).await;
+            assert!(repaired(&driver, edited).await.is_none(), "{edited}");
+            assert!(
+                thoughts(&driver)
+                    .await
+                    .iter()
+                    .any(|t| t.starts_with("Fixing the tests failed: ")),
+                "{edited}"
+            );
+        }
+    }
+
+    /// T-7924: a fix that does not build twice keeps the version on screen and says why; one
+    /// that builds is the next version, published.
+    #[tokio::test]
+    async fn a_fix_that_never_builds_keeps_the_version_and_one_that_builds_is_published() {
+        let (_server, driver) = scripted(&[
+            writes("Axios.", "src/pages/Hello.tsx", AXIOS),
+            writes("Still axios.", "src/pages/Hello.tsx", AXIOS),
+        ])
+        .await;
+        assert!(repaired(&driver, false).await.is_none());
+        assert!(
+            thoughts(&driver).await.iter().any(|t| t.starts_with(
+                "The application still does not build, so the preview keeps the version before this request:"
+            )),
+            "{:?}",
+            thoughts(&driver).await
+        );
+
+        let (_server, driver) = scripted(&[writes("Fixed.", "src/pages/Hello.tsx", PAGE)]).await;
+        let next = repaired(&driver, false).await.expect("a new version");
+        assert!(!next.observed);
+        let events = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        assert!(events.iter().any(|event| event.kind == "preview"));
+    }
+
+    /// `verify` of version 2 on screen, after an error the frame reported when `error` says so.
+    async fn verified(
+        driver: &Driver,
+        edited: bool,
+        error: bool,
+        observation: Option<&Value>,
+    ) -> Option<Shown> {
+        if error {
+            driver
+                .state
+                .agents
+                .append_event(
+                    &driver.run_id,
+                    "preview_error",
+                    json!({ "message": "x is undefined" }),
+                )
+                .await
+                .expect("event");
+        }
+        let conversation = vec![("A desk of today's alerts".to_owned(), "Ready.".to_owned())];
+        let check = Check {
+            samples: &json!({}),
+            conversation: &conversation,
+            instruction: "add a filter by district",
+            edited,
+        };
+        let on_screen = Shown {
+            version: 2,
+            seq: 0,
+            observed: true,
+        };
+        let mut files = preview::template_files();
+        driver
+            .verify(
+                check,
+                &mut files,
+                &mut BTreeMap::new(),
+                &on_screen,
+                observation,
+                &mut 0,
+            )
+            .await
+            .expect("the verification ends")
+    }
+
+    /// T-7924, SDK-28: an observation that shows nothing wrong is said in a sentence and asks
+    /// the model nothing.
+    #[tokio::test]
+    async fn an_observation_without_problems_is_said_and_asks_nothing() {
+        let (server, driver) = scripted(&[]).await;
+        let observation = json!({ "pages": [] });
+        assert!(verified(&driver, false, false, Some(&observation))
+            .await
+            .is_none());
+        assert_eq!(thoughts(&driver).await.len(), 1);
+        assert!(asked(&server).await.is_empty());
+    }
+
+    /// T-7924, SDK-28: a verification pass the provider refuses, or one that does not build, is
+    /// said and the version on screen stands.
+    #[tokio::test]
+    async fn a_verification_pass_that_fails_leaves_the_version_on_screen() {
+        for edited in [true, false] {
+            let (_server, driver) = scripted(&[None]).await;
+            assert!(verified(&driver, edited, true, None).await.is_none());
+            assert!(
+                thoughts(&driver)
+                    .await
+                    .iter()
+                    .any(|t| t.starts_with("The verification pass failed: ")),
+                "{edited}"
+            );
+        }
+        let (_server, driver) = scripted(&[
+            writes("Axios.", "src/pages/Hello.tsx", AXIOS),
+            writes("Still axios.", "src/pages/Hello.tsx", AXIOS),
+        ])
+        .await;
+        assert!(verified(&driver, false, true, None).await.is_none());
+        let said = thoughts(&driver).await;
+        assert!(
+            said.iter()
+                .any(|t| t.starts_with("The application still does not build")),
+            "{said:?}"
+        );
+        assert!(
+            said.iter()
+                .all(|t| !t.starts_with("The verification pass failed")),
+            "{said:?}"
+        );
+    }
+
     /// A failed version whose report lists no failure has nothing to fix: no model call
     /// (T-7912).
     #[tokio::test]
@@ -2634,6 +3036,44 @@ mod jc_types_tests {
             let err = driver.jc_types().await.expect_err("no types");
             assert!(err.contains(said), "{err}");
         }
+    }
+
+    /// T-7924, SDK-10: another endpoint's model that cannot be read leaves its rows untyped
+    /// beside the primary's types; when only such a model serves the needed types, there are
+    /// none to render, said so.
+    #[tokio::test]
+    async fn an_unreadable_second_model_leaves_its_rows_untyped() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/data/schema/v2/model.linkml.yaml"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("id: bikes"))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "typescript": "export interface Bike {}\n" })),
+            )
+            .mount(&server)
+            .await;
+        let driver = driver(&server);
+        let _ = driver.schema_index.set(json!({ "models": [
+            { "endpoint": 0, "types": ["Bike"], "version": 2 },
+            { "endpoint": 1, "types": ["Bike"], "version": 5 }
+        ] }));
+        assert_eq!(
+            driver.jc_types().await.expect("the primary's types"),
+            "export interface Bike {}\n"
+        );
+
+        let driver = self::driver(&server);
+        let _ = driver.schema_index.set(json!({ "models": [
+            { "endpoint": 1, "types": ["Bike"], "version": 5 }
+        ] }));
+        assert_eq!(
+            driver.jc_types().await.expect_err("nothing rendered"),
+            "no model of the run's endpoints could be rendered"
+        );
     }
 
     fn stored_run(id: &str, app: &str, prompt: &str, continues: Option<&str>) -> AgentRun {
