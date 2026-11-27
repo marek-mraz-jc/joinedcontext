@@ -937,7 +937,8 @@ pub async fn start_conversation(
             .first()
             .map(|e| e.slug.clone())
             .unwrap_or_default(),
-        endpoints: serde_json::to_value(&run_endpoints).unwrap_or_else(|_| serde_json::json!([])),
+        endpoints: serde_json::to_value(&run_endpoints)
+            .unwrap_or(serde_json::Value::Array(Vec::new())),
         profile: profile.name.clone(),
         kind: "conversation".to_owned(),
         unattended: false,

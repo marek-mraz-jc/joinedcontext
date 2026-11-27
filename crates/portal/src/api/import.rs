@@ -658,8 +658,7 @@ fn as_incoming(document: &Value, path: Option<&str>) -> Result<Incoming, ApiErro
         return Ok(Incoming {
             path: path.map(str::to_owned),
             envelope: None,
-            content: serde_norway::to_string(document)
-                .map_err(|e| ApiError::Internal(format!("document did not serialise: {e}")))?,
+            content: serde_norway::to_string(document).map_err(ApiError::internal)?,
         });
     }
     let envelope: ResourceEnvelope = serde_json::from_value(document.clone()).map_err(|err| {
@@ -1203,8 +1202,7 @@ async fn read_request(
         None if body.get("kind").is_some() => body.clone(),
         None => return Ok((Vec::new(), options)),
     };
-    let text = serde_json::to_vec(&manifests)
-        .map_err(|err| ApiError::Internal(format!("the manifests did not serialise: {err}")))?;
+    let text = serde_json::to_vec(&manifests).map_err(ApiError::internal)?;
     Ok((text, options))
 }
 
@@ -1450,7 +1448,7 @@ pub async fn import_bundle(
         crate::ops::record_import_check(state, identity, &project, &subject).await?;
         return Ok((
             StatusCode::OK,
-            serde_json::to_value(report).map_err(|e| ApiError::Internal(e.to_string()))?,
+            serde_json::to_value(report).map_err(ApiError::internal)?,
         ));
     }
     if files.is_empty() {
@@ -1476,7 +1474,7 @@ pub async fn import_bundle(
     crate::ops::forget_import_check(state, identity, &project).await;
     Ok((
         StatusCode::ACCEPTED,
-        serde_json::to_value(change).map_err(|e| ApiError::Internal(e.to_string()))?,
+        serde_json::to_value(change).map_err(ApiError::internal)?,
     ))
 }
 
@@ -1526,7 +1524,7 @@ pub async fn propose_bundle(
         None => format!("portal/import-{project}-{hash:08x}"),
     };
     let title = format!("import {} resources into {project}", files.len());
-    let detail = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "imported bundle".into());
+    let detail = serde_json::to_string_pretty(&report).unwrap_or_default();
     // The one line an approver reads before the report: whether the transfer arrived whole
     // (MF-42). A bundle without checksums has no such line rather than a reassuring one.
     let lead: Vec<String> = report
@@ -1676,8 +1674,7 @@ fn verify(incoming: &[Incoming]) -> Result<Vec<Verified>, ApiError> {
         };
         let bytes = match &item.envelope {
             Some(envelope) if envelope.kind == BUNDLE_KIND => continue,
-            Some(envelope) => serde_norway::to_string(envelope)
-                .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?,
+            Some(envelope) => serde_norway::to_string(envelope).map_err(ApiError::internal)?,
             // A native file travels byte for byte, so the bytes that arrived are the bytes
             // that will be written.
             None => item.content.clone(),
@@ -1747,8 +1744,7 @@ fn plan_import(
             source = Some(format!("{from}@{revision}"));
             continue;
         }
-        let raw = serde_json::to_value(&envelope)
-            .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+        let raw = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
         refused.extend(refusals(&envelope, &raw));
         manifests.push(envelope);
     }
@@ -1816,6 +1812,8 @@ fn plan_import(
     // Conflicts first: a rename rewrites references, so it has to happen before anything is
     // resolved or planned.
     let mut keep: Vec<ResourceEnvelope> = Vec::new();
+    // `(kind, old, new)` of every renamed manifest, for the references that follow it.
+    let mut renames: Vec<(String, String, String)> = Vec::new();
     for (origin, envelope) in manifests {
         let stored = namespace_of(
             &envelope.kind,
@@ -1860,25 +1858,20 @@ fn plan_import(
                     )));
                 }
                 report.renamed.insert(old.clone(), new.clone());
+                renames.push((envelope.kind.clone(), old, new.clone()));
                 let mut envelope = envelope;
                 envelope.metadata.name = new;
                 keep.push(envelope);
             }
         }
     }
-    for (old, new) in &report.renamed {
-        let kind = keep
-            .iter()
-            .find(|envelope| &envelope.metadata.name == new)
-            .map(|envelope| envelope.kind.clone());
-        if let Some(kind) = kind {
-            for envelope in &mut keep {
-                rewrite_reference(&mut envelope.spec, &kind, old, new);
-                // A renamed ContextSpace is the one rename that also moves ids: the `{space}`
-                // segment of every URN is that name (PF-10, MF-26).
-                if kind == "ContextSpace" {
-                    rewrite_space(&mut envelope.spec, old, new);
-                }
+    for (kind, old, new) in &renames {
+        for envelope in &mut keep {
+            rewrite_reference(&mut envelope.spec, kind, old, new);
+            // A renamed ContextSpace is the one rename that also moves ids: the `{space}`
+            // segment of every URN is that name (PF-10, MF-26).
+            if kind == "ContextSpace" {
+                rewrite_space(&mut envelope.spec, old, new);
             }
         }
     }
@@ -1948,8 +1941,7 @@ fn plan_import(
 
     let mut files: Vec<(String, String)> = Vec::new();
     for envelope in &keep {
-        let info = resource::by_kind(&envelope.kind)
-            .ok_or_else(|| ApiError::Internal(format!("kind '{}' vanished", envelope.kind)))?;
+        let info = crate::api::mutate::catalogued(&envelope.kind)?;
         let operation = if state
             .mirror
             .get(
@@ -1985,12 +1977,10 @@ fn plan_import(
         let mut committed = envelope.clone();
         committed.strip_status();
         annotate(&mut committed, report.source.as_deref());
-        let content = serde_norway::to_string(&committed)
-            .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+        let content = serde_norway::to_string(&committed).map_err(ApiError::internal)?;
         files.push((path, content));
     }
-    let group = resource::by_kind("Group")
-        .ok_or_else(|| ApiError::Internal("no catalogue entry for Group".into()))?;
+    let group = crate::api::mutate::catalogued("Group")?;
     for envelope in default_groups {
         let path = resource::repository_path(
             group,
@@ -1999,8 +1989,7 @@ fn plan_import(
             &envelope.metadata.name,
         )
         .map_err(ApiError::BadRequest)?;
-        let content = serde_norway::to_string(&envelope)
-            .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+        let content = serde_norway::to_string(&envelope).map_err(ApiError::internal)?;
         report.created.push(envelope.metadata.name);
         files.push((path, content));
     }
@@ -2054,8 +2043,7 @@ pub(crate) fn authorize_manifest(
     effective: &crate::permissions::Effective,
     envelope: &ResourceEnvelope,
 ) -> Result<(), ApiError> {
-    let raw = serde_json::to_value(envelope)
-        .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+    let raw = serde_json::to_value(envelope).map_err(ApiError::internal)?;
     effective.check(&envelope.kind, jc_core::kinds::Verb::Propose, Some(&raw))?;
     crate::permissions::within_own_rights(state, identity, &raw, None, "proposer")?;
     crate::pipeline_rights::check(
@@ -2143,8 +2131,7 @@ fn well_formed(incoming: &[Incoming], apps_dir: Option<&str>) -> Result<(), ApiE
         }
         let Some(checked) = jc_core::registry::validate_yaml(
             &envelope.kind,
-            &serde_json::to_string(envelope)
-                .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?,
+            &serde_json::to_string(envelope).map_err(ApiError::internal)?,
         ) else {
             // A kind the Portal serves and jc-core has no type for has nothing to check against.
             continue;
@@ -2166,17 +2153,21 @@ fn well_formed(incoming: &[Incoming], apps_dir: Option<&str>) -> Result<(), ApiE
 /// Every refusal of the gates above over files read from a repository, `(path, text)`, each
 /// named with its file: what a git import lands is judged as an upload is (MF-24, CC-08), and a
 /// person gets the whole list at once.
-pub(crate) fn judge_files(files: &[(String, String)], apps_dir: Option<&str>) -> Vec<String> {
-    let reason = |err: ApiError| match err {
+/// A refusal as the words of a judged file: a bad request's own message, anything else as it reads.
+fn refusal_text(err: ApiError) -> String {
+    match err {
         ApiError::BadRequest(message) => message,
         other => other.to_string(),
-    };
+    }
+}
+
+pub(crate) fn judge_files(files: &[(String, String)], apps_dir: Option<&str>) -> Vec<String> {
     let mut refused = Vec::new();
     for (path, text) in files {
         let incoming = match parse_text(text, Some(path)) {
             Ok(incoming) => incoming,
             Err(err) => {
-                refused.push(format!("{path}: {}", reason(err)));
+                refused.push(format!("{path}: {}", refusal_text(err)));
                 continue;
             }
         };
@@ -2184,16 +2175,15 @@ pub(crate) fn judge_files(files: &[(String, String)], apps_dir: Option<&str>) ->
             let Some(envelope) = &item.envelope else {
                 continue;
             };
-            match serde_json::to_value(envelope) {
-                Ok(raw) => refused.extend(
-                    refusals(envelope, &raw)
-                        .into_iter()
-                        .map(|refusal| format!("{path}: {refusal}")),
-                ),
-                Err(err) => refused.push(format!("{path}: manifest did not serialise: {err}")),
-            }
+            // A manifest is plain data, so it always serializes.
+            let raw = serde_json::to_value(envelope).unwrap_or_default();
+            refused.extend(
+                refusals(envelope, &raw)
+                    .into_iter()
+                    .map(|refusal| format!("{path}: {refusal}")),
+            );
             if let Err(err) = well_formed(std::slice::from_ref(&item), apps_dir) {
-                refused.push(reason(err));
+                refused.push(refusal_text(err));
             }
         }
     }
@@ -2700,6 +2690,17 @@ mod upload_gate_tests {
         assert_eq!(spec["other"]["contextSpaceRef"], "water");
         assert_eq!(renamed("air", "hel sinki!"), "air-helsinki");
         assert_eq!(renamed("air", "!!"), "air-imported");
+    }
+
+    /// T-7931: a judged file names a bad request by its own words and any other refusal as it
+    /// reads.
+    #[test]
+    fn a_refusal_of_a_judged_file_reads_as_its_own_words() {
+        assert_eq!(
+            refusal_text(ApiError::BadRequest("spec is not valid".into())),
+            "spec is not valid"
+        );
+        assert_eq!(refusal_text(ApiError::Forbidden), "forbidden");
     }
 
     /// A manifest small enough to sit beside whatever the case under test is really about.

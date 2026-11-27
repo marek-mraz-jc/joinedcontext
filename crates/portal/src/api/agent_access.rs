@@ -18,7 +18,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use utoipa::ToSchema;
 
-use crate::api::mutate::ProposeOutcome;
 use crate::auth::CurrentUser;
 use crate::change::Operation;
 use crate::error::ApiError;
@@ -76,7 +75,7 @@ fn account(
 }
 
 fn as_value(env: &ResourceEnvelope) -> Result<Value, ApiError> {
-    serde_json::to_value(env).map_err(|e| ApiError::Internal(e.to_string()))
+    serde_json::to_value(env).map_err(ApiError::internal)
 }
 
 #[utoipa::path(
@@ -255,7 +254,7 @@ async fn remove_grants(
             })
         });
     manifest.as_object_mut().map(|o| o.remove("status"));
-    let outcome = crate::api::mutate::propose_with_identity(
+    let change = crate::api::mutate::propose_with_identity(
         identity,
         state,
         project,
@@ -265,27 +264,21 @@ async fn remove_grants(
         false,
         manifest,
     )
-    .await?;
-    let ProposeOutcome::Change(change) = outcome else {
-        return Err(ApiError::Internal(
-            "removing a grant proposed no Change".into(),
-        ));
-    };
+    .await?
+    .into_change()?;
     let message = format!(
         "Merge change proposal {}: {what}; it only removes access (AG-132)",
         change.metadata.name
     );
-    Ok(crate::api::changes::merge_if_narrowing(
-        state,
-        project,
-        change,
-        &message,
-        |base, head| match (serde_json::to_value(base), serde_json::to_value(head)) {
-            (Ok(base), Ok(head)) => only_removes_grants(&base, &head),
-            _ => false,
-        },
+    Ok(
+        crate::api::changes::merge_if_narrowing(state, project, change, &message, |base, head| {
+            let base = serde_json::to_value(base).ok();
+            let head = serde_json::to_value(head).ok();
+            base.zip(head)
+                .is_some_and(|(base, head)| only_removes_grants(&base, &head))
+        })
+        .await,
     )
-    .await)
 }
 
 /// The grants of `spec` the reaper removes at `now`: every expired one, but never the last grant
@@ -353,7 +346,8 @@ pub async fn reap_expired_grants(
             .list(&project, KIND, &crate::store::ListOptions::default())
             .items;
         for env in accounts {
-            let Ok(spec) = serde_json::from_value::<ServiceAccountSpec>(env.spec.clone()) else {
+            let spec = serde_json::from_value::<ServiceAccountSpec>(env.spec.clone());
+            let (Ok(spec), Ok(manifest)) = (spec, as_value(&env)) else {
                 continue;
             };
             let expired = reapable(&spec, now);
@@ -369,9 +363,6 @@ pub async fn reap_expired_grants(
                 continue;
             }
             tried.insert(key, now);
-            let Ok(manifest) = as_value(&env) else {
-                continue;
-            };
             match remove_grants(
                 state,
                 &portal,

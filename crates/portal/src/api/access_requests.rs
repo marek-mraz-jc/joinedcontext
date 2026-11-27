@@ -187,8 +187,10 @@ async fn propose(
     Ok(change)
 }
 
-fn change_name(change: &Value) -> Option<&str> {
-    change["metadata"]["name"].as_str()
+/// The name of the Change an import proposed; an import that proposes always answers a Change
+/// with its name, so the empty default is never kept.
+fn change_name(change: &Value) -> &str {
+    change["metadata"]["name"].as_str().unwrap_or_default()
 }
 
 fn policies_of(state: &AppState, project: &str) -> Vec<Value> {
@@ -702,11 +704,9 @@ pub(crate) async fn approve_request(
             return Err(err);
         }
     };
-    if let Some(name) = change_name(&change) {
-        requests::record_change(pool(&state)?, &request, name)
-            .await
-            .map_err(store_error)?;
-    }
+    requests::record_change(pool(&state)?, &request, change_name(&change))
+        .await
+        .map_err(store_error)?;
     record(&state, &user, &request, "approved access").await;
     Ok((StatusCode::ACCEPTED, Json(change)).into_response())
 }
@@ -873,11 +873,9 @@ pub(crate) async fn revoke_request(
             return Err(err);
         }
     };
-    if let Some(name) = change_name(&change) {
-        requests::record_change(pool(&state)?, &request, name)
-            .await
-            .map_err(store_error)?;
-    }
+    requests::record_change(pool(&state)?, &request, change_name(&change))
+        .await
+        .map_err(store_error)?;
     record(&state, &user, &request, "revoked access").await;
     Ok((StatusCode::ACCEPTED, Json(change)).into_response())
 }
@@ -1741,6 +1739,44 @@ mod tests {
         .expect("a revoke");
         assert_eq!(answer.status(), StatusCode::ACCEPTED);
         assert_eq!(stored(&state, &ending).await.state, "revoked");
+        scratch.remove().await;
+    }
+
+    /// F-POR1-017: a second owner deciding a request another owner moved first gets the 409, and
+    /// the first decision stays; a Change's name is read from its metadata, and nothing else.
+    #[tokio::test]
+    async fn a_decision_another_owner_took_first_is_a_conflict() {
+        let (scratch, state) = on_scratch().await;
+        let request = pending(&state, "stations").await;
+        decided(
+            &state,
+            &user("olli"),
+            &request,
+            ("pending", "approved"),
+            None,
+            None,
+        )
+        .await
+        .expect("the first decision");
+        let second = decided(
+            &state,
+            &user("ana"),
+            &request,
+            ("pending", "declined"),
+            Some("no"),
+            None,
+        )
+        .await;
+        assert!(
+            matches!(&second, Err(ApiError::Conflict(m)) if m.contains("decided by someone else")),
+            "{second:?}"
+        );
+        assert_eq!(stored(&state, &request).await.state, "approved");
+        assert_eq!(
+            change_name(&json!({ "metadata": { "name": "c-1" } })),
+            "c-1"
+        );
+        assert_eq!(change_name(&json!({})), "");
         scratch.remove().await;
     }
 }

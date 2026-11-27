@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use jc_core::kinds::Verb;
 
 use crate::api::import::{digest, propose_files, riskiest, Proposal};
-use crate::api::mutate::{propose_with_identity, ProposeOutcome};
+use crate::api::mutate::propose_with_identity;
 use crate::auth::CurrentUser;
 use crate::change::{Lane, Operation, PlanSummary};
 use crate::error::{ApiError, ProblemDetails};
@@ -85,8 +85,7 @@ pub async fn rename_shapes(
     if apps.is_empty() {
         return Err(ApiError::Conflict(NOTHING_TO_RENAME.into()));
     }
-    let info = resource::by_kind("App")
-        .ok_or_else(|| ApiError::Internal("no catalogue entry for App".into()))?;
+    let info = crate::api::mutate::catalogued("App")?;
 
     let mut lane = Lane::Green;
     let mut files = Vec::with_capacity(apps.len());
@@ -105,16 +104,10 @@ pub async fn rename_shapes(
             body,
         )
         .await
-        .map_err(|err| refused(&app.metadata.name, err))?;
-        match checked {
-            ProposeOutcome::DryRun(result) if result.valid => lane = riskiest(lane, result.lane),
-            // The door's dry run answers a passing plan or refuses with an error (mutate.rs).
-            _ => {
-                return Err(ApiError::Internal(
-                    "a dry run answered with something other than a passing plan".into(),
-                ))
-            }
-        }
+        .map_err(|err| refused(&app.metadata.name, err))?
+        // The door's dry run answers a passing plan or refuses with an error (mutate.rs).
+        .into_dry_run()?;
+        lane = riskiest(lane, checked.lane);
         let path = resource::repository_path(info, &project, None, &app.metadata.name)
             .map_err(ApiError::BadRequest)?;
         let content = serde_norway::to_string(app).map_err(ApiError::internal)?;

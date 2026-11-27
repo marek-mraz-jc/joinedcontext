@@ -373,8 +373,7 @@ pub(crate) async fn land(
             // from the source as it lands.
             spec.insert(
                 "artifacts".into(),
-                serde_json::to_value(&generated)
-                    .map_err(|err| ApiError::Internal(format!("the artifacts: {err}")))?,
+                serde_json::to_value(&generated).map_err(ApiError::internal)?,
             );
         }
         let linkml = manifest
@@ -391,8 +390,7 @@ pub(crate) async fn land(
         spec.validate()
             .map_err(|err| ApiError::BadRequest(format!("{}: {err}", model.manifest)))?;
         let folder = format!("projects/{project}/datamodels/{}", model.name);
-        let text = serde_norway::to_string(&manifest)
-            .map_err(|err| ApiError::Internal(format!("the landed manifest: {err}")))?;
+        let text = serde_norway::to_string(&manifest).map_err(ApiError::internal)?;
         uploads.push((format!("{folder}/{}.yaml", model.name), text));
         let source = String::from_utf8(files[&model.file].clone())
             .map_err(|_| ApiError::BadRequest(format!("{} is not UTF-8 text", model.file)))?;

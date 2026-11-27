@@ -94,7 +94,12 @@ fn readable_endpoint(
     }
     crate::agents::endpoints::resolve(&state.mirror, project, &[name.to_owned()])?
         .pop()
-        .ok_or_else(|| ApiError::Internal("an Endpoint resolved to nothing".into()))
+        .ok_or_else(resolved_nothing)
+}
+
+/// One name resolves to one Endpoint or to a refusal, so an empty answer is our bug, a 500.
+fn resolved_nothing() -> ApiError {
+    ApiError::Internal("an Endpoint resolved to nothing".into())
 }
 
 /// A refusal of the template's needs on the Endpoint, as the field the person picked it in.
@@ -217,8 +222,8 @@ async fn propose(
     app: &str,
     dry_run: bool,
     manifest: Value,
-) -> Result<Option<Change>, ApiError> {
-    let outcome = crate::api::mutate::propose_with_identity(
+) -> Result<crate::api::mutate::ProposeOutcome, ApiError> {
+    crate::api::mutate::propose_with_identity(
         identity,
         state,
         project,
@@ -228,11 +233,7 @@ async fn propose(
         dry_run,
         manifest,
     )
-    .await?;
-    Ok(match outcome {
-        crate::api::mutate::ProposeOutcome::Change(change) => Some(change),
-        _ => None,
-    })
+    .await
 }
 
 /// Fills the new repository, protects `main` and proposes the App at the commit it holds.
@@ -268,7 +269,7 @@ async fn land(
         manifest(project, app, source, needs),
     )
     .await?
-    .ok_or_else(|| ApiError::Internal("the proposal answered a dry run".into()))
+    .into_change()
 }
 
 #[utoipa::path(
@@ -544,5 +545,14 @@ mod tests {
             "{refused:?}"
         );
         assert!(checked_name(&state, &project, "kpi-board").is_ok());
+    }
+
+    /// T-7931: an Endpoint name that resolves to nothing is our bug, a 500 that says so.
+    #[test]
+    fn an_endpoint_resolving_to_nothing_is_ours() {
+        assert!(matches!(
+            resolved_nothing(),
+            ApiError::Internal(why) if why == "an Endpoint resolved to nothing"
+        ));
     }
 }

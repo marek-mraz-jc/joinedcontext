@@ -360,7 +360,7 @@ fn with_minted_slugs(
     blueprint: &jc_core::kinds::Blueprint,
     parameters: &serde_json::Value,
 ) -> serde_json::Value {
-    use hmac::{Hmac, Mac};
+    use hmac::Mac;
     let (Some(given), Some(properties)) = (
         parameters.as_object(),
         blueprint
@@ -383,10 +383,7 @@ fn with_minted_slugs(
         {
             continue;
         }
-        let Ok(mut mac) = Hmac::<sha2::Sha256>::new_from_slice(key) else {
-            // HMAC takes a key of any length; there is no key this refuses.
-            continue;
-        };
+        let mut mac = crate::artifact_store::hmac_sha256(key);
         for part in [
             SLUG_LABEL,
             project.as_bytes(),
@@ -511,8 +508,7 @@ pub(crate) fn plan_flow(
 
         let repo_path = resolve_repo_path(&manifest, kind_info, project)?;
         manifest.strip_status();
-        let yaml = serde_norway::to_string(&manifest)
-            .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+        let yaml = serde_norway::to_string(&manifest).map_err(ApiError::internal)?;
         if operation == Operation::Create {
             created.push(repo_path.clone());
         }

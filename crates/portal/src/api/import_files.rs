@@ -272,7 +272,7 @@ fn subject(bytes: &[u8]) -> Value {
 }
 
 fn as_json<T: Serialize>(value: &T) -> Result<Value, ApiError> {
-    serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+    serde_json::to_value(value).map_err(ApiError::internal)
 }
 
 #[cfg(test)]
