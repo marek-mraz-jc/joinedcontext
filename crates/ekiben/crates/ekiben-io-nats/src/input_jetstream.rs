@@ -457,3 +457,85 @@ fn live_part(msg: jetstream::Message) -> Result<(Batch, AckResponder), CoreError
     });
     Ok((vec![part], ack))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Logs(Arc<Mutex<Vec<u8>>>);
+    impl Write for Logs {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().expect("logs").extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Logs {
+        fn text(&self) -> String {
+            String::from_utf8_lossy(&self.0.lock().expect("logs")).into_owned()
+        }
+    }
+
+    /// A message with an ADR-15 v2 reply subject carries its domain into `nats_domain`; `_` means
+    /// none. An ack that cannot be sent (no reply subject) is logged; the server redelivers.
+    #[tokio::test(flavor = "current_thread")]
+    async fn a_v2_reply_sets_the_domain_and_a_failed_ack_is_logged() {
+        let logs = Logs::default();
+        let w = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || w.clone())
+            .with_ansi(false)
+            .finish();
+        let _guard = tracing::subscriber::set_default(subscriber);
+        let client = async_nats::ConnectOptions::new()
+            .retry_on_initial_connect()
+            .connect("nats://127.0.0.1:1")
+            .await
+            .expect("a lazy client needs no server");
+        let msg = |reply: Option<&str>| jetstream::Message {
+            message: async_nats::Message {
+                subject: "events.a".into(),
+                reply: reply.map(Into::into),
+                payload: bytes::Bytes::from_static(b"x"),
+                headers: None,
+                status: None,
+                description: None,
+                length: 1,
+            },
+            context: jetstream::new(client.clone()),
+        };
+        let ts = "1790230470084404000";
+        let (batch, ack) =
+            live_part(msg(Some(&format!("$JS.ACK.hub.ACC.events.durable.2.10.7.{ts}.3")))).expect("part");
+        let part = &batch[0];
+        assert_eq!(part.meta_get_str("nats_domain"), "hub");
+        assert_eq!(part.meta_get_str("nats_sequence_stream"), "10");
+        assert_eq!(part.meta_get_str("nats_num_pending"), "3");
+        let (batch, _) =
+            live_part(msg(Some(&format!("$JS.ACK._.ACC.events.durable.2.10.7.{ts}.3")))).expect("part");
+        assert!(batch[0].meta_get("nats_domain").is_none());
+
+        drop(ack);
+        // No reply subject: no JetStream info, and the ack has nowhere to go.
+        let (batch, ack) = live_part(msg(None)).expect("part");
+        assert_eq!(batch[0].meta_get_str("nats_subject"), "events.a");
+        assert!(batch[0].meta_get("nats_sequence_stream").is_none());
+        ack.ack();
+        for _ in 0..200 {
+            if logs.text().contains("ack failed") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(
+            logs.text().contains("nats_jetstream ack failed, the server redelivers"),
+            "{}",
+            logs.text()
+        );
+    }
+}
