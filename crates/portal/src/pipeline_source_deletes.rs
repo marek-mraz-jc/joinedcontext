@@ -1796,10 +1796,7 @@ mod tests {
                 })
                 .join();
         });
-        let Inner::Memory(map) = &ledger.inner else {
-            panic!("a ledger without a database is in memory");
-        };
-        assert!(map.is_poisoned());
+        assert!(matches!(&ledger.inner, Inner::Memory(map) if map.is_poisoned()));
         let ids = vec![
             "urn:ngsi-ld:Garden:1".to_owned(),
             "urn:ngsi-ld:Garden:2".to_owned(),

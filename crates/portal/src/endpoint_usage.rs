@@ -408,18 +408,17 @@ mod tests {
     #[tokio::test]
     async fn a_poisoned_memory_store_still_counts() {
         let store = UsageStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
-        let Inner::Memory(memory) = &store.inner else {
-            panic!("a store without a database is in memory");
-        };
-        std::thread::scope(|scope| {
-            let _ = scope
-                .spawn(|| {
-                    let _held = memory.write();
-                    panic!("poison the counts' lock on purpose");
-                })
-                .join();
-        });
-        assert!(memory.is_poisoned());
+        if let Inner::Memory(memory) = &store.inner {
+            std::thread::scope(|scope| {
+                let _ = scope
+                    .spawn(|| {
+                        let _held = memory.write();
+                        panic!("poison the counts' lock on purpose");
+                    })
+                    .join();
+            });
+        }
+        assert!(matches!(&store.inner, Inner::Memory(memory) if memory.is_poisoned()));
         let today = date("2026-11-27");
         let key = (
             "p".to_owned(),
