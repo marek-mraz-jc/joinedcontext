@@ -501,7 +501,7 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
         .find(|e| e["type"] == "work")
         .unwrap();
     assert_eq!(work_email["value"], "b.jensen@hel.fi");
-    // A replace of the whole matched entry without a value leaves the entry as it was.
+    // Operations without a value, or with one of the wrong shape, leave the person as they were.
     let (st, kept) = api
         .call(
             Method::PATCH,
@@ -509,11 +509,17 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
             &admin,
             Some(json!({
                 "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
-                "Operations": [{ "op": "replace", "path": "emails[type eq \"work\"]" }]
+                "Operations": [
+                    { "op": "replace", "path": "emails[type eq \"work\"]" },
+                    { "op": "replace", "path": "emails[type eq \"work\"].value" },
+                    { "op": "replace", "path": "name", "value": "not an object" },
+                    { "op": "replace", "path": "emails", "value": "not a list" }
+                ]
             })),
         )
         .await;
     assert_eq!(st, StatusCode::OK, "{kept}");
+    assert_eq!(kept["name"]["givenName"], "Babs", "{kept}");
     assert!(
         kept["emails"]
             .as_array()

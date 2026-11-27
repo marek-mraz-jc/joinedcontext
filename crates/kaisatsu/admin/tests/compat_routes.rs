@@ -2297,6 +2297,18 @@ async fn realm_partial_import_and_native_routes() {
     let (st, _, ans) = call(&f.app, &Method::POST, &format!("{R}/partialImport"), a, Some(&json!({ "ifResourceExists": "OVERWRITE", "users": [{ "id": "pi-1", "username": "pi.one", "firstName": "Again" }] }))).await;
     assert_eq!(st, StatusCode::OK, "{ans}");
     assert_eq!(ans["overwritten"], 1);
+    // A person the import names an organization for keeps it.
+    let (st, _, ans) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/partialImport"),
+        a,
+        Some(&json!({ "users": [{ "id": "pi-org", "username": "pi.org", "orgId": "espoo" }] })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{ans}");
+    let placed = f.store.get_user_by_id("dev", None, "pi-org").await.unwrap();
+    assert_eq!(placed.and_then(|u| u.org_id).as_deref(), Some("espoo"));
     let pi = f
         .store
         .get_user_by_id("dev", None, "pi-1")
