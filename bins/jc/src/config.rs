@@ -2735,6 +2735,15 @@ path_prefix = "/api/endpoint"
         at("e2e-person-password", "pw");
         at("-pipelines", "x");
         at("Upper-pipelines", "x");
+        // A file name that is no text names no client.
+        #[cfg(unix)]
+        std::fs::write(
+            dir.path().join(
+                <std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(b"\xff-pipelines"),
+            ),
+            "x",
+        )
+        .unwrap();
         let dir_arg = dir.path().to_str().unwrap();
         let load = |args: &[&str]| {
             let mut all = vec!["--role", "ekiben"];

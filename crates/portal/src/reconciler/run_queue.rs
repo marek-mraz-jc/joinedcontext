@@ -1872,13 +1872,11 @@ mod tests {
         let five = at("2026-10-17T05:00:00Z");
         step(&queue, &fake, five).await;
         assert_eq!(fake.log(), ["start b"], "a never takes the one batch slot");
-        match queue.lock().unwrap().outcome(&key("a")) {
-            Some(StreamOutcome::Error(said)) => {
-                assert!(said.contains("no client for its account"), "{said}");
-                assert!(said.contains("401"), "{said}");
-            }
-            other => panic!("a failed run, not {other:?}"),
-        }
+        let answer = queue.lock().unwrap().outcome(&key("a"));
+        assert!(
+            matches!(&answer, Some(StreamOutcome::Error(said)) if said.contains("no client for its account") && said.contains("401")),
+            "{answer:?}"
+        );
 
         // Once the client is there, a run of a starts like any other.
         queue.lock().unwrap().unbound(HashSet::new());

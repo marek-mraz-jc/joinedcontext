@@ -66,3 +66,52 @@ async fn pg_boot_check_and_migrations_refuse_a_dead_or_unprivileged_pool() {
     app.close().await;
     db.drop_db().await;
 }
+
+/// Each write that revokes refresh-token families with it answers a storage error when that
+/// revoke fails (its table gone), and rolls back: the deleted session is still there.
+#[tokio::test]
+async fn pg_store_names_a_failed_family_revoke_and_rolls_back() {
+    let Some(db) = common::test_db("pg_family_revoke_fails").await else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    store
+        .upsert_realm(RealmConfig {
+            id: R.into(),
+            realm: R.into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    store
+        .upsert_sso_session(sso("s-1", "ann", jiff::SignedDuration::from_hours(1)))
+        .await
+        .unwrap();
+    sqlx::raw_sql("DROP TABLE kaisatsu.refresh_token_family CASCADE")
+        .execute(&db.migrate_pool)
+        .await
+        .unwrap();
+    let storage = |e: KaisatsuError| assert!(matches!(e, KaisatsuError::Storage(_)), "{e}");
+    storage(store.delete_sso_session(R, "s-1").await.unwrap_err());
+    storage(
+        store
+            .revoke_offline_families_for_user(R, "ann")
+            .await
+            .unwrap_err(),
+    );
+    storage(
+        store
+            .delete_user_client_offline_sessions(R, "ann", "portal")
+            .await
+            .unwrap_err(),
+    );
+    storage(
+        store
+            .revoke_refresh_families_for_session(R, "s-1", None)
+            .await
+            .unwrap_err(),
+    );
+    storage(store.delete_consent(R, "ann", "portal").await.unwrap_err());
+    assert!(store.get_sso_session(R, "s-1").await.unwrap().is_some());
+    db.drop_db().await;
+}

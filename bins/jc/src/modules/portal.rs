@@ -1588,6 +1588,88 @@ mod tests {
         assert!(!super::super::gateway::registry_links().contains_key("rt7184"));
     }
 
+    /// The registry rebuild on a migrated Portal database (`JC_PG_TEST_DATABASE_URL`, a superuser):
+    /// a project and its branch reach the router's project table; then each registry the rebuild
+    /// reads is dropped in turn, and each failure names that registry and keeps the table, the
+    /// watcher's pass included.
+    #[tokio::test]
+    async fn the_registry_rebuild_places_projects_and_names_each_unreadable_registry() {
+        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
+            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let db = format!("portalrebuild{}", std::process::id());
+        let server = sqlx::PgPool::connect(&admin).await.unwrap();
+        for q in [
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(q))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
+        let mut url = url::Url::parse(&admin).unwrap();
+        url.set_path(&db);
+        let pool = joinedcontext_portal::db::connect_with(url.as_str(), None)
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ('rebuild', 'rebuild.example', 'active', 'test'); \
+             INSERT INTO project_ids (id, name, organization) \
+             VALUES ('7a0c1a52-0000-4000-8000-000000000001', 'parks', 'rebuild'); \
+             INSERT INTO project_ids (id, name, parent, organization) \
+             VALUES ('7a0c1a52-0000-4000-8000-000000000002', 'b-branch', \
+                     '7a0c1a52-0000-4000-8000-000000000001', 'rebuild'); \
+             INSERT INTO project_branches (id, created_by, expires_at) \
+             VALUES ('7a0c1a52-0000-4000-8000-000000000002', 'ana', now() + interval '7 days');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let jc = jc_router::JcRouterBuilder::new("https", "city.example")
+            .hosts(jc_router::HostTable::new())
+            .module_router("portal", Router::new())
+            .build()
+            .unwrap();
+        let run = Run {
+            hosts: jc.host_swap().expect("a host table"),
+            roles: vec![Module::Portal],
+            named: Vec::new(),
+            scheme: "https".into(),
+            portal: None,
+            projects: true,
+        };
+        assert_eq!(rebuild_hosts(&pool, &run).await, Ok(0));
+        for (table, registry) in [
+            ("project_branches", "the branch registry"),
+            ("project_ids", "the project registry"),
+            ("organizations", "the Organization registry"),
+        ] {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP TABLE {table} CASCADE")))
+                .execute(&pool)
+                .await
+                .unwrap();
+            let e = rebuild_hosts(&pool, &run).await.unwrap_err();
+            assert!(
+                e.starts_with(&format!("{registry} could not be read")),
+                "{e}"
+            );
+        }
+        // The watcher's pass on the unreadable registry keeps the table and stops on shutdown.
+        let shutdown = CancellationToken::new();
+        shutdown.cancel();
+        watch_registry(pool.clone(), run, shutdown).await;
+        pool.close().await;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+        )))
+        .execute(&server)
+        .await
+        .unwrap();
+    }
+
     /// T-7185: a run-time Organization with a catalogue in this process's dataroom publishes
     /// there with jc's in-process token at its own hosts, and lists its addresses; one without a
     /// catalogue id, or with the dataroom in another container, lists addresses only.

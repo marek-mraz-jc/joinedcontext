@@ -1683,6 +1683,17 @@ mod tests {
             ..ApplyOptions::default()
         };
         apply_realm_files(&store, &files, &options).await.unwrap();
+        // A store that refuses the read or the write stops it with the store's error.
+        for method in ["get_client_by_client_id", "upsert_client"] {
+            let faults = crate::modules::faulty_store::FaultyStore::new(store.clone());
+            faults.fail(method);
+            let faulty: Arc<dyn Store> = Arc::new(faults);
+            refused(
+                add_functions_audience(&faulty, &setup.realm)
+                    .await
+                    .unwrap_err(),
+            );
+        }
         assert!(add_functions_audience(&store, &setup.realm).await.unwrap());
         assert!(!add_functions_audience(&store, &setup.realm).await.unwrap());
         let client = store
