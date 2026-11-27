@@ -453,6 +453,41 @@ fn a_dataset_of_a_served_type_is_accepted_and_an_unserved_one_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// EP-177: an Endpoint narrowed by a projection serves only the classes the projection keeps.
+#[test]
+fn a_dataset_of_a_type_its_projection_leaves_out_is_refused() {
+    let narrowed = format!("  projectionRef:\n    kind: ModelProjection\n    name: public\n{DATASETS}");
+    let dir = repo_with("datasets-projection", Some(EVENT_MODEL), &narrowed);
+    write(
+        &dir,
+        "projects/city/spaces/events/projections/public.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ModelProjection\nmetadata:\n  name: public\n  \
+         namespace: city\nspec:\n  contextSpaceRef: events\n  dataModelRef:\n    name: events\n    \
+         version: \"1\"\n  classes:\n    - name: Meeting\n      slots: [name]\n",
+    );
+    let found = dataset_findings(&dir);
+    assert!(
+        found.iter().any(|m| m.contains("names type Event, which the Endpoint does not serve")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// EP-125: a calendar over a model that does not parse is one finding saying it cannot be
+/// checked, not a pass.
+#[test]
+fn a_calendar_over_a_model_that_does_not_parse_cannot_be_checked() {
+    let dir = repo_with("ical-broken-model", Some("classes: [\n"), ICAL);
+    let found = surface_findings(&dir);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("the representations cannot be checked against the data model")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_dataset_name_another_endpoint_publishes_on_the_same_catalogue_is_refused() {
     let dir = repo_with("datasets-collision", Some(EVENT_MODEL), DATASETS);
