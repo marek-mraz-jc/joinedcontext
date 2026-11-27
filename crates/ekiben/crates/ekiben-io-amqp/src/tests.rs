@@ -17,10 +17,10 @@ fn conf(v: JsonValue) -> ComponentConfig {
 }
 
 fn refusal(v: JsonValue) -> String {
-    match AmqpInput::from_config(&conf(v)) {
-        Ok(_) => panic!("accepted"),
-        Err(e) => e.to_string(),
-    }
+    AmqpInput::from_config(&conf(v))
+        .err()
+        .expect("accepted")
+        .to_string()
 }
 
 pub(crate) fn ctx(quotas: OrgQuotas) -> StreamContext {
@@ -207,10 +207,11 @@ async fn a_private_broker_is_refused_before_any_connection() {
     })))
     .expect("builds");
     let started = std::time::Instant::now();
-    let e = match i.read_batch(&ctx(OrgQuotas::default())).await {
-        Ok(_) => panic!("read from a private address"),
-        Err(e) => e,
-    };
+    let e = i
+        .read_batch(&ctx(OrgQuotas::default()))
+        .await
+        .err()
+        .expect("read from a private address");
     assert!(matches!(e, CoreError::AccessDenied { .. }), "{e}");
     assert!(!e.to_string().contains("hunter2"), "{e}");
     // 10.11.12.13 does not answer: a connect attempt would wait out the 10 s timeout.
@@ -355,10 +356,12 @@ async fn a_broker_that_never_answers_times_out_the_handshake() {
         allow_private_ips: true,
         ..OrgQuotas::default()
     };
-    let e = match i.dial(&ctx(quotas)).await {
-        Ok(_) => panic!("a silent listener completed the handshake"),
-        Err(e) => e.to_string(),
-    };
+    let e = i
+        .dial(&ctx(quotas))
+        .await
+        .err()
+        .expect("a silent listener completed the handshake")
+        .to_string();
     assert!(e.contains("did not complete the handshake"), "{e}");
     assert!(!e.contains("hunter2"), "{e}");
     drop(held);
@@ -425,11 +428,11 @@ async fn tls_trusts_root_cas_and_nothing_else() {
 }
 
 /// The live broker of `AMQP_TEST_URL` (as tests/rabbitmq.rs), or `None` to skip.
-fn live_url(test: &str) -> Option<String> {
+/// The test's name is its thread's, as libtest names it.
+fn live_url() -> Option<String> {
     let url = std::env::var("AMQP_TEST_URL").ok();
-    if url.is_none() {
-        eprintln!("SKIP {test}: AMQP_TEST_URL unset");
-    }
+    let skip = if url.is_none() { "SKIP " } else { "" };
+    eprintln!("{skip}{:?}: AMQP_TEST_URL", std::thread::current().name());
     url
 }
 
@@ -445,9 +448,7 @@ fn loopback() -> StreamContext {
 /// contradicts the queue's settings.
 #[tokio::test]
 async fn the_broker_refusing_a_setup_step_names_the_step() {
-    let Some(url) = live_url("the_broker_refusing_a_setup_step_names_the_step") else {
-        return;
-    };
+    let Some(url) = live_url() else { return };
     let queue = format!("ekiben-refuse-{}", std::process::id());
     let dial = |extra: JsonValue| {
         let mut v = json!({"urls": [url.clone()], "queue": queue.clone()});
@@ -457,10 +458,11 @@ async fn the_broker_refusing_a_setup_step_names_the_step() {
         AmqpInput::from_config(&conf(v)).expect("builds")
     };
     let error = |i: AmqpInput| async move {
-        match i.dial(&loopback()).await {
-            Ok(_) => panic!("the broker accepted"),
-            Err(e) => e.to_string(),
-        }
+        i.dial(&loopback())
+            .await
+            .err()
+            .expect("the broker accepted")
+            .to_string()
     };
     let e = error(dial(json!({}))).await;
     assert!(e.contains("consume"), "{e}");
@@ -491,9 +493,7 @@ async fn the_broker_refusing_a_setup_step_names_the_step() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
     use lapin::options::BasicPublishOptions;
-    let Some(url) = live_url("auto_ack_and_a_declared_binding_deliver_from_the_exchange") else {
-        return;
-    };
+    let Some(url) = live_url() else { return };
     let queue = format!("ekiben-bind-{}", std::process::id());
     // amq.topic is shared by every test process on the broker: a key of our own keeps their
     // messages out of this queue
@@ -529,18 +529,7 @@ async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
     .expect("publish")
     .await
     .expect("confirm");
-    let mut got = None;
-    for _ in 0..10 {
-        match input.read_batch(&c).await {
-            Ok(b) => {
-                got = Some(b);
-                break;
-            }
-            Err(CoreError::Timeout) => {}
-            Err(e) => panic!("read: {e}"),
-        }
-    }
-    let (batch, ack) = got.expect("a message in 10 s");
+    let (batch, ack) = read_one(&mut input, &c).await;
     assert_eq!(&*batch[0].as_bytes_ref(), b"reading");
     assert_eq!(batch[0].meta_get_str("amqp_exchange"), "amq.topic");
     assert_eq!(batch[0].meta_get_str("amqp_routing_key"), key.as_str());
@@ -564,9 +553,7 @@ async fn auto_ack_and_a_declared_binding_deliver_from_the_exchange() {
 /// queue_declare.auto_delete reaches the broker: the queue goes when its consumer does.
 #[tokio::test]
 async fn an_auto_delete_queue_goes_with_its_consumer() {
-    let Some(url) = live_url("an_auto_delete_queue_goes_with_its_consumer") else {
-        return;
-    };
+    let Some(url) = live_url() else { return };
     let queue = format!("ekiben-auto-delete-{}", std::process::id());
     let mut input = AmqpInput::from_config(&conf(json!({
         "urls": [url.clone()],
@@ -603,14 +590,17 @@ async fn an_auto_delete_queue_goes_with_its_consumer() {
 }
 
 async fn read_one(input: &mut AmqpInput, c: &StreamContext) -> (Batch, AckResponder) {
+    let mut got = None;
     for _ in 0..10 {
         match input.read_batch(c).await {
-            Ok(b) => return b,
-            Err(CoreError::Timeout) => {}
-            Err(e) => panic!("read: {e}"),
+            Ok(b) => {
+                got = Some(b);
+                break;
+            }
+            Err(e) => assert!(matches!(e, CoreError::Timeout), "read: {e}"),
         }
     }
-    panic!("no message in 10 s")
+    got.expect("no message in 10 s")
 }
 
 /// An acknowledgement that cannot reach the broker leaves the message with it: one given
@@ -619,9 +609,7 @@ async fn read_one(input: &mut AmqpInput, c: &StreamContext) -> (Batch, AckRespon
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_unsent_or_failed_ack_leaves_the_message_redelivered() {
     use lapin::options::BasicPublishOptions;
-    let Some(url) = live_url("an_unsent_or_failed_ack_leaves_the_message_redelivered") else {
-        return;
-    };
+    let Some(url) = live_url() else { return };
     let queue = format!("ekiben-ack-{}", std::process::id());
     let config = json!({
         "urls": [url.clone()],

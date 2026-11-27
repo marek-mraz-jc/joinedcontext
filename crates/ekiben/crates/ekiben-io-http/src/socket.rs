@@ -100,12 +100,10 @@ impl SocketInput {
             } else {
                 "[::]:0"
             };
-            let sock = UdpSocket::bind(bind)
-                .await
-                .map_err(|e| CoreError::other(format!("socket input: udp bind: {e}")))?;
+            let sock = UdpSocket::bind(bind).await.map_err(udp_failed("bind"))?;
             sock.connect(addrs[0])
                 .await
-                .map_err(|e| CoreError::other(format!("socket input: udp connect: {e}")))?;
+                .map_err(udp_failed("connect"))?;
             Ok(Conn::Udp(sock))
         } else {
             let tcp = crate::outbound::connect_checked(&addrs, CONNECT_TIMEOUT).await?;
@@ -227,6 +225,11 @@ impl Input for SocketInput {
         self.conn = None;
         Ok(())
     }
+}
+
+/// The error of a failed UDP setup step, named.
+fn udp_failed(step: &'static str) -> impl Fn(std::io::Error) -> CoreError {
+    move |e| CoreError::other(format!("socket input: udp {step}: {e}"))
 }
 
 #[cfg(test)]
@@ -431,6 +434,14 @@ mod tests {
         udp_of(&i).expect("udp").send(b"hello").await.unwrap();
         let e = i.read_batch(&ctx).await.err().expect("refused");
         assert!(e.to_string().starts_with("socket input: "), "{e}");
+    }
+
+    #[tokio::test]
+    async fn a_udp_peer_the_kernel_refuses_names_the_connect() {
+        // A broadcast address needs SO_BROADCAST: the connect fails, named.
+        let mut i = input(json!({"network": "udp", "address": "255.255.255.255:9"})).unwrap();
+        let e = i.connect(&ctx(true)).await.err().expect("connected to broadcast");
+        assert!(e.to_string().contains("socket input: udp connect: "), "{e}");
     }
 
     #[tokio::test]
