@@ -1970,6 +1970,16 @@ async fn a_realm_admins_body_keeps_the_ids_and_organizations_it_names() {
     )
     .await;
     assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    // So does a child group's create.
+    let (st, _, body) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups/{group_id}/children"),
+        a,
+        Some(&json!({ "name": "sub-team", "attributes": { "managed-by": ["portal"] } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
 
     let mapper = json!({ "id": "pm-named", "name": "tenant", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": { "claim.name": "tenant", "claim.value": "x" } });
     let (st, _, body) = call(
