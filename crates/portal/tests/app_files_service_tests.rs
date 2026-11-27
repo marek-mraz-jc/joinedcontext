@@ -27,6 +27,11 @@ fn prefix() -> String {
 /// A Portal with App `road-defects` (a `ui` App with `files` and a 1 MiB quota) whose store is
 /// `store`.
 fn state(store: &MockServer, services: Value) -> AppState {
+    state_at(store.uri(), services)
+}
+
+/// [`state`] with its store at `endpoint`.
+fn state_at(endpoint: String, services: Value) -> AppState {
     let config = Config::from_vars(|key| {
         match key {
             "JC_OIDC_ISSUER" => Some(common::REALM.issuer.as_str()),
@@ -54,7 +59,7 @@ fn state(store: &MockServer, services: Value) -> AppState {
         store: std::sync::Arc::new(
             joinedcontext_portal::artifact_store::Client::new(
                 joinedcontext_portal::artifact_store::Settings {
-                    endpoint: store.uri(),
+                    endpoint,
                     bucket: "jc-artifacts".into(),
                     region: "us-east-1".into(),
                     root_access_key: "root".into(),
@@ -216,7 +221,35 @@ async fn a_key_outside_the_prefix_never_reaches_the_store() {
     }
     let (status, _, text) = call(&state, "GET", "?prefix=../", Vec::new()).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    // A delete and a URL of such a key are refused alike.
+    let (status, _, text) = call(&state, "DELETE", "/a%5Cb", Vec::new()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
+    let (status, _, text) = call(
+        &state,
+        "POST",
+        "/a%5Cb:url",
+        br#"{"method":"GET"}"#.to_vec(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{text}");
     assert!(asked(&store, "PUT").await.is_empty());
+    assert!(asked(&store, "DELETE").await.is_empty());
+}
+
+/// A store nobody answers at is the 503 of a store that did not answer, never a missing file
+/// (T-7921).
+#[tokio::test]
+async fn a_store_that_is_not_there_is_unavailable() {
+    // A socket bound and never listening: every connection to it is refused.
+    let closed = tokio::net::TcpSocket::new_v4().expect("a socket");
+    closed
+        .bind(std::net::SocketAddr::from(([127, 0, 0, 1], 0)))
+        .expect("bind");
+    let port = closed.local_addr().expect("address").port();
+    let state = state_at(format!("http://127.0.0.1:{port}"), json!(["files"]));
+    let (status, body, text) = call(&state, "GET", "/old.txt", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(body["detail"], "the file store did not answer", "{text}");
 }
 
 #[tokio::test]

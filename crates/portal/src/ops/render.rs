@@ -1238,6 +1238,20 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
 
+    /// A chart of aggregated history reads the broker's aggregated values and keeps its format
+    /// as `jc_data_query` sets it (T-7921).
+    #[test]
+    fn an_aggregated_history_keeps_its_own_format() {
+        let query = query_of(
+            &json!({ "endpoint": "air", "type": "AirQualityObserved", "attrs": ["pm10"],
+                     "temporal": { "timerel": "after", "timeAt": "2026-11-13T00:00:00Z",
+                                   "aggrMethods": ["avg"], "aggrPeriodDuration": "PT1H" } }),
+            "/data/query",
+        )
+        .expect("a query");
+        assert_eq!(query.format, None);
+    }
+
     /// A drawn chart: the PNG, the categories it numbered and what the chart view draws.
     #[derive(Debug)]
     struct Drawn {
@@ -2051,6 +2065,27 @@ mod tests {
         let error = |i: usize| answer["widgets"][i]["error"].clone();
         assert_eq!(error(0)["status"], 404);
         assert_eq!(error(0), error(1), "refused and missing read the same");
+        // A gateway that fails the read is its own tile, said as not readable now (T-7921).
+        Mock::given(method("GET"))
+            .and(path_regex("^/api/endpoint/brokenhelsinki"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        state.mirror.upsert(manifest(
+            "Endpoint",
+            "broken",
+            "helsinki",
+            json!({ "slug": "brokenhelsinkizzzzzzzzzzzzz", "audience": "project" }),
+        ));
+        board(&state, "failing", vec![pm10_widget("broken")]);
+        let answer = run(&caller, &state, "helsinki", whole("failing"))
+            .await
+            .expect("drawn");
+        let status = answer["widgets"][0]["error"]["status"].as_u64();
+        assert!(
+            status.is_some_and(|s| ![403, 404, 422, 429].contains(&s)),
+            "{answer}"
+        );
     }
 
     #[tokio::test]
