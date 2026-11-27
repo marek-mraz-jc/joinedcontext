@@ -1836,6 +1836,13 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A store that fails is answered as 503, never as the database's own words.
+    #[test]
+    fn a_failed_source_ledger_is_unavailable() {
+        let refused = ledger_unavailable(sqlx::Error::PoolTimedOut);
+        assert!(matches!(refused, ApiError::Unavailable(_)), "{refused:?}");
+    }
+
     /// A pipeline's bento.yaml is read from the forge: with none configured the read answers 503
     /// naming the forge, for a manifest at the root or in a folder.
     #[tokio::test]

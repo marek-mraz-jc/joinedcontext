@@ -57,3 +57,13 @@ pub fn router() -> Router<AppState> {
         .route("/internal/usage", post(take_counts))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
 }
+
+#[cfg(test)]
+mod tests {
+    /// Counts the store did not keep are a 503 that tells the gateway to send them again.
+    #[test]
+    fn counts_not_stored_ask_the_gateway_again() {
+        let refused = super::not_stored(sqlx::Error::PoolTimedOut);
+        assert!(refused.to_string().contains("sends them again"), "{refused:?}");
+    }
+}
