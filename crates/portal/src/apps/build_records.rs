@@ -496,13 +496,10 @@ mod tests {
     /// unknown id has none.
     #[tokio::test]
     async fn a_log_is_written_only_while_the_build_runs() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let db = crate::db::connect(&url).await.expect("connect and migrate");
         let project = format!("t7654-{}", jc_types::ProjectId::mint().path_segment());
         let id = enqueue(

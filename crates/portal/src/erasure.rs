@@ -1324,10 +1324,11 @@ classes:
     const T2: &str = "urn:ngsi-ld:Trip:hel.fi:trips:2";
     const T3: &str = "urn:ngsi-ld:Trip:hel.fi:bikes:3";
 
-    fn database_url() -> Option<String> {
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     fn dead_pool() -> PgPool {
@@ -1657,10 +1658,7 @@ classes:
 
     #[tokio::test]
     async fn a_connection_in_a_failed_transaction_does_not_reach_the_portals_copies() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("migrate");
         let mut conn = pool.acquire().await.expect("a connection");
         sqlx::raw_sql("BEGIN")
@@ -1767,8 +1765,8 @@ classes:
         project: String,
     }
 
-    async fn rig(label: &str) -> Option<Rig> {
-        let url = database_url()?;
+    async fn rig(label: &str) -> Rig {
+        let url = database_url();
         let admin = PgPool::connect(&url).await.expect("connect");
         let name = format!("jc_cov_er_{label}_{}", std::process::id());
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -1803,12 +1801,12 @@ classes:
             .await
             .expect("the registry")
             .expect("a registered project has a key");
-        Some(Rig {
+        Rig {
             state,
             pool,
             db: Scratch { admin, name },
             project,
-        })
+        }
     }
 
     impl Rig {
@@ -1837,10 +1835,7 @@ classes:
 
     #[tokio::test]
     async fn an_approved_erasure_is_done_once_every_store_answered_even_a_store_no_longer_kept() {
-        let Some(mut rig) = rig("attempt").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let mut rig = rig("attempt").await;
         let broker = broker_with(json!([]), json!({ "entities": 1, "history": 4 })).await;
         viewing(&mut rig.state, &broker, "attempt");
         let mut erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
@@ -1865,10 +1860,7 @@ classes:
 
     #[tokio::test]
     async fn a_declined_erasure_reaches_no_store() {
-        let Some(rig) = rig("declined").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let rig = rig("declined").await;
         let mut erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
         erasure.approval = Approval::Declined;
         rig.log(&erasure).await;
@@ -1883,10 +1875,7 @@ classes:
 
     #[tokio::test]
     async fn a_store_that_cannot_be_reached_stays_pending_with_its_error_while_the_others_finish() {
-        let Some(rig) = rig("pending").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let rig = rig("pending").await;
         let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
         rig.log(&erasure).await;
         attempt(&rig.state, &rig.pool, &erasure, None).await;
@@ -1905,10 +1894,7 @@ classes:
 
     #[tokio::test]
     async fn the_log_is_sent_again_for_a_record_the_broker_lost() {
-        let Some(mut rig) = rig("reapply").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let mut rig = rig("reapply").await;
         let broker = broker_with(
             json!([{ "subject": SUBJECT, "entities": [T1] }]),
             json!({ "entities": 1, "history": 1 }),
@@ -1944,10 +1930,7 @@ classes:
 
     #[tokio::test]
     async fn a_log_nobody_wrote_to_sends_nothing_again() {
-        let Some(mut rig) = rig("reapply_none").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let mut rig = rig("reapply_none").await;
         let broker = broker_with(json!([]), json!({})).await;
         viewing(&mut rig.state, &broker, "reapply-none");
         let outcome = reapply(&rig.state, &rig.pool).await;
@@ -1980,10 +1963,7 @@ classes:
 
     #[tokio::test]
     async fn a_broker_that_will_not_list_its_records_or_take_the_erasure_stops_the_reapply() {
-        let Some(mut rig) = rig("reapply_refused").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let mut rig = rig("reapply_refused").await;
         rig.log(&broker_done(approved(
             &rig.project,
             SPACE,
@@ -2015,10 +1995,7 @@ classes:
 
     #[tokio::test]
     async fn a_minute_asks_the_open_erasures_and_applies_the_log_every_sixtieth() {
-        let Some(mut rig) = rig("pass").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let mut rig = rig("pass").await;
         let broker = broker_with(json!([]), json!({ "entities": 1, "history": 1 })).await;
         viewing(&mut rig.state, &broker, "pass");
         let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
@@ -2045,10 +2022,7 @@ classes:
 
     #[tokio::test]
     async fn a_minute_without_a_broker_still_asks_the_other_stores() {
-        let Some(rig) = rig("pass_nobroker").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let rig = rig("pass_nobroker").await;
         let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
         rig.log(&erasure).await;
         let ran = pass(&rig.state, &rig.pool, 0).await;
@@ -2073,10 +2047,7 @@ classes:
 
     #[tokio::test]
     async fn the_loop_asks_the_open_erasures_without_waiting_for_the_next_minute() {
-        let Some(rig) = rig("spawn").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let rig = rig("spawn").await;
         let erasure = approved(&rig.project, SPACE, vec![group(&[T1])]);
         rig.log(&erasure).await;
         spawn_periodic(rig.state.clone());

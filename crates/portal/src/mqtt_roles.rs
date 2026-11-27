@@ -208,24 +208,23 @@ mod tests {
     #[test]
     fn a_role_no_broker_declares_is_422_naming_the_field() {
         for role in ["mqtt/air/camera", "mqtt/*/camera"] {
-            match judged(role) {
-                Err(ApiError::Unprocessable { errors, .. }) => {
-                    assert_eq!(errors, vec!["spec.roles[0].role".to_owned()]);
-                }
-                other => panic!("{role}: {other:?}"),
-            }
+            let judged = judged(role);
+            assert!(
+                matches!(&judged, Err(ApiError::Unprocessable { errors, .. })
+                    if *errors == ["spec.roles[0].role"]),
+                "{role}: {judged:?}"
+            );
         }
     }
 
     #[test]
     fn a_broker_that_is_not_there_for_the_proposer_is_the_reference_refusal() {
-        match judged("mqtt/water/sensor") {
-            Err(ApiError::Invalid { errors, detail }) => {
-                assert_eq!(errors, vec!["spec.roles[0].role".to_owned()]);
-                assert!(detail.contains("MqttBroker 'water'"), "{detail}");
-            }
-            other => panic!("{other:?}"),
-        }
+        let judged = judged("mqtt/water/sensor");
+        assert!(
+            matches!(&judged, Err(ApiError::Invalid { errors, detail })
+                if *errors == ["spec.roles[0].role"] && detail.contains("MqttBroker 'water'")),
+            "{judged:?}"
+        );
     }
 
     fn person(name: &str) -> crate::auth::session::Identity {

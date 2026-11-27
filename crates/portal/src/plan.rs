@@ -538,6 +538,13 @@ mod tests {
     }
 
     #[test]
+    fn merge_patch_object_onto_a_scalar_starts_an_object() {
+        let mut target = json!("plain");
+        merge_patch(&mut target, &json!({ "a": 1, "b": null }));
+        assert_eq!(target, json!({ "a": 1 }));
+    }
+
+    #[test]
     fn merge_patch_scalar_replaces_object() {
         let mut target = json!({
             "author": {

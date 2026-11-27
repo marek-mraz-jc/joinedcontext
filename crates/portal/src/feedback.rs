@@ -205,22 +205,17 @@ mod tests {
         assert_eq!(store.screenshot(99).await.expect("read"), None);
     }
 
-    async fn database() -> Option<sqlx::PgPool> {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+    async fn database() -> sqlx::PgPool {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return None;
-        };
-        Some(crate::db::connect(&url).await.expect("connect + migrate"))
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        crate::db::connect(&url).await.expect("connect + migrate")
     }
 
     #[tokio::test]
     async fn a_database_keeps_lists_and_serves_a_screenshot() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let store = FeedbackStore::new(Some(pool));
         let plain = store.add(one("db plain", None)).await.expect("kept");
         let shot = store

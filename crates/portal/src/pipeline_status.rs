@@ -112,10 +112,11 @@ impl Store {
 mod tests {
     use super::*;
 
-    fn database_url() -> Option<String> {
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     fn condition() -> Condition {
@@ -133,10 +134,7 @@ mod tests {
     /// once the window is zero.
     #[tokio::test]
     async fn a_follower_reads_what_the_leader_saved_while_it_is_fresh() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         // A project of its own run, placed in an Organization of the registry (T-7198).
         let db = crate::db::connect(&url).await.expect("connect and migrate");
         let mirror = std::sync::Arc::new(crate::store::Mirror::new());

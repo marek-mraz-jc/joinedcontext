@@ -867,9 +867,10 @@ mod tests {
             .reject("p", "a", &json!({"n": 1}), &reason("id", "id", None))
             .await
             .expect("kept");
-        let Inner::Memory(map) = &store.inner else {
-            panic!("a store without a database is in memory")
+        let Inner::Memory(m) = &store.inner else {
+            panic!()
         };
+        let map = m;
         std::thread::scope(|s| {
             let _ = s
                 .spawn(|| {

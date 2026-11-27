@@ -406,9 +406,10 @@ mod tests {
         )
         .expect_err("a model that is not there is refused");
 
-        let ApiError::Invalid { detail, errors } = refused else {
-            panic!("a missing reference is an invalid manifest, not {refused:?}");
-        };
+        use ApiError::Invalid as I;
+        let r = refused;
+        assert!(matches!(r, I { .. }), "not an invalid manifest: {r:?}");
+        let I { detail, errors } = r else { panic!() };
         assert!(detail.contains("spec.dataModelRef"), "{detail}");
         assert!(detail.contains("no-such-model"), "{detail}");
         assert_eq!(errors, vec!["spec.dataModelRef".to_owned()]);
@@ -498,11 +499,11 @@ mod tests {
             &json!({ "contextSpaceRef": "bikes", "projectionRef": "no-such-view" }),
         )
         .expect_err("the second reference is checked as well as the first");
-        let ApiError::Invalid { detail, .. } = refused else {
-            panic!("expected an invalid manifest");
-        };
-        assert!(detail.contains("spec.projectionRef"), "{detail}");
-        assert!(detail.contains("ModelProjection"), "{detail}");
+        assert!(
+            matches!(&refused, ApiError::Invalid { detail, .. }
+                if detail.contains("spec.projectionRef") && detail.contains("ModelProjection")),
+            "{refused:?}"
+        );
     }
 
     /// A kind that names nothing resolvable here is left alone, whatever its spec holds.
@@ -520,11 +521,11 @@ mod tests {
 
     /// The field and the name a refusal carries, for the cases below.
     fn refusal(mirror: &Mirror, kind: &str, spec: Value) -> (String, Vec<String>) {
-        let refused = check(mirror, "helsinki", kind, &spec)
+        use ApiError::Invalid as I;
+        let r = check(mirror, "helsinki", kind, &spec)
             .expect_err("a reference that is not there is refused");
-        let ApiError::Invalid { detail, errors } = refused else {
-            panic!("a missing reference is an invalid manifest, not {refused:?}");
-        };
+        assert!(matches!(r, I { .. }), "not an invalid manifest: {r:?}");
+        let I { detail, errors } = r else { panic!() };
         (detail, errors)
     }
 
@@ -739,8 +740,11 @@ mod tests {
             json!({ "class": "auto", "sources": [{}, { "query": { "type": "GtfsStop" } }] }),
             json!({ "class": "auto", "source": { "dataSourceRef": null } }),
         ] {
-            check(&mirror, "helsinki", "Pipeline", &spec)
-                .unwrap_or_else(|error| panic!("{spec} is incomplete, not wrong: {error:?}"));
+            let checked = check(&mirror, "helsinki", "Pipeline", &spec);
+            assert!(
+                checked.is_ok(),
+                "{spec} is incomplete, not wrong: {checked:?}"
+            );
         }
     }
 
@@ -774,6 +778,18 @@ mod tests {
                 "{kind}Spec has no {dead}; the guard has stopped seeing that"
             );
         }
+    }
+
+    #[test]
+    #[should_panic(expected = "is in KINDS with no schema beside it")]
+    fn a_kind_with_no_spec_schema_fails_the_guard() {
+        spec_schema("Nothing");
+    }
+
+    #[test]
+    #[should_panic(expected = "a reference that is not there is refused")]
+    fn a_passing_manifest_is_no_refusal() {
+        refusal(&Mirror::new(), "Organization", json!({}));
     }
 
     /// One kind's spec as `jc-core` renders it, for the guard above.

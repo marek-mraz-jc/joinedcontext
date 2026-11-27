@@ -835,6 +835,48 @@ mod tests {
     use super::bounds::serde_error_path_and_message;
     use super::*;
 
+    /// The verdict gate's conflict keeps its own slug; any other conflict is a plain one.
+    #[tokio::test]
+    async fn a_verdict_conflict_answers_verdict_required_and_another_conflict_conflict() {
+        for (error, slug) in [
+            ("verdict_required", "verdict-required"),
+            ("stale", "conflict"),
+        ] {
+            let answer = OpError::Conflict(json!({ "error": error })).into_response();
+            assert_eq!(answer.status(), StatusCode::CONFLICT);
+            let body = axum::body::to_bytes(answer.into_body(), 1 << 16)
+                .await
+                .expect("a body");
+            let body: Value = serde_json::from_slice(&body).expect("json");
+            assert_eq!(body["type"], json!(crate::error::type_uri(slug)), "{body}");
+        }
+    }
+
+    /// A proposal input without a manifest kind, or of another operation, is not judged here:
+    /// the operation's own check names what is missing.
+    #[test]
+    fn a_manifest_without_a_kind_or_another_operation_passes_the_target_check() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = testkit::admin(&state);
+        let effective = crate::permissions::for_request(&state, &caller.identity, "p");
+        let kindless = json!({ "manifest": { "spec": {} } });
+        assert!(proposed_target(
+            "jc_resource_propose",
+            &state.mirror,
+            &effective,
+            Some(&kindless)
+        )
+        .is_ok());
+        assert!(proposed_target(
+            "jc_endpoint_list",
+            &state.mirror,
+            &effective,
+            Some(&kindless)
+        )
+        .is_ok());
+        assert!(proposed_target("jc_resource_propose", &state.mirror, &effective, None).is_ok());
+    }
+
     /// T-7817: each error reaches its REST answer with the words a client acts on, and a
     /// bearer never prints its token.
     #[test]

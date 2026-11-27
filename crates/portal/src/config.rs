@@ -4573,6 +4573,112 @@ mod tests {
     /// namespace; a registry that is not a bare host, or a name that is not a Kubernetes name,
     /// stops the Portal at start rather than rendering a pod no node can pull.
     #[test]
+    fn a_registry_with_a_port_is_a_host_and_a_port_of_zero_or_text_is_not() {
+        let with = |registry: &'static str| {
+            move |k: &str| match k {
+                "JC_PORTAL_PUBLIC_URL" => Some("https://bb.example.sk".to_string()),
+                "JC_PORTAL_APPS_NAMESPACE" => Some("joinedcontext".to_string()),
+                "JC_PORTAL_ORG_DOMAIN" => Some("banskabystrica.sk".to_string()),
+                "JC_PORTAL_APPS_REGISTRY" => Some(registry.to_string()),
+                "JC_SHAKO_OWNER" => Some("joinedcontext".to_string()),
+                _ => None,
+            }
+        };
+        let ported = Config::from_vars(with("forge.example.org:5000"))
+            .expect("a host and a port")
+            .app_settings
+            .expect("apps");
+        assert_eq!(
+            ported.image_of("air", "sha256:ab").as_deref(),
+            Some("forge.example.org:5000/joinedcontext/app-air@sha256:ab")
+        );
+        for refused in [
+            "forge.example.org:0",
+            "forge.example.org:http",
+            "forge.example.org:",
+        ] {
+            assert!(
+                matches!(Config::from_vars(with(refused)), Err(ConfigError::Invalid { var, .. }) if var == "JC_PORTAL_APPS_REGISTRY"),
+                "{refused}"
+            );
+        }
+    }
+
+    /// The optional paths and URLs are read where set and left out where blank.
+    #[test]
+    fn optional_directories_files_and_databases_are_read_where_set_and_blank_is_unset() {
+        let set = Config::from_vars(vars(vec![
+            ("JC_PORTAL_SDM_MIRROR_DIR", "/var/sdm".to_owned()),
+            ("JC_PORTAL_APPS_CACHE_DIR", "/var/apps".to_owned()),
+            ("JC_PORTAL_APPS_URL", "https://city.example.org".to_owned()),
+            ("JC_PORTAL_SERVE_APP_HOSTS", " true ".to_owned()),
+            ("JC_BRANDING_FILE", "/etc/branding.json".to_owned()),
+            ("JC_HEALTH_DIR", "/var/health".to_owned()),
+            (
+                "JC_PORTAL_DATABASE_URL",
+                "postgres://portal@db/portal".to_owned(),
+            ),
+            (
+                "JC_PORTAL_MIGRATION_DATABASE_URL",
+                "postgres://owner@db/portal".to_owned(),
+            ),
+        ]))
+        .expect("every value parses");
+        assert_eq!(set.sdm_mirror_dir.as_deref(), Some("/var/sdm"));
+        assert_eq!(set.apps_cache_dir.as_deref(), Some("/var/apps"));
+        assert!(set.serve_app_hosts);
+        assert_eq!(set.branding_file.as_deref(), Some("/etc/branding.json"));
+        assert_eq!(set.health_dir.as_deref(), Some("/var/health"));
+        assert_eq!(
+            set.database_url.as_deref(),
+            Some("postgres://portal@db/portal")
+        );
+        assert_eq!(
+            set.migration_database_url.as_deref(),
+            Some("postgres://owner@db/portal")
+        );
+        let blank = Config::from_vars(vars(
+            [
+                "JC_PORTAL_SDM_MIRROR_DIR",
+                "JC_PORTAL_APPS_CACHE_DIR",
+                "JC_BRANDING_FILE",
+                "JC_HEALTH_DIR",
+                "JC_PORTAL_DATABASE_URL",
+                "JC_PORTAL_MIGRATION_DATABASE_URL",
+            ]
+            .into_iter()
+            .map(|var| {
+                (
+                    var,
+                    if var == "JC_PORTAL_SDM_MIRROR_DIR" {
+                        String::new()
+                    } else {
+                        "  ".to_owned()
+                    },
+                )
+            })
+            .chain([
+                ("JC_PORTAL_APPS_URL", "https://city.example.org".to_owned()),
+                ("JC_PORTAL_SERVE_APP_HOSTS", "yes".to_owned()),
+            ])
+            .collect(),
+        ))
+        .expect("blank is unset");
+        assert_eq!(
+            (
+                blank.sdm_mirror_dir,
+                blank.apps_cache_dir,
+                blank.branding_file,
+                blank.health_dir,
+                blank.database_url,
+                blank.migration_database_url,
+            ),
+            (None, None, None, None, None, None)
+        );
+        assert!(!blank.serve_app_hosts, "only `true` serves the App hosts");
+    }
+
+    #[test]
     fn app_settings_compose_the_image_repository_and_refuse_what_no_node_resolves() {
         let with = |extra: Vec<(&'static str, &'static str)>| {
             move |k: &str| match k {

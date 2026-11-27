@@ -1374,10 +1374,11 @@ mod tests {
             "http://10.0.0.5/a.csv",
             "http://shako:3000/a.csv",
         ] {
-            match sample_address(url, "/sample/url").await {
-                Err(OpError::InvalidInput { path, .. }) => assert_eq!("/sample/url", path, "{url}"),
-                other => panic!("{url}: {other:?}"),
-            }
+            let got = sample_address(url, "/sample/url").await;
+            assert!(
+                matches!(&got, Err(OpError::InvalidInput { path, .. }) if path == "/sample/url"),
+                "{url}: {got:?}"
+            );
         }
         assert!(sample_address("https://feeds.invalid/a.csv", "/sample/url")
             .await

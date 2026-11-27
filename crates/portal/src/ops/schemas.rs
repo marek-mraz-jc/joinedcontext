@@ -864,6 +864,12 @@ mod tests {
         assert_eq!(seen, ["Loop"]);
     }
 
+    #[test]
+    #[should_panic(expected = "expected a refusal, got")]
+    fn an_answer_is_no_refusal() {
+        invalid_at(Ok(Value::Null));
+    }
+
     fn invalid_at(result: Result<Value, OpError>) -> (String, String) {
         let Err(OpError::InvalidInput { path, message }) = result else {
             panic!("expected a refusal, got {result:?}")

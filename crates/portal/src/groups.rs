@@ -359,10 +359,14 @@ mod tests {
     }
 
     fn refusal(state: &AppState, kind: &str, meta: &ObjectMeta) -> Option<String> {
-        match check(state, &who("jana@hel.fi"), kind, meta) {
-            Ok(()) => None,
+        let answer = check(state, &who("jana@hel.fi"), kind, meta);
+        assert!(
+            matches!(answer, Ok(()) | Err(ApiError::Denied(_))),
+            "a clash is a refusal, not {answer:?}"
+        );
+        match answer {
             Err(ApiError::Denied(message)) => Some(message),
-            Err(other) => panic!("a clash is a refusal, not {other:?}"),
+            _ => None,
         }
     }
 

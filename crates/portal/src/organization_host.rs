@@ -697,6 +697,7 @@ mod tests {
         }));
         assert_ne!(token, other);
         assert_eq!(token.mint().await.err().as_deref(), Some("no token today"));
+        assert_eq!(other.mint().await.err().as_deref(), Some("no token today"));
     }
 
     #[test]
