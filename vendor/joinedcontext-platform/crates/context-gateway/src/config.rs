@@ -709,9 +709,7 @@ fn normalize_broker_url(raw: &str) -> Result<String, ConfigError> {
         .or_else(|| trimmed.strip_prefix("https://"))
         .ok_or_else(|| invalid("must start with http:// or https://"))?;
 
-    if rest.is_empty() {
-        return Err(invalid("has no host"));
-    }
+    // `rest` is never empty: the trailing `/` is trimmed first, so `http://` has no prefix.
     if rest.contains('/') {
         return Err(invalid("must be scheme and authority only, with no path"));
     }

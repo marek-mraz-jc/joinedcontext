@@ -1856,11 +1856,10 @@ mod tests {
             .await
             .expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("address"));
+        // Connections wait in the backlog, never accepted, never answered.
         tokio::spawn(async move {
-            let mut held = Vec::new();
-            while let Ok((socket, _)) = listener.accept().await {
-                held.push(socket);
-            }
+            let _listening = listener;
+            std::future::pending::<()>().await
         });
         let gateway = Gateway::new(
             crate::proxy::Broker::new(url),

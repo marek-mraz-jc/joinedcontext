@@ -1509,6 +1509,8 @@ mod tests {
         assert_eq!(tick(None, now, unasked), None);
         assert_eq!(tick(Some(now), now, unasked), None);
         assert_eq!(asked.get(), 0, "the hub's lock was taken for a live client");
+        assert_eq!(tick(None, long_ago, unasked), Some(Ended::Closing("idle")));
+        assert_eq!(asked.get(), 1, "a silent client's subscriptions are asked");
         assert_eq!(tick(Some(long_ago), now, unasked), Some(Ended::NoPong));
         assert_eq!(tick(None, long_ago, || 0), Some(Ended::Closing("idle")));
         assert_eq!(tick(None, long_ago, || 1), None);
@@ -1757,6 +1759,7 @@ mod tests {
         let (hub, queue) = busy_hub();
         hold_hub(&hubs, "busy", &hub);
         hold_hub(&hubs, "idle", &Arc::new(Hub::new("t", 10)));
+        queue.push(Out::Gap);
         hubs.close_all();
         assert_eq!(closing(&queue).len(), 1);
     }
