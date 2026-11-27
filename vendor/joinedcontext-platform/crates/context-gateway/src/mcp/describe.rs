@@ -587,6 +587,77 @@ mod tests {
         move |_| std::future::ready(answer.map(<[u8]>::to_vec))
     }
 
+    /// A gateway whose broker answers every request `status` with `body`.
+    async fn broker_answering(status: StatusCode, body: &'static str) -> Gateway {
+        let app = axum::Router::new().fallback(move || async move { (status, body) });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    fn format(name: &str) -> Map<String, Value> {
+        let mut asked = Map::new();
+        asked.insert("format".to_owned(), json!(name));
+        asked
+    }
+
+    /// AG-05: a broker that cannot give the access document or the model is a tool error that
+    /// says what to do, never its status alone; an unknown formalism is named, and a schema
+    /// URI of another Endpoint is an unknown resource.
+    #[tokio::test]
+    async fn a_broker_without_the_document_or_the_model_is_a_tool_error() {
+        let endpoint = crate::mcp::catalog::tests::fixture();
+        let anonymous = Subject::anonymous();
+        let failing = broker_answering(StatusCode::INTERNAL_SERVER_ERROR, "").await;
+        let access = read(
+            &failing,
+            &endpoint,
+            &anonymous,
+            json!(1),
+            &json!({"uri": "access://aaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+        )
+        .await;
+        assert_eq!(access["result"]["isError"], json!(true), "{access}");
+        let elsewhere = read(
+            &failing,
+            &endpoint,
+            &anonymous,
+            json!(2),
+            &json!({"uri": "schema://bbbbbbbbbbbbbbbbbbbbbbbbbb/v1/linkml"}),
+        )
+        .await;
+        assert_eq!(elsewhere["error"]["code"], -32602, "{elsewhere}");
+        let schema = read(
+            &failing,
+            &endpoint,
+            &anonymous,
+            json!(3),
+            &json!({"uri": "schema://aaaaaaaaaaaaaaaaaaaaaaaaaa/v1/linkml"}),
+        )
+        .await;
+        assert_eq!(schema["result"]["isError"], json!(true), "{schema}");
+        let summary = describe_schema(&failing, &endpoint, &anonymous, &format("summary")).await;
+        assert!(summary.is_err_and(|why| why.contains("try again later")));
+        let dance = describe_schema(&failing, &endpoint, &anonymous, &format("dance")).await;
+        assert!(dance.is_err_and(|why| why.contains("`dance` is not a formalism")));
+
+        let missing = broker_answering(StatusCode::NOT_FOUND, "").await;
+        for asked in ["summary", "linkml"] {
+            let none = describe_schema(&missing, &endpoint, &anonymous, &format(asked)).await;
+            assert_eq!(none, Err(NO_MODEL.to_owned()), "{asked}");
+        }
+        let garbled = broker_answering(StatusCode::OK, "not json").await;
+        let summary = describe_schema(&garbled, &endpoint, &anonymous, &format("summary")).await;
+        assert!(summary.is_err_and(|why| why.contains("try again later")));
+    }
+
     /// T-7767: `entityType` narrows the LinkML of the classes it names; a value of another
     /// shape, a formalism it cannot narrow, a class the view does not describe and a broker
     /// that does not answer each refuse with what to do, never the broker's status or host.

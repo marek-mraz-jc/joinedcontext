@@ -838,6 +838,81 @@ mod tests {
         }
     }
 
+    fn bare_gateway() -> Gateway {
+        Gateway::new(
+            crate::proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    fn posted(authorization: Option<&str>, body: impl Into<Body>) -> Request {
+        let mut request = Request::new(body.into());
+        if let Some(value) = authorization {
+            request.headers_mut().insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(value).expect("a header value"),
+            );
+        }
+        request
+    }
+
+    /// A token to a gateway with no realm is 401; on a public server a body past the cap is a
+    /// parse error, a notification 202, and the server's bucket, once spent, 429.
+    #[tokio::test]
+    async fn a_named_server_refuses_before_it_answers() {
+        let gateway = Arc::new(bare_gateway());
+        let organization = server(Audience::Organization);
+        let refused = serve(
+            Arc::clone(&gateway),
+            organization,
+            posted(Some("Bearer abc"), ""),
+        )
+        .await;
+        assert_eq!(refused.status(), StatusCode::UNAUTHORIZED);
+
+        let public = server(Audience::Public);
+        let big = Body::from(vec![b' '; MAX_BODY + 1]);
+        let parsed = serve(Arc::clone(&gateway), public.clone(), posted(None, big)).await;
+        let bytes = axum::body::to_bytes(parsed.into_body(), MAX_BODY)
+            .await
+            .expect("a body");
+        assert!(String::from_utf8_lossy(&bytes).contains("-32700"));
+        let gateway = Arc::new({
+            let mut fresh = bare_gateway();
+            fresh.hub_rate_limit = jc_core::kinds::RateLimits {
+                requests_per_minute: 1,
+                burst: Some(1),
+            };
+            fresh
+        });
+        let note = r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#;
+        let first = serve(Arc::clone(&gateway), public.clone(), posted(None, note)).await;
+        assert_eq!(first.status(), StatusCode::ACCEPTED);
+        let second = serve(gateway, public, posted(None, note)).await;
+        assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A deployment's server shows on a host only through a member of the host's Organization.
+    #[tokio::test]
+    async fn a_deployment_server_without_a_member_on_the_host_is_not_found() {
+        let gateway = bare_gateway();
+        let mut deployed = server(Audience::Public);
+        deployed.project = DEPLOYMENTS.to_owned();
+        gateway.replace_servers(vec![deployed]);
+        let mut request = posted(None, "{}");
+        request
+            .extensions_mut()
+            .insert(HostOrganization("city".to_owned()));
+        let answer = message(
+            State(Arc::new(gateway)),
+            Path((DEPLOYMENTS.to_owned(), "mobility".to_owned())),
+            request,
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
+
     /// S2-21: `metadata.description` is its authors' text. A line in it that reads as an
     /// instruction reaches the model inside one capped ⟦ ⟧ span, after the line saying what the
     /// marks mean, and never at the start of a line of its own.

@@ -697,6 +697,87 @@ mod tests {
         ]))
     }
 
+    /// The routes of an issuing gateway, and the status, `Location` and body of one request.
+    async fn routed(request: axum::http::Request<Body>) -> (StatusCode, Option<String>, String) {
+        use tower::ServiceExt;
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+        .issue_anonymous_tokens(issuer());
+        let answer = routes()
+            .with_state(Arc::new(gateway))
+            .oneshot(request)
+            .await
+            .expect("an answer");
+        let status = answer.status();
+        let location = answer
+            .headers()
+            .get(axum::http::header::LOCATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned);
+        let body = axum::body::to_bytes(answer.into_body(), 64 * 1024)
+            .await
+            .expect("a body");
+        (
+            status,
+            location,
+            String::from_utf8_lossy(&body).into_owned(),
+        )
+    }
+
+    fn posted(path: &str, content_type: &str, body: &str) -> axum::http::Request<Body> {
+        axum::http::Request::post(path)
+            .header(axum::http::header::CONTENT_TYPE, content_type)
+            .body(Body::from(body.to_owned()))
+            .expect("a request")
+    }
+
+    /// RFC 7591 §3.2.2, RFC 6749 §3.1.2 and §5.2: a registration that is no JSON is
+    /// `invalid_client_metadata`, an authorize without `redirect_uri` goes to the one URI the
+    /// client registered, and a token refusal is 401 for the client and 400 otherwise.
+    #[tokio::test]
+    async fn the_routes_answer_each_oauth_step() {
+        let (status, _, body) =
+            routed(posted("/oauth/register", "application/json", "not json")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(body.contains("invalid_client_metadata"), "{body}");
+
+        let issuer = issuer();
+        let client_id = client(&issuer);
+        let mut asked = Url::parse(&format!("{BASE}/oauth/authorize")).expect("a URL");
+        asked
+            .query_pairs_mut()
+            .append_pair("client_id", &client_id)
+            .append_pair("response_type", "code")
+            .append_pair("code_challenge", &sha256(VERIFIER))
+            .append_pair("code_challenge_method", "S256")
+            .append_pair("resource", &format!("{BASE}/api/mcp"));
+        let query = asked.query().unwrap_or_default();
+        let authorize = axum::http::Request::get(format!("/oauth/authorize?{query}"))
+            .body(Body::empty())
+            .expect("a request");
+        let (_, location, _) = routed(authorize).await;
+        let location = location.expect("a redirect");
+        assert!(
+            location.starts_with(GEMINI) && location.contains("code="),
+            "{location}"
+        );
+        assert!(!location.contains("state="), "{location}");
+
+        let form = "application/x-www-form-urlencoded";
+        let (status, _, body) = routed(posted(
+            "/oauth/token",
+            form,
+            "grant_type=authorization_code&client_id=bogus&code=x&code_verifier=y",
+        ))
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        let (status, _, body) = routed(posted("/oauth/token", form, "grant_type=dance")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
     #[test]
     fn a_short_key_makes_no_server() {
         let short = Issuer::new(BASE, &Secret::new("k".repeat(31)), Vec::new());

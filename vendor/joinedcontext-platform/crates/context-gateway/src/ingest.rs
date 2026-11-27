@@ -203,6 +203,13 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A value that is no text is digested as its JSON text.
+    #[test]
+    fn a_value_that_is_no_text_is_digested_as_its_json() {
+        let key = hmac::Key::new(hmac::HMAC_SHA256, b"test key");
+        assert_eq!(digest(&key, &json!(5)), digest(&key, &json!("5")));
+    }
+
     fn schema() -> ModelSchema {
         let model = json!({ "definitions": { "BikeTrip": { "type": "object", "properties": {
             "rider": { "type": "string", "x-personal-data": true, "x-ingest": "keyedHash" },

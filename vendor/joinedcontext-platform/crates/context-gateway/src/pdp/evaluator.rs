@@ -723,6 +723,17 @@ pub const NOTHING: &str = "(jcUnreadablePolicyQ==0;jcUnreadablePolicyQ!=0)";
 mod tests {
     use super::*;
 
+    /// A grant with no information block withholds nothing.
+    #[test]
+    fn a_grant_without_information_withholds_nothing() {
+        let policy: PolicySpec = serde_norway::from_str(
+            "contextSpaceRef: air\nassigner: did:web:city.example\n\
+             assignee: { kind: role, id: public }\noperations: [queryEntity]\n",
+        )
+        .expect("the policy spec parses");
+        assert_eq!(withheld_by(&policy, &crate::query::requested(&[])), None);
+    }
+
     fn spec(yaml: &str) -> PolicySpec {
         serde_norway::from_str(&format!(
             "contextSpaceRef: air\nassigner: did:web:city.example\n{yaml}"
