@@ -2039,6 +2039,53 @@ async fn a_realm_admins_body_keeps_the_ids_and_organizations_it_names() {
     assert_eq!(scope["orgId"], "espoo", "{scope}");
 }
 
+/// The holders of an application's role, listed to an organization admin, leave out the
+/// people and groups of another organization, though a realm admin mapped them.
+#[tokio::test]
+async fn role_holders_of_another_organization_stay_out_of_an_org_admins_list() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    for holder in [
+        "users/hel-user",
+        "users/esp-user",
+        "groups/hel-group",
+        "groups/esp-group",
+    ] {
+        let (st, _, body) = call(
+            &f.app,
+            &Method::POST,
+            &format!("{R}/{holder}/role-mappings/clients/c-hel"),
+            a,
+            Some(&json!([{ "name": "viewer" }])),
+        )
+        .await;
+        assert_eq!(st, StatusCode::NO_CONTENT, "{holder}: {body}");
+    }
+    for (kind, ours, theirs) in [
+        ("users", "hel-user", "esp-user"),
+        ("groups", "hel-group", "esp-group"),
+    ] {
+        let uri = format!("{R}/clients/c-hel/roles/viewer/{kind}");
+        let ids = |v: &Value| -> Vec<String> {
+            v.as_array()
+                .unwrap()
+                .iter()
+                .map(|h| h["id"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let (st, _, all) = call(&f.app, &Method::GET, &uri, a, None).await;
+        assert_eq!(st, StatusCode::OK, "{all}");
+        let all = ids(&all);
+        assert!(
+            all.contains(&ours.to_owned()) && all.contains(&theirs.to_owned()),
+            "{all:?}"
+        );
+        let (st, _, own) = call(&f.app, &Method::GET, &uri, Some(f.hel_admin.as_str()), None).await;
+        assert_eq!(st, StatusCode::OK, "{own}");
+        assert_eq!(ids(&own), [ours], "{kind}");
+    }
+}
+
 #[tokio::test]
 async fn realm_partial_import_and_native_routes() {
     let f = fixture().await;

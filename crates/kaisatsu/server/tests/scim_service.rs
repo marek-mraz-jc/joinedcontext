@@ -501,6 +501,27 @@ async fn k14_scim_put_patch_groups_etags_errors_and_deactivation_session_revocat
         .find(|e| e["type"] == "work")
         .unwrap();
     assert_eq!(work_email["value"], "b.jensen@hel.fi");
+    // A replace of the whole matched entry without a value leaves the entry as it was.
+    let (st, kept) = api
+        .call(
+            Method::PATCH,
+            &format!("{SCIM}/Users/{uid}"),
+            &admin,
+            Some(json!({
+                "schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"],
+                "Operations": [{ "op": "replace", "path": "emails[type eq \"work\"]" }]
+            })),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{kept}");
+    assert!(
+        kept["emails"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["type"] == "work" && e["value"] == "b.jensen@hel.fi"),
+        "{kept}"
+    );
 
     // PATCH error cases: remove without path -> noTarget, unknown path -> invalidPath, remove required userName -> mutability.
     for (ops, expected_type) in [
@@ -718,6 +739,12 @@ async fn scim_lists_page_by_start_index_and_count() {
         assert_eq!(count["totalResults"], 3);
         assert_eq!(count["startIndex"], 1);
         assert_eq!(count["itemsPerPage"], 0);
+        // Without a filter every row of the set is listed.
+        let (st, all) = api
+            .call(Method::GET, &format!("{SCIM}/{set}"), &admin, None)
+            .await;
+        assert_eq!(st, StatusCode::OK, "{all}");
+        assert!(all["totalResults"].as_u64().unwrap() >= 3, "{all}");
         let uri = format!("{SCIM}/{set}?count=many");
         let (st, _) = api.call(Method::GET, &uri, &admin, None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST);
