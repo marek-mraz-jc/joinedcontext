@@ -337,3 +337,63 @@ async fn a_count_the_broker_cannot_give_is_left_out_and_the_dry_run_still_answer
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(body.get("goesWith").is_none(), "{body}");
 }
+
+/// T-7918: an App's removal takes the generated grants the forge holds; a grant the mirror names
+/// but the forge has no file for is not a removal, and the App's own manifest still goes.
+#[tokio::test]
+async fn an_app_whose_generated_grant_has_no_file_removes_the_manifest_alone() {
+    let (shako, broker) = (forge().await, MockServer::start().await);
+    let state = world(&shako, &broker).await;
+    state
+        .mirror
+        .upsert(envelope("App", "air-map", PROJECT, json!({})));
+    state.mirror.upsert(envelope(
+        "Role",
+        "app-remover",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["App"], "verbs": ["read", "delete"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "app-removers",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "remover@hel.fi" }], "role": "app-remover", "scope": { "project": PROJECT } }),
+    ));
+    let mut endpoint = envelope(
+        "Endpoint",
+        "app-air-map",
+        PROJECT,
+        json!({ "contextSpaceRef": { "name": "air" }, "slug": "app-air-map" }),
+    );
+    endpoint.metadata.annotations.insert(
+        "joinedcontext.com/generated-by".to_owned(),
+        "portal/app-reconciler".to_owned(),
+    );
+    state.mirror.upsert(endpoint);
+    // The App's manifest is on the forge; the grant's file is not (the fixture's default 404).
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .and(wiremock::matchers::query_param_contains(
+            "@p",
+            "apps/air-map/app.yaml",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "sha-app",
+            "Content": "YXBpVmVyc2lvbjogeQ=="
+        })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let answer = send(
+        &state,
+        person("remover"),
+        "DELETE",
+        &format!("/api/v1/projects/{PROJECT}/apps/air-map"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let removed = common::removed_in_one_commit(&shako).await;
+    assert_eq!(removed.len(), 1, "the manifest alone: {removed:?}");
+    assert!(removed[0].ends_with("apps/air-map/app.yaml"), "{removed:?}");
+}

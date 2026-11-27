@@ -1030,4 +1030,265 @@ mod tests {
         }));
         assert!(unknown.is_err(), "a failed item takes no other member");
     }
+
+    const ISSUER: &str = "https://idm.example.test/realms/dev";
+
+    /// The headers of the project's pipeline runner: `state` now verifies tokens of a realm whose
+    /// one key signs this one, and its client is the one the Portal admits for `stations`.
+    fn runner_headers(state: &mut AppState) -> HeaderMap {
+        let (verifier, sign) = crate::auth::bearer::test_verifier(ISSUER, "portal-api", "k1");
+        state.bearer = Some(Arc::new(verifier));
+        let client = crate::auth::internal::pipeline_clients(&state.mirror, "ovzdusie", "stations")
+            [0]
+        .clone();
+        let now = crate::auth::session::now_unix();
+        let token = sign(&json!({
+            "iss": ISSUER, "typ": "Bearer", "aud": "portal-internal", "sub": "svc",
+            "azp": client, "exp": now + 60, "iat": now,
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            axum::http::HeaderValue::from_str(&format!("Bearer {token}")).expect("header"),
+        );
+        headers
+    }
+
+    fn at() -> Path<(String, String)> {
+        Path(("ovzdusie".into(), "stations".into()))
+    }
+
+    /// T-7917: an outcomes post that is not the sink's document is a 400, and a hash that is not
+    /// text is kept as its JSON text, so the run still records the change.
+    #[tokio::test]
+    async fn an_outcomes_post_must_be_the_sinks_document_and_a_numeric_hash_is_kept_as_text() {
+        let mut state = world();
+        let headers = runner_headers(&mut state);
+        assert_eq!(
+            outcomes(
+                State(state.clone()),
+                at(),
+                headers.clone(),
+                Bytes::from_static(b"{not json")
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
+        let body = json!({
+            "run": "2026-10-13T03:00:00Z",
+            "sent": ["urn:a"],
+            "hashes": [7],
+        });
+        assert_eq!(
+            outcomes(
+                State(state.clone()),
+                at(),
+                headers,
+                Bytes::from(body.to_string())
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        let runs = state
+            .pipeline_log
+            .runs("ovzdusie", "stations", 10)
+            .await
+            .expect("runs");
+        assert_eq!(runs[0].sent, 1);
+    }
+
+    /// T-7917: a source-delete report for a known pipeline is kept (204), and a body that is not
+    /// a report is a 400.
+    #[tokio::test]
+    async fn a_source_delete_report_is_kept_and_a_malformed_one_refused() {
+        let mut state = world();
+        let headers = runner_headers(&mut state);
+        let report = json!({ "run": "r1", "deleted": [], "gone": [], "failed": [] });
+        assert_eq!(
+            source_deletes(
+                State(state.clone()),
+                at(),
+                headers.clone(),
+                Bytes::from(report.to_string())
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            source_deletes(State(state), at(), headers, Bytes::from_static(b"[]")).await,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    /// T-7917: an events post for a pipeline whose `sourceDeletes` is an events rule is kept
+    /// (204); a malformed one is a 400, and a caller without the pipeline's token a 401.
+    #[tokio::test]
+    async fn an_events_post_of_an_events_pipeline_is_kept_and_a_malformed_one_refused() {
+        let mut state = world();
+        state.mirror.upsert(manifest(
+            "Pipeline",
+            "stations",
+            json!({
+                "class": "resident",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:air-write",
+                "sourceDeletes": { "mode": "events", "deletedWhen": "$.deleted == true" }
+            }),
+        ));
+        let headers = runner_headers(&mut state);
+        let marks = json!({ "run": "r1", "ids": ["urn:ngsi-ld:Thing:1"] });
+        assert_eq!(
+            source_events(
+                State(state.clone()),
+                at(),
+                headers.clone(),
+                Bytes::from(marks.to_string())
+            )
+            .await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            source_events(
+                State(state.clone()),
+                at(),
+                headers,
+                Bytes::from_static(b"{\"ids\": 3}")
+            )
+            .await,
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            source_events(
+                State(state),
+                at(),
+                HeaderMap::new(),
+                Bytes::from(marks.to_string())
+            )
+            .await,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+
+    fn forbidden_report() -> Sent {
+        Sent {
+            run: Some("2026-10-13T02:00:00Z".into()),
+            sent: Vec::new(),
+            hashes: Vec::new(),
+            failed: vec![Failed {
+                id: json!("urn:x"),
+                message: "the gateway answered 403".into(),
+            }],
+        }
+    }
+
+    async fn failed_message(state: &AppState) -> String {
+        state
+            .pipeline_log
+            .lines("ovzdusie", "stations", "2026-10-13T02:00:00Z", 10, None)
+            .await
+            .expect("lines")
+            .into_iter()
+            .find(|line| line.outcome == Outcome::Failed)
+            .expect("a failed line")
+            .message
+    }
+
+    /// T-7917: a gateway `403` in a report names no ended grant when the Portal keeps no
+    /// requests (no database) or the database does not answer: the runner's words stand alone.
+    #[tokio::test]
+    async fn a_forbidden_line_names_no_grant_when_requests_cannot_be_read() {
+        let state = world();
+        assert_eq!(
+            log_sent(&state, "ovzdusie", "stations", forbidden_report()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(failed_message(&state).await, "the gateway answered 403");
+
+        let mut down = world();
+        down.db = Some(crate::test_db::dead_pool());
+        assert_eq!(
+            log_sent(&down, "ovzdusie", "stations", forbidden_report()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(failed_message(&down).await, "the gateway answered 403");
+    }
+
+    /// T-7917 (PL-93): with a database, a `403` line names the ended grant the pipeline's access
+    /// requests hold (who revoked it); with no request of the pipeline it stays the runner's words.
+    #[tokio::test]
+    async fn a_forbidden_line_names_the_revoked_grant_of_the_pipelines_access_requests() {
+        use crate::access_requests::{
+            decide, insert, new_id, AccessRequest, Operations, Requester, TypeGrant,
+        };
+        let scratch = crate::test_db::scratch().await;
+        scratch.placed("ovzdusie").await;
+        crate::project_ids::key(&scratch.pool, "somewhere", "ovzdusie")
+            .await
+            .expect("key")
+            .expect("a keyed project");
+        let mut state = world();
+        state.db = Some(scratch.pool.clone());
+
+        assert_eq!(
+            log_sent(&state, "ovzdusie", "stations", forbidden_report()).await,
+            StatusCode::NO_CONTENT
+        );
+        assert_eq!(
+            failed_message(&state).await,
+            "the gateway answered 403",
+            "no request, no reason"
+        );
+
+        let request = AccessRequest {
+            id: new_id(),
+            project: "ovzdusie".into(),
+            requester: Requester::Pipeline("stations".into()),
+            endpoint_project: "ovzdusie".into(),
+            endpoint: "air-write".into(),
+            space: "ovzdusie".into(),
+            operations: Operations::Write,
+            types: vec![TypeGrant {
+                entity_type: "AirQualityObserved".into(),
+                attrs: vec!["pm10".into()],
+            }],
+            until: None,
+            reason: "the station feed".into(),
+            state: "pending".into(),
+            requested_by: "ana".into(),
+            requested_at: time::OffsetDateTime::now_utc(),
+            decided_by: None,
+            decided_at: None,
+            decision_reason: None,
+            change: None,
+        };
+        assert!(insert(&scratch.pool, &request).await.expect("insert"));
+        assert!(decide(
+            &scratch.pool,
+            &request,
+            ("pending", "revoked"),
+            "olli",
+            None,
+            None
+        )
+        .await
+        .expect("decide"));
+        let again = world_with_db(&scratch.pool);
+        assert_eq!(
+            log_sent(&again, "ovzdusie", "stations", forbidden_report()).await,
+            StatusCode::NO_CONTENT
+        );
+        let message = failed_message(&again).await;
+        assert!(
+            message.starts_with("access revoked by olli on "),
+            "{message}"
+        );
+        assert!(message.ends_with("the gateway answered 403"), "{message}");
+        scratch.remove().await;
+    }
+
+    fn world_with_db(pool: &sqlx::PgPool) -> AppState {
+        let mut state = world();
+        state.db = Some(pool.clone());
+        state
+    }
 }

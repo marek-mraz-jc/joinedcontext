@@ -38,12 +38,64 @@ pub async fn domain_verifications(
     let items = gate_states(state.db.as_ref(), &organizations)
         .await
         .map_err(|e| ApiError::Internal(format!("the domain verifications were not read: {e}")))?;
-    let body = serde_json::to_vec(&Items { items }).map_err(|e| {
-        ApiError::Internal(format!("the domain verifications did not serialise: {e}"))
-    })?;
+    // Plain strings and enums: serialising them cannot fail.
+    let body = serde_json::to_vec(&Items { items }).map_err(ApiError::internal)?;
     Ok(super::polled_json(&headers, body))
 }
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/internal/domain-verifications", get(domain_verifications))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use axum::http::{header, HeaderValue, StatusCode};
+    use axum::response::IntoResponse;
+    use std::sync::Arc;
+
+    const ISSUER: &str = "https://idm.example.test/realms/dev";
+
+    /// T-7917: the registry's database does not answer, so the gateway gets a 500 that names no
+    /// database host, and never a list of `pending` states it did not check.
+    #[tokio::test]
+    async fn a_dead_registry_database_answers_500_without_the_drivers_text() {
+        let mut config = Config::for_tests();
+        config.gateway_client_id = Some("context-gateway".into());
+        let mut state = AppState::new(config, None);
+        let (verifier, sign) = crate::auth::bearer::test_verifier(ISSUER, "portal-api", "k1");
+        state.bearer = Some(Arc::new(verifier));
+        state.db = Some(crate::test_db::dead_pool());
+        state.mirror.upsert(
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Organization",
+                "metadata": { "name": "hel", "namespace": "org" },
+                "spec": { "domain": "hel.fi" }
+            }))
+            .expect("an Organization"),
+        );
+        let now = crate::auth::session::now_unix();
+        let token = sign(&serde_json::json!({
+            "iss": ISSUER, "typ": "Bearer", "aud": "portal-internal", "sub": "svc",
+            "azp": "context-gateway", "exp": now + 60, "iat": now,
+        }));
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).expect("header"),
+        );
+        let refused = domain_verifications(State(state), headers)
+            .await
+            .expect_err("the database is down");
+        assert!(matches!(&refused, ApiError::Internal(m) if m.contains("were not read")));
+        let response = refused.into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .expect("body");
+        let text = String::from_utf8_lossy(&body);
+        assert!(!text.contains("127.0.0.1"), "{text}");
+    }
 }

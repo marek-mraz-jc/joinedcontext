@@ -374,12 +374,21 @@ async fn mapping_steps(
         Ok(mapping) => mapping,
         Err(steps) => return steps,
     };
-    let endpoint = match crate::record_check::check_trace(state, project, &manifest, &trace.mapping)
-    {
+    let endpoint = endpoint_of(crate::record_check::check_trace(
+        state,
+        project,
+        &manifest,
+        &trace.mapping,
+    ));
+    vec![mapping, endpoint]
+}
+
+/// The endpoint step of a record check: what it found, or why it could not run.
+fn endpoint_of(checked: Result<crate::record_check::Checked, ApiError>) -> Step {
+    match checked {
         Ok(checked) => endpoint_step(&checked),
         Err(error) => Step::new("endpoint", Outcome::Unchecked, why(&error)),
-    };
-    vec![mapping, endpoint]
+    }
 }
 
 /// The mapping step of a run, or both steps when the run left no record to check: a failure
@@ -717,18 +726,37 @@ async fn watched(
         Vec::new()
     });
     let measured = crate::api::mqtt_measured::measured_now(state, project, &spec, &release).await;
+    Ok(watch_answer(
+        refused,
+        refusals_read,
+        reasons,
+        &measured,
+        query.since,
+        account,
+    ))
+}
+
+/// The watch's answer from what was read: the refusals read (or the reasons they were not), and
+/// what the broker measures, whose own reason joins the others.
+fn watch_answer(
+    refused: Vec<Refusal>,
+    refusals_read: bool,
+    mut reasons: Vec<String>,
+    measured: &crate::api::mqtt_measured::Measured,
+    since: Option<TimestampTz>,
+    account: Option<&str>,
+) -> Watched {
     if let Some(reason) = &measured.reason {
         reasons.push(reason.clone());
     }
-    let connected = connected(&measured, account);
-    Ok(Watched {
+    Watched {
         observed_at: TimestampTz::now(),
-        refusals: filtered(refused, query.since, account),
+        refusals: filtered(refused, since, account),
         refusals_read,
-        connected,
+        connected: connected(measured, account),
         messages_per_second: measured.messages_per_second,
         reason: (!reasons.is_empty()).then(|| reasons.join("; ")),
-    })
+    }
 }
 
 pub fn router() -> Router<AppState> {
@@ -1016,5 +1044,182 @@ mod tests {
             Some("http://context-gateway.jc.svc.cluster.local:8082")
         );
         assert_eq!(internal_url("not a url"), None);
+    }
+
+    fn pipeline_of(spec: Value) -> ResourceEnvelope {
+        ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta::new("cams", "helsinki"),
+            spec,
+            status: None,
+        }
+    }
+
+    /// T-7917: a Pipeline that cannot be tested here (no source to read) leaves the mapping and
+    /// the endpoint `unchecked` with the sentence that says what to fix, not a runner error.
+    #[tokio::test]
+    async fn a_pipeline_the_tester_refuses_leaves_both_steps_unchecked_with_its_sentence() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let pipeline = pipeline_of(serde_json::json!({
+            "class": "resident",
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:cams"
+        }));
+        let identity = Identity {
+            client: None,
+            subject: "sub-ana".into(),
+            username: "ana".into(),
+            email: Some("ana@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let steps = mapping_steps(&identity, &state, "helsinki", &pipeline, "{}").await;
+        assert_eq!(steps.len(), 2);
+        for step in &steps {
+            assert_eq!(step.outcome, Outcome::Unchecked, "{}", step.step);
+            assert!(
+                step.reason.contains("pipeline.spec.source must declare"),
+                "{}",
+                step.reason
+            );
+        }
+    }
+
+    /// T-7917: a broker that is measured adds no reason, one that is not adds its own, and the
+    /// reasons of a refusal list that was not read stay beside it.
+    #[test]
+    fn the_watch_names_a_reason_only_for_what_it_could_not_read() {
+        let measured = |reason: Option<&str>| crate::api::mqtt_measured::Measured {
+            measured: reason.is_none(),
+            observed_at: TimestampTz::now(),
+            messages_per_second: reason.is_none().then_some(2.5),
+            publishers: None,
+            reason: reason.map(str::to_owned),
+            accounts: Vec::new(),
+            rates: Vec::new(),
+            refused_publishes: None,
+        };
+        let whole = watch_answer(Vec::new(), true, Vec::new(), &measured(None), None, None);
+        assert_eq!(whole.reason, None);
+        assert_eq!(whole.messages_per_second, Some(2.5));
+        assert_eq!(whole.connected, Some(0));
+        assert!(whole.refusals_read);
+
+        let partial = watch_answer(
+            Vec::new(),
+            false,
+            vec!["this instance names no gateway".into()],
+            &measured(Some("the broker did not answer")),
+            None,
+            None,
+        );
+        assert_eq!(
+            partial.reason.as_deref(),
+            Some("this instance names no gateway; the broker did not answer")
+        );
+        assert_eq!(partial.connected, None);
+        assert!(!partial.refusals_read);
+    }
+
+    /// T-7917: a record check that could not run leaves the endpoint step `unchecked` with its
+    /// sentence.
+    #[test]
+    fn a_record_check_that_could_not_run_leaves_the_endpoint_unchecked() {
+        let step = endpoint_of(Err(ApiError::BadRequest(
+            "records: at most 1 at a time".into(),
+        )));
+        assert_eq!(step.step, "endpoint");
+        assert_eq!(step.outcome, Outcome::Unchecked);
+        assert!(step.reason.contains("at most 1"), "{}", step.reason);
+    }
+
+    fn reader(name: &str) -> Identity {
+        Identity {
+            client: None,
+            subject: format!("sub-{name}"),
+            username: name.into(),
+            email: Some(format!("{name}@hel.fi")),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    fn broker_world() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::permissions::ORG_NAMESPACE;
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.into(),
+                kind: kind.into(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        put("Project", "helsinki", org, serde_json::json!({}));
+        put(
+            "MqttBroker",
+            "cameras",
+            "helsinki",
+            serde_json::json!({ "roles": [
+                { "name": "camera", "serviceAccounts": ["cam-west"], "publish": ["cameras/${clientid}/#"] }
+            ]}),
+        );
+        put(
+            "Role",
+            "reader",
+            org,
+            serde_json::json!({ "rules": [{ "kinds": ["MqttBroker", "Project"], "verbs": ["read"] }] }),
+        );
+        put(
+            "RoleBinding",
+            "ana-reads",
+            org,
+            serde_json::json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": "reader",
+                                "scope": { "project": "helsinki" } }),
+        );
+        state
+    }
+
+    /// T-7917: the watch of an instance that names no gateway and no brokers namespace answers
+    /// with both reasons and no connection count; an account the broker does not name is a 422;
+    /// a stranger finds no broker.
+    #[tokio::test]
+    async fn the_watch_of_an_instance_without_gateway_or_brokers_says_why() {
+        let state = broker_world();
+        let query = |account: Option<&str>| WatchQuery {
+            since: None,
+            account: account.map(str::to_owned),
+        };
+        let watched_all = watched(&state, &reader("ana"), "helsinki", "cameras", query(None))
+            .await
+            .expect("a watch");
+        assert!(!watched_all.refusals_read);
+        assert_eq!(watched_all.connected, None);
+        let reason = watched_all.reason.expect("a reason");
+        assert!(reason.contains("JC_PORTAL_GATEWAY_URL"), "{reason}");
+        assert!(reason.contains("JC_PORTAL_MQTT_NAMESPACE"), "{reason}");
+
+        let wrong = watched(
+            &state,
+            &reader("ana"),
+            "helsinki",
+            "cameras",
+            query(Some("nobody")),
+        )
+        .await;
+        assert!(
+            matches!(wrong, Err(ApiError::Unprocessable { .. })),
+            "{wrong:?}"
+        );
+        let stranger = watched(&state, &reader("eve"), "helsinki", "cameras", query(None)).await;
+        assert!(
+            matches!(stranger, Err(ApiError::NotFound(_))),
+            "{stranger:?}"
+        );
     }
 }

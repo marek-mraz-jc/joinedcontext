@@ -162,7 +162,7 @@ fn spec_of(request: &ScriptTestRequest) -> Result<PipelineSpec, ApiError> {
         } } }],
         "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe" }]
     }))
-    .map_err(|e| ApiError::Internal(e.to_string()))
+    .map_err(ApiError::internal)
 }
 
 /// The result of one test from its run's trace.

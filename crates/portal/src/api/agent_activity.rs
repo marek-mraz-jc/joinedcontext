@@ -659,8 +659,18 @@ pub async fn signals(
             row(s, &own)
         })
         .collect();
+    Ok(signals_of(alerts(
+        &rows,
+        &|profile| token_cap(mirror, profile),
+        now,
+    )))
+}
+
+/// One signal per project, profile and kind: the first alert of each, and the alerts come
+/// newest first.
+fn signals_of(alerts: Vec<AgentAlert>) -> Vec<Signal> {
     let mut found: Vec<Signal> = Vec::new();
-    for alert in alerts(&rows, &|profile| token_cap(mirror, profile), now) {
+    for alert in alerts {
         let event = match alert.kind {
             AlertKind::RefusalSpike => Event::RefusalSpike,
             AlertKind::SpendShare => Event::SpendShare,
@@ -674,7 +684,7 @@ pub async fn signals(
             });
         }
     }
-    Ok(found)
+    found
 }
 
 /// What a notice says beside its title: the count, and the run it names.
@@ -980,5 +990,157 @@ mod tests {
                 "{query:?}"
             );
         }
+    }
+
+    fn agent_run(id: &str, status: &str, created: &str, finished: Option<&str>) -> AgentRun {
+        AgentRun {
+            id: id.to_owned(),
+            project: "helsinki".to_owned(),
+            app_name: "air-dashboard".to_owned(),
+            title: Some("Air quality dashboard".to_owned()),
+            endpoint_name: "air-quality".to_owned(),
+            endpoint_slug: "slug".to_owned(),
+            endpoints: json!([{ "name": "air-quality", "slug": "slug", "space": "air" }]),
+            profile: "builder".to_owned(),
+            kind: "application".to_owned(),
+            unattended: false,
+            continues: None,
+            app_class: "ui".to_owned(),
+            visibility: "project".to_owned(),
+            prompt: "prompt".to_owned(),
+            prompt_digest: "sha256:abc".to_owned(),
+            data_needs: json!([]),
+            allows_write: false,
+            branch: format!("agent/app-air-dashboard/{id}"),
+            path_prefix: "projects/helsinki/apps/air-dashboard/".to_owned(),
+            status: status.to_owned(),
+            ticket_hash: "$argon2id$TICKET-HASH".to_owned(),
+            workspace: None,
+            merge_request: None,
+            change_id: None,
+            source_url: None,
+            mirror_url: None,
+            preview_url: None,
+            first_frame_ms: None,
+            first_version_ms: None,
+            files: json!({}),
+            steps: 0,
+            tokens_used: 0,
+            created_by: "ana".to_owned(),
+            origin: "person".to_owned(),
+            starter: Value::Null,
+            created_at: created.to_owned(),
+            started_at: Some(created.to_owned()),
+            finished_at: finished.map(str::to_owned),
+            expires_at: "2099-01-01T00:00:00Z".to_owned(),
+            error: None,
+        }
+    }
+
+    /// T-7917: `until` is exclusive and a run whose start cannot be read is outside any bound.
+    #[test]
+    fn an_until_bound_admits_only_runs_started_before_it() {
+        let query = ActivityQuery {
+            until: Some("2026-10-21T12:00:00Z".into()),
+            ..ActivityQuery::default()
+        };
+        let filter = Filter::parse(&query).expect("a filter");
+        let before = agent_run("a", "building", "2026-10-21T10:00:00Z", None);
+        let at_bound = agent_run("b", "building", "2026-10-21T12:00:00Z", None);
+        let after = agent_run("c", "building", "2026-10-21T13:00:00Z", None);
+        let unreadable = agent_run("d", "building", "yesterday", None);
+        assert!(filter.admits(&before));
+        assert!(!filter.admits(&at_bound));
+        assert!(!filter.admits(&after));
+        assert!(!filter.admits(&unreadable));
+    }
+
+    fn alert_of(kind: AlertKind, profile: &str, run: &str, count: u64) -> AgentAlert {
+        AgentAlert {
+            kind,
+            project: "helsinki".into(),
+            profile: profile.into(),
+            run_id: Some(run.into()),
+            run_title: Some("Air".into()),
+            count,
+            at: "2026-10-21T22:00:00Z".into(),
+        }
+    }
+
+    /// T-7917: each alert kind becomes its own incident event, and a second alert of the same
+    /// project, profile and kind adds none (the first is the newest).
+    #[test]
+    fn each_alert_kind_is_its_own_signal_once_per_profile() {
+        let found = signals_of(vec![
+            alert_of(AlertKind::SpendShare, "builder", "r1", 90),
+            alert_of(AlertKind::OffHoursWrite, "builder", "r2", 2),
+            alert_of(AlertKind::RefusalSpike, "builder", "r3", 6),
+            alert_of(AlertKind::SpendShare, "builder", "r4", 85),
+            alert_of(AlertKind::SpendShare, "other", "r5", 81),
+        ]);
+        assert_eq!(found.len(), 4, "{found:?}");
+        assert!(matches!(found[0].key.2, Event::SpendShare));
+        assert!(matches!(found[1].key.2, Event::OffHoursWrite));
+        assert!(matches!(found[2].key.2, Event::RefusalSpike));
+        assert_eq!(found[3].key.1, "other");
+        assert!(found[0].detail.contains("90 %"), "{}", found[0].detail);
+        assert!(
+            found[1].detail.contains("2 time(s)") && found[1].detail.contains("22:00:00Z"),
+            "{}",
+            found[1].detail
+        );
+        assert!(found[2].detail.contains("6 refused"), "{}", found[2].detail);
+    }
+
+    /// T-7917: the signals count a run that is live or finished within the hour, and no run that
+    /// ended earlier: here three refusals of a run finished a minute ago and two of a live run make
+    /// the spike, and the four of a run finished two hours ago are not in it.
+    #[tokio::test]
+    async fn the_signals_count_live_and_just_finished_runs_only() {
+        use crate::config::Config;
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Role".into(),
+            metadata: crate::resource::ObjectMeta::new("reader", "helsinki"),
+            spec: json!({ "rules": [] }),
+            status: None,
+        });
+        let now = TimestampTz::now();
+        let text = |at: TimestampTz| at.to_rfc3339_opts(jc_time::SecondsFormat::Secs, true);
+        let minute_ago = text(now - jiff::SignedDuration::from_mins(1));
+        let hours_ago = text(now - jiff::SignedDuration::from_hours(2));
+        for (id, status, finished, refusals) in [
+            ("just-done", "published", Some(minute_ago.as_str()), 3),
+            ("live", "building", None, 2),
+            ("long-done", "published", Some(hours_ago.as_str()), 4),
+        ] {
+            state
+                .agents
+                .create_run(&agent_run(id, status, &hours_ago, finished))
+                .await
+                .expect("a run");
+            for _ in 0..refusals {
+                state
+                    .agents
+                    .append_event(
+                        id,
+                        "tool",
+                        json!({ "tool": "jc_resource_list", "status": "failed", "error": "no" }),
+                    )
+                    .await
+                    .expect("an event");
+            }
+        }
+        let found = signals(&state.agents, &state.mirror, TimestampTz::now())
+            .await
+            .expect("signals");
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(matches!(found[0].key.2, Event::RefusalSpike));
+        assert!(
+            found[0].detail.starts_with("5 refused"),
+            "{}",
+            found[0].detail
+        );
     }
 }

@@ -13,6 +13,8 @@ use joinedcontext_portal::state::AppState;
 use joinedcontext_portal::store::Mirror;
 use tower::ServiceExt;
 
+mod common;
+
 fn make_session_cookie(config: &Config) -> String {
     use axum::response::IntoResponse;
     let now = session::now_unix();
@@ -315,4 +317,255 @@ async fn a_revision_on_a_portal_without_a_repository_is_unavailable() {
         response.headers().get(header::CONTENT_TYPE).unwrap(),
         "application/problem+json"
     );
+}
+
+/// T-7917: the resource reads that reach past the live mirror: a manifest `main` refused is
+/// listed (with its reason) only where it matches the selectors, a copy is read, and a commit
+/// the forge answers oddly is the one 404 of a missing resource or the 503 of a forge down.
+mod reaching_past_the_mirror {
+    use super::common;
+    use axum::http::StatusCode;
+    use joinedcontext_portal::ops::workspaces::{Opening, Scope};
+    use joinedcontext_portal::permissions::ORG_NAMESPACE;
+    use joinedcontext_portal::state::AppState;
+    use serde_json::{json, Value};
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    const PAST: &str = "4f2a9c1d0e8b7a6f5e4d3c2b1a0f9e8d7c6b5a49";
+    const UNPROCESSABLE: &str = "2222222222222222222222222222222222222222";
+    const DOWN: &str = "3333333333333333333333333333333333333333";
+
+    fn reader() -> joinedcontext_portal::auth::session::Identity {
+        common::person("reader@hel.fi")
+    }
+
+    fn grant(state: &AppState) {
+        state.mirror.upsert(common::envelope(
+            "Role",
+            "reads-endpoints",
+            ORG_NAMESPACE,
+            json!({ "rules": [{ "kinds": ["Endpoint"], "verbs": ["read"] }] }),
+        ));
+        state.mirror.upsert(common::envelope(
+            "RoleBinding",
+            "reader-ovzdusie",
+            ORG_NAMESPACE,
+            json!({ "subjects": [{ "user": "reader@hel.fi" }], "role": "reads-endpoints",
+                    "scope": { "project": "ovzdusie" } }),
+        ));
+    }
+
+    fn names(text: &str) -> Vec<String> {
+        let body: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+        body["items"]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|i| i["metadata"]["name"].as_str().map(str::to_owned))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// T-7917: a refused manifest is listed where the label and the field selector match it,
+    /// and left out where either does not.
+    #[tokio::test]
+    async fn a_refused_manifest_is_listed_only_where_the_selectors_match_it() {
+        let state = AppState::new(joinedcontext_portal::config::Config::for_tests(), None);
+        grant(&state);
+        let mut refused = common::envelope(
+            "Endpoint",
+            "refused-air",
+            "ovzdusie",
+            json!({ "contextSpaceRef": "air", "audience": "internal" }),
+        );
+        refused
+            .metadata
+            .labels
+            .insert("team".to_owned(), "air".to_owned());
+        state.mirror.refuse(refused);
+        let list = |query: &str| {
+            let uri = format!("/api/v1/projects/ovzdusie/endpoints?{query}");
+            let state = state.clone();
+            async move { common::send(&state, reader(), "GET", &uri, None).await }
+        };
+        let plain = list("").await;
+        assert_eq!(names(&plain.text), ["refused-air"], "{}", plain.text);
+        let both = list("labelSelector=team%3Dair&fieldSelector=metadata.name%3Drefused-air").await;
+        assert_eq!(names(&both.text), ["refused-air"], "{}", both.text);
+        let wrong_label = list("labelSelector=team%3Dwater").await;
+        assert_eq!(wrong_label.status, StatusCode::OK, "{}", wrong_label.text);
+        assert!(names(&wrong_label.text).is_empty(), "{}", wrong_label.text);
+        let wrong_field =
+            list("labelSelector=team%3Dair&fieldSelector=metadata.name%3Dsomething-else").await;
+        assert_eq!(wrong_field.status, StatusCode::OK, "{}", wrong_field.text);
+        assert!(names(&wrong_field.text).is_empty(), "{}", wrong_field.text);
+    }
+
+    /// T-7917: a copy of the project is read through its owner: the manifest answered is the
+    /// project's, as the copy holds it.
+    #[tokio::test]
+    async fn a_manifest_is_read_inside_a_copy_the_caller_owns() {
+        let state = common::state_on_forge().await;
+        grant(&state);
+        state.mirror.upsert(common::envelope(
+            "Endpoint",
+            "air",
+            "ovzdusie",
+            json!({ "contextSpaceRef": "air", "audience": "internal" }),
+        ));
+        state
+            .workspaces
+            .create(Opening {
+                name: "air-v2",
+                title: None,
+                project: "ovzdusie",
+                owner: "reader@hel.fi",
+                base_revision: "base1",
+                scope: Scope::Project {},
+                ttl_hours: 24,
+            })
+            .await
+            .expect("opened");
+        let read = common::send(
+            &state,
+            reader(),
+            "GET",
+            "/api/v1/projects/ovzdusie/endpoints/air?workspace=air-v2",
+            None,
+        )
+        .await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+        let manifest: Value = serde_json::from_str(&read.text).expect("a manifest");
+        assert_eq!(manifest["metadata"]["name"], "air");
+    }
+
+    /// A commit's tree answering `status`, and for `PAST` a tree of five files: one the forge
+    /// no longer has, one that is no manifest, one naming no namespace, one naming another project's,
+    /// and one that is the project's own.
+    async fn forge_at_odd_commits() -> MockServer {
+        let forge = common::forge().await;
+        let tree_path = format!(
+            "{}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)",
+            common::REPO
+        );
+        for (revision, status) in [(UNPROCESSABLE, 422), (DOWN, 503)] {
+            Mock::given(method("GET"))
+                .and(path(tree_path.clone()))
+                .and(query_param("@r", format!("'{revision}'")))
+                .respond_with(
+                    ResponseTemplate::new(status).set_body_json(json!({ "message": "no" })),
+                )
+                .with_priority(1)
+                .mount(&forge)
+                .await;
+        }
+        let manifest = |name: &str, namespace: Option<&str>| {
+            let namespace = namespace.map_or_else(String::new, |ns| format!("  namespace: {ns}\n"));
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: {name}\n{namespace}spec:\n  contextSpaceRef: air\n  audience: internal\n"
+            )
+        };
+        let files = [
+            ("projects/ovzdusie/endpoints/gone.yaml", None),
+            (
+                "projects/ovzdusie/endpoints/notes.yaml",
+                Some("just: some notes\n".to_owned()),
+            ),
+            (
+                "projects/ovzdusie/endpoints/bare.yaml",
+                Some(manifest("bare", None)),
+            ),
+            (
+                "projects/ovzdusie/endpoints/strayed.yaml",
+                Some(manifest("strayed", Some("other"))),
+            ),
+            (
+                "projects/ovzdusie/endpoints/kept.yaml",
+                Some(manifest("kept", Some("ovzdusie"))),
+            ),
+        ];
+        let tree: Vec<Value> = files
+            .iter()
+            .map(|(p, _)| json!({ "Path": p, "Type": "blob", "Sha": format!("blob-{p}") }))
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(tree_path))
+            .and(query_param("@r", format!("'{PAST}'")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": PAST, "Truncated": false, "Tree": tree })),
+            )
+            .with_priority(1)
+            .mount(&forge)
+            .await;
+        for (file, content) in files {
+            let answer = match content {
+                Some(content) => ResponseTemplate::new(200).set_body_json(json!({
+                    "Sha": format!("blob-{file}"), "Content": common::encode(&content)
+                })),
+                None => ResponseTemplate::new(404).set_body_json(json!({ "message": "gone" })),
+            };
+            Mock::given(method("GET"))
+                .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+                .and(query_param("@p", format!("'{file}'")))
+                .and(query_param("@r", format!("'{PAST}'")))
+                .respond_with(answer)
+                .with_priority(1)
+                .mount(&forge)
+                .await;
+        }
+        forge
+    }
+
+    /// T-7917: at a past commit a file the forge lost or that is no manifest is skipped, a
+    /// manifest with no namespace is the project's, a client error of the forge is the
+    /// missing-resource 404 and a forge down is the 503.
+    #[tokio::test]
+    async fn a_past_commit_skips_what_is_no_manifest_and_names_a_forge_down() {
+        let forge = forge_at_odd_commits().await;
+        let state = common::state_on(&forge);
+        grant(&state);
+        let base = "/api/v1/projects/ovzdusie/endpoints";
+        let list = common::send(
+            &state,
+            reader(),
+            "GET",
+            &format!("{base}?revision={PAST}"),
+            None,
+        )
+        .await;
+        assert_eq!(list.status, StatusCode::OK, "{}", list.text);
+        assert_eq!(names(&list.text), ["kept"], "{}", list.text);
+        let unprocessable = common::send(
+            &state,
+            reader(),
+            "GET",
+            &format!("{base}?revision={UNPROCESSABLE}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            unprocessable.status,
+            StatusCode::NOT_FOUND,
+            "{}",
+            unprocessable.text
+        );
+        let down = common::send(
+            &state,
+            reader(),
+            "GET",
+            &format!("{base}?revision={DOWN}"),
+            None,
+        )
+        .await;
+        assert_eq!(
+            down.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{}",
+            down.text
+        );
+    }
 }

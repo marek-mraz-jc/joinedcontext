@@ -839,10 +839,7 @@ fn within_own_rights(
     let (_, kinds) = connector.reach();
     for (i, item) in connector.scope.iter().enumerate() {
         for kind in &kinds {
-            let namespace = jc_core::registry::by_kind(kind).map_or_else(
-                || item.project.clone(),
-                |info| crate::resource::home(info, &item.project),
-            );
+            let namespace = home_of(kind, &item.project);
             let rights = crate::permissions::for_request(state, identity, &namespace);
             let mut verbs = vec![Verb::Read];
             if item.access == connectors::ItemAccess::Write {
@@ -864,6 +861,15 @@ fn within_own_rights(
         }
     }
     Ok(())
+}
+
+/// The namespace `kind` of `project` is judged in: its registry home, else the project itself
+/// for a kind the registry does not list.
+fn home_of(kind: &str, project: &str) -> String {
+    jc_core::registry::by_kind(kind).map_or_else(
+        || project.to_owned(),
+        |info| crate::resource::home(info, project),
+    )
 }
 
 /// Only an administrator of the organization reads or revokes every person's connectors.
@@ -1289,10 +1295,8 @@ pub async fn tab_events(
     let actions = tokio_stream::wrappers::BroadcastStream::new(receiver).filter_map(|item| {
         let action = item.ok()?;
         Some(Ok::<_, std::convert::Infallible>(
-            Event::default()
-                .event("action")
-                .json_data(action.as_ref())
-                .unwrap_or_else(|_| Event::default().comment("unserializable")),
+            // `json_data` is `data` of the compact JSON; a `Value` always serializes.
+            Event::default().event("action").data(action.to_string()),
         ))
     });
     // The stream ends with the session that paired the tab.
@@ -2384,5 +2388,334 @@ mod tests {
             .await
             .expect("listed");
         assert_eq!(after.items[0].connector.state, "revoked");
+    }
+
+    /// T-7917: the namespace a kind is judged in is its registry home; a kind the registry does
+    /// not list is judged in the project itself.
+    #[test]
+    fn a_kind_outside_the_registry_is_judged_in_the_project() {
+        assert_eq!(home_of("Mystery", "doprava"), "doprava");
+        assert_eq!(home_of("Endpoint", "doprava"), "doprava");
+        assert_eq!(home_of("ContextBroker", "doprava"), ORG_NAMESPACE);
+    }
+
+    /// `reader_world` plus project `tajne`, whose Organization shares two Endpoints with the
+    /// reader (the gateway admits them), a realm that hands the Portal its own token, and the
+    /// gateway that answers `access/simulate`. With `limited`, a DelegationPolicy lets the reader
+    /// name `shared-a` alone.
+    async fn shared_world(limited: bool) -> (AppState, wiremock::MockServer, wiremock::MockServer) {
+        use wiremock::matchers::{method, path, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "the-portals-own-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/api/endpoint/[a-z]+/access/simulate$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "admitted": true, "permissions": ["queryEntity"], "policies": []
+            })))
+            .mount(&gateway)
+            .await;
+        let oidc = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        let mut config = Config::for_tests();
+        config.gateway_url = Some(gateway.uri());
+        let state =
+            AppState::new(config, Some(oidc)).with_mirror(Arc::clone(&reader_world().mirror));
+        for (name, slug) in [
+            ("shared-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            ("shared-b", "bbbbbbbbbbbbbbbbbbbbbbbbbb"),
+        ] {
+            state.mirror.upsert(envelope(
+                "Endpoint",
+                name,
+                "tajne",
+                json!({ "contextSpaceRef": "air", "slug": slug, "audience": "organization" }),
+            ));
+        }
+        if limited {
+            state.mirror.upsert(envelope(
+                "DelegationPolicy",
+                "tajne-a-only",
+                ORG_NAMESPACE,
+                json!({ "subjects": [{ "kind": "Group", "name": "readers" }],
+                        "projects": ["helsinki", "tajne"], "endpoints": ["shared-a"] }),
+            ));
+            state.mirror.upsert(envelope(
+                "Group",
+                "readers",
+                ORG_NAMESPACE,
+                json!({ "members": [{ "user": "reader@hel.fi" }] }),
+            ));
+        }
+        (state, realm, gateway)
+    }
+
+    /// T-7917: a project the reader holds no right in is offered as organization data with the
+    /// Endpoints shared with them; a ceiling that lists Endpoints keeps to the ones it lists.
+    #[tokio::test]
+    async fn the_options_offer_shared_endpoints_of_a_foreign_project_within_the_ceiling() {
+        let (state, _realm, _gateway) = shared_world(true).await;
+        let Json(options) = connector_options(
+            user("reader@hel.fi"),
+            State(state.clone()),
+            HeaderMap::new(),
+        )
+        .await
+        .expect("options");
+        let shared = options
+            .projects
+            .iter()
+            .find(|p| p.project == "tajne")
+            .expect("the shared project is offered");
+        assert!(shared.organization_data);
+        assert!(shared.allowed);
+        assert_eq!(shared.endpoints, vec!["shared-a", "shared-b"]);
+        assert_eq!(
+            shared.allowed_endpoints.as_deref(),
+            Some(&["shared-a".to_owned()][..])
+        );
+        assert!(shared.spaces.is_empty() && shared.pipelines.is_empty());
+    }
+
+    /// T-7917: two items of one foreign project ask the gateway once and are each held to the
+    /// Endpoints shared with the caller: a shared one passes (dry run), an unshared one, a
+    /// project nothing of is shared and a space are the 403 naming the field.
+    #[tokio::test]
+    async fn two_items_of_a_foreign_project_name_only_endpoints_shared_with_the_caller() {
+        let (state, _realm, _gateway) = shared_world(false).await;
+        let expires =
+            (jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24)).to_rfc3339();
+        let create = |scope: Value| {
+            let new: NewConnector = serde_json::from_value(json!({
+                "name": "shared", "segments": ["data-read"], "scope": scope, "expiresAt": expires,
+            }))
+            .expect("a request");
+            create_connector(
+                user("reader@hel.fi"),
+                State(state.clone()),
+                HeaderMap::new(),
+                dry(Some("All")),
+                Ok(Json(new)),
+            )
+        };
+        let item = |project: &str, endpoint: &str| json!({ "project": project, "endpoint": endpoint, "access": "read" });
+        let both = create(json!([
+            item("tajne", "shared-a"),
+            item("tajne", "shared-b")
+        ]))
+        .await
+        .expect("both shared Endpoints are named");
+        assert_eq!(both.status(), StatusCode::OK);
+        let unshared = create(json!([item("tajne", "shared-a"), item("tajne", "private")]))
+            .await
+            .expect_err("an Endpoint not shared with the caller");
+        assert!(
+            matches!(&unshared, ApiError::Denied(why) if why.contains("scope[1].project")),
+            "{unshared:?}"
+        );
+        let nothing = create(json!([item("elsewhere", "shared-a")]))
+            .await
+            .expect_err("a project nothing of is shared");
+        assert!(
+            matches!(&nothing, ApiError::Denied(why) if why.contains("scope[0].project")),
+            "{nothing:?}"
+        );
+    }
+
+    /// T-7917: a tab that is not paired has nothing to disconnect and the answer is the same; a
+    /// connector revoked twice is gone the second time.
+    #[tokio::test]
+    async fn disconnecting_an_unpaired_tab_and_revoking_twice_answer_plainly() {
+        let state = AppState::new(Config::for_tests(), None);
+        let made = state
+            .connectors
+            .create(
+                "f:1:ana",
+                body("tab").expect("body").0,
+                Default::default(),
+                "",
+            )
+            .await
+            .expect("kept");
+        let unpaired = unpair_tab(
+            signed_in("ana", 5, None),
+            State(state.clone()),
+            Path(made.id.clone()),
+        )
+        .await;
+        assert_eq!(
+            unpaired.expect("nothing to disconnect"),
+            StatusCode::NO_CONTENT
+        );
+        state
+            .connectors
+            .record(
+                &made.id,
+                Call {
+                    at: jc_time::TimestampTz::now(),
+                    subject: "f:1:ana".into(),
+                    client: Some("mcp-local".into()),
+                    tool: "jc_resource_list".into(),
+                    target: None,
+                    verdict: "allowed".into(),
+                    duration_ms: 1,
+                },
+            )
+            .await
+            .expect("a call");
+        let audit = state.connectors.calls(&made.id).await.expect("audit");
+        assert!(!audit.is_empty());
+        assert!(
+            audit.iter().all(|c| c.tool != "tab/disconnect"),
+            "{audit:?}"
+        );
+        let revoke = || revoke_connector(user("ana"), State(state.clone()), Path(made.id.clone()));
+        assert_eq!(revoke().await.expect("revoked"), StatusCode::NO_CONTENT);
+        assert!(matches!(revoke().await, Err(ApiError::NotFound(_))));
+    }
+
+    /// T-7917: the paired tab hears each action as an `action` event; a tab that fell behind
+    /// the buffer misses some actions, not the stream.
+    #[tokio::test]
+    async fn a_paired_tab_hears_actions_and_a_slow_one_misses_some_not_the_stream() {
+        use http_body_util::BodyExt;
+        let state = AppState::new(Config::for_tests(), None);
+        let made = state
+            .connectors
+            .create(
+                "f:1:ana",
+                body("tab").expect("body").0,
+                Default::default(),
+                "",
+            )
+            .await
+            .expect("kept");
+        let (_, Json(paired)) = pair_tab(
+            signed_in("ana", 5, None),
+            State(state.clone()),
+            Path(made.id.clone()),
+        )
+        .await
+        .expect("paired");
+        let response = tab_events(
+            signed_in("ana", 5, None),
+            State(state.clone()),
+            Path((made.id.clone(), paired.tab.clone())),
+        )
+        .await
+        .expect("the paired tab listens");
+        // More actions than the tab's buffer holds, before it reads any.
+        for n in 0..40 {
+            state
+                .paired_tabs
+                .deliver(
+                    &made.id,
+                    "f:1:ana",
+                    json!({ "frame": "navigate", "n": n }),
+                    crate::auth::session::now_unix(),
+                )
+                .expect("delivered");
+        }
+        let mut stream = response.into_body();
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(5), stream.frame())
+            .await
+            .expect("an event in time")
+            .expect("a frame")
+            .expect("readable");
+        let text = String::from_utf8_lossy(&frame.into_data().expect("data")).into_owned();
+        assert!(text.contains("event: action"), "{text}");
+        assert!(text.contains("\"frame\":\"navigate\""), "{text}");
+    }
+
+    /// T-7917: an expiry notice the store cannot write is the 503; a request notice it cannot
+    /// write is logged and the connector stays as it was.
+    #[tokio::test]
+    async fn an_expiry_notice_that_cannot_be_written_is_unavailable_and_a_pending_one_is_logged() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        state.comments = Arc::new(crate::entity_comments::CommentStore::new(
+            Some(crate::test_db::dead_pool()),
+            Arc::new(Mirror::new()),
+        ));
+        let mut soon = body("ends-soon").expect("body").0;
+        soon.expires_at = jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24 * 3);
+        let made = state
+            .connectors
+            .create("f:1:ana", soon, Default::default(), "")
+            .await
+            .expect("kept");
+        let identity = person("ana");
+        let identity = Identity {
+            subject: "f:1:ana".into(),
+            ..identity
+        };
+        let refused = notify_expiring(&state, &identity, "f:1:ana").await;
+        assert!(
+            matches!(&refused, Err(ApiError::Unavailable(why)) if why.contains("notifications")),
+            "{refused:?}"
+        );
+        // A request waiting above the ceiling stays queued whether or not its notice is written.
+        notify_admins(&state, &identity, &made).await;
+        let kept = state
+            .connectors
+            .get(&made.id, "")
+            .await
+            .expect("read")
+            .expect("still kept");
+        assert_eq!(kept.state, "active");
+    }
+
+    /// T-7917: an approval or a revoke that finds its row changed under it (nothing updated)
+    /// answers as a connector that does not exist, never as done.
+    #[tokio::test]
+    async fn an_approval_and_a_revoke_that_change_no_row_answer_not_found() {
+        let scratch = crate::test_db::scratch().await;
+        let mirror = scratch.placed("doprava").await;
+        let mut state = AppState::new(Config::for_tests(), None).with_mirror(Arc::clone(&mirror));
+        state.connectors = Arc::new(connectors::ConnectorStore::new(
+            Some((scratch.pool.clone(), mirror)),
+            Some("somewhere".into()),
+        ));
+        let pending = state
+            .connectors
+            .create("f:1:ana", body("asks").expect("body").0, above_writes(), "")
+            .await
+            .expect("kept");
+        let live = state
+            .connectors
+            .create(
+                "f:1:ana",
+                body("live").expect("body").0,
+                Default::default(),
+                "",
+            )
+            .await
+            .expect("kept");
+        assert_eq!(pending.state, "pending");
+        scratch.skip_rows("connectors", "UPDATE").await;
+        let approved = approve_connector(
+            administrator_user(),
+            State(state.clone()),
+            Path(pending.id.clone()),
+        )
+        .await;
+        assert!(
+            matches!(approved, Err(ApiError::NotFound(_))),
+            "{approved:?}"
+        );
+        let revoked =
+            revoke_connector(user("ana"), State(state.clone()), Path(live.id.clone())).await;
+        assert!(matches!(revoked, Err(ApiError::NotFound(_))), "{revoked:?}");
+        scratch.remove().await;
     }
 }

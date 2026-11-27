@@ -206,6 +206,26 @@ async fn a_steward_runs_a_queued_pipeline_now_and_finds_it_in_the_run_list() {
     }
 }
 
+/// T-7928: a run whose activity event cannot be written (the feed's database is down) still
+/// starts: the warning is the only trace, the answer is 202 with the run's id.
+#[tokio::test]
+async fn a_run_starts_when_its_activity_event_cannot_be_written() {
+    let (mut state, _deployer, _runner) = world().await;
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    state.activity =
+        joinedcontext_portal::activity::ActivityStore::new(Some(pool), state.mirror.clone());
+    let started = send(&state, person("jana"), "POST", HARVEST, None).await;
+    assert_eq!(started.status, StatusCode::ACCEPTED, "{}", started.text);
+    assert!(
+        json_of(&started.text)["run"].as_str().is_some(),
+        "{}",
+        started.text
+    );
+}
+
 #[tokio::test]
 async fn a_pipeline_that_always_runs_a_reader_and_an_unknown_name_are_refused() {
     let (state, _, _) = world().await;

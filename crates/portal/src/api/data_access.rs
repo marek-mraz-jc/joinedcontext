@@ -745,4 +745,188 @@ mod tests {
         ));
         assert!(admins_only(&state, &person("owner@hel.fi", &[])).is_ok());
     }
+
+    // ---- T-7917 ----------------------------------------------------------------------------
+
+    /// `owner@hel.fi`, who holds read on Person at the Organization, and the realm groups given.
+    fn admin_world() -> (AppState, CurrentUser) {
+        let state = world();
+        let org = crate::permissions::ORG_NAMESPACE;
+        put(
+            &state,
+            "Role",
+            org,
+            "people-admin",
+            json!({ "rules": [{ "kinds": ["Person"], "verbs": ["read"] }] }),
+        );
+        put(
+            &state,
+            "RoleBinding",
+            org,
+            "people",
+            json!({ "subjects": [{ "user": "owner@hel.fi" }], "role": "people-admin",
+                    "scope": { "organization": "helsinki" } }),
+        );
+        let user = CurrentUser(crate::auth::session::Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-owner".to_owned(),
+                username: "owner@hel.fi".to_owned(),
+                email: Some("owner@hel.fi".to_owned()),
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        (state, user)
+    }
+
+    /// T-7917 (ADR-N-067 §2.5): the route asks the gateway for every cell, and a Portal with no
+    /// gateway address claims nothing: every cell is unanswered, none granted.
+    #[tokio::test]
+    async fn the_route_asks_the_gateway_and_claims_nothing_without_one() {
+        let (state, user) = admin_world();
+        let answer = get_data_access(
+            user,
+            State(state),
+            Query(DataAccessQuery {
+                group: None,
+                endpoint: None,
+            }),
+        )
+        .await
+        .expect("the matrix")
+        .0;
+        assert_eq!(answer.rows.len(), 3);
+        assert_eq!(answer.unanswered, 6);
+        assert!(answer
+            .rows
+            .iter()
+            .flat_map(|row| &row.cells)
+            .all(|cell| !cell.granted));
+    }
+
+    /// T-7917 (ADR-N-067 §2.5): what a person can read is asked as their realm groups and roles
+    /// name them, and a gateway that does not answer leaves the non-public datasets out, counted.
+    #[tokio::test]
+    async fn what_a_person_can_read_is_asked_as_their_realm_names_them() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        let on = |verb: &'static str, at: &'static str, body: Value| {
+            Mock::given(method(verb))
+                .and(path(at))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        };
+        on(
+            "POST",
+            "/realms/hel/protocol/openid-connect/token",
+            json!({ "access_token": "t" }),
+        )
+        .mount(&realm)
+        .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1",
+            json!({ "id": "u1", "username": "jana", "enabled": true }),
+        )
+        .mount(&realm)
+        .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1/groups",
+            json!([{ "path": "/helsinki/traffic-analysts" }]),
+        )
+        .mount(&realm)
+        .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1/role-mappings/realm/composite",
+            json!([{ "name": "viewer" }]),
+        )
+        .mount(&realm)
+        .await;
+        let (mut state, user) = admin_world();
+        state.people = crate::people::People::new(
+            &format!("{}/realms/hel", realm.uri()),
+            "portal".into(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        )
+        .map(std::sync::Arc::new);
+        assert!(state.people.is_some(), "a realm URL");
+        let answer = get_person_readable(user, State(state), Path("u1".to_owned()))
+            .await
+            .expect("the person's catalogue")
+            .0;
+        assert!(answer
+            .datasets
+            .iter()
+            .all(|dataset| dataset.name == "bikes"));
+        assert!(answer.unanswered >= 1, "the gateway did not answer");
+    }
+
+    /// T-7917: more cells than the gateway is asked for at once is a 422 naming how to narrow.
+    #[tokio::test]
+    async fn a_matrix_of_more_cells_than_may_be_asked_is_a_422() {
+        let state = world();
+        for i in 0..301 {
+            endpoint(&state, &format!("extra{i}"), "organization");
+        }
+        let refused = of(&state, None, None).await.expect_err("too many cells");
+        assert!(
+            matches!(&refused, ApiError::Unprocessable { detail, errors }
+                if detail.contains("more than 600")
+                    && errors[0].contains("choose a group or an endpoint")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a group that names a path is no column of its own; a Policy the gateway names that
+    /// the mirror lacks is no rule, and a rule naming no type reads `*`.
+    #[tokio::test]
+    async fn a_nested_group_is_no_column_and_a_gone_policy_is_no_rule() {
+        let state = world();
+        put(
+            &state,
+            "Policy",
+            "helsinki",
+            "nested",
+            json!({ "contextSpaceRef": "traffic",
+                    "rules": [{ "assignee": { "kind": "group", "id": "helsinki/members" } }] }),
+        );
+        put(
+            &state,
+            "Policy",
+            "helsinki",
+            "open",
+            json!({ "contextSpaceRef": "traffic",
+                    "rules": [{ "assignee": { "kind": "organization" } }] }),
+        );
+        let query = DataAccessQuery {
+            group: None,
+            endpoint: Some(format!("counts{}", "z".repeat(22))),
+        };
+        let ask = |_: String, _: Value| async {
+            Ok::<Value, ApiError>(json!({
+                "admitted": true,
+                "policies": ["ghost", 42, "open"],
+                "permissions": [{ "types": ["*"] }],
+            }))
+        };
+        let answer = matrix(&state, &query, ask).await.expect("the matrix");
+        assert_eq!(answer.columns.len(), 2, "{:?}", answer.columns);
+        let everyone = &answer.rows[0].cells[0];
+        assert!(everyone.granted);
+        assert_eq!(everyone.rules.len(), 1, "{:?}", everyone.rules);
+        assert_eq!(everyone.rules[0].policy, "open");
+        assert_eq!(everyone.rules[0].types, ["*"]);
+    }
 }

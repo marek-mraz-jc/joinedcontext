@@ -2832,3 +2832,79 @@ async fn an_import_inside_the_organizations_upload_size_is_imported() {
     assert_eq!(status, StatusCode::ACCEPTED, "{answer}");
     assert_eq!(written(&server).await.len(), 1);
 }
+
+// --- T-7917: what the coverage run found no test for ------------------------------------
+
+/// T-7917, MF-20: a JSON import whose options do not parse (`dryRun` is a boolean) is a 400
+/// naming the options, and nothing is written.
+#[tokio::test]
+async fn a_json_import_whose_options_do_not_parse_is_a_bad_request() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let body = json!({ "manifests": [], "dryRun": "yes please" });
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/json",
+        serde_json::to_vec(&body).expect("body"),
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("the import options did not parse"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
+/// T-7917, CC-08: a body past the import limit is refused as an upload that could not be read,
+/// before anything is parsed, and nothing is written.
+#[tokio::test]
+async fn a_body_past_the_import_limit_is_refused_unread() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![]);
+    let body = vec![0u8; 64 * 1024 * 1024 + 64 * 1024 + 1];
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/octet-stream",
+        body,
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem.to_string().contains("the upload could not be read"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
+
+/// T-7917, MF-23: a bundle every resource of which the project already holds, imported with
+/// `skip`, has nothing to write: a 400 saying so, and no branch or merge request.
+#[tokio::test]
+async fn a_bundle_that_skip_leaves_empty_is_refused_as_holding_nothing() {
+    let server = forge().await;
+    let (state, cookie) = state(&server, vec![SPACE]);
+    let manifest: Value = serde_norway::from_str(SPACE).expect("the space parses");
+    let body = json!({ "manifests": manifest, "conflictPolicy": "skip" });
+    let (status, problem) = send(
+        state,
+        &cookie,
+        "application/json",
+        serde_json::to_vec(&body).expect("body"),
+        &format!("/api/v1/projects/{PROJECT}/import"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("the bundle holds nothing to import"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+}
