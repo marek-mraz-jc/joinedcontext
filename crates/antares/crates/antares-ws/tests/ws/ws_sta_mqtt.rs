@@ -376,6 +376,31 @@ async fn sta_mqtt_refuses_what_is_no_reading_client() -> Result<(), String> {
     Ok(())
 }
 
+/// A topic that is no `SensorThings` read (no root, a wildcard, a query other
+/// than $select, a set that is not whole) is refused with the SUBACK failure
+/// code, and the connection stays open for the next SUBSCRIBE.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_refuses_a_topic_that_is_no_reading() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    view(&b, "m9", &READS).await?;
+    let mut ws = connected(&b, "m9", 0).await?;
+    for (id, topic) in [
+        (1_u16, "Things"),
+        (2, "v1.1/+"),
+        (3, "v1.1/Things?$top=1"),
+        (4, "v1.1/Locations"),
+    ] {
+        send(&mut ws, subscribe(id, &[topic])).await?;
+        let [hi, lo] = id.to_be_bytes();
+        assert_eq!(
+            next(&mut ws, WAIT).await?,
+            Some(vec![0x90, 3, hi, lo, 0x80]),
+            "{topic}"
+        );
+    }
+    Ok(())
+}
+
 /// A view of 64 types takes a topic; one of 65 types watches more than one Subscription
 /// may name, so it takes none.
 #[tokio::test(flavor = "multi_thread")]

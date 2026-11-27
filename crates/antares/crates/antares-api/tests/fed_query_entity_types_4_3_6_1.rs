@@ -6,11 +6,14 @@
 //! importing it lets it override the source that is registered for it
 //! (ETSI IOP_003_02_02, IOP_003_03_02, run 38806308784).
 
-use antares_api::AppState;
+use antares_api::{AppState, BuiltForward, ForwardAnswer, ForwardFuture, ForwardTransport};
+use antares_model::TenantId;
+use antares_store::Kind;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
+use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 /// A Context Source answering every request with `body`.
@@ -128,6 +131,348 @@ async fn an_info_without_entities_admits_every_type() {
         ids,
         ["urn:ngsi-ld:OffStreetParking:1", "urn:ngsi-ld:Vehicle:1"]
     );
+}
+
+/// One forward as the source saw it: method, URL, query pairs, JSON body.
+type Asked = (String, String, Vec<(String, String)>, Option<Value>);
+
+/// A Context Source behind the forward transport: it answers what it was
+/// last told to and keeps what it was asked.
+struct Scripted {
+    answer: Mutex<(u16, Value)>,
+    asked: Mutex<Vec<Asked>>,
+}
+
+impl Scripted {
+    fn say(&self, status: u16, body: Value) {
+        *self.answer.lock().expect("lock") = (status, body);
+    }
+
+    fn take(&self) -> Vec<Asked> {
+        std::mem::take(&mut *self.asked.lock().expect("lock"))
+    }
+}
+
+impl ForwardTransport for Scripted {
+    fn forward<'a>(&'a self, req: BuiltForward<'a>) -> Option<ForwardFuture<'a>> {
+        self.asked.lock().expect("lock").push((
+            req.method().to_string(),
+            req.url().to_owned(),
+            req.query().to_vec(),
+            req.body().and_then(|b| serde_json::from_slice(b).ok()),
+        ));
+        let (status, body) = self.answer.lock().expect("lock").clone();
+        let answer: ForwardAnswer = (status, body, Vec::new());
+        Some(Box::pin(std::future::ready(answer)))
+    }
+}
+
+/// A broker whose forwards all go to one [`Scripted`] source, with
+/// `registrations` created through the API.
+async fn scripted(registrations: &[Value]) -> (AppState, Arc<Scripted>) {
+    let peer = Arc::new(Scripted {
+        answer: Mutex::new((200, json!([]))),
+        asked: Mutex::default(),
+    });
+    let mut st = AppState::new("fed-arms".into());
+    antares_api::wire(&mut st).await;
+    let st = st
+        .with_forward_transport(Arc::clone(&peer) as Arc<dyn ForwardTransport>)
+        .expect("a transport on a fresh state");
+    for reg in registrations {
+        let body = reg.to_string();
+        let (status, answer) = call(
+            &st,
+            Request::builder()
+                .method("POST")
+                .uri("/ngsi-ld/v1/csourceRegistrations")
+                .header("Content-Type", "application/json")
+                .header("Content-Length", body.len())
+                .body(Body::from(body))
+                .expect("request"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{answer}");
+    }
+    (st, peer)
+}
+
+fn registration(name: &str, endpoint: &str, operations: &[&str], information: Value) -> Value {
+    json!({
+        "id": format!("urn:ngsi-ld:ContextSourceRegistration:{name}"),
+        "type": "ContextSourceRegistration",
+        "mode": "inclusive",
+        "operations": operations,
+        "information": information,
+        "endpoint": endpoint,
+    })
+}
+
+/// A registration written around the API, as a row from before a rule would
+/// be: it names what the API would refuse.
+async fn store_registration(st: &AppState, name: &str, extra: Value, information: Value) {
+    let id = format!("urn:ngsi-ld:ContextSourceRegistration:{name}");
+    let mut row = registration(
+        name,
+        "http://peer-a.invalid",
+        &["federationOps"],
+        information,
+    );
+    if let (Some(row), Some(extra)) = (row.as_object_mut(), extra.as_object()) {
+        row.extend(extra.clone());
+    }
+    st.store
+        .create(&TenantId::default(), Kind::Registration, &id, row)
+        .await
+        .expect("registration stored");
+}
+
+/// The status, the `NGSILD-Warning` values and the body of one GET.
+async fn get(st: &AppState, uri: &str) -> (StatusCode, Vec<String>, Value) {
+    let resp = antares_api::router(st.clone())
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri(uri)
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response");
+    let status = resp.status();
+    let warnings = resp
+        .headers()
+        .get_all("NGSILD-Warning")
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_owned))
+        .collect();
+    let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    (
+        status,
+        warnings,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+const VEHICLE_1: &str = "urn:ngsi-ld:Vehicle:1";
+
+/// An entity that expands to nothing: its Relationship has no URI object.
+fn invalid_entity(id: &str) -> Value {
+    json!({"id": id, "type": "Vehicle",
+           "rel": {"type": "Relationship", "object": "not a uri"}})
+}
+
+/// 5.7.2 step 4: a source offering queryBatch is asked by a Query body, one
+/// offering queryEntity by query parameters; either carries the `id` list
+/// the registration can match, as one string or an array, and neither
+/// invents a `type` the client did not give. A registered conformance
+/// version amends payloads only, so a GET passes unchanged.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_query_is_asked_of_each_source_in_the_shape_its_operations_allow() {
+    let info = json!([{"entities": [{"type": "Vehicle"}]}]);
+    let mut plain = registration(
+        "plain",
+        "http://peer-b.invalid",
+        &["queryEntity"],
+        info.clone(),
+    );
+    plain["contextSourceInfo"] = json!([{"key": "ngsildConformance", "value": "1.6"}]);
+    let (st, peer) = scripted(&[
+        registration("batch", "http://peer-a.invalid", &["queryBatch"], info),
+        plain,
+    ])
+    .await;
+    let from = |asked: &[Asked], host: &str| -> Asked {
+        asked
+            .iter()
+            .find(|a| a.1.starts_with(host))
+            .cloned()
+            .expect("the source was asked")
+    };
+
+    let (status, _, body) = get(
+        &st,
+        "/ngsi-ld/v1/entities?type=Vehicle&id=urn:ngsi-ld:Vehicle:1,urn:ngsi-ld:Vehicle:2",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let asked = peer.take();
+    let sent = from(&asked, "http://peer-a.invalid")
+        .3
+        .expect("a Query body");
+    assert_eq!(
+        sent["entities"][0]["id"],
+        json!(["urn:ngsi-ld:Vehicle:1", "urn:ngsi-ld:Vehicle:2"]),
+        "{sent}"
+    );
+
+    let (status, _, body) = get(
+        &st,
+        "/ngsi-ld/v1/entities?type=Vehicle&id=urn:ngsi-ld:Vehicle:1",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let asked = peer.take();
+    let sent = from(&asked, "http://peer-a.invalid")
+        .3
+        .expect("a Query body");
+    assert_eq!(sent["entities"][0]["id"], VEHICLE_1, "{sent}");
+
+    let (status, _, body) = get(&st, "/ngsi-ld/v1/entities?attrs=speed").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let asked = peer.take();
+    let sent = from(&asked, "http://peer-a.invalid")
+        .3
+        .expect("a Query body");
+    assert!(
+        sent.get("entities").is_none(),
+        "no selection to send: {sent}"
+    );
+    let query = from(&asked, "http://peer-b.invalid").2;
+    assert!(!query.iter().any(|(k, _)| k == "type"), "{query:?}");
+}
+
+/// 6.3.17, Table 6.3.17-1: a member of a source's answer that is no NGSI-LD
+/// Entity is not merged and is warned about (111).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_source_answering_an_invalid_entity_is_warned_about() {
+    let (st, peer) = scripted(&[registration(
+        "plain",
+        "http://peer-a.invalid",
+        &["queryEntity"],
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )])
+    .await;
+    peer.say(200, json!([invalid_entity("urn:ngsi-ld:Vehicle:9")]));
+    let (status, warnings, body) = get(&st, "/ngsi-ld/v1/entities?type=Vehicle").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        warnings.iter().any(|w| w.starts_with("111 ")),
+        "{warnings:?}"
+    );
+    assert_eq!(body, json!([]));
+}
+
+/// 5.7.1 step 4: a Retrieve Entity forwarded to a source whose registration names
+/// no type asks for any; what comes back that is no object, names another
+/// Entity or is no Entity adds nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retrieve_ignores_answers_that_are_not_the_entity() {
+    let (st, peer) = scripted(&[registration(
+        "retrieve",
+        "http://peer-a.invalid",
+        &["retrieveEntity"],
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )])
+    .await;
+    let uri = format!("/ngsi-ld/v1/entities/{VEHICLE_1}");
+    for answer in [
+        Value::Null,
+        json!([{"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle"}]),
+        invalid_entity(VEHICLE_1),
+    ] {
+        peer.say(200, answer);
+        let (status, _, body) = get(&st, &uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(peer.take().len(), 1, "the source was asked once");
+    }
+}
+
+/// 5.7.3 step 4: the same for a Retrieve Temporal Evolution: an answer naming
+/// another Entity, or one that is no Temporal Entity, adds nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_temporal_retrieve_ignores_answers_that_are_not_the_entity() {
+    let (st, peer) = scripted(&[registration(
+        "temporal",
+        "http://peer-a.invalid",
+        &["retrieveTemporal"],
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )])
+    .await;
+    let uri = format!("/ngsi-ld/v1/temporal/entities/{VEHICLE_1}");
+    for answer in [
+        json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle"}),
+        invalid_entity(VEHICLE_1),
+    ] {
+        peer.say(200, answer);
+        let (status, _, body) = get(&st, &uri).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(peer.take().len(), 1, "the source was asked once");
+    }
+}
+
+/// 5.7.4 step 4: a temporal query carries the client's Attributes to a source
+/// that registered none, and takes nothing from an answer that failed, is
+/// no array, or holds no Temporal Entity (111).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_temporal_query_takes_only_what_a_source_answers_well() {
+    let (st, peer) = scripted(&[registration(
+        "temporal",
+        "http://peer-a.invalid",
+        &["queryTemporal"],
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )])
+    .await;
+    let uri = "/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2020-01-01T00:00:00Z&attrs=speed";
+    for (status, answer, warned) in [
+        (500, Value::Null, false),
+        (200, json!({}), false),
+        (200, json!([invalid_entity("urn:ngsi-ld:Vehicle:9")]), true),
+    ] {
+        peer.say(status, answer);
+        let (code, warnings, body) = get(&st, uri).await;
+        assert_eq!(code, StatusCode::OK, "{body}");
+        assert_eq!(body, json!([]));
+        assert_eq!(
+            warnings.iter().any(|w| w.starts_with("111 ")),
+            warned,
+            "{warnings:?}"
+        );
+        let asked = peer.take();
+        assert_eq!(asked.len(), 1);
+        assert!(
+            asked[0]
+                .2
+                .contains(&("attrs".to_owned(), "speed".to_owned())),
+            "{:?}",
+            asked[0].2
+        );
+    }
+}
+
+/// A registration may name several types for one EntityInfo (5.2.8): a
+/// query for either reaches the source.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entity_info_naming_several_types_is_asked_for_any_of_them() {
+    let (st, peer) = scripted(&[registration(
+        "several",
+        "http://peer-a.invalid",
+        &["queryEntity"],
+        json!([{"entities": [{"type": ["Vehicle", "Car"]}]}]),
+    )])
+    .await;
+    let (status, _, body) = get(&st, "/ngsi-ld/v1/entities?type=Car").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(peer.take().len(), 1, "the source was asked");
+}
+
+/// T-7306: a row that names a Tenant of another Organization, written before
+/// that rule, forwards nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registration_naming_another_organizations_tenant_forwards_nothing() {
+    let (st, peer) = scripted(&[]).await;
+    store_registration(
+        &st,
+        "foreign",
+        json!({"operations": ["queryEntity"], "tenant": "sk_b__x"}),
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )
+    .await;
+    let (status, _, body) = get(&st, "/ngsi-ld/v1/entities?type=Vehicle").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(peer.take().is_empty(), "nothing was forwarded");
 }
 
 /// ETSI IOP_003_02_02: one source registered twice, (OffStreetParking ×

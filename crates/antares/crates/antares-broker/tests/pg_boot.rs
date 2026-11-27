@@ -383,6 +383,59 @@ fn a_database_another_release_migrated_stops_the_boot_at_once() {
     );
 }
 
+/// A database server that accepts every connection and hangs up on it never
+/// lets a pool open: the boot retries for its 30 s, then stops and says the
+/// database is not reachable. Needs no database of its own.
+#[test]
+fn a_database_that_hangs_up_stops_the_boot_after_the_retry_window() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
+    let url = format!("postgresql://antares:{PASSWORD}@{addr}/antares");
+    let started = Instant::now();
+    let mut child = broker(free_port(), &[("ANTARES_DATABASE_URL", &url)])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn antares");
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if started.elapsed() > Duration::from_secs(90) {
+            common::stop(&mut child);
+            panic!("the boot did not give up on the database within 90 s");
+        }
+        std::thread::sleep(Duration::from_millis(200));
+    };
+    let mut log = String::new();
+    for pipe in [
+        child.stdout.take().map(|p| Box::new(p) as Box<dyn Read>),
+        child.stderr.take().map(|p| Box::new(p) as Box<dyn Read>),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut pipe = pipe;
+        let _ = pipe.read_to_string(&mut log);
+    }
+    assert!(!status.success(), "an unreachable database fails the boot");
+    assert!(log.contains("database not reachable after 30 s"), "{log}");
+    assert!(
+        started.elapsed() >= Duration::from_secs(29),
+        "the boot gave up after {:?}, before its retry window",
+        started.elapsed()
+    );
+    assert!(
+        !log.contains(&format!(":{PASSWORD}@")),
+        "the password in the output: {log}"
+    );
+}
+
 /// The sealing key is read before any pool opens: one that is not 32 bytes
 /// stops the boot with the key's name and the expected shape, never echoed.
 #[test]

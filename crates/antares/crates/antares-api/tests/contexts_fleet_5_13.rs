@@ -115,6 +115,33 @@ async fn delete(st: &AppState, uri: &str) -> StatusCode {
         .status()
 }
 
+/// 5.13.5 step 4: a reload of a Cached @context fetches it again and keeps it.
+#[tokio::test(flavor = "multi_thread")]
+async fn reloading_a_cached_context_fetches_it_again_and_keeps_the_entry() {
+    allow_private();
+    let st = AppState::new("ctx-reload".into());
+    let (url, fetches) = mock_ctx_server();
+    let local_id = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, url.as_bytes()).to_string();
+    st.loader
+        .resolve_for(&antares_model::TenantId::default(), &json!(url))
+        .await
+        .expect("resolve");
+    assert_eq!(fetches.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let target = format!("/ngsi-ld/v1/jsonldContexts/{local_id}");
+    assert_eq!(
+        delete(&st, &format!("{target}?reload=true")).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        fetches.load(std::sync::atomic::Ordering::SeqCst),
+        2,
+        "the reload fetched the @context again"
+    );
+    let (sc, body) = get(&st, &format!("{target}?details=true")).await;
+    assert_eq!(sc, StatusCode::OK, "the entry is kept: {body}");
+    assert_eq!(body["kind"], "Cached", "{body}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn cached_context_bookkeeping_is_shared_across_instances() {
     allow_private();

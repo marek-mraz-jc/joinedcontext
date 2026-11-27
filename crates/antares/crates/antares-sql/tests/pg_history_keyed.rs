@@ -496,6 +496,55 @@ async fn a_skipped_append_leaves_no_dictionary_row() {
     assert_eq!(rows, 0);
 }
 
+/// A keyed write that finds an IRI its store knows gone from the dictionary
+/// (another pod purged the Tenant) may fail, and the store then forgets what
+/// it knew of the Tenant: the next write of the same history lands and reads
+/// back whole.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dictionary_purged_by_another_pod_does_not_fail_the_next_write() {
+    let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let cut = jc_time::parse_rfc3339(MOVED_FROM).expect("stamp");
+    let mut keyed = PgTemporalStore::with_cutover(pool.clone(), Some(cut));
+    keyed.temporal_only = true;
+    let t = TenantId::new("pgpurged").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Tank:purged1";
+    let _ = keyed.delete(&t, id).await;
+    assert!(keyed.create(&t, id, &doc(id)).await.expect("create"));
+    assert!(keyed.delete(&t, id).await.expect("delete"));
+    let mut tx = pool.begin().await.expect("tx");
+    pg::set_tenant(&mut tx, &t).await.expect("tenant");
+    sqlx::query("DELETE FROM iri_ids WHERE tenant_id = $1")
+        .bind(t.as_str())
+        .execute(&mut *tx)
+        .await
+        .expect("another pod's purge");
+    tx.commit().await.expect("commit");
+    // the store still counts the IRIs as present: this write may fail, once
+    let first = keyed.create(&t, id, &doc(id)).await;
+    if first.is_err() {
+        let _ = keyed.delete(&t, id).await;
+    } else {
+        assert!(keyed.delete(&t, id).await.expect("delete"));
+    }
+    assert!(keyed
+        .create(&t, id, &doc(id))
+        .await
+        .expect("the retry lands"));
+    let rows = count(
+        &pool,
+        &t,
+        "SELECT count(*) FROM attr_rows WHERE tenant_id = $1",
+    )
+    .await;
+    assert!(rows > 0, "the retried history is keyed again");
+    assert!(keyed.delete(&t, id).await.expect("delete"));
+}
+
 fn short_for(t: &TenantId, short: bool) -> antares_store::ShortHistory {
     let mut s = antares_store::ShortHistory::default();
     s.types

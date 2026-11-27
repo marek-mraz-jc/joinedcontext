@@ -238,6 +238,32 @@ mod tests {
         .0
     }
 
+    /// A failed build whose slot a sweep already replaced leaves the
+    /// replacement held.
+    #[test]
+    fn a_failed_build_keeps_the_slot_that_replaced_it() {
+        let cache = ViewCache::<u32>::default();
+        let now = Instant::now();
+        let later = now + Duration::from_secs(120);
+        let (outer, _) = cache.get_or_build(
+            "cars",
+            |_| true,
+            |_| true,
+            now,
+            HOUR,
+            || {
+                // a sweep a minute on drops the slot under build; a request
+                // then holds a new one
+                let (inner, _) =
+                    cache.get_or_build("cars", |_| true, |_| false, later, HOUR, || Some(5));
+                assert_eq!(inner, Some(5));
+                None
+            },
+        );
+        assert_eq!(outer, None);
+        assert_eq!(cache.len(), 1, "the replacement stays");
+    }
+
     #[test]
     fn concurrent_first_requests_build_once_and_all_get_the_view() {
         let cache = Arc::new(ViewCache::<u32>::default());

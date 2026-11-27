@@ -169,6 +169,34 @@ async fn oversized_undeclared_response_is_skipped_with_warning() {
     );
 }
 
+/// A source that breaks the connection before the declared length arrived
+/// answers no payload: the part fails as an invalid one, with warning 111.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_response_cut_off_mid_body_is_skipped_with_warning() {
+    let st = state();
+    let reply = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: 500\r\nConnection: close\r\n\r\n[{\"id\""
+        .to_owned();
+    let port = mock_replying(reply);
+    register_query_source(&st, port).await;
+
+    let (parts, body) = query_vehicles(&st).await;
+    assert_eq!(parts.status, 200, "the request itself still succeeds");
+    assert!(
+        !body.contains(REMOTE_ID),
+        "a cut-off payload must not be merged: {body}"
+    );
+    let warn = parts
+        .headers
+        .get("NGSILD-Warning")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        warn.starts_with("111 "),
+        "warning 111 expected, got {warn:?}"
+    );
+}
+
 /// 6.3.17 across a cascade (4.3.6.4): a registered Context Source that is
 /// itself a broker reports its own abnormal parts with `NGSILD-Warning`. Those
 /// values travel on to the client with the aggregated response — a warning

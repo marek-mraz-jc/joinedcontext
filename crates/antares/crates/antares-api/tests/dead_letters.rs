@@ -463,6 +463,168 @@ async fn a_replay_from_another_tenant_cannot_reach_the_letter() {
     );
 }
 
+/// A broker that retries once, its subscription over `Vehicle` notifying
+/// `uri`, and the handle of its store before `faults` wrap it.
+async fn retrying_broker(
+    uri: &str,
+    faults: impl Fn(&str, usize) -> Option<antares_model::NgsiError> + Send + Sync + 'static,
+    seed_letters: usize,
+) -> (
+    AppState,
+    Arc<dyn antares_store::CurrentStateDriver>,
+    Arc<crate::common::faults::StoreFaults>,
+) {
+    use crate::common::faults::{Faults, StoreFaults};
+    let mut st = state();
+    st.delivery = antares_notifier::DeliveryPolicy {
+        attempts: 2,
+        backoff: std::time::Duration::from_millis(20),
+        jitter: 0.0,
+        max_age: std::time::Duration::from_secs(60),
+    };
+    let t = TenantId::default();
+    for i in 0..seed_letters {
+        let id = format!("urn:ngsi-ld:DeadLetter:{i:013}-x");
+        st.store
+            .create(
+                &t,
+                Kind::DeadLetter,
+                &id,
+                letter(&id, "urn:s:old", uri, "2026-01-01T00:00:00Z"),
+            )
+            .await
+            .expect("seed letter");
+    }
+    let inner = st.store.clone();
+    let wrapped = Arc::new(StoreFaults {
+        inner: inner.clone(),
+        faults: Faults::new(faults),
+    });
+    st.store = wrapped.clone();
+    antares_api::wire(&mut st).await;
+    let sub = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}],
+        "notification": {"endpoint": {"uri": uri}}})
+    .to_string();
+    for (path, body) in [
+        ("subscriptions", sub),
+        (
+            "entities",
+            json!({"id": "urn:ngsi-ld:Vehicle:dl", "type": "Vehicle",
+                "speed": {"type": "Property", "value": 1}})
+            .to_string(),
+        ),
+    ] {
+        let res = antares_api::router(st.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(format!("/ngsi-ld/v1/{path}"))
+                    .header("Content-Type", "application/json")
+                    .header("Content-Length", body.len())
+                    .body(Body::from(body))
+                    .expect("request"),
+            )
+            .await
+            .expect("response");
+        assert_eq!(res.status(), StatusCode::CREATED, "{path}");
+    }
+    (st, inner, wrapped)
+}
+
+/// Waits until `cond` holds, polling the broker's own store.
+async fn until<F, Fut>(mut cond: F, what: &str)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    for _ in 0..200 {
+        if cond().await {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+    assert!(cond().await, "timed out waiting for {what}");
+}
+
+/// S4-31: a letter whose cap cannot be counted, or whose oldest letters
+/// cannot be read, stays parked; the cap is only skipped.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_dead_letter_is_kept_when_the_cap_cannot_be_checked() {
+    use crate::common::faults::store_down;
+    let (uri, _, _) = receiver(StatusCode::INTERNAL_SERVER_ERROR).await;
+    let t = TenantId::default();
+
+    // the count of the tenant's letters fails
+    let (_st, inner, wrapped) =
+        retrying_broker(&uri, |m, _| (m == "list_slice").then(store_down), 0).await;
+    until(
+        || async { inner.list(&t, Kind::DeadLetter).await.expect("list").len() == 1 },
+        "the letter",
+    )
+    .await;
+    assert!(wrapped.faults.calls("list_slice") >= 1);
+
+    // the count works, the read of the oldest letters past the cap fails
+    let (_st, inner, wrapped) = retrying_broker(
+        &uri,
+        |m, n| (m == "list_slice" && n >= 1).then(store_down),
+        1_000,
+    )
+    .await;
+    until(
+        || async { inner.list(&t, Kind::DeadLetter).await.expect("list").len() == 1_001 },
+        "the letter past the cap",
+    )
+    .await;
+    until(
+        || async { wrapped.faults.calls("list_slice") >= 2 },
+        "the oldest-letters read",
+    )
+    .await;
+}
+
+/// A retry that succeeds but whose bookkeeping cannot be written back is
+/// still a delivered notification: no dead letter is parked.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retry_whose_writeback_fails_leaves_no_dead_letter() {
+    use crate::common::faults::store_down;
+    let hits: Arc<AtomicUsize> = Arc::default();
+    let seen = hits.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let app = axum::Router::new().route(
+        "/notify",
+        axum::routing::post(move || {
+            let seen = seen.clone();
+            async move {
+                if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                    StatusCode::INTERNAL_SERVER_ERROR
+                } else {
+                    StatusCode::OK
+                }
+            }
+        }),
+    );
+    tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+    let uri = format!("http://{addr}/notify");
+    let (_st, inner, wrapped) =
+        retrying_broker(&uri, |m, _| (m == "mutate_boxed").then(store_down), 0).await;
+    until(|| async { hits.load(Ordering::SeqCst) >= 2 }, "the retry").await;
+    until(
+        || async { wrapped.faults.calls("mutate_boxed") >= 1 },
+        "the bookkeeping writeback",
+    )
+    .await;
+    let t = TenantId::default();
+    assert!(inner
+        .list(&t, Kind::DeadLetter)
+        .await
+        .expect("list")
+        .is_empty());
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn delete_removes_one_letter_once() {
     let st = state();

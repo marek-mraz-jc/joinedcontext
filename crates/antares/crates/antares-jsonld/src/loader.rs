@@ -1662,6 +1662,40 @@ mod tests {
     use super::*;
     use crate::pinned::CORE_CONTEXT;
 
+    /// A listener served by `handle`, one connection at a time, until
+    /// `stop`: the server task ends, so every line of it runs.
+    pub(super) struct Served {
+        stop: tokio::sync::oneshot::Sender<()>,
+        task: tokio::task::JoinHandle<()>,
+    }
+
+    impl Served {
+        pub(super) fn spawn<F, Fut>(listener: tokio::net::TcpListener, handle: F) -> Self
+        where
+            F: Fn(tokio::net::TcpStream) -> Fut + Send + 'static,
+            Fut: std::future::Future<Output = ()> + Send + 'static,
+        {
+            let (stop, mut stopped) = tokio::sync::oneshot::channel::<()>();
+            let task = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = &mut stopped => break,
+                        accepted = listener.accept() => {
+                            let (sock, _) = accepted.expect("accept");
+                            handle(sock).await;
+                        }
+                    }
+                }
+            });
+            Self { stop, task }
+        }
+
+        pub(super) async fn stop(self) {
+            self.stop.send(()).expect("the server runs until stopped");
+            self.task.await.expect("the server task ends");
+        }
+    }
+
     /// 4.4: "the Core @context is protected and shall remain immutable and
     /// invariant during expansion or compaction of terms. […] implementations
     /// shall consider the Core @context as if it were in the last position of
@@ -1802,18 +1836,16 @@ mod tests {
                 .await
                 .expect("bind");
             let addr = listener.local_addr().expect("addr");
-            tokio::spawn(async move {
-                while let Ok((mut sock, _)) = listener.accept().await {
-                    use tokio::io::AsyncWriteExt;
-                    let resp = format!(
-                        "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{body}",
-                        body.len()
-                    );
-                    let _ = sock.write_all(resp.as_bytes()).await;
-                    let _ = sock.flush().await;
-                }
+            let server = Served::spawn(listener, move |mut sock| async move {
+                use tokio::io::AsyncWriteExt;
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
             });
-            addr
+            (addr, server)
         };
         let loader = Loader::with_policy(EgressPolicy {
             allow_private: true,
@@ -1829,7 +1861,7 @@ mod tests {
             "unavailable → LdContextNotAvailable, got {err:?}"
         );
         // served but not a JSON document → BadRequestData
-        let addr = serve("this is { not json").await;
+        let (addr, not_json) = serve("this is { not json").await;
         let err = loader
             .resolve(&Value::String(format!("http://{addr}/ctx.jsonld")))
             .await
@@ -1839,7 +1871,7 @@ mod tests {
             "invalid (non-JSON) → BadRequestData, got {err:?}"
         );
         // served JSON without an @context member → BadRequestData
-        let addr = serve(r#"{"note": "no context here"}"#).await;
+        let (addr, no_context) = serve(r#"{"note": "no context here"}"#).await;
         let err = loader
             .resolve(&Value::String(format!("http://{addr}/ctx.jsonld")))
             .await
@@ -1848,6 +1880,8 @@ mod tests {
             matches!(err, NgsiError::BadRequestData(_)),
             "invalid (no @context member) → BadRequestData, got {err:?}"
         );
+        not_json.stop().await;
+        no_context.stop().await;
     }
 
     /// reqwest is compiled provider-less, and a client built while no rustls
@@ -1916,11 +1950,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let seen = hops.clone();
-        tokio::spawn(async move {
-            loop {
-                let Ok((mut sock, _)) = listener.accept().await else {
-                    return;
-                };
+        let server = Served::spawn(listener, move |mut sock| {
+            let seen = seen.clone();
+            async move {
                 seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let resp = format!(
                     "HTTP/1.1 302 Found\r\nLocation: http://{addr}/loop\r\nContent-Length: 0\r\n\r\n"
@@ -1949,6 +1981,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             MAX_REDIRECTS + 1,
             "one initial request plus MAX_REDIRECTS hops"
         );
+        server.stop().await;
     }
 
     // SSRF: a redirect to a private IP LITERAL is refused per hop even
@@ -1964,8 +1997,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hits = Arc::new(AtomicUsize::new(0));
         let seen = hits.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let seen = seen.clone();
+            async move {
                 seen.fetch_add(1, Ordering::SeqCst);
                 // redirect to a private IP literal (self)
                 let resp = format!(
@@ -1997,6 +2031,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             1,
             "only the initial request; the private-IP hop was refused"
         );
+        server.stop().await;
     }
 
     // A hop to a host NAME is not an IP literal: the redirect policy follows
@@ -2064,16 +2099,14 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .await
             .expect("bind");
         let entry_addr = entry.local_addr().expect("addr");
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = entry.accept().await {
-                let resp = format!(
-                    "HTTP/1.1 302 Found\r\nLocation: http://[::1]:{}/internal\r\nContent-Length: 0\r\n\r\n",
-                    target_addr.port()
-                );
-                use tokio::io::AsyncWriteExt;
-                let _ = sock.write_all(resp.as_bytes()).await;
-                let _ = sock.flush().await;
-            }
+        let server = Served::spawn(entry, move |mut sock| async move {
+            let resp = format!(
+                "HTTP/1.1 302 Found\r\nLocation: http://[::1]:{}/internal\r\nContent-Length: 0\r\n\r\n",
+                target_addr.port()
+            );
+            use tokio::io::AsyncWriteExt;
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.flush().await;
         });
 
         let client = client_builder(EgressPolicy {
@@ -2095,6 +2128,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             reached.await.is_err(),
             "the IPv6-literal hop was followed into loopback"
         );
+        server.stop().await;
     }
 
     #[tokio::test]
@@ -2251,8 +2285,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let served = body.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let served = served.clone();
+            async move {
                 use tokio::io::AsyncWriteExt;
                 let b = served.lock().expect("lock").clone();
                 let resp = match b {
@@ -2315,6 +2350,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .await
             .expect("resolve after reload");
         assert_eq!(ctx.expand_key("speed"), "https://b.example/speed");
+        server.stop().await;
     }
 
     /// The response-size cap must trip WHILE the body is being read, not
@@ -2329,36 +2365,27 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                // drain the request head: closing a socket with unread data
-                // pending sends RST, which discards body bytes the client
-                // has not consumed yet and turns the test nondeterministic
-                let mut reqbuf = vec![0u8; 4096];
-                let _ = sock.read(&mut reqbuf).await;
-                if sock
-                    .write_all(
-                        b"HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nTransfer-Encoding: chunked\r\n\r\n",
-                    )
-                    .await
-                    .is_err()
-                {
-                    continue;
-                }
-                let chunk = vec![b'x'; 64 * 1024];
-                let head = format!("{:x}\r\n", chunk.len());
-                for _ in 0..128 {
-                    // stop early once the client hangs up (cap tripped)
-                    if sock.write_all(head.as_bytes()).await.is_err()
-                        || sock.write_all(&chunk).await.is_err()
-                        || sock.write_all(b"\r\n").await.is_err()
-                    {
-                        break;
-                    }
-                }
-                // no terminating 0-chunk: the connection just closes
+        let server = Served::spawn(listener, |mut sock| async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            // drain the request head: closing a socket with unread data
+            // pending sends RST, which discards body bytes the client
+            // has not consumed yet and turns the test nondeterministic
+            let mut reqbuf = vec![0u8; 4096];
+            let _ = sock.read(&mut reqbuf).await;
+            let _ = sock
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nTransfer-Encoding: chunked\r\n\r\n",
+                )
+                .await;
+            let chunk = vec![b'x'; 64 * 1024];
+            let head = format!("{:x}\r\n", chunk.len());
+            for _ in 0..128 {
+                // writes fail at once after the client hung up (cap tripped)
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(&chunk).await;
+                let _ = sock.write_all(b"\r\n").await;
             }
+            // no terminating 0-chunk: the connection just closes
         });
         let loader = Loader::with_policy(EgressPolicy {
             allow_private: true,
@@ -2373,6 +2400,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             msg.contains("too large"),
             "cap must fire during the read, got {msg}"
         );
+        server.stop().await;
     }
 
     /// 5.5.6: an @context is fetched again when the first connection carried
@@ -2390,14 +2418,15 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hits = Arc::new(AtomicUsize::new(0));
         let seen = hits.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let seen = seen.clone();
+            async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 if seen.fetch_add(1, Ordering::SeqCst) == 0 {
                     // close before any response: reqwest reports a send
                     // error, the shape a dropped connection takes
                     drop(sock);
-                    continue;
+                    return;
                 }
                 let mut buf = vec![0u8; 4096];
                 let _ = sock.read(&mut buf).await;
@@ -2423,6 +2452,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             2,
             "the drop is retried once and no more"
         );
+        server.stop().await;
     }
 
     /// A connection that fails at once tends to fail again at once: a
@@ -2438,8 +2468,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let accepted = Arc::new(std::sync::Mutex::new(Vec::<std::time::Instant>::new()));
         let seen = accepted.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let seen = seen.clone();
+            async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let first = {
                     let mut at = seen.lock().expect("lock");
@@ -2448,7 +2479,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
                 };
                 if first {
                     drop(sock);
-                    continue;
+                    return;
                 }
                 let mut buf = vec![0u8; 4096];
                 let _ = sock.read(&mut buf).await;
@@ -2476,6 +2507,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             "the retry connected {:?} after the drop, sooner than {RETRY_PAUSE:?}",
             at[1] - at[0]
         );
+        server.stop().await;
     }
 
     /// The retry is bounded: a host that refuses every connection is reported
@@ -2489,8 +2521,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hits = Arc::new(AtomicUsize::new(0));
         let seen = hits.clone();
-        tokio::spawn(async move {
-            while let Ok((sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |sock| {
+            let seen = seen.clone();
+            async move {
                 seen.fetch_add(1, Ordering::SeqCst);
                 drop(sock);
             }
@@ -2512,6 +2545,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             2,
             "two attempts in total, not a loop"
         );
+        server.stop().await;
     }
 
     /// The per-resolution fetch cap must stop the crawl BEFORE the network
@@ -2526,8 +2560,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hits = Arc::new(AtomicUsize::new(0));
         let seen = hits.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let seen = seen.clone();
+            async move {
                 seen.fetch_add(1, Ordering::SeqCst);
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buf = vec![0u8; 4096];
@@ -2565,6 +2600,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         );
         let n = hits.load(Ordering::SeqCst);
         assert!(n <= 33, "crawl must stop at the cap, made {n} fetches");
+        server.stop().await;
     }
 
     /// The usage registry records client-supplied URLs — it must hold a
@@ -2740,8 +2776,9 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let served = body.clone();
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let served = served.clone();
+            async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buf = vec![0u8; 4096];
                 let _ = sock.read(&mut buf).await;
@@ -2770,6 +2807,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             "https://b.example/speed",
             "an expired @context must be re-resolved, not served from the merged cache"
         );
+        server.stop().await;
     }
 
     /// The merged cache is keyed by the SERIALIZED user @context, which an
@@ -2866,16 +2904,14 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                use tokio::io::AsyncWriteExt;
-                let b = r#"{"@context":{"Vehicle":{"@id":"https://a.example/Vehicle","@context":{"speed":"https://a.example/hidden"}}}}"#;
-                let resp = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{b}",
-                    b.len()
-                );
-                let _ = sock.write_all(resp.as_bytes()).await;
-            }
+        let server = Served::spawn(listener, |mut sock| async move {
+            use tokio::io::AsyncWriteExt;
+            let b = r#"{"@context":{"Vehicle":{"@id":"https://a.example/Vehicle","@context":{"speed":"https://a.example/hidden"}}}}"#;
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nContent-Length: {}\r\n\r\n{b}",
+                b.len()
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
         });
         let loader = Loader::with_policy(EgressPolicy {
             allow_private: true,
@@ -2885,13 +2921,18 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .resolve(&Value::String(format!("http://{addr}/scoped.jsonld")))
             .await;
         assert!(matches!(got, Err(NgsiError::BadRequestData(_))), "{got:?}");
+        server.stop().await;
     }
 
     /// A loopback server answering each request with what `respond` returns
     /// for the request count so far (one request per connection).
     async fn serve_each(
         respond: impl Fn(usize) -> Vec<u8> + Send + Sync + 'static,
-    ) -> (std::net::SocketAddr, Arc<std::sync::atomic::AtomicUsize>) {
+    ) -> (
+        std::net::SocketAddr,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Served,
+    ) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -2899,22 +2940,24 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let addr = listener.local_addr().expect("addr");
         let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let counted = Arc::clone(&hits);
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let respond = Arc::new(respond);
+        let server = Served::spawn(listener, move |mut sock| {
+            let (counted, respond) = (counted.clone(), respond.clone());
+            async move {
                 let mut req = Vec::new();
                 let mut buf = [0u8; 1024];
-                while !req.windows(4).any(|w| w == b"\r\n\r\n") {
-                    match sock.read(&mut buf).await {
-                        Ok(0) | Err(_) => break,
-                        Ok(n) => req.extend_from_slice(&buf[..n]),
-                    }
+                let mut eof = false;
+                while !eof && !req.windows(4).any(|w| w == b"\r\n\r\n") {
+                    let n = sock.read(&mut buf).await.unwrap_or(0);
+                    eof = n == 0;
+                    req.extend_from_slice(&buf[..n]);
                 }
                 let n = counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let _ = sock.write_all(&respond(n)).await;
                 let _ = sock.shutdown().await;
             }
         });
-        (addr, hits)
+        (addr, hits, server)
     }
 
     fn ld_response(body: &str, cache_control: &str) -> Vec<u8> {
@@ -2940,19 +2983,20 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
         let pad = "x".repeat(MAX_CONTEXT_BYTES - head.len() - 2);
         let body = format!("{head}{pad}\"}}");
         assert_eq!(body.len(), MAX_CONTEXT_BYTES);
-        let (addr, _) = serve_each(move |_| ld_response(&body, "no-store")).await;
+        let (addr, _, server) = serve_each(move |_| ld_response(&body, "no-store")).await;
         let ctx = loopback_loader()
             .resolve(&Value::String(format!("http://{addr}/edge.jsonld")))
             .await
             .expect("exactly the ceiling");
         assert_eq!(ctx.expand_key("edge"), "https://a.example/edge");
+        server.stop().await;
     }
 
     /// The redirect cap is an answer in itself: the loader does not repeat
     /// the whole chain after it.
     #[tokio::test]
     async fn a_redirect_loop_is_not_retried() {
-        let (addr, hits) = serve_each(|_| {
+        let (addr, hits, server) = serve_each(|_| {
             b"HTTP/1.1 302 Found\r\nLocation: /loop\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
                 .to_vec()
         })
@@ -2968,13 +3012,14 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             hits.load(std::sync::atomic::Ordering::SeqCst),
             MAX_REDIRECTS + 1
         );
+        server.stop().await;
     }
 
     /// A stale copy refreshed with other content invalidates every merged
     /// context built on it, not only the one being resolved.
     #[tokio::test]
     async fn refreshed_content_invalidates_the_merged_contexts_built_on_it() {
-        let (addr, _) = serve_each(|n| {
+        let (addr, _, server) = serve_each(|n| {
             if n == 0 {
                 ld_response(r#"{"@context":{"t":"https://a.example/old"}}"#, "max-age=0")
             } else {
@@ -2996,6 +3041,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             .expect("refresh");
         let again = loader.resolve(&wide).await.expect("again");
         assert_eq!(again.expand_key("t"), "https://a.example/new");
+        server.stop().await;
     }
 
     /// The merged cache and its source list are separate bounded caches, so
@@ -3029,7 +3075,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
     /// be joined onto the document's URL is unavailable, named as such.
     #[tokio::test]
     async fn a_relative_reference_that_does_not_join_is_named() {
-        let (addr, _) =
+        let (addr, _, server) =
             serve_each(|_| ld_response(r#"{"@context":["//bad host/x.jsonld"]}"#, "no-store"))
                 .await;
         let err = loopback_loader()
@@ -3041,13 +3087,14 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
                 if m.contains("cannot resolve @context URL //bad host/x.jsonld against")),
             "{err:?}"
         );
+        server.stop().await;
     }
 
     /// A body cut off before its declared length is a failed read, and an
     /// `Expires` header is read for the lifetime.
     #[tokio::test]
     async fn a_truncated_body_is_a_failed_read() {
-        let (addr, _) = serve_each(|_| {
+        let (addr, _, server) = serve_each(|_| {
             b"HTTP/1.1 200 OK\r\nContent-Type: application/ld+json\r\nExpires: Thu, 01 Jan 2099 00:00:00 GMT\r\nContent-Length: 400\r\n\r\n{\"@context\":{}"
                 .to_vec()
         })
@@ -3060,6 +3107,7 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
             matches!(&err, NgsiError::LdContextNotAvailable(m) if m.contains("reading http://")),
             "{err:?}"
         );
+        server.stop().await;
     }
 
     /// A URL that does not parse is refused by name before any lookup.
@@ -3964,17 +4012,19 @@ IC2RYr4Njubi2UOUVDoyzCf6Mfg18TUzqFanlh1dL64n";
 /// fetch outcomes a loopback server can produce, against one loader.
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod hooks {
+    use super::tests::Served;
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-    async fn serve() -> String {
+    async fn serve() -> (String, Served) {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
         let ttl_hits = Arc::new(AtomicUsize::new(0));
-        tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
+        let server = Served::spawn(listener, move |mut sock| {
+            let ttl_hits = ttl_hits.clone();
+            async move {
                 use tokio::io::{AsyncReadExt, AsyncWriteExt};
                 let mut buf = vec![0u8; 4096];
                 let n = sock.read(&mut buf).await.unwrap_or(0);
@@ -4007,13 +4057,13 @@ mod hooks {
                 let _ = sock.write_all(resp.as_bytes()).await;
             }
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), server)
     }
 
     #[tokio::test]
     async fn hooks_and_fetch_outcomes() {
         let _ = Loader::default();
-        let base = serve().await;
+        let (base, server) = serve().await;
         let loader = Loader::with_policy(EgressPolicy {
             allow_private: true,
             private_hosts: &[],
@@ -4190,6 +4240,7 @@ mod hooks {
             ttl_from_headers(Some("no-cache"), None),
             Some(std::time::Duration::ZERO)
         );
+        server.stop().await;
     }
 
     #[test]

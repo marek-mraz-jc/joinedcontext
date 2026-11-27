@@ -3956,6 +3956,131 @@ mod tests {
         h
     }
 
+    /// 4.5.5 step 3: a base that is no object takes nothing; a version expiring
+    /// earlier leaves the later expiry, and its non-Attribute members are
+    /// added as they come; an instance under a new datasetId is appended.
+    #[test]
+    fn merging_skips_what_cannot_merge_and_appends_new_datasets() {
+        let mut base = json!([1]);
+        merge_docs(&mut base, &json!({"id": "urn:a"}), false);
+        assert_eq!(base, json!([1]));
+
+        let mut base = json!({"id": "urn:a", "type": "T",
+            "expiresAt": "2099-01-01T00:00:00Z",
+            "p": [{"type": "Property", "value": 1}]});
+        let add = json!({"id": "urn:a", "type": "T",
+            "expiresAt": "2098-01-01T00:00:00Z", "scalar": 5,
+            "p": [{"type": "Property", "value": 2, "datasetId": "urn:ds:2"}]});
+        merge_docs(&mut base, &add, false);
+        assert_eq!(base["expiresAt"], "2099-01-01T00:00:00Z", "{base}");
+        assert_eq!(base["scalar"], 5, "{base}");
+        assert_eq!(base["p"].as_array().map(Vec::len), Some(2), "{base}");
+    }
+
+    /// Local candidates and forwarded ones without an id are not merged in.
+    #[test]
+    fn merging_candidates_skips_documents_without_an_id() {
+        let local = vec![json!({"type": "T"}), json!({"id": "urn:a", "type": "T"})];
+        let fed = vec![
+            (false, json!({"type": "T"})),
+            (false, json!({"id": "urn:b", "type": "T"})),
+        ];
+        let merged = merge_candidates(local, fed);
+        let ids: Vec<&str> = merged.iter().filter_map(|d| d["id"].as_str()).collect();
+        assert_eq!(ids, ["urn:a", "urn:b"]);
+    }
+
+    /// 5.2.18: a source's 207 is read as an UpdateResult only when its
+    /// members are of the shape; an absent list is an empty one.
+    #[test]
+    fn a_remote_update_result_is_read_only_when_well_formed() {
+        assert!(remote_update(&json!([])).is_none());
+        let only = remote_update(&json!({"updated": ["a"]})).expect("updated only");
+        assert_eq!(only.updated, ["a"]);
+        assert!(only.not_updated.is_empty());
+        let none = remote_update(&json!({})).expect("both absent");
+        assert!(none.updated.is_empty() && none.not_updated.is_empty());
+        assert!(remote_update(&json!({"updated": "a"})).is_none());
+        assert!(remote_update(&json!({"updated": [1]})).is_none());
+        assert!(remote_update(&json!({"notUpdated": [{"reason": "x"}]})).is_none());
+        let named = remote_update(&json!({"notUpdated": [{"attributeName": "n"}]})).expect("named");
+        assert_eq!(named.not_updated, [("n".to_owned(), String::new())]);
+    }
+
+    /// A transport answering every forward with one canned answer.
+    struct Canned(std::sync::Mutex<(u16, Value)>);
+
+    impl ForwardTransport for Canned {
+        fn forward<'a>(&'a self, _req: BuiltForward<'a>) -> Option<ForwardFuture<'a>> {
+            let (status, body) = self.0.lock().expect("lock").clone();
+            Some(Box::pin(std::future::ready((status, body, Vec::new()))))
+        }
+    }
+
+    /// T-3683: a peer's EntityMap keeps the ids whose Entities the peer
+    /// answers and `q` selects; an answer without an id, one for an id the
+    /// map does not list, and a failed read keep nothing, and a body with no
+    /// map is left alone.
+    #[tokio::test]
+    async fn a_peers_map_is_narrowed_to_the_ids_whose_entities_hold_q() {
+        let speed = |id: &str| {
+            json!({"id": id, "type": "Vehicle",
+            "speed": {"type": "Property", "value": 1}})
+        };
+        let canned = std::sync::Arc::new(Canned(std::sync::Mutex::new((
+            200,
+            json!([speed("urn:a"), {"type": "Vehicle"}, speed("urn:x")]),
+        ))));
+        let st = AppState::new("narrow-map".into())
+            .with_forward_transport(canned.clone() as std::sync::Arc<dyn ForwardTransport>)
+            .expect("a transport on a fresh state");
+        let tenant = TenantId::default();
+        let headers = HeaderMap::new();
+        let ctx = antares_jsonld::core_context();
+        let reg = FedReg {
+            reg_id: "urn:r".into(),
+            endpoint: "http://peer.invalid".into(),
+            mode: "inclusive".into(),
+            ops: vec!["queryEntity".into()],
+            ent_types: vec!["Vehicle".into()],
+            ent_unrestricted: true,
+            ..FedReg::default()
+        };
+        let q = antares_ql::parse_q("speed>0").expect("q");
+        let peer = || Peer {
+            st: &st,
+            tenant: &tenant,
+            headers: &headers,
+            ctx_url: "http://ctx.invalid",
+            reg: &reg,
+        };
+
+        let mut body = json!({"other": 1});
+        narrow_map_ids(peer(), &ctx, None, &q, &mut body).await;
+        assert_eq!(body, json!({"other": 1}));
+
+        let mut body = json!({"entityMap": {"urn:a": ["r"], "urn:b": ["r"]}});
+        let vehicle = "Vehicle".to_owned();
+        narrow_map_ids(peer(), &ctx, Some(&vehicle), &q, &mut body).await;
+        assert_eq!(body["entityMap"], json!({"urn:a": ["r"]}), "{body}");
+
+        *canned.0.lock().expect("lock") = (500, Value::Null);
+        let mut body = json!({"entityMap": {"urn:a": ["r"]}});
+        narrow_map_ids(peer(), &ctx, None, &q, &mut body).await;
+        assert_eq!(body["entityMap"], json!({}), "{body}");
+    }
+
+    /// A fragment or document that is no object has nothing proxied to
+    /// strip or drop.
+    #[test]
+    fn stripping_proxied_members_leaves_a_non_object_alone() {
+        let ctx = antares_jsonld::core_context();
+        assert_eq!(strip_covered_expanded(&json!([1]), &[]), json!([1]));
+        let mut doc = json!([1]);
+        drop_proxied_local(&mut doc, &[], &ctx);
+        assert_eq!(doc, json!([1]));
+    }
+
     /// 6.3.17: on a write a 404 beside a success is reported in the 207
     /// (ETSI D002_02_01_inc local 204 + source 404, D002_02_02_inc local 404
     /// + source 204); 404 on every part is one 404.

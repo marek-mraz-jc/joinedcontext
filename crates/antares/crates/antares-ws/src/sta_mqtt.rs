@@ -894,6 +894,10 @@ mod tests {
         };
         assert_eq!(urn("v1.1/Things('urn:a:x%2Fy')"), "urn:a:x/y");
         assert_eq!(urn("v1.1/Datastreams('urn:a:x%2Fy')"), "urn:a:x");
+        assert!(
+            urn("v1.1/Things").starts_with("Ok(Set"),
+            "a set names no Entity"
+        );
     }
 
     #[test]
@@ -945,17 +949,24 @@ mod tests {
                 memory.remember(sub, &thing.to_string(), members(MEMBERS));
             }
         }
-        let held: usize = memory
-            .probes
-            .values()
-            .map(|s| match s {
-                Seen::One(_) => 1,
-                Seen::Members(m) => m.len(),
-            })
-            .sum();
+        let held_in = |memory: &Memory| -> usize {
+            memory
+                .probes
+                .values()
+                .map(|s| match s {
+                    Seen::One(_) => 1,
+                    Seen::Members(m) => m.len(),
+                })
+                .sum()
+        };
+        let held = held_in(&memory);
         assert!(held <= MAX_SEEN, "{held} digests held");
         assert_eq!(held, memory.digests);
+        memory.remember("a", "single", Seen::One(7));
+        assert_eq!(held_in(&memory), memory.digests);
+        assert!(memory.probes.values().any(|s| matches!(s, Seen::One(_))));
         memory.forget("b");
+        assert!(!memory.probes.is_empty());
         assert!(memory.probes.keys().all(|k| k.starts_with("a\0")));
         assert_eq!(
             memory.digests,

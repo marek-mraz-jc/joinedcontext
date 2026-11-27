@@ -126,6 +126,70 @@ async fn ws_a_resume_elsewhere_ends_the_open_socket() -> Result<(), String> {
     Ok(())
 }
 
+/// A socket the resume replaced notices at its next Ping, even when nothing
+/// is queued for it, and ends without a close frame of its own.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_replaced_socket_ends_at_its_next_ping() -> Result<(), String> {
+    let b = broker(Limits {
+        ping_every: Duration::from_millis(100),
+        ..Limits::default()
+    })
+    .await?;
+    let mut old = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(status(&old.subscribe(cars()).await?), 201);
+    let mut c = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(
+        status(&c.resume(&old.connection, &old.token, 0).await?),
+        200
+    );
+    old.closed().await?;
+    Ok(())
+}
+
+/// The socket a resume replaced that closes on its own afterwards does not
+/// detach the connection from the socket that holds it now.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_replaced_socket_closing_leaves_the_new_one_attached() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let mut old = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(status(&old.subscribe(cars()).await?), 201);
+    let mut c = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(
+        status(&c.resume(&old.connection, &old.token, 0).await?),
+        200
+    );
+    old.close().await;
+    // the old session saw the client's close; give it time to detach
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(b.hub.attached(), 1, "the new socket still holds it");
+    b.http.car(None, "urn:ngsi-ld:Car:k", 0).await?;
+    c.notification().await?;
+    Ok(())
+}
+
+/// A client that asks for a long replay and leaves before it is written ends
+/// the session; the connection stays resumable for its grace.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_client_that_leaves_during_the_replay_ends_the_session() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let (connection, token) = seen_then_dropped(&b, &[], 40).await?;
+    let mut c = connect(b.addr, ROOT, &[]).await?;
+    c.send(
+        json!({"x-op": "x-resume", "x-id": "r", "x-connection": connection, "x-resume-token": token, "x-seq": 0}),
+        None,
+    )
+    .await?;
+    c.close().await;
+    until(&b.hub, |h| h.attached() == 0).await?;
+    let mut again = connect(b.addr, ROOT, &[]).await?;
+    assert_eq!(
+        status(&again.resume(&connection, &token, 0).await?),
+        200,
+        "still resumable inside the grace"
+    );
+    Ok(())
+}
+
 /// The ring keeps the last `queue` notifications: resuming after 0 when 6
 /// were sent with a ring of 4 starts with `x-gap` 1..2, then 3..6.
 #[tokio::test(flavor = "multi_thread")]

@@ -1876,6 +1876,76 @@ mod discovery_folds {
         }
     }
 
+    /// A type no Entity of which the rules show is dropped from the shapes
+    /// without being flagged partial.
+    #[tokio::test]
+    async fn a_type_no_rule_shows_an_entity_of_has_no_shape() {
+        use crate::policy::{Filter, Rule};
+        let st = AppState::new("test".into());
+        for n in 0..3u32 {
+            let id = format!("urn:ngsi-ld:B:{n}");
+            seed(
+                &st,
+                "tn",
+                &id,
+                json!({"id": id, "type": [BUILDING], V: [{"type": "Property", "value": n}]}),
+            )
+            .await;
+        }
+        let filter = Filter {
+            rules: vec![Rule {
+                types: vec![BUILDING.to_owned()],
+                q: Some(Box::new(antares_ql::parse_q("v>1000").expect("q"))),
+                every_attribute: true,
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        };
+        let ctx = antares_jsonld::pinned::core_context();
+        let repr = crate::repr::narrowing(&filter);
+        let (shapes, partial) = type_shapes(&st, &tid("tn"), ALL, Some((&repr, &ctx)))
+            .await
+            .expect("shapes")
+            .expect("the memory store keeps a catalogue");
+        assert!(shapes.is_empty(), "{shapes:?}");
+        assert!(!partial);
+    }
+
+    /// An Attribute a type omits is never probed for on that type, and only
+    /// on that type.
+    #[test]
+    fn may_show_honours_an_attribute_omitted_for_one_type() {
+        use crate::policy::Filter;
+        let filter = Filter {
+            omit_by_type: BTreeMap::from([(BUILDING.to_owned(), vec![V.to_owned()])]),
+            ..Filter::default()
+        };
+        let ctx = antares_jsonld::pinned::core_context();
+        let repr = crate::repr::narrowing(&filter);
+        let view = Some((&repr, &ctx));
+        assert!(!may_show(view, BUILDING, V));
+        assert!(may_show(view, BUILDING, R));
+        assert!(may_show(view, SENSOR, V));
+        assert!(may_show(None, BUILDING, V));
+    }
+
+    /// A walk with no deadline runs its probe to the end.
+    #[tokio::test]
+    async fn a_walk_without_a_deadline_runs_the_probe_to_the_end() {
+        let st = AppState::new("test".into());
+        let tenant = tid("tw");
+        let w = Walk {
+            st: &st,
+            tenant: &tenant,
+            max: ALL,
+            view: None,
+            beside: Vec::new(),
+            until: None,
+        };
+        let seen = within(&w, async { Ok(Probe::Seen) }).await.expect("probe");
+        assert!(matches!(seen, Probe::Seen));
+    }
+
     /// A complete answer carries no warning; a truncated one carries exactly
     /// one 199 (RFC 7234 5.5.1) naming this broker.
     #[test]

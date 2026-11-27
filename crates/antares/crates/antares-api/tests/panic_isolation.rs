@@ -35,6 +35,25 @@ impl ApiSurface for Boom {
     }
 }
 
+/// A surface the router cannot be built from: its routes panic on the first
+/// in-process call, which builds the router on the call's own task.
+struct Unbuildable;
+
+impl ApiSurface for Unbuildable {
+    fn name(&self) -> &str {
+        "unbuildable"
+    }
+    fn prefix(&self) -> &str {
+        "/x"
+    }
+    fn router(&self, _st: AppState) -> Router<AppState> {
+        std::panic::panic_any("the surface cannot be built")
+    }
+    fn version_info(&self) -> Value {
+        json!({})
+    }
+}
+
 async fn boom() -> &'static str {
     panic!("{SECRET}")
 }
@@ -61,4 +80,24 @@ async fn a_panicking_handler_answers_500_and_the_broker_keeps_serving() {
         let (code, body) = send(&app, "/ngsi-ld/v1/entities?type=Vehicle").await;
         assert_eq!(code, StatusCode::OK, "{body}");
     }
+}
+
+/// An in-process call whose task panics answers 500 InternalError, and the
+/// panic message stays out of the body.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_in_process_call_whose_task_panics_answers_500() {
+    let st = AppState::new("panic-task".into())
+        .with_surface(Box::new(Unbuildable))
+        .expect("/x is a reserved prefix");
+    let req = Request::get("/x/anything")
+        .body(Body::empty())
+        .expect("req");
+    let resp = st
+        .call_on_task(None, axum::http::HeaderMap::new(), req)
+        .await;
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let bytes = resp.into_body().collect().await.expect("body").to_bytes();
+    let body = String::from_utf8_lossy(&bytes);
+    assert!(body.contains("InternalError"), "{body}");
+    assert!(!body.contains("cannot be built"), "{body}");
 }

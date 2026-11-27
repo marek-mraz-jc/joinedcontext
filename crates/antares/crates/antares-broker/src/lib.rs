@@ -2264,6 +2264,23 @@ pub(crate) mod test_env {
 mod config_key_tests {
     use super::unknown_config_key;
 
+    /// A database that cannot answer the ownership probe refuses the boot
+    /// with the probe's error, never as a role that owns nothing.
+    #[tokio::test]
+    async fn an_unanswered_ownership_probe_refuses_the_boot() {
+        let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool opens no connection");
+        let e = super::refuse_owning_request_role(&pool)
+            .await
+            .expect_err("no database answers");
+        assert!(
+            e.starts_with("ANTARES_DATABASE_URL: ownership probe failed: "),
+            "{e}"
+        );
+    }
+
     /// T-7036 (EP-188): off by default, enforce only beside subject headers,
     /// any other value fatal.
     #[cfg(feature = "jc")]

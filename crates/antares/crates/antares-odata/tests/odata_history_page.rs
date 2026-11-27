@@ -203,6 +203,29 @@ async fn a_held_value_ends_a_page_at_its_bytes_and_the_links_reach_every_row_onc
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn a_link_inside_a_read_takes_no_skip_or_top_beside_it() {
+    let (_broker, app) = fixture().await.expect("fixture");
+    let first = get(&app, &format!("{PAST}/Heavy_history"), None)
+        .await
+        .expect("a page");
+    let link = first
+        .get("@nextLink")
+        .or_else(|| first.get("@odata.nextLink"))
+        .and_then(Value::as_str)
+        .expect("a next link");
+    let from = link.find("/x/").expect("a path");
+    let next = link.get(from..).unwrap_or_default();
+    get(&app, next, None).await.expect("the link alone resumes");
+    for extra in ["$top=1", "$skip=1"] {
+        let refused = get(&app, &format!("{next}&{extra}"), None).await;
+        assert!(
+            refused.as_ref().err().is_some_and(|e| e.starts_with("400")),
+            "{extra}: {refused:?}"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_wide_page_charges_the_rows_it_builds_and_no_others() {
     let (broker, app) = fixture().await.expect("fixture");
     let pool = broker.answer_pool();

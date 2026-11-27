@@ -82,7 +82,7 @@ const PROGRAM_TIER_BYTES: usize = 32 * 1024;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, RwLock};
+use std::sync::{Arc, LazyLock, PoisonError, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// What a pattern compiled to, or the refusal it earned. A refusal is
 /// retained as its message so the pattern is not rebuilt per candidate.
@@ -107,6 +107,21 @@ fn stamp<V>(v: V) -> Entry<V> {
 fn touch<V>(e: &Entry<V>) -> &V {
     e.1.store(CLOCK.fetch_add(1, Ordering::Relaxed), Ordering::Relaxed);
     &e.0
+}
+
+/// A cache map behind its lock, taken over when a panic poisoned it: every
+/// entry is inserted whole, so a poisoned map is still a valid cache.
+fn read<V>(
+    lock: &RwLock<HashMap<Box<str>, Entry<V>>>,
+) -> RwLockReadGuard<'_, HashMap<Box<str>, Entry<V>>> {
+    lock.read().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// [`read`] for a writer.
+fn write<V>(
+    lock: &RwLock<HashMap<Box<str>, Entry<V>>>,
+) -> RwLockWriteGuard<'_, HashMap<Box<str>, Entry<V>>> {
+    lock.write().unwrap_or_else(PoisonError::into_inner)
 }
 
 /// Drop the least recently used half. The entries a request in flight is
@@ -153,18 +168,15 @@ fn build(pattern: &str, limit: usize) -> Result<regex::Regex, regex::Error> {
 /// [`MAX_REGEX_PROGRAM_BYTES`] — and each call site keeps mapping it to its
 /// own spec error.
 pub fn compile(pattern: &str) -> Result<Arc<regex::Regex>, String> {
-    if let Some(hit) = CACHE
-        .read()
-        .ok()
-        .and_then(|c| c.get(pattern).map(|e| touch(e).0.clone()))
-    {
+    let hit = read(&CACHE).get(pattern).map(|e| touch(e).0.clone());
+    if let Some(hit) = hit {
         return hit.map_err(String::from);
     }
     #[cfg(test)]
     COMPILES.with(|n| n.set(n.get().saturating_add(1)));
     // Compiled OUTSIDE the lock — a pattern compile must never serialize the
-    // matcher — and a poisoned lock degrades to "compile every time", never
-    // to a failed request.
+    // matcher. A poisoned lock is taken over (`read`/`write`): every entry
+    // is whole, so a panic elsewhere never turns into a failed request.
     let (outcome, charge): (Outcome, usize) = match build(pattern, PROGRAM_TIER_BYTES) {
         Ok(re) => (Ok(Arc::new(re)), PROGRAM_TIER_BYTES),
         Err(_) => match build(pattern, MAX_REGEX_PROGRAM_BYTES) {
@@ -173,7 +185,8 @@ pub fn compile(pattern: &str) -> Result<Arc<regex::Regex>, String> {
             Err(e) => (Err(e.to_string().into()), 0),
         },
     };
-    if let Ok(mut c) = CACHE.write() {
+    {
+        let mut c = write(&CACHE);
         // Halving is repeated rather than assumed sufficient: one charge can
         // be the whole byte budget's worth of the tier above, so the loop —
         // which halves what is left each pass — is what makes the bound hold.
@@ -204,11 +217,10 @@ pub fn compile_anchored(pattern: &str) -> Result<Arc<regex::Regex>, String> {
 /// The retained program for `pattern`, without compiling anything. A
 /// retained refusal holds no program and reads as `None` here.
 pub fn cached(pattern: &str) -> Option<Arc<regex::Regex>> {
-    CACHE.read().ok().and_then(|c| {
-        c.get(pattern)
-            .and_then(|e| touch(e).0.as_ref().ok())
-            .cloned()
-    })
+    read(&CACHE)
+        .get(pattern)
+        .and_then(|e| touch(e).0.as_ref().ok())
+        .cloned()
 }
 
 /// Compilations performed on the calling thread (i.e. its cache misses).
@@ -219,7 +231,7 @@ fn compiles() -> u64 {
 
 /// Patterns currently retained — never above `MAX_REGEX_CACHE`.
 pub fn len() -> usize {
-    CACHE.read().map(|c| c.len()).unwrap_or(0)
+    read(&CACHE).len()
 }
 
 /// Program bytes currently charged — never above `cache_bytes()`.
@@ -237,20 +249,16 @@ static GEO_CACHE: Cache<Arc<crate::geo::GeoQuery>> = LazyLock::new(|| RwLock::ne
 /// Entry size is already capped by the parser's own complexity ceiling
 /// (`MAX_Q_NODES`), entry count by the same bound and eviction as above.
 pub fn q_node(q: &str) -> Option<Arc<crate::QNode>> {
-    if let Some(hit) = Q_CACHE
-        .read()
-        .ok()
-        .and_then(|c| c.get(q).map(|e| Arc::clone(touch(e))))
-    {
-        return Some(hit);
+    let hit = read(&Q_CACHE).get(q).map(|e| Arc::clone(touch(e)));
+    if hit.is_some() {
+        return hit;
     }
     let node = Arc::new(crate::parse_q(q).ok()?);
-    if let Ok(mut c) = Q_CACHE.write() {
-        if c.len() >= MAX_REGEX_CACHE {
-            evict_lru_half(&mut c);
-        }
-        c.insert(q.into(), stamp(Arc::clone(&node)));
+    let mut c = write(&Q_CACHE);
+    if c.len() >= MAX_REGEX_CACHE {
+        evict_lru_half(&mut c);
     }
+    c.insert(q.into(), stamp(Arc::clone(&node)));
     Some(node)
 }
 
@@ -263,20 +271,16 @@ pub fn geo_query(
     key: &str,
     build: impl FnOnce() -> Option<crate::geo::GeoQuery>,
 ) -> Option<Arc<crate::geo::GeoQuery>> {
-    if let Some(hit) = GEO_CACHE
-        .read()
-        .ok()
-        .and_then(|c| c.get(key).map(|e| Arc::clone(touch(e))))
-    {
-        return Some(hit);
+    let hit = read(&GEO_CACHE).get(key).map(|e| Arc::clone(touch(e)));
+    if hit.is_some() {
+        return hit;
     }
     let gq = Arc::new(build()?);
-    if let Ok(mut c) = GEO_CACHE.write() {
-        if c.len() >= MAX_REGEX_CACHE {
-            evict_lru_half(&mut c);
-        }
-        c.insert(key.into(), stamp(Arc::clone(&gq)));
+    let mut c = write(&GEO_CACHE);
+    if c.len() >= MAX_REGEX_CACHE {
+        evict_lru_half(&mut c);
     }
+    c.insert(key.into(), stamp(Arc::clone(&gq)));
     Some(gq)
 }
 
@@ -320,6 +324,48 @@ mod tests {
             !first.is_match("urn:ngsi-ld:Vehicle:compiled-once-x"),
             "a shared program still rejects what the pattern excludes"
         );
+    }
+
+    /// A panic while a cache lock is held poisons it; the caches take the map
+    /// over and keep serving and retaining, never failing a request.
+    #[test]
+    fn a_poisoned_cache_keeps_serving() {
+        let _serial = serial_lock();
+        let poison = |f: fn()| assert!(std::thread::spawn(f).join().is_err());
+        poison(|| {
+            let _held = CACHE.write();
+            panic!("poisons the regex cache");
+        });
+        poison(|| {
+            let _held = Q_CACHE.write();
+            panic!("poisons the q cache");
+        });
+        poison(|| {
+            let _held = GEO_CACHE.write();
+            panic!("poisons the geo cache");
+        });
+        assert!(CACHE.is_poisoned() && Q_CACHE.is_poisoned() && GEO_CACHE.is_poisoned());
+        let p = "^urn:ngsi-ld:Poisoned:[0-9]+$";
+        let first = compile(p).expect("valid pattern");
+        assert!(Arc::ptr_eq(&first, &compile(p).expect("valid pattern")));
+        assert!(cached(p).is_some_and(|c| Arc::ptr_eq(&c, &first)));
+        assert!(len() >= 1);
+        let q = q_node("poisoned_q>1").expect("valid q");
+        assert!(Arc::ptr_eq(&q, &q_node("poisoned_q>1").expect("valid q")));
+        let point = || {
+            crate::geo::GeoQuery::from_params(&HashMap::from([
+                ("georel".to_owned(), "near;maxDistance==10".to_owned()),
+                ("geometry".to_owned(), "Point".to_owned()),
+                ("coordinates".to_owned(), "[1,2]".to_owned()),
+            ]))
+            .ok()
+            .flatten()
+        };
+        let g = geo_query("poisoned-geo", point).expect("geo");
+        assert!(Arc::ptr_eq(
+            &g,
+            &geo_query("poisoned-geo", || None).expect("retained")
+        ));
     }
 
     /// A pattern that parses only inside the `^(?:...)$` wrapper is refused,

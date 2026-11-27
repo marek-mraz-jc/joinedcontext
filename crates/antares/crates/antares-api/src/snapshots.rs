@@ -3268,6 +3268,33 @@ mod clause_5_16 {
         );
     }
 
+    /// 5.16.2 step 4: a source whose Temporal Evolutions outgrow the snapshot
+    /// ceiling is not copied: TooManyResults, and nothing half-copied is
+    /// reported as a success.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_16_2_4_a_clone_of_too_many_evolutions_is_refused() {
+        let mut st = state().await;
+        st.max_limit = 1;
+        let from = TenantId::new_internal("snap-default-big").expect("tenant");
+        let to = TenantId::new_internal("snap-default-bigto").expect("tenant");
+        let cap = fill_cap(&st);
+        for i in 0..=cap {
+            let eid = format!("urn:ngsi-ld:Vehicle:big{i}");
+            st.temporal
+                .upsert(
+                    &from,
+                    &eid,
+                    json!({"id": eid, "type": format!("{DEF}Vehicle")}),
+                )
+                .await
+                .expect("seed evolution");
+        }
+        let err = copy_snapshot_data(&st, &from, &to, cap)
+            .await
+            .expect_err("over the ceiling");
+        assert!(matches!(err, NgsiError::TooManyResults(_)), "{err:?}");
+    }
+
     /// 5.16.2.4 (F-ANT5-007): a clone of a source still preparing waits for
     /// the source's fill and copies what it ends with; a source that fails
     /// fails the clone.

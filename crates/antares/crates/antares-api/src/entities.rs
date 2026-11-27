@@ -5637,6 +5637,20 @@ mod handler_edges {
         assert_eq!(b, json!({"vocab": "car"}));
     }
 
+    /// 5.7.2 step 4: a malformed `q` is a 400 on a listing, with or without an
+    /// Entity Map, and a map is never created for it.
+    #[tokio::test]
+    async fn a_listing_with_a_malformed_q_is_refused() {
+        let st = AppState::new(ALIAS.into());
+        for uri in [
+            "/ngsi-ld/v1/entities?type=V&q=speed%3E(",
+            "/ngsi-ld/v1/entities?type=V&q=speed%3E(&entityMap=true",
+        ] {
+            let (s, _, b) = send(&st, "GET", uri, &[], None).await;
+            assert_eq!(s, StatusCode::BAD_REQUEST, "{uri}: {b}");
+        }
+    }
+
     /// 5.14.4.4: an EntityMap query refuses an invalid id and an invalid
     /// csf, and under splitEntities only id, idPattern and type narrow the
     /// local candidates.
@@ -5682,6 +5696,17 @@ mod handler_edges {
         .await
         .expect_err("an invalid csf is refused");
         assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
+        let e = build_query_map(
+            &st,
+            &tenant,
+            &h,
+            &ctx,
+            &p(&[("type", "V"), ("q", "speed>(")]),
+            &f,
+        )
+        .await
+        .expect_err("an invalid q is refused");
+        assert!(matches!(e, ApiError::Ngsi(NgsiError::BadRequestData(_))));
         let split = build_query_map(
             &st,
             &tenant,
@@ -5702,6 +5727,82 @@ mod handler_edges {
             vec!["urn:ngsi-ld:V:s1", "urn:ngsi-ld:V:s2"],
             "q cannot be judged on a fragment"
         );
+    }
+
+    /// 5.14.4 step 4: a query map holds at most one page-limit of Entities, the
+    /// rest of the candidates left out.
+    #[tokio::test]
+    async fn the_query_map_stops_at_the_page_limit() {
+        let mut st = AppState::new(ALIAS.into());
+        st.max_limit = 2;
+        for i in 0..3 {
+            create(
+                &st,
+                json!({"id": format!("urn:ngsi-ld:V:cap{i}"), "type": "V"}),
+            )
+            .await;
+        }
+        let ctx = st.loader.core();
+        let params: HashMap<String, String> = [("type".to_owned(), "V".to_owned())].into();
+        let map = build_query_map(
+            &st,
+            &TenantId::default(),
+            &HeaderMap::new(),
+            &ctx,
+            &params,
+            &crate::policy::Filter::default(),
+        )
+        .await
+        .expect("map");
+        assert_eq!(map["entityMap"].as_object().map(|m| m.len()), Some(2));
+    }
+
+    /// An ordered, joined listing whose window lies past the last match is
+    /// an empty page, not an error.
+    #[tokio::test]
+    async fn an_ordered_joined_listing_past_the_end_is_empty() {
+        let st = AppState::new(ALIAS.into());
+        create(
+            &st,
+            json!({"id": "urn:ngsi-ld:V:end1", "type": "V", "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&orderBy=speed&offset=50&join=inline&joinLevel=1",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(b, json!([]));
+    }
+
+    /// An Entity a pick selects nothing of is left out of a listing.
+    #[tokio::test]
+    async fn a_listing_leaves_out_an_entity_the_pick_selects_nothing_of() {
+        let st = AppState::new(ALIAS.into());
+        for (id, attr) in [
+            ("urn:ngsi-ld:V:pk1", "speed"),
+            ("urn:ngsi-ld:V:pk2", "colour"),
+        ] {
+            create(
+                &st,
+                json!({"id": id, "type": "V", attr: {"type": "Property", "value": 1}}),
+            )
+            .await;
+        }
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&pick=colour",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(b.as_array().map(Vec::len), Some(1), "{b}");
     }
 
     /// 5.5.9.3/6.4.3.2: paging through a live EntityMap — a reference

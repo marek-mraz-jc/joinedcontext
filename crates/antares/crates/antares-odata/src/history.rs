@@ -1356,6 +1356,58 @@ mod tests {
     }
 
     #[test]
+    fn an_instance_not_in_a_list_is_read_as_a_list_of_one() {
+        let member = Member {
+            iri: String::new(),
+            shape: crate::edm::Shape::Geo,
+            list: false,
+            json: false,
+            untyped: false,
+            written: crate::edm::Written::Always,
+        };
+        let set = Set {
+            type_iri: String::new(),
+            members: std::collections::BTreeMap::new(),
+            identifier: None,
+            writable: crate::edm::Writable::default(),
+            references: std::collections::BTreeMap::new(),
+            bound: std::collections::BTreeMap::new(),
+            output: None,
+        };
+        let plan = Plan {
+            set: &set,
+            filter: Translated::default(),
+            program: None,
+            terms: vec![("m", &member, "t0".to_owned())],
+            attrs: vec!["t0".to_owned()],
+            observed: "observed".to_owned(),
+            window: String::new(),
+            lower: None,
+            empty: false,
+        };
+        let one = json!({"type": "Property", "value": 1, "observedAt": "1970-01-01T01:00:00Z"});
+        let window = json!({"id": "urn:a", "t0": one});
+        let earlier = json!({"id": "urn:a"});
+        let (w, e) = (raw(&window), raw(&earlier));
+        let found = Found {
+            urn: "urn:a".to_owned(),
+            window: &w,
+            earlier: Some(&e),
+        };
+        let version = ODataVersion::V4_01;
+        let want = eager(&plan, &window, &earlier);
+        assert_eq!(want.len(), 1);
+        let mut axis = Axis::new(&plan, &found, version).expect("an axis");
+        assert!(axis.step());
+        assert!(axis.hold(version).is_ok());
+        assert_eq!(
+            (axis.at, axis.micros, Value::Object(axis.doc.clone())),
+            (want[0].0.as_str(), want[0].1, want[0].2.clone())
+        );
+        assert!(!axis.step());
+    }
+
+    #[test]
     fn a_token_inside_a_read_answers_its_own_request_alone() {
         let at = Start {
             offset: 8,

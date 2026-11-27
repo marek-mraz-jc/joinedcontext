@@ -2736,6 +2736,22 @@ mod tests {
         assert!(local.holds(&car(0.5), &ctx));
     }
 
+    /// A record condition with a scope reads the record's own `scope`, and a
+    /// record whose `type` is no string keeps it as it is.
+    #[test]
+    fn a_record_condition_reads_the_scope_of_a_record_with_a_list_type() {
+        let cond = Condition {
+            q: None,
+            scope_q: Some("/city/#".into()),
+            areas: Vec::new(),
+            rules: None,
+            refused: std::sync::OnceLock::new(),
+        };
+        let record = |scope: &str| json!({"id": "urn:ngsi-ld:Subscription:1", "type": ["Subscription"], "scope": scope});
+        assert!(cond.holds_for_record(&record("/city/a")));
+        assert!(!cond.holds_for_record(&record("/other")));
+    }
+
     /// ADR-0023 rule 7 per rule (K22): a write names only Attributes the
     /// rules that hold for its post-image show.
     #[test]
@@ -3175,6 +3191,11 @@ mod tests {
         assert_eq!(
             decide(&Never, &subject(), &Operation::new("5.6.1")).await,
             Decision::Deny(ENGINE_TIMED_OUT.to_owned())
+        );
+        assert_eq!(Never.name(), "never");
+        assert_eq!(
+            Never.pre_notify(&subject(), &json!({}), &mut json!({})),
+            NotifyDecision::Deliver
         );
     }
 

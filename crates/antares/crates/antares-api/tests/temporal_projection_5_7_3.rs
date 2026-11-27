@@ -140,6 +140,26 @@ async fn clause_5_7_3_5_a_core_only_pick_reduces_the_entity_rather_than_hiding_i
     assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
 }
 
+/// 5.7.4 step 4: a `q` that does not parse is BadRequestData, not an empty
+/// answer; one that selects nothing is an empty list.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_7_4_4_a_malformed_q_is_refused_on_the_query() {
+    let st = seeded().await;
+    let (status, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{WINDOW}&q=%28speed"),
+    )
+    .await;
+    is_bad_request(status, &body);
+    let (status, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{WINDOW}&q=speed%3E1000"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([]), "{body}");
+}
+
 const EXPIRING: &str = "urn:ngsi-ld:Vehicle:tpx";
 
 /// Table 6.3.11-1 (p.276): "When its value includes the keyword "sysAttrs", a

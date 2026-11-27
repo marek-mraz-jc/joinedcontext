@@ -75,6 +75,47 @@ async fn subscribe(st: &AppState, id: &str, uri: &str, trigger: Option<&str>) {
     assert_eq!(status, StatusCode::CREATED, "subscribe {id}: {body}");
 }
 
+/// `attributeDeleted` fires when an Attribute is deleted, and a Subscription
+/// naming only that trigger names the Attribute it lost.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_deleted_attribute_reaches_the_attribute_deleted_subscription() {
+    antares_jsonld::allow_private_egress(true);
+    let mut st = AppState::new("test-triggers-deleted".into());
+    antares_api::wire(&mut st).await;
+    let (uri, mut rx) = sink().await;
+    subscribe(
+        &st,
+        "urn:ngsi-ld:Subscription:attr-deleted",
+        &uri,
+        Some("attributeDeleted"),
+    )
+    .await;
+    let (status, body) = call(
+        &st,
+        "POST",
+        "entities",
+        &json!({"id": "urn:ngsi-ld:Trigger:del", "type": "Trigger",
+            "speed": {"type": "Property", "value": 1}})
+        .to_string(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = call(
+        &st,
+        "DELETE",
+        "entities/urn:ngsi-ld:Trigger:del/attrs/speed",
+        "",
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let wait = std::time::Duration::from_secs(5 * antares_api::state::slow_factor());
+    let n = tokio::time::timeout(wait, rx.recv())
+        .await
+        .expect("the attributeDeleted subscription must be told")
+        .expect("one notification");
+    assert_eq!(n["data"][0]["id"], "urn:ngsi-ld:Trigger:del", "{n}");
+}
+
 /// The positive half decides when the negative half may be read: once the
 /// declared-trigger sink has been served, the fan-out for that change has
 /// run. A delivery to the other endpoint is still a separate request on its

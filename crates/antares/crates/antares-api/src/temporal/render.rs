@@ -1041,6 +1041,26 @@ mod edges {
         assert_eq!(out, json!("x"));
     }
 
+    /// A single vocab IRI is compacted like each member of a vocab list.
+    #[test]
+    fn a_single_vocab_string_is_compacted() {
+        let ctx = Context::default();
+        assert_eq!(
+            compact_vocab(&json!("urn:v:a"), &ctx),
+            json!(ctx.compact_iri("urn:v:a"))
+        );
+        assert_eq!(
+            simplified_attr(
+                &[
+                    json!({"type": "VocabProperty", "vocab": "urn:v:a", "observedAt": "2020-01-01T00:00:00Z"})
+                ],
+                &ctx,
+                "observedAt"
+            )["vocabs"][0][0],
+            json!({"vocab": ctx.compact_iri("urn:v:a")})
+        );
+    }
+
     /// 4.5.9: every attribute kind takes its simplified member name and
     /// value shape; two datasets give two groups, an instance with no type
     /// is a Property, a datasetId is kept.

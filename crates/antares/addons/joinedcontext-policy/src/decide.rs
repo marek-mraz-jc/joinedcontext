@@ -1070,11 +1070,8 @@ mod tests {
         let creating = table(&json!({"information": [], "operations": ["5.6.1"],
                                      "q": "speed<100"}))?;
         let speed = |v: u32| {
-            let mut body = json!({"id": "urn:ngsi-ld:Car:1", "type": car()});
-            if let Some(o) = body.as_object_mut() {
-                o.insert(iri("speed"), json!([{"type": "Property", "value": v}]));
-            }
-            body
+            json!({"id": "urn:ngsi-ld:Car:1", "type": car(),
+                   iri("speed"): [{"type": "Property", "value": v}]})
         };
         assert_eq!(
             with(&creating, "5.6.1", &car(), &[], Some(&speed(5)), false),
@@ -1246,9 +1243,11 @@ mod tests {
             .filter(|w| !w.is_empty())
             .ok_or("no window")?;
         // a selector given a window of its own still admits no history
-        if let Some(s) = t.policies.first_mut().and_then(|p| p.selectors.first_mut()) {
-            s.temporal = window;
-        }
+        t.policies
+            .first_mut()
+            .and_then(|p| p.selectors.first_mut())
+            .ok_or("no selector")?
+            .temporal = window;
         for t in [&t, &whole] {
             let held = held(
                 with(t, "5.6.3", &car(), &speed, None, false),

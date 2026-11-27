@@ -142,6 +142,77 @@ async fn a_socket_subscription_the_store_cannot_delete_is_not_counted() {
         .is_some());
 }
 
+/// An erasure that a store or the history refuses at any step answers that
+/// step's error, as text.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_erasure_answers_the_error_of_the_step_that_failed() {
+    let room = ["urn:ngsi-ld:Room:1".to_owned()];
+    let attrs = ["temperature".to_owned()];
+    let tenant = TenantId::new("seams").expect("tenant");
+    let down = |method: &'static str, from: usize| {
+        move |m: &str, n: usize| (m == method && n >= from).then(store_down)
+    };
+    for (method, from, named) in [
+        ("list_page", 1, None),
+        ("list_page", 0, None),
+        ("delete_entity_if", 0, None),
+        ("mutate_boxed", 0, Some(&attrs[..])),
+    ] {
+        let mut st = seeded().await;
+        failing_store(&mut st, down(method, from));
+        let err = antares_api::erasure::erase(&st, &tenant, &room, named, None)
+            .await
+            .expect_err("the step fails");
+        assert!(err.contains("store unavailable"), "{method}: {err}");
+    }
+    let mut st = seeded().await;
+    failing_history(&mut st, down("erase", 0));
+    let err = antares_api::erasure::erase(&st, &tenant, &room, None, None)
+        .await
+        .expect_err("the history refuses");
+    assert!(err.contains("store unavailable"), "{err}");
+
+    let mut st = seeded().await;
+    let letter = "urn:ngsi-ld:DeadLetter:1";
+    st.store
+        .create(
+            &tenant,
+            Kind::DeadLetter,
+            letter,
+            json!({"id": letter, "payload": {"data": [{"id": room[0]}]}}),
+        )
+        .await
+        .expect("letter");
+    failing_store(&mut st, down("delete", 0));
+    let err = antares_api::erasure::erase(&st, &tenant, &room, None, None)
+        .await
+        .expect_err("the letter cannot be deleted");
+    assert!(err.contains("store unavailable"), "{err}");
+}
+
+/// A dead letter that names the Entity but carries no id of its own cannot be
+/// addressed, so it is left and not counted.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_erasure_leaves_a_dead_letter_with_no_id() {
+    let st = seeded().await;
+    let tenant = TenantId::new("seams").expect("tenant");
+    st.store
+        .create(
+            &tenant,
+            Kind::DeadLetter,
+            "urn:ngsi-ld:DeadLetter:anon",
+            json!({"payload": {"data": [{"id": "urn:ngsi-ld:Room:1"}]}}),
+        )
+        .await
+        .expect("letter");
+    let gone =
+        antares_api::erasure::erase(&st, &tenant, &["urn:ngsi-ld:Room:1".to_owned()], None, None)
+            .await
+            .expect("erase");
+    assert_eq!(gone["entities"], 1);
+    assert_eq!(gone["deadLetters"], 0, "{gone}");
+}
+
 /// A history driver that cannot count leaves the history out: no
 /// `attrInstances`, no `estimated`, the counts still 200.
 #[tokio::test(flavor = "multi_thread")]

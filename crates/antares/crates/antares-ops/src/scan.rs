@@ -563,9 +563,9 @@ mod tests {
     fn linked(links: &[&str]) -> Response {
         let mut answer = ().into_response();
         for l in links {
-            if let Ok(v) = l.parse() {
-                answer.headers_mut().append(LINK, v);
-            }
+            answer
+                .headers_mut()
+                .append(LINK, l.parse().expect("a link header"));
         }
         answer
     }

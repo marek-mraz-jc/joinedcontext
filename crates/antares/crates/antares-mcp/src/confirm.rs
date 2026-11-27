@@ -127,11 +127,16 @@ pub(crate) fn tenant_of(id: &str) -> Option<TenantId> {
     if !sized || !lower_hex(nonce) || !lower_hex(hex) {
         return None;
     }
+    // every digit is a lower-case hex one, checked above
+    let digit = |b: u8| (b & 0x0F).saturating_add(if b >= b'a' { 9 } else { 0 });
     let name: Vec<u8> = hex
         .as_bytes()
         .chunks(2)
-        .map(|pair| u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok())
-        .collect::<Option<_>>()?;
+        .map(|pair| {
+            pair.iter()
+                .fold(0u8, |acc, b| acc.wrapping_mul(16).wrapping_add(digit(*b)))
+        })
+        .collect();
     TenantId::new(std::str::from_utf8(&name).ok()?).ok()
 }
 

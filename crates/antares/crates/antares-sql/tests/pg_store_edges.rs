@@ -271,6 +271,64 @@ async fn the_boot_probes_answer_a_database_they_cannot_read() {
     );
 }
 
+/// The temporal backend probe refuses a database with no history table, and
+/// a plain history table the catalog does not list as a hypertable; it names
+/// one the catalog lists.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_backend_probe_refuses_a_plain_table_and_names_a_hypertable() {
+    let url = require_db!();
+    let own = own_database(&url, "backend").await;
+    let raw = PgPool::connect(&own).await.expect("connect");
+    let missing = maintenance::detect_temporal_backend(&raw)
+        .await
+        .expect_err("no history table");
+    assert!(missing.contains("unexpected relkind"), "{missing}");
+
+    raw.execute("CREATE TABLE public.attr_instances (t timestamptz NOT NULL)")
+        .await
+        .expect("a plain history table");
+    let held: Option<String> =
+        sqlx::query_scalar("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+            .fetch_optional(&raw)
+            .await
+            .expect("extensions");
+    if held.is_none() {
+        raw.execute("CREATE SCHEMA timescaledb_information")
+            .await
+            .expect("a catalog schema");
+        raw.execute(
+            "CREATE VIEW timescaledb_information.hypertables AS
+             SELECT 'unrelated'::text AS hypertable_name",
+        )
+        .await
+        .expect("a catalog that lists no history table");
+    }
+    let plain = maintenance::detect_temporal_backend(&raw)
+        .await
+        .expect_err("a plain table is refused");
+    assert!(plain.contains("is a plain table"), "{plain}");
+
+    if held.is_none() {
+        raw.execute(
+            "CREATE OR REPLACE VIEW timescaledb_information.hypertables AS
+             SELECT 'attr_instances'::text AS hypertable_name",
+        )
+        .await
+        .expect("a catalog that lists it");
+    } else {
+        raw.execute("SELECT create_hypertable('public.attr_instances', 't')")
+            .await
+            .expect("a hypertable");
+    }
+    assert_eq!(
+        maintenance::detect_temporal_backend(&raw)
+            .await
+            .expect("a hypertable"),
+        maintenance::TemporalBackend::Hypertable
+    );
+    raw.close().await;
+}
+
 /// A pass with nothing old to drop reports no deletion; a lease whose session was ended is dead
 /// and gives back nothing it could not unlock.
 #[tokio::test(flavor = "multi_thread")]
@@ -364,6 +422,21 @@ async fn store_calls_that_find_nothing_say_so() {
     let rows = store.query_entities_text(&t, &f).await.expect("query").rows;
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert!(rows[0].get().contains("urn:e:live"));
+    let backend = PgBackend::new(pool.clone());
+    let many = backend
+        .entities
+        .get_many(&t, &["urn:e:old", "urn:e:live", "urn:e:none"])
+        .await
+        .expect("get_many");
+    assert_eq!(many.len(), 1, "an expired or absent id is not returned");
+    assert!(many.contains_key("urn:e:live"), "{many:?}");
+    let other = TenantId::new(&format!("edge_other_{}", run())).expect("tenant");
+    assert!(backend
+        .entities
+        .get_many(&other, &["urn:e:live"])
+        .await
+        .expect("get_many")
+        .is_empty());
     let digests = store.list_digests(&t, Kind::Entity).await.expect("digests");
     assert!(
         digests.iter().any(|(id, _)| id == "urn:e:live"),

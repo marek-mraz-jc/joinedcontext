@@ -1125,6 +1125,22 @@ mod write_edges {
         );
     }
 
+    /// A member the round does not name is an internal error, and a stored
+    /// Entity without a creation instant is replaced with the batch's own.
+    #[test]
+    fn a_lost_member_is_an_internal_error_and_a_replacement_stamps_itself() {
+        let docs: HashMap<&str, &Value> = HashMap::new();
+        let lost = member(&docs, "urn:ngsi-ld:Car:9").expect_err("not in the round");
+        assert!(
+            matches!(&lost, NgsiError::InternalError(m) if m.contains("urn:ngsi-ld:Car:9")),
+            "{lost:?}"
+        );
+        let src = json!({"id": "urn:ngsi-ld:Car:9", "type": "Car"});
+        let stored = json!({"id": "urn:ngsi-ld:Car:9", "type": "Car"});
+        let new = replacement(&src, &stored, "2026-01-01T00:00:00Z");
+        assert!(new.get("createdAt").is_some(), "{new}");
+    }
+
     /// 5.6.9 with noOverwrite is instance-level: an instance under a
     /// datasetId the Attribute does not hold yet is appended beside the
     /// stored one, an instance the Attribute holds is kept as stored.

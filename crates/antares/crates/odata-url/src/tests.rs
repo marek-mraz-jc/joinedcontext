@@ -69,29 +69,29 @@ fn err_within(uri: &str, limits: &Limits) -> UrlError {
 }
 
 fn options(uri: &str) -> QueryOptions {
-    match ok(uri) {
-        ODataUri::Resource { options, .. } => options,
-        other => {
-            assert!(
-                matches!(other, ODataUri::Resource { .. }),
-                "{uri}: {other:?}"
-            );
-            QueryOptions::default()
-        }
+    let parsed = ok(uri);
+    assert!(
+        matches!(parsed, ODataUri::Resource { .. }),
+        "{uri}: {parsed:?}"
+    );
+    let mut found = QueryOptions::default();
+    if let ODataUri::Resource { options, .. } = parsed {
+        found = options;
     }
+    found
 }
 
 fn path(uri: &str) -> Vec<Segment> {
-    match ok(uri) {
-        ODataUri::Resource { path, .. } => path,
-        other => {
-            assert!(
-                matches!(other, ODataUri::Resource { .. }),
-                "{uri}: {other:?}"
-            );
-            Vec::new()
-        }
+    let parsed = ok(uri);
+    assert!(
+        matches!(parsed, ODataUri::Resource { .. }),
+        "{uri}: {parsed:?}"
+    );
+    let mut found = Vec::new();
+    if let ODataUri::Resource { path, .. } = parsed {
+        found = path;
     }
+    found
 }
 
 fn filter(text: &str) -> Expr {
@@ -169,10 +169,11 @@ fn the_service_forms() {
         }
     );
     let entity = ok("$entity?$id=Buildings('b1')&$format=xml");
-    let ODataUri::Entity { options } = entity else {
-        unreachable_form(&entity);
-        return;
-    };
+    assert!(matches!(entity, ODataUri::Entity { .. }), "{entity:?}");
+    let mut options = QueryOptions::default();
+    if let ODataUri::Entity { options: found } = entity {
+        options = found;
+    }
     assert_eq!(options.id.as_deref(), Some("Buildings('b1')"));
     assert_eq!(options.format, Some(Format::Xml));
     // `$entity` takes `$id` and `$format` only; `$select` is no custom option either.
@@ -198,10 +199,6 @@ fn an_empty_path_segment_is_a_syntax_error() {
     syntax("Buildings/?$top=1", 10);
     syntax("Buildings('b1')/", 16);
     syntax("Buildings('b1')//name", 16);
-}
-
-fn unreachable_form(uri: &ODataUri) {
-    assert!(matches!(uri, ODataUri::Entity { .. }), "{uri:?}");
 }
 
 #[test]
@@ -485,9 +482,15 @@ fn methods_and_lambdas() {
     );
     // URL 5.1.1.11.1, ABNF distanceMethodCallExpr: the call is a number to compare
     let far = filter("geo.distance(location,geography'SRID=4326;Point(1 2)') lt 10.5");
-    let Expr::Compare(call, CompareOp::Lt, _) = &far else {
-        panic!("{far:?}")
-    };
+    assert!(
+        matches!(&far, Expr::Compare(_, CompareOp::Lt, _)),
+        "{far:?}"
+    );
+    let mut call = None;
+    if let Expr::Compare(inner, _, _) = &far {
+        call = Some(inner);
+    }
+    let call = call.expect("a comparison");
     assert!(
         matches!(&**call, Expr::Call(Method::GeoDistance, args) if args.len() == 2),
         "{far:?}"
@@ -496,15 +499,26 @@ fn methods_and_lambdas() {
         far.to_string(),
         "geo.distance(location,geography'SRID=4326;Point(1%202)')%20lt%2010.5"
     );
+}
+
+#[test]
+fn lambdas() {
     let any = filter("rooms/any(r:r/area gt 10)");
-    let Expr::Any {
-        collection,
-        lambda: Some((variable, body)),
-    } = any
-    else {
-        assert!(matches!(any, Expr::Any { .. }), "{any:?}");
-        return;
-    };
+    assert!(
+        matches!(
+            any,
+            Expr::Any {
+                lambda: Some(_),
+                ..
+            }
+        ),
+        "{any:?}"
+    );
+    let mut parts = None;
+    if let Expr::Any { collection, lambda } = any {
+        parts = lambda.map(|lambda| (collection, lambda));
+    }
+    let (collection, (variable, body)) = parts.expect("a lambda");
     assert_eq!(
         (collection.path, variable.as_str()),
         (vec!["rooms".to_owned()], "r")
@@ -534,14 +548,21 @@ fn methods_and_lambdas() {
     let nested = filter("sensors/any(s:s/owner/name eq 'x' and tags/any(t:t eq 'y'))");
     assert!(matches!(nested, Expr::Any { .. }), "{nested:?}");
     let bare = filter("tags/any(t:t)");
-    let Expr::Any {
-        lambda: Some((_, body)),
-        ..
-    } = bare
-    else {
-        assert!(matches!(bare, Expr::Any { .. }), "{bare:?}");
-        return;
-    };
+    assert!(
+        matches!(
+            bare,
+            Expr::Any {
+                lambda: Some(_),
+                ..
+            }
+        ),
+        "{bare:?}"
+    );
+    let mut lambda = None;
+    if let Expr::Any { lambda: found, .. } = bare {
+        lambda = found;
+    }
+    let (_, body) = lambda.expect("a lambda");
     assert_eq!(
         *body,
         Expr::Member(MemberPath {
@@ -1331,9 +1352,15 @@ fn methods_parse_with_their_arity() {
         assert_eq!(bare.to_string(), want, "{method:?}");
         let text = format!("{}({args}) eq null", method.name().to_uppercase());
         let parsed = filter(&text);
-        let Expr::Compare(call, CompareOp::Eq, _) = parsed else {
-            panic!("{text}: {parsed:?}")
-        };
+        assert!(
+            matches!(parsed, Expr::Compare(_, CompareOp::Eq, _)),
+            "{text}: {parsed:?}"
+        );
+        let mut call = None;
+        if let Expr::Compare(inner, _, _) = parsed {
+            call = Some(inner);
+        }
+        let call = call.expect("a comparison");
         assert!(
             matches!(call.as_ref(), Expr::Call(m, a) if *m == method && a.len() == method.arity().0),
             "{text}: {call:?}"
@@ -1589,10 +1616,16 @@ fn search_is_bounded() {
     };
     let limit = |q: &str| {
         let e = err_within(&format!("Buildings?{q}"), &tight);
-        match e.kind {
-            UrlErrorKind::LimitExceeded { limit, .. } => limit,
-            other => panic!("{q}: {other:?}"),
+        assert!(
+            matches!(e.kind, UrlErrorKind::LimitExceeded { .. }),
+            "{q}: {:?}",
+            e.kind
+        );
+        let mut found = None;
+        if let UrlErrorKind::LimitExceeded { limit, .. } = e.kind {
+            found = Some(limit);
         }
+        found.expect("a limit")
     };
     assert_eq!(limit("$search=a b c d"), LimitKind::ExprNodes);
     assert_eq!(limit("$search=NOT NOT NOT a"), LimitKind::ExprDepth);
@@ -2112,9 +2145,12 @@ fn apply_chains_and_nestings_cost_their_budget() {
         max_query_len: 1 << 20,
         ..Limits::strict()
     };
-    let limit_of = |uri: &str| match err_within(uri, &long).kind {
-        UrlErrorKind::LimitExceeded { limit, .. } => Some(limit),
-        _ => None,
+    let limit_of = |uri: &str| {
+        let mut found = None;
+        if let UrlErrorKind::LimitExceeded { limit, .. } = err_within(uri, &long).kind {
+            found = Some(limit);
+        }
+        found
     };
     // a concat 200 deep is refused by depth, before the parser's stack grows with it (T-4017)
     let deep = format!(

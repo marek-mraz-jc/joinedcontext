@@ -3037,6 +3037,8 @@ mod tests {
             got["data"][0]["id"], "urn:ngsi-ld:ContextSourceRegistration:live",
             "{got}"
         );
+        // let the notifying task run to its end before the runtime goes
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
     }
 
     /// A binding of `urn:antares:ws:` endpoints that takes `mine` as the
@@ -3065,6 +3067,49 @@ mod tests {
         ) -> antares_notifier::DeliveryFuture<'a> {
             Box::pin(async { Ok(()) })
         }
+    }
+
+    /// The test binding delivers whatever it is handed, and an update whose
+    /// fragment repeats the stored id is the same update as one without it.
+    #[tokio::test]
+    async fn a_fragment_repeating_the_stored_id_updates_and_the_socket_delivers() {
+        let p = HashMap::new();
+        let h = json_headers();
+        let t = TenantId::default();
+        let st = AppState::new("sub-same-id".into());
+        let id = "urn:ngsi-ld:Subscription:same";
+        st.store
+            .create(
+                &t,
+                Kind::Subscription,
+                id,
+                json!({"id": id, "type": "Subscription", "entities": [{"type": "Vehicle"}],
+                    "notification": {"endpoint": {"uri": "http://127.0.0.1:9/n"}}}),
+            )
+            .await
+            .expect("seed");
+        let body = json!({"id": id, "description": "same id"}).to_string();
+        let r = update(&st, Kind::Subscription, id, &p, &h, body.as_bytes())
+            .await
+            .expect("updated");
+        assert_eq!(r.status(), StatusCode::NO_CONTENT);
+
+        let out = antares_notifier::Outbound {
+            body: json!({}),
+            accept: "application/json".into(),
+            link: String::new(),
+            receiver_info: Vec::new(),
+            notifier_info: Vec::new(),
+        };
+        let sink = Socket(std::sync::atomic::AtomicUsize::new(0));
+        let sent = antares_notifier::NotificationSink::deliver(
+            &sink,
+            "urn:antares:ws:mine",
+            &out,
+            std::time::Duration::from_secs(1),
+        )
+        .await;
+        assert!(sent.is_ok());
     }
 
     /// ADR-0026 rule 4 (T-4755): a fragment that moves a watch off the

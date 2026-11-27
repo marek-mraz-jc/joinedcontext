@@ -233,4 +233,67 @@ pub(super) mod tests {
         assert!(committed, "a disk with room commits");
         assert!(!failed.is_empty(), "no injected fault reached the write");
     }
+
+    /// A table that the file holds under another key/value type refuses the
+    /// write with the error instead of committing it.
+    #[test]
+    fn a_table_of_another_type_refuses_the_write() {
+        let db = Database::builder()
+            .create_with_backend(Fault::new(Vec::new(), i64::MAX, i64::MAX))
+            .expect("in-memory db");
+        let tx = db.begin_write().expect("tx");
+        let other: TableDefinition<&str, &str> = TableDefinition::new("entities");
+        tx.open_table(other)
+            .expect("table")
+            .insert("k", "v")
+            .expect("row");
+        tx.commit().expect("commit");
+        let shadow = Shadow { db };
+        let err = shadow
+            .try_write_many([(T_ENTITIES, &b"t\0a"[..], Some(&b"{}"[..]))])
+            .expect_err("refused");
+        assert!(!err.is_empty());
+    }
+
+    /// A read the disk refuses while a write commit opens its tables and
+    /// walks their rows returns its error; with a disk that answers it commits.
+    #[test]
+    fn a_refused_read_returns_its_error() {
+        let first = Fault::new(Vec::new(), i64::MAX, i64::MAX);
+        let bytes = first.bytes.clone();
+        let db = Database::builder()
+            .create_with_backend(first)
+            .expect("in-memory db");
+        let doc: &[u8] = b"{}";
+        let keys: Vec<Vec<u8>> = (0..300).map(|i| format!("t\0e{i}").into_bytes()).collect();
+        let seed: Vec<_> = keys
+            .iter()
+            .flat_map(|k| [(T_ENTITIES, k.as_slice(), Some(doc))])
+            .chain([(T_VIEWS, &b"t\0v"[..], Some(doc))])
+            .collect();
+        Shadow { db }.try_write_many(seed).expect("seed commits");
+        let file = bytes.read().expect("bytes").clone();
+        let mut failed = std::collections::BTreeSet::new();
+        let mut committed = false;
+        for reads in 0..300 {
+            let Ok(db) =
+                Database::builder().create_with_backend(Fault::new(file.clone(), reads, i64::MAX))
+            else {
+                continue;
+            };
+            let rows = [
+                (T_VIEWS, &b"t\0v"[..], None),
+                (T_ENTITIES, keys[150].as_slice(), Some(&b"[]"[..])),
+                (T_ENTITIES, keys[7].as_slice(), None),
+            ];
+            match (Shadow { db }).try_write_many(rows) {
+                Ok(()) => committed = true,
+                Err(e) => {
+                    failed.insert(e);
+                }
+            }
+        }
+        assert!(committed, "a disk with room commits");
+        assert!(failed.len() < 300, "the faults are errors, not panics");
+    }
 }

@@ -22,6 +22,11 @@ fn doc(id: &str) -> Value {
     json!({"id": id, "type": "https://uri.etsi.org/ngsi-ld/default-context/T"})
 }
 
+/// A mutate that changes nothing and accepts.
+fn leave(_: &mut Value) -> Result<(), ()> {
+    Ok(())
+}
+
 /// Hold a current-state driver to the contract `antares-api` writes against.
 ///
 /// `a` and `b` are two existing tenants; `prefix` namespaces the ids this
@@ -51,7 +56,7 @@ pub async fn run_current_state_contract(
     // implementation lets a bookkeeping writeback racing a DELETE resurrect
     // the deleted row.
     let missed = d
-        .mutate::<(), ()>(a, Kind::Entity, &gone, |_| Ok(()))
+        .mutate::<(), ()>(a, Kind::Entity, &gone, leave)
         .await
         .expect("mutate");
     assert!(missed.is_none(), "mutate of an absent row must answer None");
@@ -94,6 +99,15 @@ pub async fn run_current_state_contract(
         .await
         .expect("mutate");
     assert_eq!(applied, Some(Ok(())), "a mutate over a present row applies");
+    let unchanged = d
+        .mutate::<(), ()>(a, Kind::Entity, &e1, leave)
+        .await
+        .expect("mutate");
+    assert_eq!(
+        unchanged,
+        Some(Ok(())),
+        "a mutate that changes nothing applies"
+    );
     assert_eq!(
         d.get(a, Kind::Entity, &e1)
             .await
@@ -155,12 +169,17 @@ pub async fn run_current_state_contract(
         "another tenant must not delete the row"
     );
     assert!(
-        d.mutate::<(), ()>(b, Kind::Entity, &e1, |_| Ok(()))
+        d.mutate::<(), ()>(b, Kind::Entity, &e1, leave)
             .await
             .expect("mutate")
             .is_none(),
         "another tenant must not mutate the row"
     );
+    // b holds a row of its own, so its list is not empty and is checked row by row
+    let own = format!("urn:ngsi-ld:{prefix}:b-only");
+    d.upsert(b, Kind::Entity, &own, doc(&own))
+        .await
+        .expect("upsert");
     assert!(
         d.list(b, Kind::Entity)
             .await
@@ -169,6 +188,7 @@ pub async fn run_current_state_contract(
             .all(|r| r["id"] != e1.as_str()),
         "another tenant must not list the row"
     );
+    d.delete(b, Kind::Entity, &own).await.expect("delete");
 
     // Kinds are separate namespaces: the same id under two kinds is two rows.
     assert!(
@@ -763,13 +783,22 @@ pub async fn run_current_state_contract(
         "a refused delete leaves the document in place"
     );
     // 4.14: the predicate never even runs for another tenant's document.
+    let reached = std::sync::atomic::AtomicBool::new(false);
+    let notice = |_: &Value| {
+        reached.store(true, std::sync::atomic::Ordering::SeqCst);
+        true
+    };
+    assert!(notice(&doc(&cond)));
+    reached.store(false, std::sync::atomic::Ordering::SeqCst);
     assert!(
-        !d.delete_entity_if(b, &cond, &|_| panic!(
-            "another tenant's document reached the predicate"
-        ))
-        .await
-        .expect("delete_entity_if"),
+        !d.delete_entity_if(b, &cond, &notice)
+            .await
+            .expect("delete_entity_if"),
         "an Entity of another tenant is absent here"
+    );
+    assert!(
+        !reached.load(std::sync::atomic::Ordering::SeqCst),
+        "another tenant's document reached the predicate"
     );
     assert!(
         d.get(a, Kind::Entity, &cond).await.expect("get").is_some(),
@@ -1323,10 +1352,7 @@ pub async fn run_temporal_contract(
         !d.delete(a, &gone).await.expect("delete"),
         "delete of an absent temporal document must answer false"
     );
-    let missed = d
-        .mutate::<(), ()>(a, &gone, |_| Ok(()))
-        .await
-        .expect("mutate");
+    let missed = d.mutate::<(), ()>(a, &gone, leave).await.expect("mutate");
     assert!(
         missed.is_none(),
         "mutate of an absent document must answer None"
@@ -1343,6 +1369,12 @@ pub async fn run_temporal_contract(
     assert!(
         !d.create(a, &e1, doc(&e1)).await.expect("create"),
         "a create over an existing id reports false"
+    );
+    let unchanged = d.mutate::<(), ()>(a, &e1, leave).await.expect("mutate");
+    assert_eq!(
+        unchanged,
+        Some(Ok(())),
+        "a mutate that changes nothing applies"
     );
     let rejected = d
         .mutate::<(), &'static str>(a, &e1, |v| {
@@ -1370,6 +1402,8 @@ pub async fn run_temporal_contract(
         !d.delete(b, &e1).await.expect("delete"),
         "another tenant must not delete it"
     );
+    let own = format!("urn:ngsi-ld:{prefix}:tb-only");
+    d.upsert(b, &own, doc(&own)).await.expect("upsert");
     assert!(
         d.list(b)
             .await
@@ -1378,6 +1412,7 @@ pub async fn run_temporal_contract(
             .all(|r| r["id"] != e1.as_str()),
         "another tenant must not list it"
     );
+    d.delete(b, &own).await.expect("delete");
 
     assert!(
         d.delete(a, &e1).await.expect("delete"),

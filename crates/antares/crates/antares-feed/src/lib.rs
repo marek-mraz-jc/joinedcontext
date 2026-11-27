@@ -533,9 +533,12 @@ mod tests {
                 skipped: 0,
             };
             let mut headers = HeaderMap::new();
-            if let Ok(v) = since.parse() {
-                headers.insert(IF_MODIFIED_SINCE, v);
-            }
+            headers.insert(
+                IF_MODIFIED_SINCE,
+                since
+                    .parse()
+                    .unwrap_or(axum::http::HeaderValue::from_static("")),
+            );
             let reply = page.reply(&headers);
             let modified = reply
                 .headers()

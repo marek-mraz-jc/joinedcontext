@@ -478,6 +478,13 @@ mod tests {
         assert!(wire.lock().is_empty());
     }
 
+    #[test]
+    fn the_process_relay_is_set_once_and_the_first_stays() {
+        set_relay(Arc::new(Wire::default()));
+        set_relay(Arc::new(Wire::default()));
+        assert!(streams().relay.get().is_some());
+    }
+
     #[tokio::test]
     async fn the_sink_takes_only_its_own_stream_while_it_makes_it() {
         let uri = format!("{SCHEME}:abc");

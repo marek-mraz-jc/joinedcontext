@@ -416,6 +416,8 @@ dependencies = [
  "antares-api",
  "antares-ops",
  "antares-sql",
+ "antares-store",
+ "async-trait",
  "axum",
  "http-body-util",
  "jc-time",

@@ -37,28 +37,46 @@ impl Surface for Shown {
         Value::Null
     }
     fn router(&self, ops: Ops) -> Router {
-        Router::new().route(
-            "/{view}/{op}",
-            get(
-                move |Path((id, op)): Path<(String, String)>, caller: Caller| async move {
-                    let Some(view) = ops.view(&id) else {
-                        return axum::Json(json!("no view"));
-                    };
+        let alone = ops.clone();
+        Router::new()
+            .route(
+                "/alone/{view}/{op}",
+                get(move |Path((id, op)): Path<(String, String)>| async move {
                     let op = OperationId::from_id(&op).unwrap_or(OperationId::Notification);
-                    let asked = view
-                        .visible(&caller, op, &[CAR.to_owned()], &[SPEED.to_owned()])
-                        .await;
-                    axum::Json(match asked {
-                        Ok(v) => json!([
-                            v.shows_type("Car"),
-                            v.shows_attribute(CAR, SPEED),
-                            v.shows_attribute(CAR, COLOUR),
-                        ]),
-                        Err(refusal) => json!(refusal.status().as_u16()),
-                    })
-                },
-            ),
-        )
+                    axum::Json(alone.view(&id).map_or(json!("no view"), |view| {
+                        match view.visible_to_view(op) {
+                            Ok(v) => json!([
+                                v.shows_type("Car"),
+                                v.shows_attribute(CAR, SPEED),
+                                v.shows_attribute(CAR, COLOUR),
+                            ]),
+                            Err(refusal) => json!(refusal.status().as_u16()),
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/{view}/{op}",
+                get(
+                    move |Path((id, op)): Path<(String, String)>, caller: Caller| async move {
+                        let Some(view) = ops.view(&id) else {
+                            return axum::Json(json!("no view"));
+                        };
+                        let op = OperationId::from_id(&op).unwrap_or(OperationId::Notification);
+                        let asked = view
+                            .visible(&caller, op, &[CAR.to_owned()], &[SPEED.to_owned()])
+                            .await;
+                        axum::Json(match asked {
+                            Ok(v) => json!([
+                                v.shows_type("Car"),
+                                v.shows_attribute(CAR, SPEED),
+                                v.shows_attribute(CAR, COLOUR),
+                            ]),
+                            Err(refusal) => json!(refusal.status().as_u16()),
+                        })
+                    },
+                ),
+            )
     }
 }
 
@@ -194,6 +212,31 @@ async fn a_metadata_narrowing_does_not_refuse_what_is_visible() {
     assert_eq!(
         get_json(&app, "/x/visible/cars/retrieve_entity_type_info").await,
         json!([true, true, true])
+    );
+}
+
+/// SHR-16: the view's own projection, the engine not asked: what `Narrowing` hides or denies
+/// stays shown, and an operation the view leaves out is still not allowed.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_view_alone_shows_what_the_engine_would_narrow() {
+    let app = broker(Some(Arc::new(Narrowing))).await.expect("a broker");
+    for op in ["retrieve_entity_type_info", "retrieve_attribute_info"] {
+        assert_eq!(
+            get_json(&app, &format!("/x/visible/alone/cars/{op}")).await,
+            json!([true, true, true]),
+            "{op}"
+        );
+    }
+    for op in ["retrieve_entity_type_details", "notification"] {
+        assert_eq!(
+            get_json(&app, &format!("/x/visible/alone/cars/{op}")).await,
+            json!(405),
+            "{op}"
+        );
+    }
+    assert_eq!(
+        get_json(&app, "/x/visible/alone/nosuch/retrieve_entity_type_info").await,
+        json!("no view")
     );
 }
 

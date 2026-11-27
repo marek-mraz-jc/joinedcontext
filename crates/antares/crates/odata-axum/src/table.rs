@@ -204,10 +204,9 @@ async fn read(
             decided(table.as_ref(), scope, Operation::Read, Some(&key))
                 .await
                 .map_err(fail)?;
-            let by_key = match key_options(table.info(), &key, options.select.clone()) {
-                Ok(by_key) => by_key,
-                Err(e) => return Err(fail(refused(e))),
-            };
+            let by_key = key_options(table.info(), &key, options.select.clone())
+                .map_err(refused)
+                .map_err(fail)?;
             let answer = run(table.as_ref(), &by_key, scope, served.max_page)
                 .await
                 .map_err(fail)?;
@@ -527,10 +526,9 @@ fn target(
                     "a write to one entity takes no query option but dryRun",
                 ));
             }
-            let filter = match key_options(table.info(), &key, None) {
-                Ok(by_key) => by_key.filter,
-                Err(e) => return Err(refused(e)),
-            };
+            let filter = key_options(table.info(), &key, None)
+                .map_err(refused)?
+                .filter;
             Ok((
                 QueryOptions {
                     filter,

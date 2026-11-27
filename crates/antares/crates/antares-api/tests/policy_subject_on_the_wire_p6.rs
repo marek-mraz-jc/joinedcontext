@@ -33,7 +33,11 @@ use std::sync::{Arc, Mutex};
 use tower::ServiceExt;
 
 fn subject_header() -> &'static str {
-    std::env::set_var("ANTARES_POLICY_SUBJECT_HEADERS", "X-Subject");
+    // a name no header can carry is listed beside it and carries nothing
+    std::env::set_var(
+        "ANTARES_POLICY_SUBJECT_HEADERS",
+        "X-Subject, not a header name",
+    );
     "X-Subject"
 }
 

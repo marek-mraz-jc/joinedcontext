@@ -2454,6 +2454,70 @@ mod type_rules_memo_tests {
 }
 
 #[cfg(test)]
+mod keyvalues_join {
+    use crate::AppState;
+    use axum::body::Body;
+    use axum::http::{Request, StatusCode};
+    use serde_json::{json, Value};
+    use tower::ServiceExt;
+
+    async fn call(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
+        let b = Request::builder().method(method).uri(uri);
+        let req = match body {
+            Some(v) => {
+                let text = v.to_string();
+                b.header("Content-Type", "application/json")
+                    .header("Content-Length", text.len())
+                    .body(Body::from(text))
+            }
+            None => b.body(Body::empty()),
+        }
+        .expect("request");
+        let res = crate::router(st.clone())
+            .oneshot(req)
+            .await
+            .expect("response");
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    /// 4.5.23 step 2 with the keyValues representation: the bare URI of a
+    /// Relationship is replaced by the Linked Entity it names.
+    #[tokio::test]
+    async fn an_inline_join_replaces_a_key_values_relationship_by_its_entity() {
+        let st = AppState::new("repr-kv-join".into());
+        for doc in [
+            json!({"id": "urn:ngsi-ld:Room:kv-1", "type": "Room"}),
+            json!({"id": "urn:ngsi-ld:Floor:kv-1", "type": "Floor",
+                   "room": {"type": "Relationship", "object": "urn:ngsi-ld:Room:kv-1"}}),
+        ] {
+            let (status, body) = call(&st, "POST", "/ngsi-ld/v1/entities", Some(doc)).await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:Floor:kv-1?format=keyValues&join=inline&joinLevel=1",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["room"]["id"], "urn:ngsi-ld:Room:kv-1", "{body}");
+    }
+}
+
+#[cfg(test)]
 mod shaping_edges {
     use super::*;
     use antares_jsonld::Loader;
@@ -2487,6 +2551,51 @@ mod shaping_edges {
             vec!["speed", "id", "type"],
             "colour is not allowed; the frame comes back"
         );
+    }
+
+    /// ADR-0020: an engine pick with no request pick of its own becomes the
+    /// pick, the Entity frame added.
+    #[test]
+    fn a_policy_pick_alone_becomes_the_pick_with_its_frame() {
+        let ctx = Loader::new().core();
+        let f = crate::policy::Filter {
+            pick: vec![format!("{T}speed")],
+            ..Default::default()
+        };
+        let mut pick = None;
+        let mut omit = None;
+        narrow_projection(&mut pick, &mut omit, &f, &ctx).expect("narrowed");
+        let raws: Vec<String> = pick.iter().flatten().map(|n| n.raw.clone()).collect();
+        assert_eq!(raws, vec![format!("{T}speed"), "id".into(), "type".into()]);
+        assert!(omit.is_none());
+    }
+
+    /// A closing brace before its opening one is refused, though the braces
+    /// count out even.
+    #[test]
+    fn a_projection_closing_before_it_opens_is_refused() {
+        let e = parse_projection("}a{", &Loader::new().core()).expect_err("refused");
+        assert!(
+            e.to_string().contains("invalid attribute projection"),
+            "{e}"
+        );
+    }
+
+    /// The notification's compacted narrowing carries the per-type omissions
+    /// under the compact type name.
+    #[test]
+    fn the_compacted_filter_compacts_the_per_type_omissions() {
+        let ctx = Loader::new().core();
+        let f = crate::policy::Filter {
+            omit_by_type: std::collections::BTreeMap::from([(
+                format!("{T}Car"),
+                vec![format!("{T}speed")],
+            )]),
+            ..Default::default()
+        };
+        let got = compacted_filter(&f, &ctx);
+        assert_eq!(got.omit_by_type.len(), 1, "{:?}", got.omit_by_type);
+        assert!(got.omit_by_type.keys().all(|t| !t.starts_with("https://")));
     }
 
     /// 4.21: a term opening a brace it does not close at its end, a term

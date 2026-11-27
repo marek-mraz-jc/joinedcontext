@@ -188,3 +188,21 @@ async fn a_failing_confirmation_store_answers_500_and_writes_nothing() -> Result
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_question_the_store_cannot_keep_is_refused_and_writes_nothing() -> Result<(), String> {
+    let (_broker, app, fault) = writes().await?;
+    let car = json!({"id": "urn:ngsi-ld:Car:f2", "type": "Car",
+        "speed": {"type": "Property", "value": 5}});
+    fault.fail(|method, _, _| method == "confirmation_ask");
+    let asked = create(&app, "alice", &car, &json!({})).await;
+    assert!(
+        refusal(&asked).contains("could not be read or kept now; nothing was written"),
+        "{asked}"
+    );
+    assert_eq!(question(&asked).0, "", "no question was opened: {asked}");
+    fault.fail(|_, _, _| false);
+    let (id, _) = question(&create(&app, "alice", &car, &json!({})).await);
+    assert_ne!(id, "", "healed: a question is opened");
+    Ok(())
+}

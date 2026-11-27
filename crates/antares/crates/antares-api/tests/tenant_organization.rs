@@ -474,6 +474,134 @@ async fn a_stored_organization_that_disagrees_with_the_name_refuses() {
     }
 }
 
+/// The check is no check while it is off, inside an in-process call, or for a
+/// reserved name no caller vouched for; a refused Tenant whose name no store
+/// accepts answers as a malformed one.
+#[tokio::test]
+async fn the_organization_check_admits_what_it_does_not_cover() {
+    use antares_api::admin_auth::{organization_admits, tenant_door, OrganizationRefusal};
+    let off = state(false).await;
+    let none = axum::http::HeaderMap::new();
+    assert_eq!(organization_admits(&off, Some("plain"), &none), Ok(()));
+
+    let st = state(true).await;
+    assert_eq!(
+        organization_admits(&st, Some("plain"), &none),
+        Err(OrganizationRefusal::Malformed),
+        "a named Tenant has the shape even for the admin bearer"
+    );
+    assert_eq!(organization_admits(&st, Some("snap-x"), &none), Ok(()));
+    assert!(tenant_door(&st, Some("snap-x"), &none, false)
+        .await
+        .is_none());
+    let in_process =
+        antares_api::state::at_depth(1, async { organization_admits(&st, Some("plain"), &none) })
+            .await;
+    assert_eq!(in_process, Ok(()));
+
+    let mut vouched = axum::http::HeaderMap::new();
+    for (k, v) in member("sk_c") {
+        vouched.insert(k, axum::http::HeaderValue::from_static(v));
+    }
+    let refused = tenant_door(&st, Some("sk_b__x.y"), &vouched, false)
+        .await
+        .expect("refused");
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+}
+
+/// A subject header whose value is no text is not carried; the others are.
+#[tokio::test]
+async fn a_subject_header_that_is_not_text_is_left_out_of_the_subject() {
+    let _ = state(true).await;
+    let mut headers = axum::http::HeaderMap::new();
+    headers.append(
+        "x-jc-subject",
+        axum::http::HeaderValue::from_bytes(b"\xff").expect("opaque bytes"),
+    );
+    headers.append(
+        "x-jc-subject",
+        axum::http::HeaderValue::from_static("alice"),
+    );
+    let subject = antares_api::policy::subject_of(&antares_model::TenantId::default(), &headers);
+    assert_eq!(
+        subject.headers,
+        vec![("x-jc-subject".to_owned(), "alice".to_owned())]
+    );
+}
+
+/// A store that cannot say a Tenant's standing, or whether it exists, answers
+/// its error and serves nothing.
+#[tokio::test]
+async fn a_store_that_cannot_vouch_for_the_tenant_refuses_the_request() {
+    use crate::common::faults::{store_down, Faults, StoreFaults};
+    use antares_api::admin_auth::tenant_door;
+    let none = axum::http::HeaderMap::new();
+    for (failing, must_exist) in [("tenant_standing", false), ("tenant_exists", true)] {
+        let mut st = state(true).await;
+        st.store = std::sync::Arc::new(StoreFaults {
+            inner: st.store.clone(),
+            faults: Faults::new(move |m, _| (m == failing).then(store_down)),
+        });
+        let refused = tenant_door(&st, Some("sk_b__x"), &none, must_exist)
+            .await
+            .expect("refused");
+        assert_eq!(
+            refused.status(),
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "{failing}"
+        );
+    }
+}
+
+/// The door of a surface that creates no Tenant: an unnamed request and an
+/// existing Tenant pass, an absent one is unknown, two names are refused.
+#[tokio::test]
+async fn the_existing_tenant_door_serves_only_tenants_the_store_holds() {
+    let st = state(true).await;
+    let app = axum::Router::new()
+        .route("/", axum::routing::get(|| async { "served" }))
+        .layer(axum::middleware::from_fn_with_state(
+            st.clone(),
+            antares_api::admin_auth::existing_tenant_layer,
+        ));
+    let ask = |names: &[&str]| {
+        let mut b = Request::builder().uri("/");
+        for n in names {
+            b = b.header("NGSILD-Tenant", *n);
+        }
+        b.body(Body::empty()).expect("request")
+    };
+    let served = app.clone().oneshot(ask(&[])).await.expect("response");
+    assert_eq!(served.status(), StatusCode::OK);
+    let absent = app
+        .clone()
+        .oneshot(ask(&["sk_b__nobody"]))
+        .await
+        .expect("response");
+    assert_eq!(absent.status(), StatusCode::NOT_FOUND);
+    let (s, ..) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some("sk_b__x"),
+        &member("sk_b"),
+        Some(room("urn:ngsi-ld:Room:1")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let held = app
+        .clone()
+        .oneshot(ask(&["sk_b__x"]))
+        .await
+        .expect("response");
+    assert_eq!(held.status(), StatusCode::OK);
+    let twice = app
+        .oneshot(ask(&["sk_b__x", "sk_b__y"]))
+        .await
+        .expect("response");
+    assert_eq!(twice.status(), StatusCode::BAD_REQUEST);
+}
+
 /// Design 10.1: a name the rename moved away is neither served nor created,
 /// by a member or by the admin bearer, and answers as an unknown Tenant.
 #[tokio::test]

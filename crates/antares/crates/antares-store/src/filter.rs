@@ -1032,6 +1032,9 @@ mod id_literal_tests {
         // early is no anchored rule, so nothing is pushed down from it
         assert_eq!(sql("urn2|1-x)n|x(%@b"), None);
         assert_eq!(id_pattern_required("urn:x:a)(b"), None);
+        // a pattern that matches no id at all reads as no single sequence
+        assert_eq!(id_pattern_required("[^\\s\\S]"), None);
+        assert_eq!(id_pattern_segments("[^\\s\\S]"), None);
         assert!(id_pattern_segments("urn:x:a)(:b").is_none());
         // every bounded repetition form a rule writes
         assert_eq!(

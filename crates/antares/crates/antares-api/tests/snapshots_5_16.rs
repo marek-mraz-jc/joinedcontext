@@ -253,6 +253,37 @@ async fn clause_5_16_1_empty_result_yields_empty_status() {
     assert_eq!(list, json!([]), "{list}");
 }
 
+/// 5.16.1 step 4: one query with results and one without → snapshotStatus
+/// "partial", each query with its own ExecutionResultDetails entry.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_16_1_mixed_results_yield_partial_status() {
+    let st = state().await;
+    create_vehicle(&st, "urn:ngsi-ld:Vehicle:p1", 10).await;
+    let snap = json!({"type": "Snapshot", "snapshotQueries": [
+        {"type": "Query", "entities": [{"type": "Vehicle"}]},
+        {"type": "Query", "entities": [{"type": "Nothing"}]}]})
+    .to_string();
+    let (status, headers, body) =
+        send_h(&st, "POST", "/ngsi-ld/v1/snapshots", Some(snap), &[]).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let loc = headers
+        .get("Location")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let ready = wait_ready(&st, &loc).await;
+    assert_eq!(ready["snapshotStatus"], "partial", "{ready}");
+    assert_eq!(
+        ready["snapshotQueriesDetails"][0]["resultStatus"], "success",
+        "{ready}"
+    );
+    assert_eq!(
+        ready["snapshotQueriesDetails"][1]["resultStatus"], "empty",
+        "{ready}"
+    );
+}
+
 /// 5.2.41 gates: at least one of snapshotQueries/snapshotTemporalQueries;
 /// snapshotQueries entries must NOT carry temporalQ; priority is 1..=10.
 #[tokio::test(flavor = "multi_thread")]
