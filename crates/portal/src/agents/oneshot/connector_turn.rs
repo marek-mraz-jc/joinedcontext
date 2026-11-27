@@ -296,13 +296,9 @@ impl Driver {
         }
     }
 
-    /// The turn's answer said in the chat and returned for the transcript.
+    /// The turn's answer said in the chat and returned for the transcript. Never empty: an
+    /// answer with no call and no text is refused as `CallError::Empty` before it gets here.
     async fn said(&self, prose: &str) -> Result<String, String> {
-        let prose = if prose.is_empty() {
-            "I have no answer to that; say what you want to do in this project."
-        } else {
-            prose
-        };
         self.thought(prose).await?;
         Ok(prose.to_owned())
     }
@@ -526,6 +522,58 @@ mod tests {
         let second = bodies[1].to_string();
         assert!(second.contains("joinedcontext.com/errors/"), "{second}");
         assert!(!second.contains("not one of this conversation"), "{second}");
+    }
+
+    /// A read the segment offers runs, its output goes back to the model as a step, and a
+    /// provider that reports no input tokens is counted by the length of what was sent.
+    #[tokio::test]
+    async fn an_offered_read_runs_and_its_output_goes_back() {
+        let server = model(
+            calls("jc_resource_list", json!({ "kind": "Endpoint" }), 0),
+            answers("none yet"),
+        )
+        .await;
+        let (driver, state) = as_segment(&server.uri(), "data-read");
+        let answer = driver.connector_turn(&[], "list them", "data-read").await;
+        assert_eq!(answer.as_deref(), Ok("none yet"));
+        let steps = tool_events(&state).await;
+        assert!(
+            steps
+                .iter()
+                .any(|step| step["tool"] == "jc_resource_list" && step["status"] == "ok"),
+            "{steps:?}"
+        );
+    }
+
+    /// A tool call whose input is no object is read as no arguments; an answer with neither a
+    /// call nor text is refused as empty, never said as a blank line.
+    #[tokio::test]
+    async fn an_input_that_is_no_object_is_no_arguments_and_an_empty_answer_is_refused() {
+        let server = model(calls("jc_resource_list", json!("x"), 10), answers(" ")).await;
+        let (driver, _) = as_segment(&server.uri(), "data-read");
+        let answer = driver.connector_turn(&[], "list", "data-read").await;
+        assert_eq!(answer, Err("the model's answer carried no text".to_owned()));
+        // The tool round, then the empty answer and the one retry it gets.
+        assert_eq!(sent(&server).await.len(), 3);
+    }
+
+    /// A model that does not answer within the turn's timeout ends it with what to do.
+    #[tokio::test]
+    async fn a_model_past_the_timeout_ends_the_turn_with_what_to_do() {
+        let server = model(
+            answers("late").set_delay(std::time::Duration::from_secs(5)),
+            answers("late"),
+        )
+        .await;
+        let (mut driver, _) = as_segment(&server.uri(), "data-read");
+        driver.answer_timeout = std::time::Duration::from_millis(100);
+        let answer = driver.connector_turn(&[], "anything", "data-read").await;
+        assert!(
+            answer
+                .as_ref()
+                .is_err_and(|why| why.contains("gave no answer within")),
+            "{answer:?}"
+        );
     }
 
     /// A model that keeps calling stops at the step ceiling and the person reads why.

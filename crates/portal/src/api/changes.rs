@@ -4773,10 +4773,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err_no_confirm {
-            ApiError::BadRequest(msg) => assert!(msg.contains("mobility")),
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
+        assert!(
+            matches!(&err_no_confirm, ApiError::BadRequest(msg) if msg.contains("mobility")),
+            "{err_no_confirm:?}"
+        );
 
         // 2. Wrong confirm body -> 400
         let wrong_body = Bytes::from(r#"{"confirm":"wrong-name"}"#);
@@ -4788,10 +4788,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err_wrong {
-            ApiError::BadRequest(msg) => assert!(msg.contains("mobility")),
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
+        assert!(
+            matches!(&err_wrong, ApiError::BadRequest(msg) if msg.contains("mobility")),
+            "{err_wrong:?}"
+        );
 
         // 3. Correct confirm body -> 202 Accepted. No review is posted: the forge token is the
         //    author and the merge message carries the approver instead.
@@ -4886,9 +4886,8 @@ mod tests {
             .list("ovzdusie", &filter)
             .await
             .expect("feed");
-        let [blank, capped] = page.items.as_slice() else {
-            panic!("two change.rejected events, got {:?}", page.items);
-        };
+        assert_eq!(page.items.len(), 2, "two change.rejected events");
+        let (blank, capped) = (&page.items[0], &page.items[1]);
         assert_eq!(capped.correlation_id.as_deref(), Some("chg-00000004"));
         assert_eq!(capped.details["rejectedBy"], json!("eva@bb.sk"));
         assert_eq!(capped.details["object"], json!("endpoints/public-air"));

@@ -668,6 +668,13 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A store that fails is answered as 503, never as the database's own words.
+    #[test]
+    fn a_failed_host_registry_is_unavailable() {
+        let refused = db(sqlx::Error::PoolTimedOut);
+        assert!(matches!(refused, ApiError::Unavailable(_)), "{refused:?}");
+    }
+
     const RESERVED: &[&str] = &["api", "idm", "login", "opendata"];
 
     fn bases() -> Vec<String> {
@@ -675,10 +682,8 @@ mod tests {
     }
 
     fn field(err: ApiError) -> String {
-        match err {
-            ApiError::Unprocessable { errors, .. } => errors.join(" "),
-            other => panic!("not 422: {other:?}"),
-        }
+        assert!(!err.field_errors().is_empty(), "not 422: {err:?}");
+        err.field_errors().join(" ")
     }
 
     #[test]

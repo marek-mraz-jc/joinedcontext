@@ -710,6 +710,43 @@ mod tests {
         assert!(kind_schema("Nope").is_err());
     }
 
+    /// A schema that names itself stops at the depth bound, a number steps into a list, a
+    /// schema that does not compile refuses the manifest, and a kind the Portal does not know
+    /// has its home and names in the project.
+    #[test]
+    fn a_self_naming_schema_ends_and_an_unknown_kind_lives_in_the_project() {
+        let looping =
+            json!({ "$ref": "#", "properties": { "steps": { "items": { "type": "object" } } } });
+        assert!(has_field(&looping, "steps.0"));
+        assert!(!has_field(&looping, "steps.x"));
+        let broken = refused_fields(&json!({ "type": 12 }), &json!({}));
+        assert!(broken.is_err(), "{broken:?}");
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let identity = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-jana".into(),
+            username: "jana".into(),
+            email: None,
+            name: None,
+            roles: vec![],
+            groups: vec![],
+            second_factor: false,
+        };
+        let asker = Asker {
+            state: &state,
+            identity: &identity,
+            project: "helsinki",
+            connector: None,
+        };
+        assert_eq!(asker.home("Nope"), "helsinki");
+        assert!(asker.names_of("Nope").is_empty());
+        let refused = for_tab(&asker, "jc_ui_submit", &json!({}));
+        assert_eq!(
+            refused.err().as_deref(),
+            Some("'jc_ui_submit' is not a browser action")
+        );
+    }
+
     #[test]
     fn a_text_is_one_bounded_line() {
         let args = json!({ "m": "look <b>here</b>", "n": "two\nlines", "o": "x".repeat(300) });

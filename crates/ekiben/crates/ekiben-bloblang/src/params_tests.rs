@@ -71,10 +71,11 @@ fn the_table_is_the_recorded_bento_spec() {
 }
 
 fn compile_err(mapping: &str) -> String {
-    match Environment::new().compile_mapping(mapping) {
-        Ok(_) => panic!("{mapping} compiled"),
-        Err(e) => e.to_string(),
-    }
+    Environment::new()
+        .compile_mapping(mapping)
+        .err()
+        .expect("compiled")
+        .to_string()
 }
 
 /// Each message is what `bento blobl` 1.22 prints for the same mapping.
@@ -133,7 +134,7 @@ fn calls_outside_the_spec_are_refused_at_parse_as_bento_does() {
 #[test]
 fn every_parameter_is_taken_under_its_spec_name() {
     let env = Environment::new();
-    let mut failures = Vec::new();
+    let mut calls = Vec::new();
     for (kind, spec) in [("function", FUNCTIONS), ("method", METHODS)] {
         for (name, variadic, params) in spec {
             let known = match kind {
@@ -159,20 +160,22 @@ fn every_parameter_is_taken_under_its_spec_name() {
                 _ => format!("this.{name}({})", args.join(", ")),
             };
             let mapping = format!("root = {call}");
-            let err = match env.compile_mapping(&mapping) {
-                Err(e) => Some(e.to_string()),
-                Ok(exec) => exec
-                    .exec_on_value(Value::String("a".to_string()))
+            let compiled = env.compile_mapping(&mapping);
+            let ran = compiled.as_ref().ok().and_then(|exec| {
+                exec.exec_on_value(Value::String("a".to_string()))
                     .err()
-                    .map(|e| e.to_string()),
-            };
-            if let Some(e) = err {
-                if e.contains("unknown parameter") || e.contains("missing parameter") {
-                    failures.push(format!("{mapping}: {e}"));
-                }
-            }
+                    .as_ref()
+                    .map(ToString::to_string)
+            });
+            let err = compiled.err().as_ref().map(ToString::to_string).or(ran);
+            calls.push(format!("{mapping}: {}", err.unwrap_or_default()));
         }
     }
+    let failures: Vec<String> = calls
+        .iter()
+        .filter(|e| e.contains("unknown parameter") || e.contains("missing parameter"))
+        .cloned()
+        .collect();
     assert!(
         failures.is_empty(),
         "{} calls refuse a spec name:\n{}",

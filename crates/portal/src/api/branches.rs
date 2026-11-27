@@ -278,6 +278,13 @@ pub fn router() -> Router<AppState> {
 mod tests {
     use super::*;
 
+    /// A store that fails is answered as 503, never as the database's own words.
+    #[test]
+    fn a_failed_branch_registry_is_unavailable() {
+        let refused = unread(sqlx::Error::PoolTimedOut);
+        assert!(matches!(refused, ApiError::Unavailable(_)), "{refused:?}");
+    }
+
     #[test]
     fn settings_default_and_refuse_out_of_range_values() {
         assert_eq!(parse(None, None), Ok(BranchSettings::default()));

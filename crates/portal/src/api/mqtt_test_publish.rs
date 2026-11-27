@@ -968,9 +968,13 @@ mod tests {
     #[test]
     fn each_member_at_fault_is_named() {
         assert!(validate(&spec(), &body("cam-west", "cameras/x", "{}")).is_ok());
-        let fault = |b: TestPublish| match validate(&spec(), &b) {
-            Err(ApiError::Unprocessable { errors, .. }) => errors,
-            other => panic!("{other:?}"),
+        let fault = |b: TestPublish| {
+            let errors = validate(&spec(), &b)
+                .expect_err("a 422")
+                .field_errors()
+                .to_vec();
+            assert!(!errors.is_empty(), "a 422 names its fields");
+            errors
         };
         assert!(fault(body("cam-north", "cameras/x", ""))[0].starts_with("account: "));
         for topic in ["", "cameras/+", "cameras/#", "$SYS/x"] {

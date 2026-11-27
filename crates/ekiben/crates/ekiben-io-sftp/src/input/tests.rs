@@ -173,10 +173,10 @@ fn a_watcher_names_a_cache_that_exists() {
         config: with(json!({"watcher": {"enabled": true, "cache": "seen"}})),
         processors: Vec::new(),
     };
-    match SftpInput::from_config(&conf, &ctx(OrgQuotas::default())) {
-        Ok(_) => panic!("built without the cache resource"),
-        Err(e) => assert!(e.to_string().contains("seen"), "{e}"),
-    }
+    let e = SftpInput::from_config(&conf, &ctx(OrgQuotas::default()))
+        .err()
+        .expect("built without the cache resource");
+    assert!(e.to_string().contains("seen"), "{e}");
 }
 
 #[tokio::test]
@@ -190,10 +190,11 @@ async fn a_private_server_is_refused_before_any_connection() {
     let c = ctx(OrgQuotas::default());
     let mut i = SftpInput::from_config(&conf, &c).expect("builds");
     let started = std::time::Instant::now();
-    let e = match i.read_batch(&c).await {
-        Ok(_) => panic!("read from a private address"),
-        Err(e) => e,
-    };
+    let e = i
+        .read_batch(&c)
+        .await
+        .err()
+        .expect("read from a private address");
     assert!(matches!(e, CoreError::AccessDenied { .. }), "{e}");
     assert!(started.elapsed() < Duration::from_secs(2));
     assert!(!i.is_connected());
@@ -227,16 +228,18 @@ async fn a_server_that_is_not_ssh_fails_the_handshake_by_name() {
     let port = listener.local_addr().expect("addr").port();
     tokio::spawn(async move {
         use tokio::io::AsyncWriteExt;
-        while let Ok((mut sock, _)) = listener.accept().await {
+        if let Ok((mut sock, _)) = listener.accept().await {
             let _ = sock.write_all(b"HTTP/1.1 400 Bad Request\r\n\r\n").await;
         }
     });
     let (mut i, c) = local_input(port, json!({}));
     assert_eq!((i.input_type(), i.label()), ("sftp", "upload"));
-    let e = match i.read_batch(&c).await {
-        Ok(_) => panic!("read from a web server"),
-        Err(e) => e.to_string(),
-    };
+    let e = i
+        .read_batch(&c)
+        .await
+        .err()
+        .expect("read from a web server")
+        .to_string();
     assert!(e.contains("sftp input: ssh handshake"), "{e}");
     assert!(!i.is_connected());
     i.close().await.expect("nothing to close");
@@ -248,18 +251,16 @@ async fn a_server_that_never_answers_times_out_the_handshake() {
         .await
         .expect("bind");
     let port = listener.local_addr().expect("addr").port();
-    tokio::spawn(async move {
-        let mut held = Vec::new();
-        while let Ok((sock, _)) = listener.accept().await {
-            held.push(sock);
-        }
-    });
+    // The accepted socket stays open in the task's output until the test ends.
+    let _held = tokio::spawn(async move { listener.accept().await });
     let (mut i, c) = local_input(port, json!({}));
     let started = std::time::Instant::now();
-    let e = match i.read_batch(&c).await {
-        Ok(_) => panic!("read from a silent server"),
-        Err(e) => e.to_string(),
-    };
+    let e = i
+        .read_batch(&c)
+        .await
+        .err()
+        .expect("read from a silent server")
+        .to_string();
     assert!(
         e.contains("did not complete the SSH handshake in 15 s"),
         "{e}"
@@ -274,10 +275,11 @@ async fn a_refused_connection_fails_a_listing_at_once() {
     let port = closed.local_addr().expect("addr").port();
     drop(closed);
     let (mut i, c) = local_input(port, json!({}));
-    let e = match i.read_batch(&c).await {
-        Ok(_) => panic!("read from a closed port"),
-        Err(e) => e,
-    };
+    let e = i
+        .read_batch(&c)
+        .await
+        .err()
+        .expect("read from a closed port");
     assert!(
         !matches!(e, CoreError::Config(_) | CoreError::AccessDenied { .. }),
         "{e}"

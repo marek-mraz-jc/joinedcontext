@@ -752,6 +752,7 @@ async fn the_ingest_listener_serves_notifications_beside_http_server_inputs() {
     for request in [
         client.post(format!("{base}/other")),
         client.get(format!("{base}/notify")),
+        client.post(format!("http://{addr}/")),
     ] {
         let answer = request.send().await.expect("answered");
         assert_eq!(answer.status().as_u16(), 404);
