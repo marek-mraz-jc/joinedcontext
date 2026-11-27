@@ -10,7 +10,10 @@ fuzz_target!(|data: &[u8]| {
         let mut seen = std::collections::HashSet::new();
         for (path, _) in &files {
             assert!(path.starts_with("projects/zilina/"), "{path}");
-            assert!(!path.split('/').any(|s| s == ".." || s.is_empty()), "{path}");
+            assert!(
+                !path.split('/').any(|s| s == ".." || s.is_empty()),
+                "{path}"
+            );
             assert!(seen.insert(path.clone()), "{path} twice");
         }
     }
