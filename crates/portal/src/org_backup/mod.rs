@@ -1336,22 +1336,23 @@ pub async fn run(state: &AppState, target: &Target, actor: &str) -> Result<LogEn
         .org_backups
         .claim(&target.organization, &target.kind)
         .await?;
-    held(state, target, &lease, actor).await
+    held(state, target, &lease, actor, LEASE_RENEW).await
 }
 
-/// One run under `lease`: renewed every [`LEASE_RENEW`] while it runs and stopped if another
-/// replica took the lease over, then ended by [`BackupStore::finished`], which stamps
-/// `last_run_at` only on success.
+/// One run under `lease`: renewed every `renew_every` ([`LEASE_RENEW`]) while it runs and
+/// stopped if another replica took the lease over, then ended by [`BackupStore::finished`],
+/// which stamps `last_run_at` only on success.
 async fn held(
     state: &AppState,
     target: &Target,
     lease: &Lease,
     actor: &str,
+    renew_every: std::time::Duration,
 ) -> Result<LogEntry, ApiError> {
     let job = attempt(state, target, actor);
     tokio::pin!(job);
     let mut renew =
-        tokio::time::interval_at(tokio::time::Instant::now() + LEASE_RENEW, LEASE_RENEW);
+        tokio::time::interval_at(tokio::time::Instant::now() + renew_every, renew_every);
     let outcome = loop {
         tokio::select! {
             outcome = &mut job => break outcome,
@@ -1578,7 +1579,7 @@ pub async fn schedule(
         let state = state.clone();
         started.push(tokio::spawn(async move {
             let _slot = slot;
-            match held(&state, &target, &lease, "schedule").await {
+            match held(&state, &target, &lease, "schedule", LEASE_RENEW).await {
                 Ok(_) => tracing::info!(organization = %target.organization, kind = %target.kind, "scheduled organization backup ran"),
                 Err(err) => tracing::warn!(organization = %target.organization, kind = %target.kind, error = %err, "scheduled organization backup failed; tried again after the backoff"),
             }
@@ -1654,6 +1655,79 @@ mod tests {
         config.pipeline_secrets =
             Some(crate::pipeline_secrets::Backend::Sops { age_key_file: file });
         (AppState::new(config, None), identity)
+    }
+
+    /// A run renews its lease while it runs: a lease another replica took over stops the run
+    /// with a 409 naming that, and a store that fails one renewal lets the run go on to its end.
+    #[tokio::test]
+    async fn a_run_stops_when_its_lease_is_taken_and_goes_on_when_a_renewal_fails() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let s3 = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(300))
+                    .set_body_string("<VersioningConfiguration/>"),
+            )
+            .mount(&s3)
+            .await;
+        let (state, _) = keyed_state();
+        let state = state.with_org_backup_egress(reqwest::Client::new());
+        let mut target = due_target("alfa");
+        target.endpoint = s3.uri();
+        target.sealed_secret = seal(
+            &state,
+            &target_context("alfa", &target.kind),
+            "s3-secret-access-key",
+        )
+        .expect("sealed");
+        state.org_backups.save(&target).await.expect("saved");
+        let taken = state
+            .org_backups
+            .claim("alfa", &target.kind)
+            .await
+            .expect("claimed");
+        lapse(&state.org_backups);
+        let lease = state
+            .org_backups
+            .claim("alfa", &target.kind)
+            .await
+            .expect("taken over");
+        let every = std::time::Duration::from_millis(20);
+        let stopped = held(&state, &target, &taken, "ada", every)
+            .await
+            .expect_err("the lease is another replica's");
+        assert!(
+            matches!(&stopped, ApiError::Conflict(m) if m.contains("another Portal replica")),
+            "{stopped}"
+        );
+        poison(&state.org_backups);
+        let ended = held(&state, &target, &lease, "ada", every)
+            .await
+            .expect_err("versioning off, the store poisoned");
+        assert!(
+            !ended.to_string().contains("another Portal replica"),
+            "a failed renewal stops no run: {ended}"
+        );
+    }
+
+    /// A seal opens only with the Portal's age key: a key file that is gone is said in words,
+    /// never a seal half read.
+    #[test]
+    fn a_seal_without_a_readable_age_key_is_refused() {
+        let (keyed, _) = keyed_state();
+        let sealed = seal(&keyed, "operator-smtp/jc", "hunter2").expect("sealed");
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_secrets = Some(crate::pipeline_secrets::Backend::Sops {
+            age_key_file: std::env::temp_dir().join("org-backup-key-that-is-not-there"),
+        });
+        let state = AppState::new(config, None);
+        let refused = open(&state, &sealed).expect_err("no key");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("cannot be unsealed")),
+            "{refused}"
+        );
     }
 
     /// `plain` sealed as `seal` armours it, to `recipient`.
@@ -2106,6 +2180,48 @@ mod tests {
         assert_eq!(projects_of(&mirror, "ba"), ["pa"]);
     }
 
+    /// A manifest of a kind the platform has no schema for still goes into the bundle; only
+    /// the kinds with a schema carry one beside it.
+    #[tokio::test]
+    async fn a_bundle_carries_a_kind_without_a_schema_without_inventing_one() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Organization",
+            "bb",
+            serde_json::json!({ "domain": "bb.sk" }),
+        ));
+        state.mirror.upsert(envelope(
+            "Gadget",
+            "g1",
+            serde_json::json!({ "organizationRef": "bb" }),
+        ));
+        let (bytes, index) = build_bundle(&state, "bb", "admin").await.expect("a bundle");
+        assert!(
+            index
+                .items
+                .iter()
+                .any(|i| i.kind == "Gadget" && i.id == "g1"),
+            "{index:?}"
+        );
+        let zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a zip");
+        let names: Vec<String> = zip
+            .file_names()
+            .map(|n| n.expect("a name").into_owned())
+            .collect();
+        assert!(
+            !names
+                .iter()
+                .any(|n| n == "schemas/kinds/Gadget.schema.json"),
+            "{names:?}"
+        );
+        assert!(
+            names
+                .iter()
+                .any(|n| n == "schemas/kinds/Organization.schema.json"),
+            "{names:?}"
+        );
+    }
+
     #[test]
     fn code_and_secret_values_stay_out_of_the_organization_manifests() {
         let mirror = Mirror::new();
@@ -2143,7 +2259,7 @@ mod tests {
             "https://minio.backup.svc",
             "https://minio",
         ] {
-            let url = url::Url::parse(refused).unwrap_or_else(|_| panic!("{refused}"));
+            let url = url::Url::parse(refused).expect(refused);
             assert!(egress.check(&url).is_err(), "{refused}");
         }
         let fine = url::Url::parse("https://s3.eu-central-1.amazonaws.com").ok();
@@ -2200,6 +2316,66 @@ mod tests {
                 .await;
         }
         realm
+    }
+
+    /// An Organization with a realm of its own: its people are everyone in that realm, read by
+    /// the Portal's admin client there, never the installation realm's members group.
+    #[tokio::test]
+    async fn the_people_of_an_organization_with_its_own_realm_are_that_realm_s_users() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/alfa/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "access_token": "t" })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/alfa/users"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": "u-2", "username": "bea", "email": "bea@alfa.example" },
+                { "id": "u-1", "username": "ada", "email": "ada@alfa.example" }
+            ])))
+            .mount(&realm)
+            .await;
+        let oidc = crate::config::OidcConfig {
+            issuer: "https://idm.example/realms/jc".parse().expect("url"),
+            client_id: "portal".into(),
+            auth: crate::auth::client_auth::ClientAuth::Secret("s".into()),
+            extra_ca_pem: None,
+            admin_url: None,
+        };
+        let setting = crate::auth::realms::RealmSetting {
+            organization: "alfa".into(),
+            issuer: "https://idm.alfa.example/realms/alfa".parse().expect("url"),
+            jwks_url: format!("{}/realms/alfa/protocol/openid-connect/certs", realm.uri())
+                .parse()
+                .expect("url"),
+        };
+        let admin = (
+            "portal-reconciler".to_owned(),
+            crate::auth::client_auth::ClientAuth::Secret("admin-secret".into()),
+        );
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.organization_realms =
+            crate::auth::realms::OrganizationRealms::new(std::collections::BTreeMap::from([(
+                "alfa".to_owned(),
+                Arc::new(crate::auth::realms::OrganizationRealm::new(
+                    &setting,
+                    &oidc,
+                    &"https://portal.alfa.example".parse().expect("url"),
+                    Some(&admin),
+                )),
+            )]));
+        let people = people_of(&state, "alfa")
+            .await
+            .expect("the realm answers")
+            .expect("a realm with an admin client");
+        let names: Vec<&str> = people.iter().map(|p| p.username.as_str()).collect();
+        assert_eq!(names, ["ada", "bea"], "sorted by id");
     }
 
     async fn people_yaml(realm: &wiremock::MockServer, organization: &str) -> Option<String> {

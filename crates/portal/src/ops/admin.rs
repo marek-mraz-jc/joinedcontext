@@ -207,8 +207,8 @@ const IMPORT_MANIFESTS: u64 = 1000;
 fn import_bytes(input: &ImportInput) -> Result<Vec<u8>, OpError> {
     match (&input.bundle, &input.manifests) {
         (Some(bundle), None) => Ok(bundle.clone().into_bytes()),
-        (None, Some(manifests)) => serde_json::to_vec(manifests)
-            .map_err(|err| OpError::Api(ApiError::Internal(err.to_string()))),
+        // A JSON array of values always serialises: its text is the import door's body.
+        (None, Some(manifests)) => Ok(Value::from(manifests.clone()).to_string().into_bytes()),
         _ => Err(OpError::InvalidInput {
             path: "/bundle".into(),
             message: "send either bundle or manifests, one of them".into(),
@@ -257,11 +257,19 @@ fn source_put_output_schema() -> Value {
 
 /// A route that answers a `Change` as its response, read back as an operation answers it: the id
 /// and the lane beside the document, like every other propose (T-0838).
+/// A route's answer read whole, up to `limit` bytes; a larger or broken body is an internal error.
+async fn body_bytes(
+    response: axum::response::Response,
+    limit: usize,
+) -> Result<axum::body::Bytes, OpError> {
+    axum::body::to_bytes(response.into_body(), limit)
+        .await
+        .map_err(|err| OpError::Api(ApiError::Internal(err.to_string())))
+}
+
 pub(super) async fn proposed(response: axum::response::Response) -> Result<Value, OpError> {
     let accepted = response.status() == axum::http::StatusCode::ACCEPTED;
-    let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
-        .await
-        .map_err(|err| OpError::Api(ApiError::Internal(err.to_string())))?;
+    let bytes = body_bytes(response, 8 * 1024 * 1024).await?;
     let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     if !accepted {
         // A dry run answers the check, not a change.
@@ -369,9 +377,7 @@ pub fn operations() -> Vec<Operation> {
                         }),
                     )
                     .await?;
-                    let bytes = axum::body::to_bytes(response.into_body(), 32 * 1024 * 1024)
-                        .await
-                        .map_err(|err| OpError::Api(ApiError::Internal(err.to_string())))?;
+                    let bytes = body_bytes(response, 32 * 1024 * 1024).await?;
                     Ok(json!({
                         "format": format,
                         "document": String::from_utf8_lossy(&bytes),
@@ -552,6 +558,55 @@ mod tests {
                 other => panic!("the missing repository, got {other:?}"),
             }
         }
+    }
+
+    /// A route's answer over the read limit is an internal error, never a truncated answer; a
+    /// 202 that holds no Change is one too; any other status answers its body as it is, or null
+    /// when it is no JSON.
+    #[tokio::test]
+    async fn a_proposed_answer_too_large_or_not_a_change_is_internal() {
+        use axum::http::StatusCode;
+        let answer = |status: StatusCode, body: Vec<u8>| {
+            let mut response = axum::response::Response::new(axum::body::Body::from(body));
+            *response.status_mut() = status;
+            response
+        };
+        let large = proposed(answer(StatusCode::OK, vec![b' '; 8 * 1024 * 1024 + 1])).await;
+        assert!(
+            matches!(&large, Err(OpError::Api(ApiError::Internal(_)))),
+            "{large:?}"
+        );
+        let shapeless = proposed(answer(StatusCode::ACCEPTED, b"{}".to_vec())).await;
+        assert!(
+            matches!(&shapeless, Err(OpError::Api(ApiError::Internal(why))) if why.contains("missing field")),
+            "{shapeless:?}"
+        );
+        let checked = proposed(answer(StatusCode::OK, b"{\"valid\":true}".to_vec()))
+            .await
+            .expect("a dry run answers its body");
+        assert_eq!(checked, json!({ "valid": true }));
+        let text = proposed(answer(StatusCode::OK, b"not json".to_vec()))
+            .await
+            .expect("a body that is no JSON is null");
+        assert_eq!(text, Value::Null);
+    }
+
+    /// The manifests of a JSON import are read as the import door's JSON body: one array.
+    #[test]
+    fn import_bytes_of_manifests_are_their_json_array() {
+        let input: ImportInput = serde_json::from_value(json!({
+            "manifests": [{ "kind": "Endpoint", "metadata": { "name": "air" } }]
+        }))
+        .expect("an import input");
+        let bytes = import_bytes(&input).expect("bytes");
+        let back: Value = serde_json::from_slice(&bytes).expect("json");
+        assert_eq!(
+            back,
+            json!([{ "kind": "Endpoint", "metadata": { "name": "air" } }])
+        );
+        let empty: ImportInput =
+            serde_json::from_value(json!({ "manifests": [] })).expect("an import input");
+        assert_eq!(import_bytes(&empty).expect("bytes"), b"[]".to_vec());
     }
 
     /// An import takes the bundle or the manifests, never both nor neither, and a conflict

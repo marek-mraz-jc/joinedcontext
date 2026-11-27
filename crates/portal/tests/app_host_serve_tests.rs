@@ -926,3 +926,37 @@ async fn without_serve_app_hosts_the_portal_leaves_app_hosts_to_the_edge() {
     assert_eq!(status, StatusCode::OK);
     assert!(served(&body, INDEX));
 }
+
+/// Without a stub the shard is asked at its cluster address with the shared client: outside the
+/// cluster that name resolves to nothing, so the call is the 502 problem, never another host.
+#[tokio::test]
+async fn a_shard_outside_the_cluster_is_a_502_problem() {
+    let bundles = Bundles::new("wasm-direct", &["air-shard"]);
+    let (_, seen) = shard().await;
+    let mut config = Config {
+        apps_dir: Some(bundles.0.to_string_lossy().into_owned()),
+        public_base_url: "https://portal.example.org".parse().unwrap(),
+        apps_url: Some("https://example.org".parse().unwrap()),
+        serve_app_hosts: true,
+        ..Config::for_tests()
+    };
+    config.apps_db = Some(AppsDbSettings {
+        url: "postgres://apps@db/apps".into(),
+        shards: 2,
+        bucket: "apps".into(),
+        host_namespace: Some("wasm-host".into()),
+        shards_through: None,
+    });
+    let portal = server::app(AppState::new(config, None).with_mirror(mirror()));
+    let req = Request::builder()
+        .uri("/api/forecast")
+        .header(header::HOST, "air-shard.apps.example.org");
+    let (status, headers, body) = send_with(&portal, req, "").await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(headers[header::CONTENT_TYPE], "application/problem+json");
+    assert!(
+        String::from_utf8(body).unwrap().contains("did not answer"),
+        "the problem names the unanswered call"
+    );
+    assert!(seen.lock().unwrap().is_empty(), "the stub is not the shard");
+}

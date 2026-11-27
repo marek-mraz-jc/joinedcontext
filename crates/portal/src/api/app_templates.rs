@@ -156,4 +156,30 @@ mod tests {
             assert_eq!(response.status(), StatusCode::NOT_FOUND, "{asked} {width}");
         }
     }
+
+    /// T-7931 (T-3306): every embedded file is a template's screenshot at one of the two widths,
+    /// and every template has both.
+    #[test]
+    fn every_embedded_file_is_a_screenshot_of_a_template_at_its_width() {
+        let files: Vec<String> = Screenshots::iter().map(|file| file.into_owned()).collect();
+        let templates = samples::templates();
+        assert!(!files.is_empty(), "the screenshots are embedded");
+        for file in &files {
+            let (name, png) = file.split_once('/').expect("a template's folder");
+            assert!(
+                templates.iter().any(|template| template.name == name),
+                "{file}"
+            );
+            assert!(
+                png == "screenshot-1440.png" || png == "screenshot-375.png",
+                "{file}"
+            );
+        }
+        for template in &templates {
+            for width in [1440, 375] {
+                let file = format!("{}/screenshot-{width}.png", template.name);
+                assert!(files.contains(&file), "{file}");
+            }
+        }
+    }
 }

@@ -697,16 +697,16 @@ mod tests {
     use super::*;
 
     fn poisoned() -> CommentStore {
-        let store = CommentStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
-        if let Inner::Memory(lock) = &store.inner {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _guard = lock.write();
-                panic!("poison the lock on purpose");
-            }));
-            assert!(outcome.is_err());
-            assert!(lock.is_poisoned());
+        let lock = RwLock::new(Memory::default());
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = lock.write();
+            panic!("poison the lock on purpose");
+        }));
+        assert!(outcome.is_err());
+        assert!(lock.is_poisoned());
+        CommentStore {
+            inner: Inner::Memory(lock),
         }
-        store
     }
 
     const WHO: Author<'static> = Author {

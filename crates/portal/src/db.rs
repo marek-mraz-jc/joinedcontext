@@ -1521,21 +1521,18 @@ mod coverage_tests {
         .execute(&db.admin)
         .await
         .expect("the role");
-        let outcome = connect_as(&db.as_role(&role), None).await;
-        let bypass = match &outcome {
-            Ok(pool) => rls_bypass(pool).await.map_err(|e| e.to_string()),
-            Err(e) => Err(e.to_string()),
-        };
-        if let Ok(pool) = outcome {
-            pool.close().await;
-        }
+        let pool = connect_as(&db.as_role(&role), None)
+            .await
+            .expect("the owning role migrates and serves");
+        let bypass = rls_bypass(&pool).await.expect("the role's attributes");
+        pool.close().await;
         db.remove().await;
         let cleanup = PgPool::connect(&database_url()).await.expect("connect");
         sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
             .execute(&cleanup)
             .await
             .expect("drop role");
-        assert_eq!(bypass, Ok(None));
+        assert_eq!(bypass, None);
     }
 
     /// The same role named for serving and for migrating is refused before any connection.

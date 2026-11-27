@@ -876,10 +876,11 @@ mod tests {
         let port = socket.local_addr().expect("address").port();
         tokio::spawn(async move {
             let mut buffer = [0_u8; 1500];
-            while let Ok((read, from)) = socket.recv_from(&mut buffer).await {
-                if let Some(answer) = reply(&buffer[..read]) {
-                    let _ = socket.send_to(&answer, from).await;
-                }
+            loop {
+                let (read, from) = socket.recv_from(&mut buffer).await.expect("a datagram");
+                // A query the zone cannot parse gets an empty datagram, which the resolver drops.
+                let answer = reply(&buffer[..read]).unwrap_or_default();
+                let _ = socket.send_to(&answer, from).await;
             }
         });
         let mut server = NameServerConfig::udp(std::net::IpAddr::from([127, 0, 0, 1]));
@@ -1039,18 +1040,18 @@ mod tests {
             .expect("bind");
         let port = listener.local_addr().expect("address").port();
         tokio::spawn(async move {
-            while let Ok((socket, _)) = listener.accept().await {
+            loop {
+                let (socket, _) = listener.accept().await.expect("a connection");
                 let acceptor = acceptor.clone();
                 let answer = answer.clone();
                 tokio::spawn(async move {
                     let mut stream = acceptor.accept(socket).await?;
                     let mut request = Vec::new();
                     let mut buffer = [0_u8; 1024];
-                    while !request.windows(4).any(|end| end == b"\r\n\r\n") {
-                        let read = stream.read(&mut buffer).await?;
-                        if read == 0 {
-                            break;
-                        }
+                    // Reads up to the end of the head, or until the client closes (`read` 0).
+                    let mut read = 1;
+                    while read > 0 && !request.windows(4).any(|end| end == b"\r\n\r\n") {
+                        read = stream.read(&mut buffer).await?;
                         request.extend_from_slice(&buffer[..read]);
                     }
                     stream.write_all(&answer).await?;

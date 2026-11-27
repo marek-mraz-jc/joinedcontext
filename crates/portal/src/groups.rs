@@ -94,13 +94,17 @@ fn owner(state: &AppState, identity: &Identity, app: Option<&String>) -> String 
     }
 }
 
-/// The App whose default group the organization's `Group` `name` is, as `(project, App)`, when
-/// the group is annotated with it and that App exists (AP-118).
-fn app_of(state: &AppState, name: &str) -> Option<(String, Value)> {
+/// The App whose default group the organization's `Group` `name` is, as `(project, App, Group)`,
+/// when the group is annotated with it and that App exists (AP-118); the stored Group comes with
+/// it, so a caller compares against the same read.
+fn app_of(
+    state: &AppState,
+    name: &str,
+) -> Option<(String, Value, crate::resource::ResourceEnvelope)> {
     let held = state.mirror.get(ORG_NAMESPACE, "Group", name)?;
     let (project, app) = held.metadata.annotations.get(APP_LABEL)?.split_once('/')?;
     let app = state.mirror.get(project, "App", app)?;
-    Some((project.to_owned(), serde_json::to_value(app).ok()?))
+    Some((project.to_owned(), serde_json::to_value(app).ok()?, held))
 }
 
 /// Whether the caller may read the organization's `Group` `name` because it is the default group
@@ -114,7 +118,7 @@ pub fn may_read_as_app_group(
 ) -> bool {
     project == ORG_NAMESPACE
         && kind == "Group"
-        && app_of(state, name).is_some_and(|(owner, app)| {
+        && app_of(state, name).is_some_and(|(owner, app, _)| {
             crate::permissions::for_request(state, identity, &owner).may_read_manifest("App", &app)
         })
 }
@@ -147,16 +151,13 @@ pub fn for_proposal(
     let Some(name) = manifest.pointer("/metadata/name").and_then(Value::as_str) else {
         return effective;
     };
-    let Some((owner, app)) = app_of(state, name) else {
+    let Some((owner, app, held)) = app_of(state, name) else {
         return effective;
     };
     let kept = manifest
         .pointer("/metadata/annotations")
         .and_then(|annotations| annotations.get(APP_LABEL))
         .and_then(Value::as_str);
-    let Some(held) = state.mirror.get(ORG_NAMESPACE, "Group", name) else {
-        return effective;
-    };
     let annotated = held.metadata.annotations.get(APP_LABEL).cloned();
     if kept.is_none() || kept.map(str::to_owned) != annotated {
         return effective;
@@ -271,9 +272,8 @@ fn project_unbinding(state: &AppState, identity: &Identity, name: &str) -> Optio
 fn only_members_differ(held: &crate::resource::ResourceEnvelope, manifest: &Value) -> bool {
     let without_members = |value: Value| {
         let mut value = value;
-        if let Some(object) = value.as_object_mut() {
-            object.remove("status");
-        }
+        // A serialized envelope is always an object; `map` keeps that arm off its own line.
+        let _ = value.as_object_mut().map(|object| object.remove("status"));
         if let Some(spec) = value.get_mut("spec").and_then(Value::as_object_mut) {
             spec.remove("members");
         }

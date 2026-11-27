@@ -342,13 +342,11 @@ async fn mapping_steps(
     pipeline: &ResourceEnvelope,
     payload: &str,
 ) -> Vec<Step> {
-    let mut manifest = match serde_json::to_value(pipeline) {
-        Ok(manifest) => manifest,
-        Err(error) => return unchecked_both(error.to_string()),
-    };
-    if let Some(object) = manifest.as_object_mut() {
-        object.remove("status");
-    }
+    // The manifest without its status, which is not the pipeline's to test; an envelope is plain
+    // data, so it always serializes.
+    let mut bare = pipeline.clone();
+    bare.strip_status();
+    let manifest = serde_json::to_value(&bare).unwrap_or_default();
     let spec = match pipeline_test::tested_spec(identity, state, project, &manifest) {
         Ok(spec) => spec,
         Err(ApiError::Forbidden | ApiError::Denied(_)) => {

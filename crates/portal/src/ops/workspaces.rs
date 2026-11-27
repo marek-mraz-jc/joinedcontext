@@ -1345,7 +1345,9 @@ async fn recheck(
         .ok_or_else(|| ApiError::BadRequest(format!("{path}: kind '{}' is not served", env.kind)))?
         .plural;
     let name = env.metadata.name.clone();
-    let outcome = crate::api::mutate::propose_with_identity(
+    // A dry run that answers at all is valid: every fault of the manifest is a refusal of the
+    // propose engine, named at its path here (T-2234).
+    crate::api::mutate::propose_with_identity(
         identity,
         state,
         project,
@@ -1360,14 +1362,7 @@ async fn recheck(
         ApiError::BadRequest(msg) => ApiError::BadRequest(format!("{path}: {msg}")),
         other => other,
     })?;
-    match outcome {
-        crate::api::mutate::ProposeOutcome::DryRun(result) if !result.valid => {
-            Err(ApiError::BadRequest(format!(
-                "{path}: its check found problems; fix them in the workspace"
-            )))
-        }
-        _ => Ok(()),
-    }
+    Ok(())
 }
 
 /// Merges main into the workspace: what only main changed is taken, what both changed is
@@ -1419,11 +1414,8 @@ pub async fn update_from_main(
                                content: Option<String>| {
                 match content {
                     Some(content) => uploads.push((path.clone(), content)),
-                    None => {
-                        if let Some(sha) = o {
-                            deletes.push((path.clone(), sha.clone()));
-                        }
-                    }
+                    // Main removed it: the workspace's copy goes (a file both lack is skipped above).
+                    None => deletes.extend(o.map(|sha| (path.clone(), sha.clone()))),
                 }
             };
             let theirs_text = match t {
@@ -2132,5 +2124,238 @@ mod tests {
             })
             .await;
         assert!(matches!(got, Err(WorkspaceError::Db(_))), "{got:?}");
+    }
+
+    fn opening<'a>(name: &'a str, owner: &'a str, ttl_hours: i64) -> Opening<'a> {
+        Opening {
+            name,
+            title: None,
+            project: "helsinki",
+            owner,
+            base_revision: "base1",
+            scope: Scope::Project {},
+            ttl_hours,
+        }
+    }
+
+    /// A name memory a panicking thread poisoned still answers.
+    #[test]
+    fn a_poisoned_name_memory_still_answers() {
+        let names = std::sync::Mutex::new(std::collections::HashMap::new());
+        let poisoned = std::thread::scope(|s| {
+            s.spawn(|| {
+                let _held = names.lock().expect("lock");
+                std::panic::panic_any("a panic while holding the names");
+            })
+            .join()
+        });
+        assert!(poisoned.is_err() && names.is_poisoned());
+        known(&names).insert("w".to_owned(), "helsinki".to_owned());
+        assert_eq!(known(&names).get("w").map(String::as_str), Some("helsinki"));
+    }
+
+    /// A person without an e-mail owns what they open by their username.
+    #[test]
+    fn an_owner_without_an_e_mail_is_their_username() {
+        let mut identity = super::super::testkit::person("ana", &[]);
+        assert_eq!(owner_of(&identity), "ana");
+        identity.email = Some("ana@hel.fi".into());
+        assert_eq!(owner_of(&identity), "ana@hel.fi");
+    }
+
+    /// A store that is down reaps nothing and fails a read as the store's error, never as a
+    /// workspace nobody has.
+    #[tokio::test]
+    async fn a_store_that_is_down_reaps_nothing_and_reads_nothing() {
+        let mut state = super::super::testkit::state();
+        state.workspaces = WorkspaceStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        assert_eq!(reap_expired_at(&state, TimestampTz::now()).await, 0);
+        let admin = super::super::testkit::admin(&state);
+        let got = visible(&state, &admin.identity, "helsinki", "w1").await;
+        assert!(
+            matches!(&got, Err(err) if !matches!(err, ApiError::NotFound(_))),
+            "{got:?}"
+        );
+    }
+
+    /// A Portal with no forge has no branch to read a workspace's mirror from.
+    #[tokio::test]
+    async fn a_workspace_mirror_without_a_forge_is_unavailable() {
+        let state = super::super::testkit::state();
+        state
+            .workspaces
+            .create(opening("w1", "admin", 1))
+            .await
+            .expect("opened");
+        let admin = super::super::testkit::admin(&state);
+        let got = mirror_of(&state, &admin.identity, "w1", "helsinki").await;
+        assert!(
+            matches!(&got, Err(ApiError::Unavailable(why)) if why.contains("not configured")),
+            "{:?}",
+            got.err()
+        );
+    }
+
+    /// A YAML file of the branch or of the base that is no manifest leaves the mirror as it is.
+    #[tokio::test]
+    async fn a_yaml_file_that_is_no_manifest_leaves_the_workspace_mirror_alone() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        let tree = |git_ref: &str, entries: Value| {
+            Mock::given(method("GET"))
+                .and(path(format!(
+                    "{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+                )))
+                .and(query_param("@r", format!("'{git_ref}'")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({ "Tree": entries, "Truncated": false })),
+                )
+        };
+        tree(
+            "workspace/w1",
+            json!([
+                { "Path": "projects/helsinki/a.yaml", "Type": "blob", "Sha": "s2" },
+                { "Path": "projects/helsinki/notes.txt", "Type": "blob", "Sha": "t1" }
+            ]),
+        )
+        .mount(&server)
+        .await;
+        tree(
+            "base1",
+            json!([
+                { "Path": "projects/helsinki/a.yaml", "Type": "blob", "Sha": "s1" },
+                { "Path": "projects/helsinki/b.yaml", "Type": "blob", "Sha": "b1" }
+            ]),
+        )
+        .mount(&server)
+        .await;
+        use base64::Engine;
+        for (file, git_ref) in [("a.yaml", "workspace/w1"), ("b.yaml", "base1")] {
+            Mock::given(method("GET"))
+                .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+                .and(query_param("@p", format!("'projects/helsinki/{file}'")))
+                .and(query_param("@r", format!("'{git_ref}'")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "Sha": "x",
+                    "Content": base64::engine::general_purpose::STANDARD.encode("just: words\n"),
+                })))
+                .mount(&server)
+                .await;
+        }
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = super::super::testkit::state().with_shako(Arc::new(forge));
+        state.mirror.upsert(super::super::testkit::envelope(
+            "ContextSpace",
+            "air",
+            "helsinki",
+            json!({}),
+        ));
+        state
+            .workspaces
+            .create(opening("w1", "admin", 1))
+            .await
+            .expect("opened");
+        let admin = super::super::testkit::admin(&state);
+        let view = mirror_of(&state, &admin.identity, "w1", "helsinki")
+            .await
+            .expect("a mirror");
+        assert!(view.get("helsinki", "ContextSpace", "air").is_some());
+        let requests = server.received_requests().await.expect("requests");
+        let files = requests
+            .iter()
+            .filter(|r| r.url.path().ends_with("Shako.File(Path=@p,Ref=@r)"))
+            .count();
+        assert_eq!(files, 2, "the changed and the removed manifest were read");
+    }
+
+    /// A replica that does not lead reaps nothing: its reaper passes the tick.
+    #[tokio::test]
+    async fn a_reaper_that_does_not_lead_passes_its_tick() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://follower@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let shako = Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://localhost:3000".parse().expect("a url"),
+                "test-owner",
+                "test-repo",
+                "token",
+            )
+            .expect("a client"),
+        );
+        let follower = crate::reconciler::Syncer::new(shako, Arc::new(crate::store::Mirror::new()))
+            .with_leadership(Arc::new(crate::reconciler::Leadership::reconciler(pool)));
+        let state = super::super::testkit::state().with_syncer(Arc::new(follower));
+        assert!(!state.leads());
+        state
+            .workspaces
+            .create(opening("w1", "admin", 1))
+            .await
+            .expect("opened");
+        spawn_reaper(state.clone());
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(state.workspaces.get("w1").await.expect("read").is_some());
+    }
+
+    /// A record the database refuses to delete stays after its branch went, for the next pass;
+    /// a scope stored in a shape no workspace has is read as the store's error.
+    #[tokio::test]
+    async fn a_record_the_database_keeps_waits_for_the_next_pass() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let scratch = crate::test_db::scratch().await;
+        let mirror = scratch.placed("helsinki").await;
+        let store = WorkspaceStore::new(Some(scratch.pool.clone()), Arc::clone(&mirror));
+        store
+            .create(opening("old", "admin", 1))
+            .await
+            .expect("opened");
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/Shako.DeleteBranch",
+            ))
+            .respond_with(ResponseTemplate::new(204))
+            .mount(&server)
+            .await;
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let mut state = super::super::testkit::state().with_shako(Arc::new(forge));
+        state.workspaces = store.clone();
+        scratch.refuse("workspaces", "DELETE").await;
+        let later = TimestampTz::now() + jiff::SignedDuration::from_hours(2);
+        assert_eq!(reap_expired_at(&state, later).await, 0);
+        assert!(store.get("old").await.expect("read").is_some(), "kept");
+        let requests = server.received_requests().await.expect("requests");
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.url.path().ends_with("/Shako.DeleteBranch")),
+            "the branch went first"
+        );
+
+        let mut tx = crate::project_ids::tx_of(&scratch.pool, &mirror, "helsinki")
+            .await
+            .expect("a key")
+            .expect("placed");
+        sqlx::query(
+            "UPDATE workspaces SET scope = '{\"kind\": \"galaxy\"}'::jsonb WHERE name = 'old'",
+        )
+        .execute(&mut *tx)
+        .await
+        .expect("a scope no workspace has");
+        tx.commit().await.expect("commit");
+        let read = store.get("old").await;
+        assert!(matches!(read, Err(WorkspaceError::Db(_))), "{read:?}");
+        scratch.remove().await;
     }
 }

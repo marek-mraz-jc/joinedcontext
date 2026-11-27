@@ -594,6 +594,15 @@ impl ProposeOutcome {
         }
     }
 
+    /// The Change of an outcome asked for without a dry run, a workspace or a plan; anything
+    /// else is our bug, since only those three answer something other than a Change.
+    pub fn into_change(self) -> Result<Change, ApiError> {
+        match self {
+            Self::Change(change) => Ok(change),
+            _ => Err(ApiError::Internal("a proposal answered no Change".into())),
+        }
+    }
+
     /// The commit of an outcome asked for onto a plan's branch; anything else is our bug.
     pub fn into_bundled(self) -> Result<BundledCommit, ApiError> {
         match self {
@@ -1173,12 +1182,10 @@ async fn propose_engine(
     let mut manifest_path = resolve_repo_path(&envelope, kind_info, project)?;
     let mut sidecars = sidecars(sidecar_files, &manifest_path, &envelope.metadata.name)?;
     let folder = manifest_path.rsplit_once('/').map_or("", |(dir, _)| dir);
+    // The model's files sit under `datamodels/`, where no file a caller sends can be: a YAML
+    // sidecar is only the manifest's own native file beside it (F-POR2-004).
     for (relative, content) in space_model {
-        let full = format!("{folder}/{relative}");
-        // A caller that sent the model's files itself keeps its own.
-        if !sidecars.iter().any(|(path, _)| *path == full) {
-            sidecars.push((full, content));
-        }
+        sidecars.push((format!("{folder}/{relative}"), content));
     }
     for (path, content) in &sidecars {
         plan.fields.push(plan::FieldChange {
@@ -2040,8 +2047,7 @@ fn app_grants(
                 ApiError::BadRequest(format!("the App's {} is not valid: {e}", raw.kind))
             })?;
         }
-        let info = resource::by_kind(&raw.kind)
-            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", raw.kind)))?;
+        let info = catalogued(&raw.kind)?;
         let path = resolve_repo_path(&env, info, project)?;
         kept.insert((raw.kind.clone(), env.metadata.name.clone()));
         let yaml = serde_norway::to_string(&env).map_err(ApiError::internal)?;
@@ -2052,8 +2058,7 @@ fn app_grants(
         if kept.contains(&(held.kind.clone(), held.metadata.name.clone())) {
             continue;
         }
-        let info = resource::by_kind(&held.kind)
-            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", held.kind)))?;
+        let info = catalogued(&held.kind)?;
         out.removed.push(resolve_repo_path(&held, info, project)?);
         out.review.push(plan::FieldChange {
             path: format!("grants.{}", held.metadata.name),
@@ -2064,6 +2069,12 @@ fn app_grants(
     Ok(out)
 }
 
+/// The catalogue row of a kind the Portal itself writes; a kind without one is our bug, a 500.
+pub(crate) fn catalogued(kind: &str) -> Result<&'static resource::KindInfo, ApiError> {
+    resource::by_kind(kind)
+        .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {kind}")))
+}
+
 /// The default groups an App's Change writes and removes (AP-118), as files and review lines
 /// beside its grants; a group removed with members in it is said in the plan.
 fn group_files(
@@ -2071,8 +2082,7 @@ fn group_files(
     project: &str,
     grants: &mut AppGrants,
 ) -> Result<(), ApiError> {
-    let info = resource::by_kind("Group")
-        .ok_or_else(|| ApiError::Internal("no catalogue entry for Group".into()))?;
+    let info = catalogued("Group")?;
     for group in &groups.written {
         let yaml = serde_norway::to_string(group).map_err(ApiError::internal)?;
         grants
@@ -2992,18 +3002,20 @@ pub(crate) fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
     };
     let representations: Representations = serde_json::from_value(block.clone())
         .map_err(|e| unprocessable(vec![format!("spec.representations: {e}")]))?;
+    // Without a model to read, the feed and widget checks only fail on a model that does not
+    // parse, so they answer their gaps alone here; the model check is `check_surfaces`.
     let gaps: Vec<String> = outputs_gaps(&representations.ical)
         .into_iter()
         .map(|gap| format!("spec.representations.ical: {gap}"))
         .chain(
             feed_gaps(&representations.feed, None)
-                .map_err(|e| unprocessable(vec![format!("spec.representations.feed: {e}")]))?
+                .unwrap_or_default()
                 .into_iter()
                 .map(|gap| format!("spec.representations.feed: {gap}")),
         )
         .chain(
             widget_gaps(&representations.widget, None)
-                .map_err(|e| unprocessable(vec![format!("spec.representations.widget: {e}")]))?
+                .unwrap_or_default()
                 .into_iter()
                 .map(|gap| format!("spec.representations.widget: {gap}")),
         )
@@ -3285,6 +3297,13 @@ fn take_bundle(body: &mut Value, dry_run: bool) -> Result<Vec<Value>, ApiError> 
     }
 }
 
+/// The registered operation a door of the Portal reaches by its own constant name; a name the
+/// registry lacks is our bug, a 500.
+fn registered(name: &str) -> Result<&'static crate::ops::Operation, ApiError> {
+    crate::ops::find(name)
+        .ok_or_else(|| ApiError::Internal(format!("operation '{name}' is not registered")))
+}
+
 /// A form proposing or checking the draft it holds: the registered operation of the kind
 /// owns the check and the gate (PF-57), so this door reaches the same operation as MCP and
 /// the ops route (ADR-N-021) instead of parsing the reference as a manifest. The body's
@@ -3309,8 +3328,7 @@ async fn propose_draft(
         // MCP and the assistant reach, instead of a 400 in the form alone (T-0842).
         (_, false) => "jc_resource_propose",
     };
-    let op = crate::ops::find(name)
-        .ok_or_else(|| ApiError::Internal(format!("operation '{name}' is not registered")))?;
+    let op = registered(name)?;
     let caller = crate::ops::Caller {
         bearer: None,
         identity: user.0.identity,
@@ -6180,6 +6198,87 @@ mod tests {
             Err(ApiError::Internal(_))
         ));
         assert_eq!(bundled().into_bundled().expect("a commit").path, "a.yaml");
+    }
+
+    /// T-7931: a proposal asked for without a dry run, a workspace or a plan answers its Change;
+    /// any other outcome is ours (500), never a Change made up.
+    #[test]
+    fn only_a_change_outcome_is_a_change() {
+        let workspace = ProposeOutcome::Workspace(WorkspaceCommit {
+            workspace: "w".into(),
+            branch: "workspace/w".into(),
+            path: "projects/ovzdusie/x.yaml".into(),
+            lane: Lane::Green,
+        });
+        assert!(matches!(
+            workspace.into_change(),
+            Err(ApiError::Internal(message)) if message == "a proposal answered no Change"
+        ));
+        let diff = plan::diff(None, Some(&manifest("ContextSpace", "s", json!({}))));
+        let change = Change::new(
+            ChangeMeta::from_merge_request(9, "ovzdusie"),
+            ChangeStatus::new(Lane::Green, ChangePhase::PendingApproval, diff.summary),
+        );
+        let name = change.metadata.name.clone();
+        let kept = ProposeOutcome::Change(change)
+            .into_change()
+            .expect("a Change");
+        assert_eq!(kept.metadata.name, name);
+    }
+
+    /// T-7931: a kind the Portal writes has its catalogue row, and a kind without one is our 500
+    /// naming it; the same for an operation a door reaches by name.
+    #[test]
+    fn a_kind_or_operation_the_portal_lacks_is_ours_and_named() {
+        assert_eq!(catalogued("Group").expect("a row").kind, "Group");
+        assert!(matches!(
+            catalogued("Spaceship"),
+            Err(ApiError::Internal(message)) if message == "no catalogue entry for Spaceship"
+        ));
+        assert_eq!(
+            registered("jc_resource_propose").expect("registered").name,
+            "jc_resource_propose"
+        );
+        assert!(matches!(
+            registered("jc_nothing"),
+            Err(ApiError::Internal(message)) if message.contains("'jc_nothing' is not registered")
+        ));
+    }
+
+    /// T-7931: a grant the gateway's loader would refuse fails the App's proposal as a 400 naming
+    /// the kind: a publisher domain with a space makes an assigner no Policy takes.
+    #[test]
+    fn an_app_grant_the_loader_refuses_is_a_400_naming_the_kind() {
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: resource::API_VERSION.into(),
+            kind: "Project".into(),
+            metadata: ObjectMeta::new("helsinki", crate::api::blueprints::ORG_NAMESPACE),
+            spec: json!({ "domain": "hel fi" }),
+            status: None,
+        });
+        let err = app_grants(&state, "helsinki", &bikes_app())
+            .map(drop)
+            .expect_err("an assigner with a space");
+        assert!(
+            matches!(&err, ApiError::BadRequest(message)
+                if message.starts_with("the App's Policy is not valid")),
+            "{err:?}"
+        );
+    }
+
+    /// T-7931 (EP-157): feed and widget outputs are checked for their shape without a model;
+    /// a member the kind does not know is a 422 naming the path.
+    #[test]
+    fn feed_and_widget_outputs_are_checked_without_a_model() {
+        assert!(check_representation_shape(&json!({ "representations": {} })).is_ok());
+        let err = check_representation_shape(&json!({ "representations": { "fly": [] } }))
+            .expect_err("an unknown member");
+        assert!(
+            matches!(&err, ApiError::Unprocessable { detail, .. }
+                if detail.starts_with("spec.representations: ")),
+            "{err:?}"
+        );
     }
 
     /// T-7917 (PF-57): a bearer caller's dry run records its check as a bearer's and answers the

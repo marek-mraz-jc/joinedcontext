@@ -875,6 +875,15 @@ mod tests {
         assert_eq!(
             example_of(
                 &defs,
+                &json!({ "type": "array", "minItems": 2, "items": { "type": "integer" } }),
+                0
+            ),
+            json!([1, 1])
+        );
+        assert_eq!(example_of(&defs, &json!({ "type": "array" }), 0), json!([]));
+        assert_eq!(
+            example_of(
+                &defs,
                 &json!({ "anyOf": [{ "type": "null" }, { "type": "integer" }] }),
                 0
             ),

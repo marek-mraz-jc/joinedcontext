@@ -22,6 +22,14 @@
 # that each add a line both keep theirs. Add a line, never a [[bin]] block (it would mix with
 # this array and cargo refuses the file).
 bin = [
+  { name = "change_plan_input", path = "fuzz_targets/change_plan_input.rs", test = false, doc = false, bench = false },
+  { name = "datasource_paging_guess", path = "fuzz_targets/datasource_paging_guess.rs", test = false, doc = false, bench = false },
+  { name = "data_write_input", path = "fuzz_targets/data_write_input.rs", test = false, doc = false, bench = false },
+  { name = "render_spec", path = "fuzz_targets/render_spec.rs", test = false, doc = false, bench = false },
+  { name = "pipeline_sample_input", path = "fuzz_targets/pipeline_sample_input.rs", test = false, doc = false, bench = false },
+  { name = "repository_webhook_address", path = "fuzz_targets/repository_webhook_address.rs", test = false, doc = false, bench = false },
+  { name = "workspace_scope", path = "fuzz_targets/workspace_scope.rs", test = false, doc = false, bench = false },
+  { name = "config_installation_organization", path = "fuzz_targets/config_installation_organization.rs", test = false, doc = false, bench = false },
   { name = "build_digest", path = "fuzz_targets/build_digest.rs", test = false, doc = false, bench = false },
   { name = "sync_ref_advertisement", path = "fuzz_targets/sync_ref_advertisement.rs", test = false, doc = false, bench = false },
   { name = "change_ref", path = "fuzz_targets/change_ref.rs", test = false, doc = false, bench = false },

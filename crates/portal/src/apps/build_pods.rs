@@ -554,16 +554,20 @@ pub async fn trigger_once(
     mirror: &Mirror,
 ) -> Result<Vec<(String, String)>, DispatchError> {
     let mut queued = Vec::new();
-    let apps: Vec<ResourceEnvelope> = mirror
+    // Each App with the project it is listed under: the mirror holds no App without one.
+    let apps: Vec<(String, ResourceEnvelope)> = mirror
         .namespaces()
-        .iter()
-        .flat_map(|namespace| mirror.list(namespace, "App", &ListOptions::default()).items)
-        .filter(|app| builds(app) && on_forge(app))
+        .into_iter()
+        .flat_map(|namespace| {
+            let items = mirror
+                .list(&namespace, "App", &ListOptions::default())
+                .items;
+            items.into_iter().map(move |app| (namespace.clone(), app))
+        })
+        .filter(|(_, app)| builds(app) && on_forge(app))
         .collect();
-    for app in apps {
-        let (Some(project), name) = (app.metadata.namespace.as_deref(), &app.metadata.name) else {
-            continue;
-        };
+    for (project, app) in apps {
+        let (project, name) = (project.as_str(), &app.metadata.name);
         let repo = forge.for_application(crate::agents::repository::name(project, name));
         let head = match repo.default_branch().await {
             Ok(branch) => repo.branch_head(&branch).await,
@@ -723,15 +727,37 @@ pub fn spawn_periodic(
     mirror: std::sync::Arc<Mirror>,
     settings: Settings,
 ) {
-    match KubeClient::in_cluster() {
-        Ok(Some(kube)) => {
-            spawn_passes(kube, forge, db, syncer, mirror, settings, PASS_EVERY);
-        }
+    spawn_on(
+        KubeClient::in_cluster(),
+        forge,
+        db,
+        syncer,
+        mirror,
+        settings,
+    );
+}
+
+/// [`spawn_periodic`] on the cluster `kube` says it reached: the passes' task when there is one.
+/// Public for the tests, which hand it a cluster, none, and an unreadable mount.
+pub fn spawn_on(
+    kube: Result<Option<KubeClient>, KubeError>,
+    forge: std::sync::Arc<ShakoClient>,
+    db: PgPool,
+    syncer: std::sync::Arc<crate::reconciler::Syncer>,
+    mirror: std::sync::Arc<Mirror>,
+    settings: Settings,
+) -> Option<tokio::task::JoinHandle<()>> {
+    match kube {
+        Ok(Some(kube)) => Some(spawn_passes(
+            kube, forge, db, syncer, mirror, settings, PASS_EVERY,
+        )),
         Ok(None) => {
             tracing::info!("no cluster: App builds wait in the queue and nobody starts them");
+            None
         }
         Err(err) => {
             tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so no build pod starts");
+            None
         }
     }
 }

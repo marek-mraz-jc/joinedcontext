@@ -123,8 +123,8 @@ async fn ui_build(ui_url: Option<&str>) -> Option<Build> {
             crate::capped::bytes(answer, VERSION_BYTES).await.ok()?
         }
         None => {
-            let bytes = crate::assets::Assets::get("version.json")?.data;
-            return embedded_build(&bytes);
+            let file = crate::assets::Assets::get("version.json");
+            return file.and_then(|f| embedded_build(&f.data));
         }
     };
     serde_json::from_slice(&bytes).ok()

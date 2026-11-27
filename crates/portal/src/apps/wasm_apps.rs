@@ -53,11 +53,8 @@ pub fn component_of(bundle: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|err| format!("the bundle is no tar.gz: {err}"))?;
     for entry in entries {
         let entry = entry.map_err(|err| format!("the bundle is no tar.gz: {err}"))?;
-        let path = entry
-            .path()
-            .map_err(|err| format!("a bundle path: {err}"))?
-            .to_string_lossy()
-            .into_owned();
+        // The name as the archive spells it; one that is no text never names the component.
+        let path = String::from_utf8_lossy(&entry.path_bytes()).into_owned();
         if path.trim_start_matches("./") != COMPONENT_PATH {
             continue;
         }
@@ -205,11 +202,14 @@ impl WasmApps {
                 .await
                 .map_err(|err| format!("the App's files could not be listed: {err}"))?
             {
-                objects.push((prefix.len(), object));
+                objects.push((prefix, object));
             }
         }
-        for (cut, object) in &objects {
-            let relative = &object.key[*cut..];
+        for (prefix, object) in &objects {
+            // A key the store lists outside the asked prefix is none of this App's files.
+            let Some(relative) = object.key.strip_prefix(prefix.as_str()) else {
+                continue;
+            };
             self.store
                 .copy_object(
                     &self.bucket,

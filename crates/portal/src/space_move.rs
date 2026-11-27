@@ -678,7 +678,27 @@ mod tests {
             assert!(joined.is_err());
         });
         assert!(moves.get("p/air").is_none());
-        moves.set("p/air", |job| job.reason = Some("never called".into()));
-        assert!(moves.get("p/air").is_none());
+        let note = |job: &mut Move| job.reason = Some("noted".into());
+        moves.set("p/air", note);
+        assert!(moves.get("p/air").is_none(), "no job, nothing noted");
+        lock(&moves.jobs).insert(
+            "p/air".into(),
+            Move {
+                space: "p/air".into(),
+                from: "a".into(),
+                to: "b".into(),
+                state: MoveState::Holding,
+                reason: None,
+                source: None,
+                target: None,
+                started_at: TimestampTz::now(),
+                ended_at: None,
+            },
+        );
+        moves.set("p/air", note);
+        assert_eq!(
+            moves.get("p/air").and_then(|job| job.reason).as_deref(),
+            Some("noted")
+        );
     }
 }

@@ -1729,6 +1729,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A base no path can be joined to (a URL that is no base) is a client error before
+    /// anything is sent.
+    #[tokio::test]
+    async fn a_base_no_path_joins_to_is_a_client_error() {
+        let kube = KubeClient::with_token("mailto:kube@example.org", "tok").expect("a client");
+        let got = kube.get("batch/v1", "Job", "builds", "build-a-1").await;
+        assert!(matches!(&got, Err(KubeError::Client(_))), "{got:?}");
+    }
+
     /// A body the API server cuts short is a transport error of the log read.
     #[tokio::test]
     async fn a_log_cut_short_is_a_transport_error() {

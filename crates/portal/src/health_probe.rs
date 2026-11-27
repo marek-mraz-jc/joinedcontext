@@ -664,7 +664,8 @@ mod tests {
         let at = silent.local_addr().expect("an address");
         let held = tokio::spawn(async move {
             let mut open = Vec::new();
-            while let Ok((socket, _)) = silent.accept().await {
+            loop {
+                let (socket, _) = silent.accept().await.expect("a connection");
                 open.push(socket);
             }
         });
@@ -796,9 +797,8 @@ mod tests {
             let mark = mark.clone();
             async move {
                 let sent = req.headers().get(MARK_HEADER).and_then(|v| v.to_str().ok());
-                if sent == Some(mark.as_str()) {
-                    seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                }
+                let marked = usize::from(sent == Some(mark.as_str()));
+                seen.fetch_add(marked, std::sync::atomic::Ordering::SeqCst);
                 let path = req.uri().path();
                 if path.ends_with("/ngsi-ld/v1/types") && !path.contains("/ok-0/") {
                     axum::http::StatusCode::SERVICE_UNAVAILABLE

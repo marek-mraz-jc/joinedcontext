@@ -391,4 +391,99 @@ mod tests {
         assert!(validate_status(&json!({ "source": "web" })).is_ok());
         assert!(validate_status(&json!({ "startUrls": ["http://a"] })).is_err());
     }
+
+    /// With an assistant, a proposer's named source carries its failed reads, and an assistant
+    /// whose errors answer holds no `items` still answers an empty list, never a missing one.
+    #[tokio::test]
+    async fn a_proposer_reads_the_failed_reads_or_an_empty_list() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        let issuer = format!("{}/realms/hel", realm.uri());
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+            .mount(&realm)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "the-portals-own-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let assistant = MockServer::start().await;
+        let base = "/internal/v1/projects/helsinki/knowledge/sources";
+        Mock::given(method("GET"))
+            .and(path(base))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [
+                { "source": "web", "state": "crawled" },
+                { "source": "guide", "state": "crawled" }
+            ] })))
+            .mount(&assistant)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{base}/web/errors")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [
+                { "url": "https://www.hel.fi/gone", "kind": "page", "reason": "HTTP 404" }
+            ] })))
+            .mount(&assistant)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{base}/guide/errors")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&assistant)
+            .await;
+        let oidc = crate::auth::oidc::OidcClient::discover(
+            &crate::config::OidcConfig {
+                issuer: issuer.parse().expect("an issuer"),
+                client_id: "portal-api".into(),
+                auth: crate::config::ClientAuth::Secret("test-secret".into()),
+                extra_ca_pem: None,
+                admin_url: None,
+            },
+            "https://portal.test/api/v1/auth/callback",
+        )
+        .await
+        .expect("discovery");
+        let mut config = crate::config::Config::for_tests();
+        config.knowledge_url = Some(assistant.uri());
+        let state = crate::state::AppState::new(config, Some(oidc));
+        for (name, spec) in [
+            (
+                "web",
+                json!({ "source": "website", "startUrls": ["https://www.hel.fi/"], "visibility": "public" }),
+            ),
+            (
+                "guide",
+                json!({ "source": "guide", "visibility": "public", "languages": ["en"] }),
+            ),
+        ] {
+            state
+                .mirror
+                .upsert(envelope("KnowledgeSource", name, "helsinki", spec));
+        }
+        let web = status_of(&admin(&state), &state, json!({ "source": "web" }))
+            .await
+            .expect("the source with its errors");
+        assert_eq!(web["items"][0]["state"], "crawled", "{web}");
+        assert_eq!(web["errors"][0]["reason"], "HTTP 404", "{web}");
+        let guide = status_of(&admin(&state), &state, json!({ "source": "guide" }))
+            .await
+            .expect("the source");
+        assert_eq!(guide["errors"], json!([]), "{guide}");
+    }
 }

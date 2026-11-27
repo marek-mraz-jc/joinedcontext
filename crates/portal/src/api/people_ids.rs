@@ -441,9 +441,7 @@ async fn propose(
     let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &default_branch).await?;
     let mut uploads = Vec::with_capacity(manifests.len());
     for envelope in manifests {
-        let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
-            ApiError::Internal(format!("no catalogue entry for {}", envelope.kind))
-        })?;
+        let info = crate::api::mutate::catalogued(&envelope.kind)?;
         let path = crate::api::mutate::resolve_repo_path(
             envelope,
             info,

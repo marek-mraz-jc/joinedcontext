@@ -734,6 +734,32 @@ pub(crate) mod tests {
         );
     }
 
+    /// An archive file that is not there is refused before the bucket is asked.
+    #[tokio::test]
+    async fn an_archive_file_that_is_not_there_is_refused_before_the_bucket_is_asked() {
+        let server = wiremock::MockServer::start().await;
+        let bucket = Bucket {
+            endpoint: server.uri().parse().expect("url"),
+            region: "eu-central-1".into(),
+            bucket: "b".into(),
+            access_key_id: "AKID".into(),
+            secret_access_key: Zeroizing::new("secret".into()),
+        };
+        let gone = std::env::temp_dir().join(format!("s3-gone-{}-none", std::process::id()));
+        let refused = bucket
+            .put_file(&reqwest::Client::new(), "jc/a/x.age", &gone, 10, 1000)
+            .await;
+        assert!(
+            matches!(refused, Err(S3Error::Unreadable("the archive file"))),
+            "{refused:?}"
+        );
+        assert!(server
+            .received_requests()
+            .await
+            .expect("requests")
+            .is_empty());
+    }
+
     /// The GET Object example of the AWS SigV4 documentation ("Examples of Signature
     /// Calculations", examplebucket, 20130524T000000Z): the published signature.
     #[test]

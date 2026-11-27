@@ -137,7 +137,7 @@ fn authorize(
     let env = state.mirror.get(project, KIND, name).ok_or_else(|| {
         ApiError::NotFound(format!("no ServiceAccount {name} in project {project}"))
     })?;
-    let target = serde_json::to_value(&env).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let target = serde_json::to_value(&env).map_err(ApiError::internal)?;
     effective.check(KIND, Verb::Approve, Some(&target))?;
     let spec: ServiceAccountSpec = serde_json::from_value(env.spec).map_err(|e| {
         ApiError::Conflict(format!(

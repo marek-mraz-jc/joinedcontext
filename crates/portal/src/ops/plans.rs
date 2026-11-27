@@ -467,11 +467,9 @@ async fn checked(
     let base = etag(state, &home, info.kind, &change.name);
     let answer = match &manifest {
         Some(m) => {
-            let check = super::find("jc_manifest_dry_run").ok_or_else(|| {
-                OpError::Api(ApiError::Internal(
-                    "jc_manifest_dry_run is not registered".into(),
-                ))
-            })?;
+            let check = super::find("jc_manifest_dry_run").ok_or(OpError::Api(
+                ApiError::Internal("jc_manifest_dry_run is not registered".into()),
+            ))?;
             (check.run)(caller, state, &home, json!({ "manifest": m })).await?
         }
         None => removal_dry_run(caller, state, &home, info.plural, &change.name, workspace).await?,
@@ -481,13 +479,12 @@ async fn checked(
     slug_settled(caller, state, at, &home, manifest.as_mut()).await?;
     let mut answer = answer;
     if let (Some(m), "Pipeline") = (&manifest, info.kind) {
+        // The dry run answers a verdict with its findings, a refused check's included.
         let warnings = super::replace_check::warnings(state, project, &home, m).await;
-        if let Some(findings) = answer
-            .pointer_mut("/verdict/findings")
-            .and_then(Value::as_array_mut)
-        {
-            findings.extend(warnings);
-        }
+        let mut findings: Vec<Value> =
+            serde_json::from_value(answer["verdict"]["findings"].take()).unwrap_or_default();
+        findings.extend(warnings);
+        answer["verdict"]["findings"] = Value::Array(findings);
     }
     super::endpoint_reach::warn_outside(
         &mut answer,
@@ -496,9 +493,10 @@ async fn checked(
         &home,
         manifest.as_ref(),
     );
-    let model = match change.source {
-        None => None,
-        Some(_) => Some(model_checked(caller, state, at, &home, change, manifest.as_ref()).await?),
+    // A source never rides on a removal (`source_fits`), so a model change carries a manifest.
+    let model = match (&change.source, &manifest) {
+        (Some(_), Some(m)) => Some(model_checked(caller, state, &home, change, m).await?),
+        _ => None,
     };
     // Where a person opens this change in the Portal (S-41): the kind's editor on the object, or
     // its create form; the change itself is applied with the plan, never by following the link.
@@ -528,11 +526,10 @@ async fn checked(
         Some((shown, Err(findings))) => {
             diff["model"] = shown;
             diff["verdict"]["ok"] = json!(false);
-            if let Some(all) = diff["verdict"]["findings"].as_array_mut() {
-                all.extend(findings);
-            } else {
-                diff["verdict"]["findings"] = Value::Array(findings);
-            }
+            let mut all: Vec<Value> =
+                serde_json::from_value(diff["verdict"]["findings"].take()).unwrap_or_default();
+            all.extend(findings);
+            diff["verdict"]["findings"] = Value::Array(all);
             None
         }
         Some((shown, Ok(model))) => {
@@ -644,18 +641,11 @@ async fn removal_dry_run(
 async fn model_checked(
     caller: &Caller,
     state: &AppState,
-    at: &str,
     home: &str,
     change: &ChangeInput,
-    manifest: Option<&Value>,
+    manifest: &Value,
 ) -> Result<(Value, Result<ModelPlan, Vec<Value>>), OpError> {
     let source = change.source.as_deref().unwrap_or_default();
-    let Some(manifest) = manifest else {
-        return Err(invalid(
-            format!("{at}/source"),
-            "op delete takes no source".into(),
-        ));
-    };
     let current = state.mirror.get(home, "DataModel", &change.name);
     let creating = current.is_none();
     let spec = current.map_or_else(|| manifest["spec"].clone(), |envelope| envelope.spec);
@@ -748,10 +738,7 @@ async fn affected(
         Err("the model names no contextSpaceRef".to_owned())
     } else {
         let broker = crate::spaces::broker(&state.mirror, home, space);
-        match match crate::spaces::tenant(&state.mirror, home, space) {
-            Ok(tenant) => state.space_usage.usage(&broker, &tenant).await,
-            Err(reason) => Err(reason),
-        } {
+        match usage_of(state, &broker, home, space).await {
             Ok(usage) => match usage.bytes {
                 Some(bytes) => Ok(bytes.by_type),
                 None if usage.entities == 0 => Ok(BTreeMap::new()),
@@ -788,6 +775,17 @@ async fn affected(
         }
     }
     rows
+}
+
+/// What the space's broker counts in its tenant, or why it cannot.
+async fn usage_of(
+    state: &AppState,
+    broker: &str,
+    home: &str,
+    space: &str,
+) -> Result<crate::space_usage::SpaceUsage, String> {
+    let tenant = crate::spaces::tenant(&state.mirror, home, space)?;
+    state.space_usage.usage(broker, &tenant).await
 }
 
 /// The classes of the published model a change's subject touches: `Class` or `Class.slot`, or
@@ -1595,8 +1593,9 @@ async fn revert(
         let (op, manifest) = match (before, now.is_some()) {
             (Some(before), true) => (Op::Replace, Some(before)),
             (Some(before), false) => (Op::Create, Some(before)),
-            (None, true) => (Op::Delete, None),
-            (None, false) => continue,
+            // Absent before and now: the manifest named it only as made, and `now != made`
+            // above moved it, so the one case left is a file the change added.
+            (None, _) => (Op::Delete, None),
         };
         // The revert writes what the original wrote, so it needs the same right on each item.
         may_put_back(
@@ -2883,7 +2882,6 @@ mod tests {
         let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
         let checked = (op.run)(&steward(), &state, "doprava", json!({ "manifest": space }))
             .await
-            .map_err(|err| format!("{err:?}"))
             .expect("a verdict");
         assert_eq!(checked["valid"], true, "{checked}");
         assert_eq!(checked["verdict"]["ok"], true, "{checked}");
@@ -3353,5 +3351,694 @@ mod tests {
             .expect_err("a space has no model half")
             .to_string();
         assert!(why.contains("a model change without its source"), "{why}");
+    }
+
+    fn held(state: &AppState, kind: &str, name: &str, namespace: &str, spec: Value) {
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: crate::resource::ObjectMeta::new(name, namespace),
+            spec,
+            status: None,
+        });
+    }
+
+    fn removal_of(kind: &str, plural: &'static str, name: &str, base: &str) -> Planned {
+        Planned {
+            kind: kind.into(),
+            plural,
+            home: "doprava".into(),
+            name: name.into(),
+            manifest: None,
+            base: base.into(),
+            model: None,
+        }
+    }
+
+    /// A patch carrying only a model's LinkML source leaves the manifest as the object is now,
+    /// without its status.
+    #[test]
+    fn a_patch_carrying_only_a_source_keeps_the_manifest() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        held(
+            &state,
+            "DataModel",
+            "bike-counter",
+            "doprava",
+            json!({ "contextSpaceRef": "parking", "linkml": "./bike.linkml.yaml" }),
+        );
+        let change = ChangeInput {
+            op: Op::Patch,
+            kind: "DataModel".into(),
+            name: "bike-counter".into(),
+            manifest: None,
+            patch: None,
+            source: Some("classes: {}".into()),
+        };
+        let manifest = manifest_of(&state, "/changes/0", "doprava", &change)
+            .expect("a patch")
+            .expect("a manifest");
+        assert_eq!(manifest["spec"]["linkml"], "./bike.linkml.yaml");
+        assert_eq!(manifest["metadata"]["name"], "bike-counter");
+        assert!(manifest.get("status").is_none(), "{manifest}");
+    }
+
+    /// An object kept in the organization's namespace (a RoleBinding) opens a change request of
+    /// its own, so a plan holding one is no bundle.
+    #[test]
+    fn a_plan_with_an_organization_object_is_no_bundle() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let input = PlanInput {
+            changes: vec![
+                create("ContextSpace", "parking"),
+                create("RoleBinding", "readers"),
+            ],
+            workspace: None,
+        };
+        assert!(together(&state, "doprava", &input).is_none());
+    }
+
+    /// MF-07: a removal of a space an Endpoint still names is refused at the plan, naming the
+    /// Endpoint, and an apply of it opens nothing and says the same.
+    #[tokio::test]
+    async fn a_removal_of_a_referenced_space_is_refused_at_plan_and_at_apply() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        held(
+            &state,
+            "ContextSpace",
+            "parking",
+            "doprava",
+            json!({ "isSandbox": true }),
+        );
+        held(
+            &state,
+            "Endpoint",
+            "counters",
+            "doprava",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "parking" } }),
+        );
+        let removal = ChangeInput {
+            op: Op::Delete,
+            kind: "ContextSpace".into(),
+            name: "parking".into(),
+            manifest: None,
+            patch: None,
+            source: None,
+        };
+        let refused = plan(
+            &steward(),
+            &state,
+            "doprava",
+            PlanInput {
+                changes: vec![removal],
+                workspace: None,
+            },
+        )
+        .await;
+        let named = "1 dependent resource blocks deletion: Endpoint counters";
+        assert!(
+            matches!(&refused, Err(OpError::Api(ApiError::Unprocessable { errors, .. }))
+                if errors.iter().any(|e| *e == format!("/changes/0/manifest: {named}"))),
+            "{refused:?}"
+        );
+        assert_eq!(state.plans.plans.lock().map(|p| p.len()).unwrap_or(1), 0);
+        let item = removal_of(
+            "ContextSpace",
+            "spaces",
+            "parking",
+            &etag(&state, "doprava", "ContextSpace", "parking"),
+        );
+        let opened = open_one(&steward(), &state, &item, None).await;
+        assert!(
+            matches!(&opened, Err(ApiError::Conflict(why)) if why.starts_with(named)),
+            "{opened:?}"
+        );
+    }
+
+    /// A removal into a workspace commits on the workspace's branch and opens no Change (CC-76).
+    #[tokio::test]
+    async fn a_removal_into_a_workspace_commits_on_its_branch() {
+        use base64::Engine as _;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        let manifest = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "parking", "namespace": "doprava" },
+            "spec": { "isSandbox": true }
+        });
+        let content = base64::engine::general_purpose::STANDARD.encode(manifest.to_string());
+        for (verb, at, answer) in [
+            ("GET", repo.to_owned(), json!({ "DefaultBranch": "main" })),
+            (
+                "GET",
+                format!("{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"),
+                json!({ "Sha": "t1", "Tree": [], "Truncated": false }),
+            ),
+            (
+                "GET",
+                format!("{repo}/Shako.File(Path=@p,Ref=@r)"),
+                json!({ "Sha": "s1", "Content": content }),
+            ),
+            (
+                "POST",
+                format!("{repo}/Shako.CommitFiles"),
+                json!({ "Sha": "c0ffee" }),
+            ),
+        ] {
+            Mock::given(method(verb))
+                .and(path(at))
+                .respond_with(ResponseTemplate::new(200).set_body_json(answer))
+                .mount(&server)
+                .await;
+        }
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(forge));
+        held(
+            &state,
+            "ContextSpace",
+            "parking",
+            "doprava",
+            json!({ "isSandbox": true }),
+        );
+        state
+            .workspaces
+            .create(crate::ops::workspaces::Opening {
+                name: "w1",
+                title: None,
+                project: "doprava",
+                owner: "jana",
+                base_revision: "b0",
+                scope: crate::ops::workspaces::Scope::Project {},
+                ttl_hours: 1,
+            })
+            .await
+            .expect("a workspace");
+        let item = removal_of(
+            "ContextSpace",
+            "spaces",
+            "parking",
+            &etag(&state, "doprava", "ContextSpace", "parking"),
+        );
+        let opened = open_one(&steward(), &state, &item, Some("w1")).await;
+        assert!(
+            matches!(&opened, Ok(ProposeOutcome::Workspace(commit))
+                if commit.workspace == "w1" && commit.branch == "workspace/w1"),
+            "{opened:?}"
+        );
+    }
+
+    /// A model's source is checked at the plan: unreadable YAML and a range naming no class are
+    /// findings at `/source` (a slot whose name has a space keeps the check's own words), and a
+    /// check that cannot reach Model Tools is that error, for a model patched or created.
+    #[tokio::test]
+    async fn a_model_source_the_check_refuses_is_named_at_the_source() {
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        held(
+            &state,
+            "DataModel",
+            "bike-counter",
+            "doprava",
+            json!({ "contextSpaceRef": "parking", "linkml": "./bike.linkml.yaml" }),
+        );
+        held(
+            &state,
+            "ContextSpace",
+            "parking",
+            "doprava",
+            json!({ "isSandbox": true }),
+        );
+        let patch = |source: &str| PlanInput {
+            changes: vec![ChangeInput {
+                op: Op::Patch,
+                kind: "DataModel".into(),
+                name: "bike-counter".into(),
+                manifest: None,
+                patch: None,
+                source: Some(source.into()),
+            }],
+            workspace: None,
+        };
+        let yaml = plan(&steward(), &state, "doprava", patch("classes: [")).await;
+        assert!(
+            matches!(&yaml, Err(OpError::Api(ApiError::Unprocessable { errors, .. }))
+                if errors.iter().any(|e| e.starts_with("/changes/0/source: invalid yaml body"))),
+            "{yaml:?}"
+        );
+        let spaced = "classes:\n  Parking:\n    slots: [\"my slot\"]\nslots:\n  my slot:\n    range: Nowhere\n";
+        let ranged = plan(&steward(), &state, "doprava", patch(spaced)).await;
+        assert!(
+            matches!(&ranged, Err(OpError::Api(ApiError::Unprocessable { errors, .. }))
+            if errors.iter().any(|e| e.starts_with(
+                "/changes/0/source: a slot's range names a class the model does not define: \
+                 slots/my slot/range: class 'Nowhere'"
+            ))),
+            "{ranged:?}"
+        );
+        let unreached = |answer: &Result<Value, OpError>| matches!(answer, Err(OpError::Api(ApiError::Unavailable(why))) if why.contains("model tools"));
+        let tools = plan(
+            &steward(),
+            &state,
+            "doprava",
+            patch("classes:\n  Parking: {}\n"),
+        )
+        .await;
+        assert!(unreached(&tools), "{tools:?}");
+        let mut created = create("DataModel", "parking");
+        created.source = Some("classes:\n  Parking: {}\n".into());
+        let new = plan(
+            &steward(),
+            &state,
+            "doprava",
+            PlanInput {
+                changes: vec![created],
+                workspace: None,
+            },
+        )
+        .await;
+        assert!(unreached(&new), "{new:?}");
+        assert_eq!(state.plans.plans.lock().map(|p| p.len()).unwrap_or(1), 0);
+    }
+
+    /// The stored entities of a breaking change: none in a space whose broker holds nothing, not
+    /// counted where the broker counts no types, and those of the touched class where it does.
+    #[tokio::test]
+    async fn a_breaking_change_counts_what_the_broker_holds_by_type() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let token = std::env::temp_dir().join("jc-plans-broker-token");
+        std::fs::write(&token, "t").expect("a token file");
+        let published = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(".*"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Content": "Y2xhc3NlczoKICBQYXJraW5nOgogICAgc2xvdHM6IFtzcGFjZXNdCnNsb3RzOgogIHNwYWNlczoKICAgIHJhbmdlOiBpbnRlZ2VyCg==", "Encoding": "base64",
+                "Sha": "s1", "Path": "doprava/parking.linkml.yaml"
+            })))
+            .mount(&published)
+            .await;
+        let changes = [datamodels::ModelChange {
+            severity: "breaking".into(),
+            subject: "Parking.spaces".into(),
+            reason: "r".into(),
+        }];
+        let manifest = json!({ "spec": { "contextSpaceRef": "mobility" } });
+        let mut rows = Vec::new();
+        for counts in [
+            json!({ "counts": { "entities": 0 } }),
+            json!({ "counts": { "entities": 3 } }),
+            json!({ "counts": { "entities": 3 }, "bytes": { "entities": 3, "attrInstances": 0,
+                "byType": { "https://example.org/Parking": 2, "https://example.org/Kiosk": 1 } } }),
+        ] {
+            let broker = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path_regex("^/q/tenants/[^/]+$"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(counts))
+                .mount(&broker)
+                .await;
+            let mut state = on_forge(&published).await;
+            state.space_usage = std::sync::Arc::new(crate::space_usage::Counter::new(
+                Some(broker.uri()),
+                Some(token.clone()),
+            ));
+            held(
+                &state,
+                "DataModel",
+                "parking",
+                "doprava",
+                json!({ "contextSpaceRef": "mobility", "linkml": "./parking.linkml.yaml" }),
+            );
+            held(
+                &state,
+                "ContextSpace",
+                "mobility",
+                "doprava",
+                json!({ "isSandbox": true }),
+            );
+            let row = affected(&state, "doprava", "parking", &manifest, &changes).await;
+            assert_eq!(row.len(), 1, "{row:?}");
+            rows.push(row[0].clone());
+        }
+        assert_eq!(rows[0]["affectedEntities"], 0, "{rows:?}");
+        assert_eq!(rows[0]["space"], "mobility", "{rows:?}");
+        assert!(rows[1]["affectedEntities"].is_null(), "{rows:?}");
+        assert!(
+            rows[1]["notCounted"]
+                .as_str()
+                .is_some_and(|why| why.contains("does not count by type")),
+            "{rows:?}"
+        );
+        assert_eq!(rows[2]["affectedEntities"], 2, "{rows:?}");
+    }
+
+    /// A gate whose recorded check cannot be read is an error, never a pass; an item never
+    /// checked refuses the whole apply, naming it.
+    #[tokio::test]
+    async fn an_unreadable_or_absent_check_refuses_the_apply() {
+        let fresh = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "fresh", "namespace": "doprava" },
+            "spec": { "isSandbox": true }
+        });
+        let mut item = removal_of("ContextSpace", "spaces", "fresh", "absent");
+        item.manifest = Some(fresh);
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let refused = unchanged_and_gated(&state, std::slice::from_ref(&item)).await;
+        assert!(
+            matches!(&refused, Err(OpError::Api(ApiError::Conflict(why)))
+                if why.starts_with("nothing was applied: ContextSpace fresh: ") && why.contains(PLAN)),
+            "{refused:?}"
+        );
+        let mut broken = AppState::new(crate::config::Config::for_tests(), None);
+        broken.drafts = crate::ops::drafts::DraftStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("doprava"),
+        );
+        let gate = gate_refusal(&broken, &item).await;
+        assert!(
+            matches!(&gate, Err(OpError::Api(ApiError::Internal(_)))),
+            "{gate:?}"
+        );
+    }
+
+    /// MF-24: only a `secretRef` the repository's encrypted files do not hold, or a key of it
+    /// they lack, is asked for, each with its form.
+    #[tokio::test]
+    async fn only_a_secret_the_repository_does_not_hold_is_needed() {
+        use base64::Engine as _;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        let sealed = concat!(
+            "counters-api:\n  apiKey: ENC[AES256_GCM",
+            ",data:x]\nsops:\n  version: 3.9.0\n"
+        );
+        for (at, answer) in [
+            (repo.to_owned(), json!({ "DefaultBranch": "main" })),
+            (
+                format!("{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"),
+                json!({ "Sha": "t1", "Truncated": false, "Tree": [
+                    { "Path": "projects/doprava/secrets/counters.enc.yaml", "Type": "blob", "Sha": "b1" }
+                ] }),
+            ),
+            (
+                format!("{repo}/Shako.File(Path=@p,Ref=@r)"),
+                json!({ "Sha": "s1", "Content": base64::engine::general_purpose::STANDARD.encode(sealed) }),
+            ),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(at))
+                .respond_with(ResponseTemplate::new(200).set_body_json(answer))
+                .mount(&server)
+                .await;
+        }
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(forge));
+        let source = |name: &str, key: Option<&str>| {
+            let mut item = removal_of("DataSource", "datasources", "counters", "absent");
+            item.manifest = Some(json!({
+                "kind": "DataSource", "metadata": { "name": "counters" },
+                "spec": { "secretRef": { "name": name, "key": key } }
+            }));
+            item
+        };
+        let items = [
+            source("counters-api", Some("apiKey")),
+            source("counters-api", Some("token")),
+            source("gone", None),
+            removal_of("DataSource", "datasources", "old", "e1"),
+        ];
+        let needed = needs_secret(&state, "doprava", &items).await;
+        let named: Vec<(&str, Option<&str>)> = needed
+            .iter()
+            .map(|n| (n["name"].as_str().unwrap_or_default(), n["key"].as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            [("counters-api", Some("token")), ("gone", None)],
+            "{needed:?}"
+        );
+        assert!(
+            needed[0]["form"]
+                .as_str()
+                .is_some_and(|form| form.contains("/projects/doprava/secrets/new")),
+            "{needed:?}"
+        );
+    }
+
+    /// MF-48: a bundled change whose reference an open change creates opens its one Change with
+    /// the line that holds it until that change is approved.
+    #[tokio::test]
+    async fn a_bundled_plan_waiting_on_an_open_change_says_so_in_its_merge_request() {
+        let open = crate::api::mutate::branch_name(
+            "doprava",
+            "DataModel",
+            "transit",
+            crate::change::Operation::Create,
+        );
+        let server = empty_forge(Some(open)).await;
+        let state = on_forge(&server).await;
+        let space = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "mobility", "namespace": "doprava" },
+            "spec": { "isSandbox": true, "dataModelRef": "transit" }
+        });
+        super::super::proposals::record_check(
+            &steward(),
+            &state,
+            "doprava",
+            &space,
+            &super::super::verdict::Verdict::green(&space, None),
+        )
+        .await;
+        let mut plan = model_and_space();
+        plan.items[1].manifest = Some(space);
+        let rows = opened_together(&state, &plan).await;
+        assert!(rows.as_ref().is_ok_and(|rows| rows.len() == 1), "{rows:?}");
+        let requests = server.received_requests().await.expect("requests");
+        let bodies: Vec<String> = requests
+            .iter()
+            .filter(|r| {
+                r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.OpenPullRequest")
+            })
+            .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+            .collect();
+        assert_eq!(bodies.len(), 1, "{bodies:?}");
+        assert!(bodies[0].contains("#175"), "{bodies:?}");
+    }
+
+    /// An autonomous connector's apply of a plan that opens nothing answers an empty list,
+    /// also outside any proposal channel.
+    #[tokio::test]
+    async fn an_autonomous_apply_of_an_empty_plan_opens_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut connector = scoped_connector(true);
+        connector.autonomous = true;
+        let id = kept(&state.plans, "sub-jana", Some("c9"), TTL_MINUTES);
+        let applied = apply(
+            &caller(Some(connector.access())),
+            &state,
+            "doprava",
+            ApplyInput { plan_id: id },
+        )
+        .await
+        .expect("nothing to open");
+        assert_eq!(applied["changeRequests"], json!([]), "{applied}");
+    }
+
+    /// A dry run and a bundled commit are shown as they are.
+    #[test]
+    fn an_opened_row_shows_a_dry_run_or_a_bundled_commit_whole() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let dry = crate::api::dry_run::DryRunResult {
+            valid: true,
+            lane: Lane::Green,
+            plan: crate::plan::diff(None, None),
+            restarts_stream: false,
+            probe: None,
+            verdict: None,
+            findings: Vec::new(),
+            awaited: Vec::new(),
+            goes_with: Vec::new(),
+            binds_endpoints: Vec::new(),
+        };
+        let row = opened_row(&state, "doprava", ProposeOutcome::DryRun(dry));
+        assert_eq!(row["valid"], true, "{row}");
+        let bundled = crate::api::mutate::BundledCommit {
+            path: "projects/doprava/a.yaml".into(),
+            lane: Lane::Green,
+            waits_on: vec!["Waits-On: #1".into()],
+        };
+        let row = opened_row(&state, "doprava", ProposeOutcome::Bundled(bundled));
+        assert_eq!(row["path"], "projects/doprava/a.yaml", "{row}");
+        assert_eq!(row["waitsOn"][0], "Waits-On: #1", "{row}");
+    }
+
+    /// A manifest put back must be a resource, and an object a revert deletes needs `delete` on
+    /// its kind.
+    #[test]
+    fn a_put_back_needs_a_resource_and_delete_for_a_removal() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let nobody = caller(None);
+        let effective = crate::permissions::for_request(&state, &nobody.identity, "doprava");
+        let removal = may_put_back(
+            &nobody,
+            &state,
+            "doprava",
+            &effective,
+            "Endpoint",
+            "projects/doprava/a.yaml",
+            None,
+        );
+        assert!(removal.is_err(), "{removal:?}");
+        let admin = steward();
+        let effective = crate::permissions::for_request(&state, &admin.identity, "doprava");
+        let broken = may_put_back(
+            &admin,
+            &state,
+            "doprava",
+            &effective,
+            "Endpoint",
+            "projects/doprava/a.yaml",
+            Some(&json!({ "kind": 7 })),
+        );
+        assert!(
+            matches!(&broken, Err(OpError::InvalidInput { path, message })
+                if path == "/id" && message.starts_with("projects/doprava/a.yaml: ")),
+            "{broken:?}"
+        );
+        assert!(may_put_back(
+            &admin,
+            &state,
+            "doprava",
+            &effective,
+            "Endpoint",
+            "projects/doprava/a.yaml",
+            None
+        )
+        .is_ok());
+    }
+
+    /// The forge of [`forge_with_pull`]'s merged change 7, which touched
+    /// `projects/doprava/endpoints/air.yaml`: the file as it was before (`b1`), on main now and as
+    /// merged (`m1`), each `None` when absent there.
+    async fn reverting(
+        before: Option<&Value>,
+        now: Option<&Value>,
+        made: Option<&Value>,
+    ) -> (wiremock::MockServer, AppState) {
+        use base64::Engine as _;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = forge_with_pull(json!({}), 200).await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(7)/Files")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [
+                { "Filename": "projects/doprava/endpoints/air.yaml", "Status": "added" }
+            ] })))
+            .mount(&server)
+            .await;
+        for (at, file) in [("'b1'", before), ("'main'", now), ("'m1'", made)] {
+            let answer = match file {
+                Some(manifest) => ResponseTemplate::new(200).set_body_json(json!({
+                    "Sha": "s1",
+                    "Content": base64::engine::general_purpose::STANDARD.encode(manifest.to_string()),
+                })),
+                None => ResponseTemplate::new(404).set_body_json(json!({ "message": "not found" })),
+            };
+            Mock::given(method("GET"))
+                .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+                .and(query_param("@r", at))
+                .respond_with(answer)
+                .mount(&server)
+                .await;
+        }
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(forge));
+        (server, state)
+    }
+
+    fn air() -> Value {
+        json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+            "metadata": { "name": "air", "namespace": "doprava" },
+            "spec": {}
+        })
+    }
+
+    /// S-53: a file the change added and main still holds as merged is planned as its removal.
+    #[tokio::test]
+    async fn a_revert_of_an_added_file_plans_its_removal() {
+        let (_forge, state) = reverting(None, Some(&air()), Some(&air())).await;
+        held(&state, "Endpoint", "air", "doprava", json!({}));
+        let answer = revert(
+            &steward(),
+            &state,
+            "doprava",
+            RevertInput {
+                id: "chg-00000007".into(),
+                workspace: None,
+            },
+        )
+        .await;
+        assert!(
+            answer.as_ref().is_ok_and(|a| a["reverts"] == "chg-00000007"
+                && a["diff"][0]["op"] == "delete"
+                && a["diff"][0]["name"] == "air"),
+            "{answer:?}"
+        );
+    }
+
+    /// F-R2POR4-007: a reader of the project who may not read a kind the change touched is told
+    /// the change is not there.
+    #[tokio::test]
+    async fn a_revert_touching_a_kind_the_caller_does_not_read_is_not_found() {
+        let (_forge, state) = reverting(None, Some(&air()), Some(&air())).await;
+        let org = crate::permissions::ORG_NAMESPACE;
+        held(
+            &state,
+            "Role",
+            "space-reader",
+            org,
+            json!({ "rules": [{ "kinds": ["ContextSpace"], "verbs": ["read"] }] }),
+        );
+        held(
+            &state,
+            "RoleBinding",
+            "space-readers",
+            org,
+            json!({ "role": "space-reader", "subjects": [{ "group": "readers" }],
+                    "scope": { "project": "doprava" } }),
+        );
+        let mut reader = caller(None);
+        reader.identity.groups = vec!["readers".into()];
+        let refused = revert(
+            &reader,
+            &state,
+            "doprava",
+            RevertInput {
+                id: "chg-00000007".into(),
+                workspace: None,
+            },
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(OpError::Api(ApiError::NotFound(why)))
+                if why == "change 'chg-00000007' not found in project 'doprava'"),
+            "{refused:?}"
+        );
     }
 }

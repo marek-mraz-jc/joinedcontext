@@ -2078,18 +2078,8 @@ pub fn installation_organization(
                  [[organizations]] entry every existing project belongs to, e.g. smartcity"
             ))
         })?;
-    let host = base
-        .host_str()
-        .map(|h| match base.port() {
-            Some(port) => format!("{h}:{port}"),
-            None => h.to_owned(),
-        })
-        .ok_or_else(|| {
-            invalid(format!(
-                "'{name}' has no host in JC_PORTAL_ORGANIZATION_HOSTS"
-            ))
-        })?
-        .to_ascii_lowercase();
+    // `organization_host::parse` refuses a base without a host, so the slice is host[:port].
+    let host = base[url::Position::BeforeHost..url::Position::AfterPort].to_ascii_lowercase();
     Ok(Some(crate::host_registry::SeedOrganization {
         name,
         organization_id: None,

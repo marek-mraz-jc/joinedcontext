@@ -822,51 +822,44 @@ impl AppState {
         // settings that say where. Either missing leaves the reconciler reading apps and
         // deploying nothing, which is what a Portal on a laptop does (T-0411, AP-18). No
         // realm is needed: the login front is the edge's one client (AP-27, ADR-N-019).
-        match (self.config.app_settings.clone(), self.in_cluster()) {
-            (Some(settings), Ok(Some(kube))) => {
-                // The edge file has its own client: the converger owns the other one.
-                match self.in_cluster() {
-                    Ok(Some(edge_kube)) => {
-                        let namespace = settings.apisix_namespace.clone();
-                        match self.in_cluster() {
-                            Ok(Some(hosts_kube)) => {
-                                syncer = syncer.with_app_hosts(Arc::new(
-                                    crate::reconciler::app_hosts::AppHosts::new(
-                                        hosts_kube,
-                                        namespace.clone(),
-                                    ),
-                                ));
-                            }
-                            _ => {
-                                tracing::warn!(
-                                    "no third API client: no App host gets a certificate"
-                                );
-                            }
-                        }
-                        syncer = self.wire_org_hosts(syncer, &namespace);
-                        syncer = syncer.with_edge_file(
-                            Arc::new(
-                                crate::reconciler::edge_file::EdgeFile::new(edge_kube, namespace)
-                                    .with_registry(self.db.clone())
-                                    .with_bounds(self.config.organization_bounds.clone())
-                                    .with_wasm_host(
-                                        self.config
-                                            .apps_db
-                                            .as_ref()
-                                            .and_then(|db| db.host_namespace.clone()),
-                                    ),
+        // The converger, the edge file, the App hosts and the registry hosts each own a client,
+        // all read from the one mount: a mount that answered once answers each of them.
+        let clients = (
+            self.in_cluster(),
+            self.in_cluster(),
+            self.in_cluster(),
+            self.in_cluster(),
+        );
+        match (self.config.app_settings.clone(), clients) {
+            (
+                Some(settings),
+                (Ok(Some(kube)), Ok(Some(edge_kube)), Ok(Some(hosts_kube)), Ok(Some(org_kube))),
+            ) => {
+                let namespace = settings.apisix_namespace.clone();
+                syncer = syncer.with_app_hosts(Arc::new(
+                    crate::reconciler::app_hosts::AppHosts::new(hosts_kube, namespace.clone()),
+                ));
+                syncer = self.wire_org_hosts(syncer, org_kube, &namespace);
+                syncer = syncer.with_edge_file(
+                    Arc::new(
+                        crate::reconciler::edge_file::EdgeFile::new(edge_kube, namespace)
+                            .with_registry(self.db.clone())
+                            .with_bounds(self.config.organization_bounds.clone())
+                            .with_wasm_host(
+                                self.config
+                                    .apps_db
+                                    .as_ref()
+                                    .and_then(|db| db.host_namespace.clone()),
                             ),
-                            settings.clone(),
-                        );
-                    }
-                    _ => tracing::warn!("no second API client: the edge serves helm's base alone"),
-                }
+                    ),
+                    settings.clone(),
+                );
                 syncer = syncer.with_converger(Arc::new(
                     crate::apps::converge::Converger::new(kube, settings)
                         .with_wasm_apps(self.wasm_apps.clone()),
                 ));
             }
-            (_, Err(err)) => {
+            (_, (Err(err), ..)) => {
                 tracing::warn!(error = %err, "the ServiceAccount mount is unreadable, so no app is deployed")
             }
             _ => tracing::info!("no app settings or no cluster: apps are read, not deployed"),
@@ -877,7 +870,12 @@ impl AppState {
     /// The registry hosts' certificates and Ingresses (T-7129 §3), beside the App hosts': a
     /// database for the registry and a client of their own. `JC_PORTAL_DNS01_ISSUER` names the
     /// dns01 ClusterIssuer to request them from instead of the edge certificate's issuer.
-    fn wire_org_hosts(&self, syncer: Syncer, namespace: &str) -> Syncer {
+    fn wire_org_hosts(
+        &self,
+        syncer: Syncer,
+        kube: crate::apps::kube::KubeClient,
+        namespace: &str,
+    ) -> Syncer {
         let Some(pool) = self.db.clone() else {
             return syncer;
         };
@@ -899,21 +897,15 @@ impl AppState {
             tracing::error!(%name, "JC_PORTAL_DNS01_ISSUER is not a Kubernetes name: no registry host gets a certificate");
             return syncer;
         }
-        match self.in_cluster() {
-            Ok(Some(kube)) => syncer.with_org_hosts(Arc::new(
-                crate::reconciler::org_hosts::OrgHosts::new(
-                    kube,
-                    namespace.to_owned(),
-                    pool,
-                    Arc::new(dns),
-                )
-                .with_dns01_issuer(dns01),
-            )),
-            _ => {
-                tracing::warn!("no fourth API client: no registry host gets a certificate");
-                syncer
-            }
-        }
+        syncer.with_org_hosts(Arc::new(
+            crate::reconciler::org_hosts::OrgHosts::new(
+                kube,
+                namespace.to_owned(),
+                pool,
+                Arc::new(dns),
+            )
+            .with_dns01_issuer(dns01),
+        ))
     }
 
     /// The realm writers: groups, App clients, workload clients, hub scopes, MQTT and MCP clients.
@@ -1035,15 +1027,7 @@ impl AppState {
                                 == crate::reconciler::streams::PipelineCredential::Secret,
                     );
                     // A removed account's tokens end with it (T-5568).
-                    let state = self.clone();
-                    let clients = clients.with_revoke(Arc::new(move |subject: String| {
-                        let state = state.clone();
-                        Box::pin(async move {
-                            state
-                                .revoke_subject(&subject, crate::auth::session::now_unix())
-                                .await
-                        })
-                    }));
+                    let clients = clients.with_revoke(self.revoker());
                     let clients = match self.db.clone() {
                         Some(pool) => clients.with_keys(pool),
                         None => clients,
@@ -1124,18 +1108,26 @@ impl AppState {
         syncer
     }
 
+    /// What the workload clients call for a removed account: its subject's tokens end now
+    /// (T-5568).
+    fn revoker(&self) -> crate::reconciler::workload_clients::Revoke {
+        let state = self.clone();
+        Arc::new(move |subject: String| {
+            let state = state.clone();
+            Box::pin(async move {
+                state
+                    .revoke_subject(&subject, crate::auth::session::now_unix())
+                    .await
+            })
+        })
+    }
+
     /// The stream deployer, with its queue started, when a pipeline runner is configured.
     fn wire_streams(&self, mut syncer: Syncer) -> Syncer {
         if let Some(url) = self.config.pipeline_runner_url.clone() {
             let (batch, short) = self.config.pipelines_concurrency;
             // A snapshot pipeline judges its source deletes when its run ends (T-4891).
-            let (ends, mut ended) = tokio::sync::mpsc::unbounded_channel();
-            let judge = self.clone();
-            tokio::spawn(async move {
-                while let Some(end) = ended.recv().await {
-                    crate::pipeline_source_deletes::run_ended(&judge, end).await;
-                }
-            });
+            let (ends, _judged) = judge_run_ends(self.clone());
             // An events pipeline without runs deletes what its source marked every sweep (T-5360).
             let sweeper = self.clone();
             tokio::spawn(async move {
@@ -1461,11 +1453,7 @@ impl AppState {
                         keys: self.db.clone(),
                     });
                     let boot = Arc::clone(&wasm);
-                    tokio::spawn(async move {
-                        if let Err(err) = boot.db.bootstrap().await {
-                            tracing::error!(error = %err, "the apps database's jc_apps schema did not apply");
-                        }
-                    });
+                    tokio::spawn(async move { bootstrap_apps(&boot.db).await });
                     self.wasm_apps = Some(wasm);
                 }
                 (Err(err), _) => {
@@ -1824,6 +1812,29 @@ fn catalogue_host(config: &Config) -> String {
     origin_or_host(&config.api_base_url())
 }
 
+/// Judges the source deletes of each run that ends, until every sender is gone (T-4891).
+pub(crate) fn judge_run_ends(
+    judge: AppState,
+) -> (
+    tokio::sync::mpsc::UnboundedSender<crate::pipeline_source_deletes::RunEnd>,
+    tokio::task::JoinHandle<()>,
+) {
+    let (ends, mut ended) = tokio::sync::mpsc::unbounded_channel();
+    let judged = tokio::spawn(async move {
+        while let Some(end) = ended.recv().await {
+            crate::pipeline_source_deletes::run_ended(&judge, end).await;
+        }
+    });
+    (ends, judged)
+}
+
+/// Applies jc_apps's schema to the wasm Apps' database; a failure is logged and the Portal
+/// serves on.
+async fn bootstrap_apps(db: &crate::apps::apps_db::AppsDb) {
+    let failed = |err: &crate::apps::apps_db::Error| tracing::error!(error = %err, "the apps database's jc_apps schema did not apply");
+    let _ = db.bootstrap().await.inspect_err(failed);
+}
+
 /// `base` as a dataset links the Endpoints answering there (jcctl `Settings::host`): a bare
 /// host for `https` on its default port, else the whole origin, scheme and port kept.
 pub(crate) fn origin_or_host(base: &url::Url) -> String {
@@ -2169,6 +2180,83 @@ mod tests {
             .with_leadership(Arc::new(Leadership::reconciler(pool)));
         let state = AppState::new(Config::for_tests(), None).with_syncer(Arc::new(follower));
         assert!(!state.leads());
+    }
+
+    /// A guard whose slot was freed by someone else frees nothing twice and leaves no key.
+    #[test]
+    fn a_slot_freed_elsewhere_leaves_its_guard_nothing_to_free() {
+        let state = AppState::new(Config::for_tests(), None);
+        let held = state
+            .mcp_enter(&[("person", 2), ("connector", 1)])
+            .expect("free slots");
+        state
+            .mcp_in_flight
+            .lock()
+            .expect("the slots")
+            .remove("person");
+        drop(held);
+        assert!(state.mcp_in_flight.lock().expect("the slots").is_empty());
+    }
+
+    /// T-5568: the workload clients' revoker ends a removed account's tokens now, and nobody
+    /// else's.
+    #[tokio::test]
+    async fn the_revoker_ends_the_removed_accounts_tokens_only() {
+        let state = AppState::new(Config::for_tests(), None);
+        let before = now_unix() - 10;
+        assert!(!state.revoked_since("service-account-feed", before));
+        (state.revoker())("service-account-feed".to_owned()).await;
+        assert!(state.revoked_since("service-account-feed", before));
+        assert!(!state.revoked_since("service-account-other", before));
+    }
+
+    /// T-4891: the judge reads each run end, one of a pipeline nobody holds included, and
+    /// stops once every sender is gone.
+    #[tokio::test]
+    async fn the_run_end_judge_reads_each_end_and_stops_with_its_senders() {
+        let state = AppState::new(Config::for_tests(), None);
+        let (ends, judged) = judge_run_ends(state.clone());
+        ends.send(crate::pipeline_source_deletes::RunEnd {
+            project: "p".into(),
+            pipeline: "gone".into(),
+            run: "r1".into(),
+            finished: true,
+            reports: crate::pipeline_source_deletes::ReportCount::Complete,
+            stream: "hash".into(),
+        })
+        .expect("the judge listens");
+        drop(ends);
+        judged.await.expect("the judge ends with its senders");
+        assert!(
+            state
+                .pipeline_log
+                .ran_streams()
+                .await
+                .expect("the log")
+                .is_empty(),
+            "a run that logged no line keeps no stream"
+        );
+    }
+
+    /// AP-149: an apps database that does not answer leaves its error in the log; the Portal
+    /// serves on without the schema.
+    #[tokio::test]
+    async fn an_apps_database_that_does_not_answer_is_logged() {
+        let connect: sqlx::postgres::PgConnectOptions =
+            "postgres://apps@127.0.0.1:1/apps".parse().expect("a URL");
+        let db = crate::apps::apps_db::AppsDb {
+            admin: sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(std::time::Duration::from_millis(200))
+                .connect_lazy_with(connect.clone()),
+            connect,
+            shards: 1,
+        };
+        let ((), log) = crate::test_log::logged(
+            tracing::level_filters::LevelFilter::ERROR,
+            bootstrap_apps(&db),
+        )
+        .await;
+        assert!(log.contains("jc_apps schema did not apply"), "{log}");
     }
 
     #[test]

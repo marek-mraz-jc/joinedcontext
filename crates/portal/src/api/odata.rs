@@ -343,7 +343,8 @@ pub(crate) fn metadata_xml(model: &Model) -> Result<String, String> {
     let mut xml = Vec::new();
     odata_csdl::write_xml(model, &odata_csdl::Limits::strict(), &mut xml)
         .map_err(|e| e.to_string())?;
-    let xml = String::from_utf8(xml).map_err(|e| e.to_string())?;
+    // The writer writes UTF-8, so nothing is replaced here.
+    let xml = String::from_utf8_lossy(&xml).into_owned();
     let (actions, imports) = actions_xml();
     let container = xml
         .rfind("</EntityContainer>")
@@ -644,13 +645,13 @@ async fn answer(
     let served = &*SERVED;
     // An entity set that is not there answers 404, as an unknown plural does on the REST door.
     let name = target.split(['(', '/', '?']).next().unwrap_or_default();
-    if !served.sets.iter().any(|set| set.set == name) {
+    let Some(set) = served.sets.iter().find(|set| set.set == name) else {
         return Err(not_found(format!(
             "no entity set {name}; $metadata lists the entity sets"
         ))
         .into_response()
         .into());
-    }
+    };
     let parsed = odata_url::parse(target, &EdmModel(&served.model), &limits()).map_err(|e| {
         match e.kind {
             UrlErrorKind::NotImplemented(_) => not_implemented(&e.to_string()),
@@ -664,17 +665,12 @@ async fn answer(
     let ODataUri::Resource { path, options } = parsed else {
         return Err(not_implemented("this resource").into_response().into());
     };
-    let Some((Segment::EntitySet(name), rest)) = path.split_first() else {
+    let Some((Segment::EntitySet(_), rest)) = path.split_first() else {
         return Err(not_implemented("this resource path").into_response().into());
-    };
-    let Some(set) = served.sets.iter().find(|set| &set.set == name) else {
-        return Err(not_found(format!("no entity set {name}"))
-            .into_response()
-            .into());
     };
     let rows = rows_of(set, caller, state, project).await?;
     let fail = |e: TableError| Refusal::from(e).into_response();
-    let table = table_of(served, name, rows)?;
+    let table = table_of(served, &set.set, rows)?;
     let root = service_root(state, project);
     let all = Scope::all();
     match rest {

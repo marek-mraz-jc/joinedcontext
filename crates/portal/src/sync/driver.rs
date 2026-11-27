@@ -373,9 +373,12 @@ impl Driver {
             .filter(|(id, _)| id.kind == KIND)
             .map(|(_, resource)| resource.manifest.clone())
             .collect();
-        if let Ok(mut cache) = self.cached.lock() {
-            *cache = Some((revision.to_owned(), sources.clone()));
-        }
+        // A cache a panic poisoned is only a cache: this pass's sources replace it.
+        *self
+            .cached
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Some((revision.to_owned(), sources.clone()));
         Ok((sources, Some(scratch)))
     }
 

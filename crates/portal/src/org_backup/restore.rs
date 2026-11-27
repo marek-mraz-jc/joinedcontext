@@ -1251,6 +1251,38 @@ mod tests {
         assert!(binary.contains("not a data backup archive"), "{binary}");
     }
 
+    /// What does not open is refused in words before a row is read: bytes that are no age file,
+    /// in memory or fetched; a sealed archive whose payload was changed after sealing; a zip
+    /// without its index; an index that is no backup index.
+    #[tokio::test]
+    async fn what_does_not_open_as_a_sealed_backup_is_refused() {
+        let identity = age::x25519::Identity::generate();
+        let refused = decrypt_capped(b"not age", &identity, 1 << 20).expect_err("no age file");
+        assert!(
+            refused.to_string().contains("does not open the archive"),
+            "{refused}"
+        );
+        let (_server, response) = served(b"not age either".to_vec()).await;
+        let sealed = receive(response).await.expect("received");
+        let refused = open(sealed, identity.clone(), "alfa", CAPS).await;
+        assert!(refused.is_err(), "no age file opens");
+        let mut tampered = super::super::data::encrypt_bytes(
+            &[identity.to_public()],
+            &zipped(&[("index.yaml", &index_of(FORMAT_VERSION, BTreeMap::new()))]),
+        )
+        .expect("sealed");
+        let last = tampered.len() - 1;
+        tampered[last] ^= 0x55;
+        let (_server, response) = served(tampered).await;
+        let sealed = receive(response).await.expect("received");
+        let refused = open(sealed, identity, "alfa", CAPS).await;
+        assert!(refused.is_err(), "a changed payload fails its tag");
+        let refused = refusal(opened(&zipped(&[("other.yaml", b"x: 1")]), CAPS).await);
+        assert!(refused.contains("not a data backup archive"), "{refused}");
+        let refused = refusal(opened(&zipped(&[("index.yaml", b"a list: [1, 2")]), CAPS).await);
+        assert!(refused.contains("not a data backup archive"), "{refused}");
+    }
+
     /// A sealed archive past what a run uploads is refused by its length; one cut short says the
     /// bucket did not answer whole.
     #[tokio::test]
@@ -1448,6 +1480,110 @@ mod tests {
         assert!(
             listed.projects.is_empty() && listed.deleted.is_empty(),
             "{listed:?}"
+        );
+    }
+
+    /// A table's lines are rows of JSON: one that is not is the archive refused; a table not
+    /// keyed per project is one batch with no key, the database never asked.
+    #[tokio::test]
+    async fn a_tables_lines_are_json_rows_in_one_batch_unless_keyed_per_project() {
+        let state = state_with_unreached_db();
+        let pool = state.db.clone().expect("a lazy pool");
+        let table = &PORTAL_TABLES[1];
+        let refused = batches(&state, &pool, table, &[], vec!["not json".into()], true)
+            .await
+            .expect_err("no row");
+        assert!(
+            refused.to_string().contains("not a data backup archive"),
+            "{refused}"
+        );
+        let one = batches(
+            &state,
+            &pool,
+            table,
+            &[],
+            vec!["{\"id\":1}".into(), "{\"id\":2}".into()],
+            false,
+        )
+        .await
+        .expect("one batch");
+        assert_eq!(one.len(), 1);
+        assert!(one[0].0.is_none());
+        assert_eq!(one[0].1.len(), 2);
+    }
+
+    /// The target of a restore without its Organization in the registry: a plan names a module
+    /// the Portal only reads as not restored here, and then the Organization is the 404 of one
+    /// the registry does not hold, nothing written.
+    #[tokio::test]
+    async fn a_restore_for_an_organization_the_registry_does_not_hold_is_a_404() {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        let pool = crate::db::connect(&url).await.expect("connect + migrate");
+        let state = state_without_db().with_db(pool);
+        let mut modules = portal(&[]);
+        modules.insert(
+            "kaisatsu".to_owned(),
+            ModuleIndex {
+                exported: true,
+                ..ModuleIndex::default()
+            },
+        );
+        let archive = zipped(&[("index.yaml", &index_of(FORMAT_VERSION, modules))]);
+        let mut archive = opened(&archive, CAPS).await.expect("opened");
+        let organization = format!("unheld{}", jc_types::ProjectId::mint().path_segment());
+        let target = super::super::Target {
+            organization: organization.clone(),
+            kind: DATA.into(),
+            endpoint: String::new(),
+            region: String::new(),
+            bucket: String::new(),
+            prefix: "jc/".into(),
+            access_key_id: String::new(),
+            sealed_secret: String::new(),
+            enabled: true,
+            every_hours: 24,
+            keep_days: 30,
+            recipients: Vec::new(),
+            updated_by: String::new(),
+            updated_at: String::new(),
+            last_run_at: None,
+            key: None,
+        };
+        let refused = run(&state, &target, "v1", &mut archive, None)
+            .await
+            .expect_err("no registry row");
+        assert!(
+            matches!(&refused, ApiError::NotFound(m) if m.contains(&organization)),
+            "{refused}"
+        );
+        // Registered now, from an archive whose Portal part was left out: the plan restores no
+        // Portal table and says why the part is missing.
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ($1, $1 || '.example', 'active', 'test')",
+        )
+        .bind(&organization)
+        .execute(state.db.as_ref().expect("the pool"))
+        .await
+        .expect("registered");
+        let left_out = BTreeMap::from([(
+            "portal".to_owned(),
+            ModuleIndex {
+                exported: false,
+                reason: "this Portal ran without a database".into(),
+                ..ModuleIndex::default()
+            },
+        )]);
+        let archive = zipped(&[("index.yaml", &index_of(FORMAT_VERSION, left_out))]);
+        let mut archive = opened(&archive, CAPS).await.expect("opened");
+        let plan = run(&state, &target, "v1", &mut archive, None)
+            .await
+            .expect("a plan");
+        assert!(plan.modules.is_empty(), "{:?}", plan.modules);
+        assert_eq!(
+            plan.not_in_archive.get("portal").map(String::as_str),
+            Some("this Portal ran without a database")
         );
     }
 

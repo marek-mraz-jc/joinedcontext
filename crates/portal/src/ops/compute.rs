@@ -1148,6 +1148,46 @@ mod tests {
         assert_eq!(kpi_value(&zero, &params(kpi::Agg::Sum)).ok(), Some(0.0));
     }
 
+    /// A catalogue that does not answer is named under `unavailable` beside the datasets the
+    /// others found, so a search is never silently short; an empty `q` and an unknown scope are
+    /// refused before any catalogue is asked.
+    #[tokio::test]
+    async fn a_catalogue_that_does_not_answer_is_named_unavailable() {
+        let host = "https://cat-compute-down.example.invalid";
+        let mut config = crate::config::Config::for_tests();
+        config.ckan_api_route = Some((
+            host.parse().expect("url"),
+            "http://127.0.0.1:9".parse().expect("url"),
+        ));
+        let state = crate::state::AppState::new(config, None);
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "CkanInstance",
+            "opendata",
+            "doprava",
+            json!({ "url": host, "apiTokenRef": { "name": "ckan-token", "key": "token" } }),
+        ));
+        let search = |q: &str, scope: Option<&str>| CatalogSearchInput {
+            q: q.into(),
+            scope: scope.map(str::to_owned),
+        };
+        let answer = catalog_search(&caller(), &state, "doprava", search("air", Some(DATASET)))
+            .await
+            .expect("an answer");
+        assert_eq!(answer["unavailable"], json!([host]), "{answer}");
+        assert_eq!(answer["datasets"], json!([]), "{answer}");
+        assert_eq!(answer["items"], json!([]), "{answer}");
+        for (q, scope, says) in [
+            ("  ", None, "q must not be empty"),
+            ("air", Some("Spaceship"), "scope 'Spaceship' is not one of"),
+        ] {
+            let refused = catalog_search(&caller(), &state, "doprava", search(q, scope)).await;
+            assert!(
+                matches!(&refused, Err(OpError::Api(ApiError::BadRequest(why))) if why.contains(says)),
+                "{q}: {refused:?}"
+            );
+        }
+    }
+
     /// T-3250: an address to infer a model from is judged before any fetch: an address at all,
     /// http or https, no credential in it, the caller's right to propose a DataSource, and a
     /// public host; each refusal names `/url` (or the missing right) and never repeats a secret.

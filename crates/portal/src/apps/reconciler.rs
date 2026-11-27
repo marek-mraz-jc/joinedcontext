@@ -483,7 +483,9 @@ fn app_config(
     slug: &EndpointSlug,
     settings: &Settings,
 ) -> Result<Value, RenderError> {
-    let space = single_space(spec)?;
+    // The one space of every need: `own_needs` refused a pod App's second space before
+    // `render` gets here (AP-04).
+    let space = spec.data_needs[0].context_space_ref.name();
     let endpoints = [crate::agents::endpoints::RunEndpoint {
         name: endpoint.metadata.name.clone(),
         slug: slug.as_str().to_owned(),
@@ -506,21 +508,6 @@ fn app_config(
     // static host writes it for a `ui` App.
     config["portal"] = json!(format!("https://{}/projects/{project}", settings.host));
     Ok(config)
-}
-
-/// The one space every data need must name; two spaces cannot become one endpoint (AP-04).
-fn single_space(spec: &AppSpec) -> Result<&str, RenderError> {
-    let first = spec.data_needs[0].context_space_ref.name();
-    for need in &spec.data_needs[1..] {
-        let other = need.context_space_ref.name();
-        if other != first {
-            return Err(RenderError::SeveralSpaces {
-                first: first.to_owned(),
-                second: other.to_owned(),
-            });
-        }
-    }
-    Ok(first)
 }
 
 /// `repo@sha256:<64 hex>`; anything else is a tag, and a tag can be moved under the pod (AP-13).

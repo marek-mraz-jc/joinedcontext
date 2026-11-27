@@ -182,6 +182,7 @@ pub async fn projects(
     let Some(part) = opened.index.modules.get("portal").filter(|p| p.exported) else {
         return Ok(out);
     };
+    let mut readable = BTreeMap::new();
     for (id, archived_name) in &part.projects {
         let Ok(source) = ProjectId::from_path_segment(id) else {
             continue;
@@ -190,16 +191,20 @@ pub async fn projects(
             Source::Live(name)
                 if crate::permissions::for_request(state, identity, &name).may_read_project() =>
             {
-                out.projects.push(ArchivedProject {
-                    id: id.clone(),
-                    name,
-                });
+                // A live name answers to one id only: keyed by it, the list comes out sorted.
+                readable.insert(
+                    name.clone(),
+                    ArchivedProject {
+                        id: id.clone(),
+                        name,
+                    },
+                );
             }
             Source::Live(_) | Source::Unknown => {}
             Source::Deleted(_) => out.deleted.push(archived_name.clone()),
         }
     }
-    out.projects.sort_by(|a, b| a.name.cmp(&b.name));
+    out.projects = readable.into_values().collect();
     out.deleted.sort();
     Ok(out)
 }
@@ -526,5 +531,44 @@ mod tests {
         for (skipped, _) in NOT_RESTORED {
             assert!(!order.contains(skipped), "{skipped} is never copied");
         }
+    }
+    /// A folder line that is not a JSON object is the archive refused before a row is written;
+    /// a write the database refuses for another reason than a rule of the data is the Portal's
+    /// 500, never a row counted as refused.
+    #[tokio::test]
+    async fn a_line_that_is_no_row_or_a_write_that_fails_is_refused() {
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        let pool = crate::db::connect(&url).await.expect("connect + migrate");
+        let mut tx = pool.begin().await.expect("begin");
+        let table = copied_tables()[0];
+        for line in ["not json", "[1, 2]"] {
+            let refused = copy_table(
+                &mut tx,
+                table,
+                "alfa-copy",
+                vec![line.to_owned()],
+                &mut HashMap::new(),
+            )
+            .await
+            .expect_err(line);
+            assert!(
+                refused.to_string().contains("not a data backup archive"),
+                "{line}: {refused}"
+            );
+        }
+        let failed = write(
+            &mut tx,
+            "SELECT 1 / 0 WHERE $1::jsonb IS NOT NULL",
+            &serde_json::json!({}),
+            false,
+        )
+        .await
+        .expect_err("division by zero");
+        assert!(
+            matches!(&failed, ApiError::Internal(why) if why.starts_with("the restore failed: ")),
+            "{failed}"
+        );
+        tx.rollback().await.expect("rollback");
     }
 }

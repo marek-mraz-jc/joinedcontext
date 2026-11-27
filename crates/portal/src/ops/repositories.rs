@@ -349,13 +349,11 @@ impl Owned {
         if self.client.public_base == self.client.base {
             return self.field("CloneUrl").to_owned();
         }
-        let owner = match self.field("Owner") {
-            "" => self.client.owner.as_str(),
-            owner => owner,
-        };
+        // A row is the project's only under an owner [`role_of`] matched, so it names one.
         format!(
-            "{}/{owner}/{}.git",
+            "{}/{}/{}.git",
             self.client.public_base.as_str().trim_end_matches('/'),
+            self.field("Owner"),
             self.name()
         )
     }

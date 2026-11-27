@@ -655,7 +655,7 @@ fn inclusion_body(change: &InclusionRequest) -> Result<Value, ApiError> {
             "at most {MAX_IDS} pages and documents in one call"
         )));
     }
-    serde_json::to_value(change).map_err(|err| ApiError::Internal(err.to_string()))
+    serde_json::to_value(change).map_err(ApiError::internal)
 }
 
 #[utoipa::path(
@@ -1678,27 +1678,26 @@ mod tests {
         crate::state::AppState::new(config, Some(oidc))
     }
 
-    /// A local server answering every request with `answer` and then closing the connection.
-    async fn cut_short(answer: &'static str) -> String {
+    /// A local server answering its one request with `answer` and then closing the connection;
+    /// the handle ends once the client let go of it (five seconds at most).
+    async fn cut_short(answer: &'static str) -> (String, tokio::task::JoinHandle<()>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
             .await
             .expect("a port");
         let addr = listener.local_addr().expect("an address");
-        tokio::spawn(async move {
-            loop {
-                let (mut socket, _) = listener.accept().await.expect("a connection");
-                tokio::spawn(async move {
-                    let mut buffer = [0u8; 4096];
-                    let _ = socket.read(&mut buffer).await;
-                    let _ = socket.write_all(answer.as_bytes()).await;
-                    // Closed for writing, then drained: the client reads the cut, not a reset.
-                    let _ = socket.shutdown().await;
-                    while matches!(socket.read(&mut buffer).await, Ok(n) if n > 0) {}
-                });
-            }
+        let served = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let mut buffer = [0u8; 4096];
+            let _ = socket.read(&mut buffer).await;
+            let _ = socket.write_all(answer.as_bytes()).await;
+            // Closed for writing, then drained: the client reads the cut, not a reset.
+            let _ = socket.shutdown().await;
+            let drained =
+                async { while matches!(socket.read(&mut buffer).await, Ok(n) if n > 0) {} };
+            let _ = tokio::time::timeout(Duration::from_secs(5), drained).await;
         });
-        format!("http://{addr}")
+        (format!("http://{addr}"), served)
     }
 
     fn admin(state: &crate::state::AppState) -> crate::auth::CurrentUser {
@@ -1750,7 +1749,7 @@ mod tests {
     #[tokio::test]
     async fn an_export_cut_short_is_503() {
         let realm = realm(200).await;
-        let assistant = cut_short(
+        let (assistant, served) = cut_short(
             "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\nContent-Length: 100\r\n\r\nshort",
         )
         .await;
@@ -1767,6 +1766,7 @@ mod tests {
             "{:?}",
             text.err()
         );
+        served.await.expect("the cut was served");
     }
 
     /// A chat answer that breaks off mid-stream passes on what came and ends in an error.
@@ -1774,7 +1774,7 @@ mod tests {
     async fn a_chat_answer_that_breaks_off_ends_its_stream_in_an_error() {
         use futures_util::StreamExt;
         let realm = realm(200).await;
-        let assistant = cut_short(
+        let (assistant, served) = cut_short(
             "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n",
         )
         .await;
@@ -1808,6 +1808,8 @@ mod tests {
             events.next().await.is_some_and(|next| next.is_err()),
             "the break is an error"
         );
+        drop(events);
+        served.await.expect("the cut was served");
     }
 
     /// An upload past the largest a source takes is 413, read no further than the cap.

@@ -55,13 +55,13 @@ fn admit(map: &mut HashMap<String, TokenBucket>, client_ip: &str, now: Instant) 
     if map.len() >= MAX_BUCKETS && !map.contains_key(client_ip) {
         map.retain(|_, b| now.duration_since(b.last_refill).as_secs() < 120);
         if map.len() >= MAX_BUCKETS {
+            // The map is full here, so it has a longest-idle bucket; that one goes.
             let oldest = map
                 .iter()
                 .min_by_key(|(_, b)| b.last_refill)
-                .map(|(ip, _)| ip.clone());
-            if let Some(ip) = oldest {
-                map.remove(&ip);
-            }
+                .map(|(ip, _)| ip.clone())
+                .unwrap_or_default();
+            map.remove(&oldest);
         }
     }
 

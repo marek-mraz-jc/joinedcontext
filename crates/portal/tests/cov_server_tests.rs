@@ -297,6 +297,18 @@ async fn the_background_work_starts_without_a_sync_driver() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
 
+/// A syncer with no forge client in the state for the foreign-model mirror: the sync loops
+/// start, the mirror does not.
+#[tokio::test]
+async fn the_background_work_starts_without_a_foreign_model_mirror() {
+    let forge = MockServer::start().await;
+    let mut state = busy_state(&forge, false);
+    state.shako = None;
+    server::spawn_background(&state);
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(state.syncer.is_some() && state.shako.is_none());
+}
+
 #[tokio::test]
 async fn the_background_work_of_a_bare_portal_starts_without_a_database() {
     server::spawn_background(&AppState::new(Config::for_tests(), None));

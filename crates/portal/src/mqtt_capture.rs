@@ -856,16 +856,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_poisoned_lock_of_the_memory_store_still_serves() {
-        let store = Arc::new(CaptureStore::new(None, Default::default()));
-        let poisoner = Arc::clone(&store);
-        let joined = std::thread::spawn(move || {
-            if let Inner::Memory(memory) = &poisoner.inner {
-                let _held = memory.lock().expect("not poisoned yet");
-                panic!("poison the lock on purpose");
-            }
-        })
-        .join();
+        let memory: Mutex<BTreeMap<Key, VecDeque<Message>>> = Mutex::default();
+        let joined = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _held = memory.lock().expect("not poisoned yet");
+            panic!("poison the lock on purpose");
+        }));
         assert!(joined.is_err());
+        assert!(memory.is_poisoned());
+        let store = CaptureStore {
+            inner: Inner::Memory(memory),
+        };
         store
             .keep("p", "b", 5, vec![message("a", 0, 1)], at(1))
             .await

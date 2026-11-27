@@ -1049,9 +1049,11 @@ mod tests {
             !mapping.contains("pm10-plausible"),
             "a flag is the gateway's: {mapping}"
         );
-        if let Ok(out) = std::env::var("JC_QUALITY_MAPPING_OUT") {
-            std::fs::write(out, mapping).expect("write the mapping");
-        }
+        // JC_QUALITY_MAPPING_OUT names where the mapping goes; otherwise a scratch file.
+        let pid = std::process::id();
+        let scratch = std::env::temp_dir().join(format!("jc-quality-mapping-{pid}"));
+        let out = std::env::var("JC_QUALITY_MAPPING_OUT").map_or(scratch, std::path::PathBuf::from);
+        std::fs::write(out, mapping).expect("write the mapping");
         assert_eq!(
             stage(&model(false)).len(),
             2,

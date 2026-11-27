@@ -858,6 +858,41 @@ mod tests {
         assert!(!has_path(&layer, "noSuchField"));
     }
 
+    /// A tuple list is addressed through each of its element schemas, and a union of no object
+    /// is the schema itself.
+    #[test]
+    fn the_path_walker_reads_tuple_lists_and_unions_of_no_object() {
+        let root: schemars::schema::RootSchema = serde_json::from_value(json!({
+            "type": "object",
+            "properties": {
+                "pair": {
+                    "type": "array",
+                    "items": [
+                        { "type": "string" },
+                        { "type": "object", "properties": { "x": { "type": "string" } } }
+                    ]
+                },
+                "either": { "anyOf": [true, false] }
+            }
+        }))
+        .expect("a schema");
+        assert!(has_path(&root, "pair[]"));
+        assert!(has_path(&root, "pair[].x"));
+        assert!(!has_path(&root, "pair[].y"));
+        let either = root
+            .schema
+            .object
+            .as_ref()
+            .and_then(|object| object.properties.get("either"))
+            .expect("the union");
+        assert_eq!(
+            branches(either, &root).len(),
+            1,
+            "a union of booleans is the schema itself"
+        );
+        assert!(has_path(&root, "either"));
+    }
+
     /// Whether a dotted path, `[]` and all, addresses a field of this spec.
     fn has_path(root: &schemars::schema::RootSchema, path: &str) -> bool {
         let segments: Vec<&str> = path.trim_start_matches("spec.").split('.').collect();

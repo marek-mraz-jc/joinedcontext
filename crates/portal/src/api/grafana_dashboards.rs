@@ -376,6 +376,19 @@ async fn dashboard_of(
     client.dashboard(org, uid).await?.ok_or_else(not_found)
 }
 
+/// The list of a project whose organization the service lacks or does not answer for: not ready,
+/// saying why; any other refusal stays one.
+fn not_ready(err: ApiError) -> Result<Json<DashboardList>, ApiError> {
+    match err {
+        ApiError::Conflict(reason) | ApiError::Unavailable(reason) => Ok(Json(DashboardList {
+            ready: false,
+            reason: Some(reason),
+            items: Vec::new(),
+        })),
+        other => Err(other),
+    }
+}
+
 #[utoipa::path(
     get,
     path = "/api/v1/projects/{project}/grafana/dashboards",
@@ -405,14 +418,7 @@ pub async fn list_dashboards(
     };
     let org = match organization_held(&client, &project).await {
         Ok(org) => org,
-        Err(ApiError::Conflict(reason) | ApiError::Unavailable(reason)) => {
-            return Ok(Json(DashboardList {
-                ready: false,
-                reason: Some(reason),
-                items: Vec::new(),
-            }))
-        }
-        Err(err) => return Err(err),
+        Err(err) => return not_ready(err),
     };
     let mut items: Vec<DashboardSummary> = client
         .dashboards(org)
@@ -2045,5 +2051,24 @@ mod tests {
             &Client::new(state.config.grafana.as_ref().unwrap()),
         )
         .await;
+    }
+
+    /// T-7931: a project the service holds no organization for, or one it does not answer for,
+    /// lists as not ready saying why; any other refusal stays that refusal.
+    #[test]
+    fn a_missing_or_silent_organization_is_not_ready_and_a_refusal_stays() {
+        for err in [
+            ApiError::Conflict("no organization".into()),
+            ApiError::Unavailable("no organization".into()),
+        ] {
+            let Json(list) = not_ready(err).expect("a list");
+            assert!(!list.ready);
+            assert_eq!(list.reason.as_deref(), Some("no organization"));
+            assert!(list.items.is_empty());
+        }
+        assert!(matches!(
+            not_ready(ApiError::Forbidden),
+            Err(ApiError::Forbidden)
+        ));
     }
 }

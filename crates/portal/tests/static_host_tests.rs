@@ -1859,3 +1859,104 @@ async fn revoking_access_ends_it_at_the_next_request() {
     }
     assert!(clock.elapsed() < limit);
 }
+
+/// A bundle file the Portal cannot read (no permission) is the same 404 as a missing one.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_file_the_portal_cannot_read_is_not_found() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = app_root("unreadable", &[("index.html", INDEX)]);
+    let locked = dir.path().join("air-quality/locked.js");
+    std::fs::write(&locked, BUNDLE_JS).expect("locked file");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+    let (status, _, body) = get_from(
+        dir.path(),
+        app_spec("published"),
+        "/apps/air-quality/locked.js",
+    )
+    .await;
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_ne!(body, BUNDLE_JS);
+}
+
+/// The bundle file of an App using the files service, with the store origin `origin`.
+async fn with_store_origin(root: &std::path::Path, origin: &str) -> axum::response::Response {
+    let mut spec = app_spec("published");
+    spec["services"] = serde_json::json!(["files"]);
+    let config = Config {
+        apps_dir: Some(root.to_string_lossy().into_owned()),
+        apps_store_origin: Some(origin.to_owned()),
+        ..Config::for_tests()
+    };
+    server::app(AppState::new(config, None).with_mirror(mirror_with_app(spec)))
+        .oneshot(
+            Request::builder()
+                .uri("/apps/air-quality/bundle.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+}
+
+/// A store origin no header can carry never lets an App that uses the files service be served
+/// without its policy: the file is refused with a 503 instead.
+#[tokio::test]
+async fn an_app_whose_policy_is_no_header_is_refused_not_served_bare() {
+    let dir = app_root(
+        "bare-policy",
+        &[("index.html", INDEX), ("bundle.js", BUNDLE_JS)],
+    );
+    let served = with_store_origin(dir.path(), "https://store.example.org").await;
+    assert_eq!(served.status(), StatusCode::OK);
+    let csp = served.headers()[header::CONTENT_SECURITY_POLICY]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        csp.contains("connect-src 'self' https://store.example.org"),
+        "{csp}"
+    );
+    let refused = with_store_origin(dir.path(), "https://store.example.org\nx").await;
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body = refused.into_body().collect().await.unwrap().to_bytes();
+    assert_ne!(body.as_ref(), BUNDLE_JS);
+}
+
+/// A bearer token on the index, with the edge's token not trusted and no session, names nobody
+/// signed in: the index is served and a fresh CSRF pair is minted for the anonymous caller.
+#[tokio::test]
+async fn a_bearer_without_a_session_on_the_index_gets_a_fresh_csrf_pair() {
+    let dir = app_root("bearer-anonymous", &[("index.html", INDEX)]);
+    let config = Config {
+        apps_dir: Some(dir.path().to_string_lossy().into_owned()),
+        trust_edge_token: false,
+        ..Config::for_tests()
+    };
+    let app = server::app(
+        AppState::new(config, None).with_mirror(mirror_with_app(app_spec("published"))),
+    );
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/apps/air-quality/")
+                .header(header::AUTHORIZATION, "Bearer not-a-session")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let cookies: Vec<String> = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(str::to_owned)
+        .collect();
+    assert!(
+        cookies.iter().any(|c| c.starts_with("__Host-jc_csrf=")),
+        "{cookies:?}"
+    );
+}

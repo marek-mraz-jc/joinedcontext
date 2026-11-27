@@ -364,15 +364,21 @@ fn check(
 
 /// The draft's spec, after the manifest rules every Pipeline is held to.
 fn parsed(pipeline: &Value) -> Result<PipelineSpec, KpiProblem> {
-    let refused = |reason: String| KpiProblem {
+    // A JSON value always prints, and JSON is YAML; jc-core types the Pipeline kind, so the
+    // manifest rules always run.
+    let text = pipeline.to_string();
+    jc_core::registry::validate_yaml("Pipeline", &text)
+        .unwrap_or(Ok(()))
+        .map_err(|e| problem_of(&e))?;
+    serde_json::from_value(pipeline["spec"].clone()).map_err(spec_refused)
+}
+
+/// A spec that does not read as a Pipeline's, as the problem of its `spec` field.
+fn spec_refused(err: serde_json::Error) -> KpiProblem {
+    KpiProblem {
         field: "spec".into(),
-        reason,
-    };
-    let text = serde_json::to_string(pipeline).map_err(|e| refused(e.to_string()))?;
-    if let Some(checked) = jc_core::registry::validate_yaml("Pipeline", &text) {
-        checked.map_err(|e| problem_of(&e))?;
+        reason: err.to_string(),
     }
-    serde_json::from_value(pipeline["spec"].clone()).map_err(|e| refused(e.to_string()))
 }
 
 /// The field a jc-core refusal names, and its reason.
@@ -1039,5 +1045,17 @@ mod tests {
             problem_of(&jc_core::Error::ApiVersion("v9".into())).field,
             "spec"
         );
+    }
+
+    /// T-7931: a spec that does not read is the problem of the `spec` field, in the parser's
+    /// words.
+    #[test]
+    fn a_spec_that_does_not_read_is_the_spec_fields_problem() {
+        let err = serde_json::from_value::<PipelineSpec>(serde_json::json!("a string"))
+            .expect_err("no spec");
+        let words = err.to_string();
+        let problem = spec_refused(err);
+        assert_eq!(problem.field, "spec");
+        assert_eq!(problem.reason, words);
     }
 }
