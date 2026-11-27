@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import i18n from "../src/i18n";
 import en from "../src/locales/en.json";
-import { endpointOf, toForm, typeOf } from "../src/pages/datasources/DataSourcesPage";
+import { endpointOf, toEnvelope, toForm, typeOf } from "../src/pages/datasources/DataSourcesPage";
 import type { Manifest } from "../src/api/manifest";
 import { digestOf } from "../src/api/digest";
 import { findFormPage } from "./formPage";
@@ -43,6 +43,16 @@ afterEach(() => {
   window.history.pushState({}, "", P);
 });
 
+/** As `answerWith`, and the draft door saves: a form whose draft is refused checks nothing. */
+function drafting(dry: (request: Request) => Response | Promise<Response>, drafts: unknown[] = []) {
+  const rest = answerWith(dry);
+  return async (path: string, request: Request): Promise<Response | undefined> => {
+    if (!path.includes("/drafts/")) return rest(path, request);
+    if (request.method === "PUT") drafts.push(await request.clone().json());
+    return jsonResponse({ version: 1 });
+  };
+}
+
 function answerWith(dry: (request: Request) => Response | Promise<Response>, items: unknown[] = [WS]) {
   return (path: string, request: Request): Response | Promise<Response> | undefined => {
     if (path.endsWith("/datasources") && request.method === "GET") return jsonResponse(list(items));
@@ -73,32 +83,29 @@ describe("DataSourcesPage coverage (T-7706)", () => {
     expect(r.calls().filter((c) => c === "POST " + API)).toHaveLength(1);
   });
 
-  it("carries a secret picked for a runner field into the check as a reference, never as text", async () => {
-    const bodies: Record<string, unknown>[] = [];
-    const r = await renderRoute({
-      path: P,
-      answer: answerWith(async (request) => {
-        bodies.push((await request.clone().json()) as Record<string, unknown>);
-        return problem(422, "the broker is not reachable");
-      }),
-      permissions: FULL,
-    });
+  it("carries a secret picked for a runner field into the draft as a reference, and settles", async () => {
+    const drafts: unknown[] = [];
+    await renderRoute({ path: P, answer: drafting(() => problem(500, "x"), drafts), permissions: FULL });
     await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
     const dialog = await findFormPage();
     await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "nats");
     await userEvent.type(within(dialog).getAllByLabelText(/^Name/)[0], "bus-feed");
     const [secret] = await within(dialog).findAllByPlaceholderText(/Secret name/);
+    // Each keystroke names a reference; the page took one a render and looped for ever (T-7937).
     await userEvent.type(secret, "nats-creds");
-    await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.check }));
-    await within(dialog).findByText(/not reachable/);
-    expect(r.calls().filter((c) => c === "POST " + API)).toHaveLength(1);
-    const spec = bodies[0]?.spec as { secrets?: { name: string; envVar: string }[] };
-    expect(spec.secrets?.some((one) => one.name === "nats-creds" && /^DS_NATS_CREDS_/.test(one.envVar))).toBe(true);
-    expect(JSON.stringify(bodies[0])).not.toContain('"nats-creds:');
+    expect(secret).toHaveValue("nats-creds");
+    await waitFor(
+      () => {
+        const last = JSON.stringify(drafts[drafts.length - 1] ?? {});
+        expect(last).toContain('"name":"nats-creds"');
+        expect(last).toMatch(/"envVar":"DS_NATS_CREDS_[A-Z0-9_]+"/);
+      },
+      { timeout: 5000 },
+    );
   });
 
   it("names the runner field whose YAML does not parse and sends no check", async () => {
-    const r = await renderRoute({ path: P, answer: answerWith(() => problem(500, "x")), permissions: FULL });
+    const r = await renderRoute({ path: P, answer: drafting(() => problem(500, "x")), permissions: FULL });
     await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
     const dialog = await findFormPage();
     await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "http_client");
@@ -108,6 +115,7 @@ describe("DataSourcesPage coverage (T-7706)", () => {
       expect(box).not.toBeNull();
       return box as HTMLTextAreaElement;
     });
+    fireEvent.change(dialog.querySelector<HTMLInputElement>("#root_url") as HTMLInputElement, { target: { value: "https://feed.hel.fi/aq.csv" } });
     fireEvent.change(headers, { target: { value: "{ Accept: [text/csv" } });
     await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.check }));
     expect(await within(dialog).findByText(/headers: not valid YAML/)).toBeInTheDocument();
@@ -115,7 +123,7 @@ describe("DataSourcesPage coverage (T-7706)", () => {
   });
 
   it("refuses to propose a runner field whose YAML does not parse, under lax validation too", async () => {
-    const r = await renderRoute({ path: P, answer: answerWith(() => problem(500, "x")), permissions: FULL, brand: { ...OTHER_BRAND, validation: "lax" } });
+    const r = await renderRoute({ path: P, answer: drafting(() => problem(500, "x")), permissions: FULL, brand: { ...OTHER_BRAND, validation: "lax" } });
     await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
     const dialog = await findFormPage();
     await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "http_client");
@@ -125,6 +133,7 @@ describe("DataSourcesPage coverage (T-7706)", () => {
       expect(box).not.toBeNull();
       return box as HTMLTextAreaElement;
     });
+    fireEvent.change(dialog.querySelector<HTMLInputElement>("#root_url") as HTMLInputElement, { target: { value: "https://feed.hel.fi/aq.csv" } });
     fireEvent.change(headers, { target: { value: "{ Accept: [text/csv" } });
     await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.propose }));
     expect(await within(dialog).findByText(/headers: not valid YAML/)).toBeInTheDocument();
@@ -230,6 +239,15 @@ describe("toForm, typeOf and endpointOf", () => {
     } as unknown as Manifest);
     expect(form.urls).toEqual(["nats://x"]);
     expect(String(form.processors)).toContain("mapping: root = this");
+  });
+
+  it("keeps a runner field whose YAML does not parse as typed in the draft, and refuses it in the check", () => {
+    const form = { name: "feed", type: "http_client", url: "https://x.example", headers: "{ Accept: [text/csv" };
+    const drafted = toEnvelope("p", "http_client", form, undefined, true);
+    expect((drafted.spec.input as { headers?: unknown }).headers).toBe("{ Accept: [text/csv");
+    expect(() => toEnvelope("p", "http_client", form)).toThrow(/^headers: not valid YAML/);
+    const fine = toEnvelope("p", "http_client", { ...form, headers: "{ Accept: text/csv }" }, undefined, true);
+    expect((fine.spec.input as { headers?: unknown }).headers).toEqual({ Accept: "text/csv" });
   });
 
   it("falls back to the first type for a manifest without one", () => {

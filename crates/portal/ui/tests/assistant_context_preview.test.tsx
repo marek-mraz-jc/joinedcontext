@@ -83,7 +83,7 @@ const CONTEXT: AssistantContext = {
   problems: ["a public deployment lists the origins it may be placed on"],
 };
 
-async function openForm(context: AssistantContext | null) {
+async function openForm(context: AssistantContext | null, refused = 400) {
   const previews: { url: string; body: unknown }[] = [];
   const rendered = await renderRoute({
     path: "/projects/bb/assistantdeployments/new?lang=en",
@@ -97,7 +97,7 @@ async function openForm(context: AssistantContext | null) {
             previews.push({ url: request.url, body });
             return context
               ? jsonResponse(context)
-              : jsonResponse({ title: "Bad Request", status: 400, detail: "spec: unknown field" }, 400);
+              : jsonResponse({ title: "Refused", status: refused, detail: "spec: unknown field" }, refused);
           });
       }
       if (/\/knowledgesources$/.test(path)) return jsonResponse(list([]));
@@ -133,14 +133,21 @@ describe("the preview of what the assistant will read (AG-121)", () => {
     expect(within(preview).queryByRole("table")).not.toBeInTheDocument();
   });
 
-  it("asks for the preview again on Retry", async () => {
-    const { previews } = await openForm(null);
+  it("asks for the preview again on Retry when the Portal was away", async () => {
+    const { previews } = await openForm(null, 503);
     const preview = await screen.findByRole("region", { name: "What the assistant will know" });
     await within(preview).findByRole("alert");
     const before = previews.length;
     await userEvent.click(within(preview).getByRole("button", { name: en.app.error.retry }));
     await waitFor(() => expect(previews.length).toBeGreaterThan(before));
     expect(await within(preview).findByRole("alert")).toHaveTextContent("spec: unknown field");
+  });
+
+  it("offers no Retry for a manifest the Portal refused: the same manifest is refused again", async () => {
+    await openForm(null);
+    const preview = await screen.findByRole("region", { name: "What the assistant will know" });
+    await within(preview).findByRole("alert");
+    expect(within(preview).queryByRole("button", { name: en.app.error.retry })).toBeNull();
   });
 });
 
