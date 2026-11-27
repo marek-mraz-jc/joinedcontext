@@ -281,12 +281,15 @@ const SHAREABLE_REQUEST_HEADERS: &[&str] = &[
 /// changed value is served stale at most that long, which is why the deployment bounds it
 /// (`JC_GATEWAY_PUBLIC_MAX_AGE`, at most [`crate::config::PUBLIC_MAX_AGE_LIMIT`]).
 fn share_for(headers: &mut axum::http::HeaderMap, seconds: u32) {
-    if let Ok(value) = HeaderValue::from_str(&format!("public, max-age={seconds}")) {
-        headers.insert(axum::http::header::CACHE_CONTROL, value);
-        // The quota left is one caller's: a shared cache would replay it to the next (F-R2PLT2-018).
-        for name in ["ratelimit-limit", "ratelimit-remaining", "ratelimit-reset"] {
-            headers.remove(name);
-        }
+    // The text of a number is always a legal value, so the one iteration is the only outcome.
+    HeaderValue::from_str(&format!("public, max-age={seconds}"))
+        .into_iter()
+        .for_each(|value| {
+            headers.insert(axum::http::header::CACHE_CONTROL, value);
+        });
+    // The quota left is one caller's: a shared cache would replay it to the next (F-R2PLT2-018).
+    for name in ["ratelimit-limit", "ratelimit-remaining", "ratelimit-reset"] {
+        headers.remove(name);
     }
 }
 
@@ -531,6 +534,33 @@ mod tests {
         share_for(&mut headers, 60);
         assert_eq!(headers.len(), 1, "{headers:?}");
         assert_eq!(headers["cache-control"], "public, max-age=60");
+    }
+
+    /// A public address no header can carry yields no `describedby` link rather than a broken
+    /// one; a usable one yields a JSON Schema and a SHACL link per model major.
+    #[test]
+    fn a_public_address_no_header_can_carry_names_no_schema_link() {
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.representations = vec![jc_core::kinds::Representation::NgsiLd];
+        endpoint.models = vec![crate::resolver::Model {
+            name: "air".to_owned(),
+            version: "1.0.0".to_owned(),
+            major: 1,
+            classes: vec!["Air".to_owned()],
+            json_schema: None,
+            context: None,
+        }];
+        let path = format!("{}/ngsi-ld/v1/entities", endpoint.base_path);
+        let mut gateway = Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "city.test",
+        )
+        .serve([endpoint]);
+        gateway.public_url = Some("https://api.city.test".to_owned());
+        assert_eq!(describedby(&gateway, &path).len(), 2);
+        gateway.public_url = Some("https://api.city.test\r\nx-injected: 1".to_owned());
+        assert!(describedby(&gateway, &path).is_empty());
     }
 
     /// Every path segment names its document, `model` negotiates by `Accept`, and an unknown

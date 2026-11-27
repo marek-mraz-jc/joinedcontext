@@ -88,9 +88,8 @@ pub fn check_in(
     check_no_smuggled_policy(entity)?;
     check_id(entity, contexts)?;
     check_type(entity, constraints)?;
-    if let Some(raw) = entity_id(entity) {
-        check_granted_id(raw, constraints)?;
-    }
+    // `check_id` refused an entity with no identifier, so one is always read here.
+    check_granted_id(entity_id(entity).unwrap_or_default(), constraints)?;
     // A whole entity without a scope would sit outside every scope the grant names, so a grant
     // on `/geo/SK/BB` could create entities no scoped read of it reaches (F-PLT2-009). A
     // fragment keeps the scope the entity already has, so only the whole entity must carry one.

@@ -33,7 +33,7 @@ pub fn minted(sent: &[u8], owner: Option<&str>) -> Result<Vec<u8>, Box<ProblemDe
     let owner = owner.map(|owner| format!("{owner}:")).unwrap_or_default();
     let id = format!("urn:ngsi-ld:{entity_type}:{owner}{}", uuid_v4()?);
     object.insert("id".to_owned(), Value::String(id));
-    serde_json::to_vec(&entity).map_err(|_| Box::new(ProblemDetails::internal()))
+    Ok(entity.to_string().into_bytes())
 }
 
 /// A random RFC 9562 version 4 UUID from the system's generator.

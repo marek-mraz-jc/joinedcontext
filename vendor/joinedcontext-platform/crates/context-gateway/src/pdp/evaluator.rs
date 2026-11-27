@@ -1041,9 +1041,7 @@ mod tests {
             std::slice::from_ref(&grant),
             TimestampTz::now(),
         );
-        let Verdict::Rewrite(c) = verdict else {
-            panic!("the grant writes: {verdict:?}")
-        };
+        let c = verdict.constraints().expect("the grant writes").clone();
         let entity = |attr: &str| {
             serde_json::json!({"id": "urn:ngsi-ld:ShareCheck:fi_hel:sh1", "type": "ShareCheck",
                 attr: {"type": "Property", "value": "x", "observedAt": "2026-11-19T00:00:00Z"}})

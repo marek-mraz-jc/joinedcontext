@@ -228,6 +228,31 @@ mod tests {
         }
     }
 
+    /// Every reason has its own code, the counter's label and the record's field.
+    #[test]
+    fn every_reason_has_its_own_code() {
+        let reasons = [
+            Reason::NoToken,
+            Reason::NoRealm,
+            Reason::Expired,
+            Reason::WrongAudience,
+            Reason::InvalidToken,
+            Reason::WrongClient,
+            Reason::UnknownAccount,
+            Reason::OtherProject,
+            Reason::NoRole,
+            Reason::NoSubscription,
+            Reason::SourceAddress,
+            Reason::TokenNotAllowed,
+            Reason::Certificate,
+        ];
+        let codes: std::collections::BTreeSet<&str> =
+            reasons.iter().map(|reason| reason.code()).collect();
+        assert_eq!(codes.len(), reasons.len(), "{codes:?}");
+        assert_eq!(Reason::NoRealm.code(), "no_realm");
+        assert_eq!(Reason::Certificate.code(), "certificate");
+    }
+
     #[test]
     fn a_username_names_an_account_only_of_the_brokers_own_roles() {
         let broker = broker();

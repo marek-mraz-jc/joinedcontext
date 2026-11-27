@@ -229,3 +229,83 @@ async fn slow_reads_weigh_more_and_leave_room_for_another_callers_quick_read() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
+
+/// T-5124: anonymous requests share a part of the slots; once it is held another anonymous request
+/// is answered 429 with `Retry-After` and never reaches the broker.
+#[tokio::test]
+async fn an_anonymous_flood_past_its_share_is_answered_429() {
+    let (url, live) = broker().await;
+    let app = gateway(&url, 8, 8);
+    let share = context_gateway::middleware::in_flight::anonymous_share(8);
+    let held: Vec<_> = (0..share)
+        .map(|n| tokio::spawn(app.clone().oneshot(read("Slow", &format!("flood-{n}")))))
+        .collect();
+    let until = Instant::now() + Duration::from_secs(5);
+    while live.load(Ordering::SeqCst) < share {
+        assert!(Instant::now() < until, "the broker never held the share");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let answer = app
+        .clone()
+        .oneshot(read("Slow", "one-too-many"))
+        .await
+        .expect("an answer");
+    assert_eq!(answer.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(answer.headers()["retry-after"], "1");
+    assert_eq!(live.load(Ordering::SeqCst), share, "nothing more was sent");
+    for read in held {
+        read.abort();
+    }
+}
+
+/// T-5921: the load generator's verified token reads only; its write is answered 403 before the
+/// broker sees it, and a plain caller's write meets no such rule.
+#[tokio::test]
+async fn a_verified_load_generator_may_only_read() {
+    let (url, live) = broker().await;
+    let realm = crate::common::Realm::new();
+    let app = router(Arc::new(
+        Gateway::new(Broker::new(url), Box::new(PolicyPdp), DOMAIN)
+            .limit_in_flight(16, 8, 1)
+            .serve_loadtest(Some("perf-loadtest".to_owned()), 8)
+            .serve([endpoint()])
+            .authenticate(
+                Arc::new(realm.verifier()),
+                context_gateway::auth::accounts::ServiceAccounts::new(),
+                None,
+            ),
+    ));
+    let write = |token: &str| {
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities"))
+            .header("content-type", "application/json")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::from(r#"{"id":"urn:ngsi-ld:Slow:x","type":"Slow"}"#))
+            .expect("a request")
+    };
+    let load = realm.workload_token("perf-loadtest", serde_json::json!(SLUG));
+    let answer = app.clone().oneshot(write(&load)).await.expect("an answer");
+    assert_eq!(answer.status(), StatusCode::FORBIDDEN);
+    let body = axum::body::to_bytes(answer.into_body(), 1 << 16)
+        .await
+        .expect("the body");
+    let problem: serde_json::Value = serde_json::from_slice(&body).expect("a problem");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.contains("load generator")),
+        "{problem}"
+    );
+    assert_eq!(live.load(Ordering::SeqCst), 0, "the broker saw nothing");
+
+    let other = realm.workload_token("another-client", serde_json::json!(SLUG));
+    let answer = app.oneshot(write(&other)).await.expect("an answer");
+    let body = axum::body::to_bytes(answer.into_body(), 1 << 16)
+        .await
+        .expect("the body");
+    assert!(
+        !String::from_utf8_lossy(&body).contains("load generator"),
+        "another client's write meets the Policy, not the generator's rule"
+    );
+}

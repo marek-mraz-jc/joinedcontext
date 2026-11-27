@@ -610,3 +610,23 @@ fn the_installations_organization_sets_the_limits_and_no_other() {
         "the peer's profiles are not the installation's"
     );
 }
+
+/// A checkouts directory that is not there is the error of reading it, naming the path; a
+/// registered project whose checkout is missing is left out and the others load.
+#[test]
+fn a_checkouts_directory_that_is_not_there_is_an_error_and_a_missing_checkout_is_left_out() {
+    let (org, checkouts) = organization("missing-checkouts");
+    let gone = Checkouts {
+        projects: checkouts.projects.join("not-there"),
+        assembly: checkouts.assembly.clone(),
+        renders: Default::default(),
+    };
+    let Err(error) = store::load_from(&org, Some(&gone)) else {
+        panic!("there is nothing to list");
+    };
+    assert!(error.to_string().contains("not-there"), "{error}");
+
+    std::fs::remove_dir_all(checkouts.projects.join("doprava")).expect("a checkout to remove");
+    let (endpoints, ..) = store::load_from(&org, Some(&checkouts)).expect("the others load");
+    assert_eq!(slugs(&endpoints), [AIR]);
+}

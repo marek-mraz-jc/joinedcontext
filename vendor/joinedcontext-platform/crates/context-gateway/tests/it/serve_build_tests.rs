@@ -183,3 +183,71 @@ fn the_broker_hop_trusts_the_image_roots_or_the_named_bundle() {
     assert!(refused.contains("empty.pem"), "{refused}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// A CA bundle the broker hop trusts instead of the image's roots, and the broker template that
+/// names the other brokers.
+#[test]
+fn a_named_bundle_is_trusted_and_brokers_are_addressed_by_the_template() {
+    let roots = std::fs::read("/etc/ssl/certs/ca-certificates.crt").expect("the image's roots");
+    let dir = scratch("bundle-ok");
+    let bundle = dir.join("roots.pem");
+    std::fs::write(&bundle, roots).expect("a bundle");
+    let config = config(vec![
+        ("JC_GATEWAY_EGRESS_CA_BUNDLE", bundle.display().to_string()),
+        (
+            "JC_GATEWAY_BROKER_URL_TEMPLATE",
+            "http://{broker}.brokers.svc:1026".to_owned(),
+        ),
+    ]);
+    assert!(broker_of(&config).is_ok());
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+/// An organization of project checkouts follows them with the repository, and previews listed
+/// without a workload token still start: the Portal's refusal says so in the log.
+#[tokio::test]
+async fn checkouts_and_previews_without_a_token_start() {
+    let realm = common::Realm::new();
+    let base = portal(&realm).await;
+    let repo = scratch("repo-checkouts");
+    let projects = scratch("projects");
+    let previews = scratch("previews-no-token");
+    let with_checkouts = config(vec![
+        ("JC_GATEWAY_REPO_DIR", repo.display().to_string()),
+        ("JC_GATEWAY_PROJECTS_DIR", projects.display().to_string()),
+    ]);
+    let built = build(&with_checkouts, Broker::new("http://127.0.0.1:9"))
+        .await
+        .expect("it starts");
+    assert!(!built.gateway.stale());
+
+    let anonymous_previews = config(vec![
+        ("JC_GATEWAY_REPO_DIR", repo.display().to_string()),
+        ("JC_GATEWAY_PREVIEWS_URL", format!("{base}/previews")),
+        ("JC_GATEWAY_PREVIEWS_DIR", previews.display().to_string()),
+    ]);
+    build(&anonymous_previews, Broker::new("http://127.0.0.1:9"))
+        .await
+        .expect("it starts");
+    for dir in [repo, projects, previews] {
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}
+
+/// An OAuth key the issuer refuses is a start refused, naming the server.
+#[tokio::test]
+async fn an_oauth_key_the_issuer_refuses_refuses_the_start() {
+    let mut weak = config(vec![(
+        "JC_GATEWAY_PUBLIC_URL",
+        "https://gw.hel.fi".to_owned(),
+    )]);
+    weak.oauth_key = Some(jc_core::Secret::new("short"));
+    let refused = build(&weak, Broker::new("http://127.0.0.1:9"))
+        .await
+        .err()
+        .expect("a weak key");
+    assert!(
+        refused.starts_with("cannot start the anonymous OAuth server"),
+        "{refused}"
+    );
+}

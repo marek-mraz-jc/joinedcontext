@@ -658,5 +658,8 @@ mod tests {
             Outcome::Refused
         );
         assert_eq!(Outcome::Failed.as_str(), "failed");
+        assert_eq!(Outcome::Answered.as_str(), "answered");
+        assert_eq!(Outcome::ToolError.as_str(), "tool-error");
+        assert_eq!(Outcome::Refused.as_str(), "refused");
     }
 }

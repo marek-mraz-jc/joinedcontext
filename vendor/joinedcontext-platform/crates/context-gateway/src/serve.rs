@@ -61,8 +61,9 @@ impl OrganizationRealms {
             .iter()
             .map(|r| (r.organization.clone(), r.issuer.clone()))
             .collect();
+        // The verifier hands back only realms of the pairs it was given, so each has its one URL.
         for (organization, own) in self.verifier.replace_organizations(&pairs) {
-            if let Some(realm) = realms.iter().find(|r| r.organization == organization) {
+            for realm in realms.iter().filter(|r| r.organization == organization) {
                 tokio::spawn(keep_current(
                     Arc::downgrade(&own),
                     realm.jwks_url.clone(),
@@ -92,6 +93,18 @@ async fn keep_current(
         drop(verifier);
         tokio::time::sleep(jwks::REFRESH).await;
     }
+}
+
+/// Waits for the repository reaper to end, which it does only when its task failed, and then
+/// makes the gateway refuse every request: a stopped reaper would leave a revoked grant standing
+/// (T-4591, OPS-45).
+async fn refuse_when_it_stops(
+    reaper: impl std::future::Future<Output = tokio::task::JoinError>,
+    gateway: Arc<Gateway>,
+) {
+    let error = reaper.await;
+    gateway.set_stale(true);
+    tracing::error!(%error, "the repository reaper stopped; the gateway refuses requests so a revoked grant never stays");
 }
 
 /// Builds the gateway that forwards to `broker` and spawns its background work on the current
@@ -190,10 +203,10 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
             // answering yet keeps its Organization's tokens refused, never the installation's.
             // A realm dropped at run time (T-7180) stops its refresh with it.
             for (organization, realm) in verifier.organizations() {
-                if let Some(own) = config
+                for own in config
                     .oidc_organizations
                     .iter()
-                    .find(|own| own.organization == organization)
+                    .filter(|own| own.organization == organization)
                 {
                     tokio::spawn(keep_current(
                         Arc::downgrade(&realm),
@@ -350,12 +363,7 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
             }
             None => reaper,
         };
-        let stale = Arc::clone(&gateway);
-        tokio::spawn(async move {
-            let error = reaper.run().await;
-            stale.set_stale(true);
-            tracing::error!(%error, "the repository reaper stopped; the gateway refuses requests so a revoked grant never stays");
-        });
+        tokio::spawn(refuse_when_it_stops(reaper.run(), Arc::clone(&gateway)));
     }
 
     let internal = config.internal_bind.map(|_| {
@@ -374,4 +382,84 @@ pub async fn build(config: &Config, broker: Broker) -> Result<Built, String> {
         internal,
         organization_realms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::IntoFuture;
+
+    /// A realm on a free port answering `/ok` with an empty key set and `/down` with 503, and
+    /// counting its calls.
+    async fn realm() -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        let app = axum::Router::new()
+            .route(
+                "/ok",
+                axum::routing::get({
+                    let counted = Arc::clone(&counted);
+                    move || {
+                        counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        async { axum::Json(serde_json::json!({ "keys": [] })) }
+                    }
+                }),
+            )
+            .route(
+                "/down",
+                axum::routing::get(move || {
+                    counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(axum::serve(listener, app).into_future());
+        (format!("http://{address}"), calls)
+    }
+
+    /// An Organization realm's keys are fetched again every refresh interval, whether the realm
+    /// answers or not, for as long as the verifier holds the realm; once it lets go the task ends.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_realms_keys_are_refreshed_until_the_verifier_lets_it_go() {
+        let (base, calls) = realm().await;
+        for path in ["ok", "down"] {
+            calls.store(0, std::sync::atomic::Ordering::SeqCst);
+            let verifier = Arc::new(Verifier::new("https://idm.hel.test/realms/hel"));
+            let task = tokio::spawn(keep_current(
+                Arc::downgrade(&verifier),
+                format!("{base}/{path}"),
+                None,
+            ));
+            for _ in 0..3 {
+                tokio::time::sleep(jwks::REFRESH + std::time::Duration::from_secs(1)).await;
+            }
+            assert!(
+                calls.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+                "{path}: fetched again after the interval"
+            );
+            assert!(!task.is_finished(), "{path}: the realm is still held");
+            drop(verifier);
+            tokio::time::sleep(jwks::REFRESH * 2).await;
+            assert!(task.is_finished(), "{path}: a released realm is left alone");
+        }
+    }
+
+    /// A reaper that ends leaves the gateway refusing requests.
+    #[tokio::test]
+    async fn a_reaper_that_stopped_leaves_the_gateway_refusing_requests() {
+        let gateway = Arc::new(Gateway::new(
+            Broker::new("http://127.0.0.1:1"),
+            Box::new(PolicyPdp),
+            "city.test",
+        ));
+        assert!(!gateway.stale());
+        let failed = tokio::spawn(async { std::panic::resume_unwind(Box::new("the reaper died")) })
+            .await
+            .expect_err("a task that panicked");
+        refuse_when_it_stops(async move { failed }, Arc::clone(&gateway)).await;
+        assert!(gateway.stale());
+    }
 }

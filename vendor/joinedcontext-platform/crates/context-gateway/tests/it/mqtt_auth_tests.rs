@@ -1638,3 +1638,135 @@ async fn the_served_listener_knows_its_peer() {
     served.abort();
     assert!(answer.contains(r#""result":"allow""#), "{answer}");
 }
+
+/// A broker or a DataSource the kinds refuse is left out of the table, the rest of the
+/// repository still served; a DataSource of another kind, of no broker or of an unknown broker
+/// adds no topic to anyone.
+#[test]
+fn what_the_kinds_refuse_is_left_out_of_the_broker_table() {
+    let dir = std::env::temp_dir().join("gateway-mqtt-refused-kinds");
+    let _ = std::fs::remove_dir_all(&dir);
+    let broker = |name: &str, extra: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  mode: ingest\n{extra}  roles:\n    - name: sensor\n      serviceAccounts: [cam-north]\n      publish: [\"air/${{clientid}}\"]\n")
+    };
+    write(
+        &dir,
+        "projects/ovzdusie/mqttbrokers/fine.yaml",
+        &broker("fine", ""),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/mqttbrokers/badnet.yaml",
+        &broker("badnet", "  allowedSources: [\"not-a-network\"]\n"),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/mqttbrokers/twice.yaml",
+        &broker(
+            "twice",
+            "  allowedSources: [\"10.0.0.0/8\", \"10.0.0.0/8\"]\n",
+        ),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/mqttbrokers/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: broken\n  namespace: ovzdusie\nspec:\n  roles: 7\n",
+    );
+    let source = |name: &str, spec: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n{spec}")
+    };
+    write(
+        &dir,
+        "projects/ovzdusie/datasources/broken.yaml",
+        &source("broken", "  type: 7\n"),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/datasources/http.yaml",
+        &source("http", "  type: rest\n"),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/datasources/nobroker.yaml",
+        &source(
+            "nobroker",
+            "  type: mqtt\n  mqtt:\n    topics: [\"air/+\"]\n",
+        ),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/datasources/ghost.yaml",
+        &source("ghost", "  type: mqtt\n  mqtt:\n    brokerRef: { kind: MqttBroker, name: ghost }\n    topics: [\"air/+\"]\n"),
+    );
+    let repo = jc_manifest::loader::Repository::load(&dir).expect("the repository loads");
+    let table = brokers_of(&repo);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        table.keys().collect::<Vec<_>>(),
+        ["mqtt-ovzdusie-fine"],
+        "only the broker the kind admits is served"
+    );
+    assert!(table["mqtt-ovzdusie-fine"].runner_topics.is_empty());
+}
+
+/// A token the realm verifies is still no device when no realm is configured, when it names no
+/// client, or when its client is no ServiceAccount; and a tokenless CONNECT under any other name
+/// than the runner's or the capture's has no pod to come from.
+#[tokio::test]
+async fn a_verified_token_still_needs_a_client_and_an_account_and_a_tokenless_stranger_is_denied() {
+    let f = Fixture::new("no-realm-no-azp");
+    let token = f.token("ovzdusie-cam-north", "mqtt-ovzdusie-cameras", 300);
+    let pods = Pods::default();
+    let (answer, why) = decide(
+        &f.brokers,
+        None,
+        &f.accounts,
+        Some(CAMERAS),
+        &pods,
+        &device("ovzdusie-cam-north", token),
+    );
+    assert_eq!(answer.result, "deny");
+    assert_eq!(why.refused.map(|reason| reason.code()), Some("no_realm"));
+
+    let anonymous = f.realm.mint(&json!({
+        "iss": common::ISSUER, "sub": "someone", "aud": "mqtt-ovzdusie-cameras",
+        "exp": common::in_seconds(300), "iat": common::in_seconds(-10),
+    }));
+    let (_, refused) = f.decide_why(Some(CAMERAS), &device("ovzdusie-cam-north", anonymous));
+    assert_eq!(refused, Some("wrong_client"));
+
+    let ghost = f.token("ovzdusie-ghost", "mqtt-ovzdusie-cameras", 300);
+    let (_, refused) = f.decide_why(Some(CAMERAS), &device("ovzdusie-ghost", ghost));
+    assert_eq!(refused, Some("unknown_account"));
+
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let app = proxied(internal_router(
+        Arc::new(gateway),
+        Some("localhost".to_owned()),
+        None,
+        None,
+        None,
+    ));
+    let body = json!({
+        "clientid": "stranger", "username": "stranger", "password": "", "ipaddr": "127.0.0.1"
+    });
+    let request = Request::post("/internal/mqtt/auth")
+        .header("content-type", "application/json")
+        .header("l5d-client-id", CAMERAS)
+        .body(Body::from(body.to_string()))
+        .expect("a request");
+    let response = app.oneshot(request).await.expect("answers");
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("a body");
+    assert_eq!(
+        serde_json::from_slice::<Value>(&bytes).expect("json")["result"],
+        "deny"
+    );
+}

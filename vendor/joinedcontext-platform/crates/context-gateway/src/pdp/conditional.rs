@@ -57,3 +57,88 @@ pub(crate) async fn retrieve(
         body: serde_json::from_slice(&bytes).unwrap_or(Value::Null),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::IntoFuture;
+
+    /// A broker on a free port answering every GET with `status`, `content_type` and `body`.
+    async fn broker_answering(status: u16, body: Vec<u8>) -> Broker {
+        let app = axum::Router::new().fallback(axum::routing::get(move || {
+            let body = body.clone();
+            async move {
+                (
+                    axum::http::StatusCode::from_u16(status).expect("a status"),
+                    [("content-type", "application/json")],
+                    body,
+                )
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(axum::serve(listener, app).into_future());
+        Broker::new(format!("http://{address}"))
+    }
+
+    /// The pre-write read answers the broker's status and JSON, a body that is no JSON as null.
+    #[tokio::test]
+    async fn a_read_before_a_write_answers_what_the_broker_said() {
+        let found = broker_answering(200, br#"{"id":"urn:ngsi-ld:A:1"}"#.to_vec()).await;
+        let read = retrieve(
+            &found,
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:A:1",
+            &HeaderMap::new(),
+        )
+        .await
+        .map_err(|refused| refused.status)
+        .expect("an answer");
+        assert_eq!(read.status, 200);
+        assert_eq!(read.body["id"], "urn:ngsi-ld:A:1");
+
+        let gone = broker_answering(404, b"not json".to_vec()).await;
+        let read = retrieve(
+            &gone,
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:A:2",
+            &HeaderMap::new(),
+        )
+        .await
+        .map_err(|refused| refused.status)
+        .expect("an answer");
+        assert_eq!((read.status, read.body), (404, Value::Null));
+    }
+
+    /// A broker nothing listens on is the gateway's own failure answer, and one that answers more
+    /// than a single entity can be is a 500 rather than held whole.
+    #[tokio::test]
+    async fn a_broker_that_is_down_or_answers_without_end_is_an_error_not_an_entity() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let closed = listener.local_addr().expect("the bound address");
+        drop(listener);
+        let down = Broker::new(format!("http://{closed}"));
+        let refused = retrieve(
+            &down,
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:A:1",
+            &HeaderMap::new(),
+        )
+        .await
+        .err()
+        .expect("the broker is down");
+        assert!(refused.status >= 500, "{}", refused.status);
+
+        let huge = broker_answering(200, vec![b' '; MAX_PROBE + 1]).await;
+        let refused = retrieve(
+            &huge,
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:A:1",
+            &HeaderMap::new(),
+        )
+        .await
+        .err()
+        .expect("too large");
+        assert_eq!(refused.status, 500);
+    }
+}

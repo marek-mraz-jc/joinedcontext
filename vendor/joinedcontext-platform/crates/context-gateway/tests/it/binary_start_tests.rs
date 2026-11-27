@@ -68,6 +68,15 @@ fn every_deployment_fault_is_a_failing_exit() {
 
 #[test]
 fn a_started_gateway_stops_cleanly_on_sigterm() {
+    stops_cleanly_on("-TERM");
+}
+
+#[test]
+fn a_started_gateway_stops_cleanly_on_an_interrupt() {
+    stops_cleanly_on("-INT");
+}
+
+fn stops_cleanly_on(signal: &str) {
     let (bind, metrics, internal) = (free_port(), free_port(), free_port());
     let mut vars = base(bind, metrics);
     vars.push(("JC_GATEWAY_INTERNAL_BIND", format!("127.0.0.1:{internal}")));
@@ -82,7 +91,7 @@ fn a_started_gateway_stops_cleanly_on_sigterm() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let stopped = Command::new("kill")
-        .args(["-TERM", &child.id().to_string()])
+        .args([signal, &child.id().to_string()])
         .status()
         .expect("kill runs");
     assert!(stopped.success());

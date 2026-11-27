@@ -820,6 +820,45 @@ mod tests {
         assert_eq!(answer.status(), 200);
     }
 
+    /// A read that answers after the slow mark and before the deadline is the answer, weighed as a
+    /// slow read for as long as it ran.
+    #[tokio::test]
+    async fn a_read_answering_between_the_slow_mark_and_the_deadline_is_answered() {
+        let gate = timed(8, 8);
+        let ticket = gate.admit("a".into(), SIGNED_READ).expect("a");
+        let answer = gate
+            .time(ticket, async {
+                tokio::time::sleep(Duration::from_millis(40)).await;
+                Response::new(Body::from("late but whole"))
+            })
+            .await;
+        assert_eq!(answer.status(), 200);
+        let body = axum::body::to_bytes(answer.into_body(), 1024)
+            .await
+            .expect("the body");
+        assert_eq!(&body[..], b"late but whole");
+        assert!(gate.callers.lock().expect("the map").is_empty());
+    }
+
+    /// A ticket whose caller's entry is gone (the map is only ever the tickets') returns its slots
+    /// and counts nothing; a weigh of such a ticket is refused.
+    #[test]
+    fn a_ticket_whose_caller_left_the_map_gives_back_its_slots_and_cannot_weigh() {
+        let gate = InFlight::new(2, 2, 1);
+        let ticket = gate.admit("a".into(), SIGNED_READ).expect("a");
+        gate.callers.lock().expect("the map").clear();
+        drop(ticket);
+        assert!(gate.callers.lock().expect("the map").is_empty());
+        assert!(
+            gate.admit("b".into(), SIGNED_READ).is_ok(),
+            "the slot is back"
+        );
+
+        let mut lost = gate.admit("c".into(), SIGNED_READ).expect("c");
+        gate.callers.lock().expect("the map").clear();
+        assert!(!gate.weigh(&mut lost), "no caller entry to weigh against");
+    }
+
     /// A streamed answer (an OGC file, jc-ogc-stream) keeps its slots after its headers, for as
     /// long as its body is sent; its end, or a client dropping it, gives them back.
     #[tokio::test]
