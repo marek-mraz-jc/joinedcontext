@@ -465,6 +465,26 @@ mod tests {
         Ok(())
     }
 
+    /// A spool whose file cannot be read ends its streamed body with the error, never a short
+    /// success the length header would not match.
+    #[tokio::test]
+    async fn a_spool_that_cannot_be_read_ends_its_body_with_the_error()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let mut spool = work(dir.path(), 2 * MIB)
+            .spool(OrgId::from_u128(9), 0)
+            .await?;
+        spool.file = std::fs::File::open(dir.path())?;
+        let response = spool.respond("text/plain").await?;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
     /// A job that asks for more memory than is free gives back what it holds and waits; when the
     /// wait runs out it answers `Busy`, and a later ask in the same job is refused at once.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

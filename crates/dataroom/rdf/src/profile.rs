@@ -220,6 +220,9 @@ pub struct Context {
     /// Terms the published file uses and leaves out.
     #[serde(default)]
     pub add: serde_json::Map<String, serde_json::Value>,
+    /// The file's `@context` object with `add` in it, read when the profiles load.
+    #[serde(skip)]
+    pub resolved: serde_json::Value,
 }
 
 /// `profile.json`.
@@ -426,6 +429,25 @@ fn load(sources: &[Embedded<'_>]) -> std::result::Result<Vec<Profile>, String> {
             .any(|part| part.is_empty())
         {
             return Err(bad("an empty context prefix would take every @context"));
+        }
+        let texts: Vec<&'static str> = profile
+            .contexts
+            .iter()
+            .map(|c| profile.file(&c.file))
+            .collect();
+        for (context, text) in profile.contexts.iter_mut().zip(texts) {
+            let mut whole: serde_json::Value = serde_json::from_str(text)
+                .map_err(|e| bad(&format!("context {}: {e}", context.file)))?;
+            let Some(serde_json::Value::Object(mut map)) =
+                whole.get_mut("@context").map(serde_json::Value::take)
+            else {
+                return Err(bad(&format!(
+                    "context {} holds no @context object",
+                    context.file
+                )));
+            };
+            map.extend(context.add.clone());
+            context.resolved = serde_json::Value::Object(map);
         }
         let mut iris = vec![&profile.uri];
         for row in &profile.required {
@@ -788,6 +810,41 @@ mod tests {
         assert_eq!(
             loaded(&[("dcat-ap-3.0.1", EU, FILES), ("c", empty_prefix, FILES)]),
             "profile c: an empty context prefix would take every @context"
+        );
+        // A context file must be JSON whose `@context` is an object, read once at load.
+        let with_context: &'static str = Box::leak(
+            child(&format!(
+                r#""contexts":[{{"prefixes":["https://x.example/"],"file":"c.jsonld","add":{{"t":"urn:x:t"}}}}],{row}"#
+            ))
+            .into_boxed_str(),
+        );
+        for (file, want) in [
+            ("not json", "profile c: context c.jsonld: expected"),
+            (
+                r#"{"@context":["urn:x:a"]}"#,
+                "profile c: context c.jsonld holds no @context object",
+            ),
+            (
+                r#"{"other":{}}"#,
+                "profile c: context c.jsonld holds no @context object",
+            ),
+        ] {
+            let files: &'static [(&'static str, &'static str)] =
+                Box::leak(vec![("a.ttl", "# shapes"), ("c.jsonld", file)].into_boxed_slice());
+            let err = loaded(&[("dcat-ap-3.0.1", EU, FILES), ("c", with_context, files)]);
+            assert!(err.starts_with(want), "{err}");
+        }
+        let good: &[(&str, &'static str)] = &[
+            ("a.ttl", "# shapes"),
+            ("c.jsonld", r#"{"@context":{"a":"urn:x:a"}}"#),
+        ];
+        let profiles = load(&[("dcat-ap-3.0.1", EU, FILES), ("c", with_context, good)])
+            .expect("a good context loads");
+        let c = profiles.iter().find(|p| p.id == "c").expect("c");
+        assert_eq!(
+            c.contexts[0].resolved,
+            serde_json::json!({"a": "urn:x:a", "t": "urn:x:t"}),
+            "the added terms join the file's"
         );
         let silent = EU.replace(r#""serialisations":["turtle"],"#, "");
         let silent: &'static str = Box::leak(silent.into_boxed_str());

@@ -1738,6 +1738,45 @@ mod tests {
     /// JC1-09, DM-24: a published model whose source the forge cannot read now is not checked
     /// as a model with no published source, which reads every slot as new and lets a removal
     /// pass under the same major: the check is refused with the forge's reason.
+    /// A model tools service that cannot be reached, answers an error or answers something that
+    /// is no artifact set is the same 503 to the caller; the cause stays in the log (T-7909).
+    #[tokio::test]
+    async fn a_model_tools_failure_of_each_kind_is_one_unavailable() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        // A port that was just bound and released: nothing listens there.
+        let unreachable = format!(
+            "http://{}",
+            std::net::TcpListener::bind("127.0.0.1:0")
+                .and_then(|l| l.local_addr())
+                .expect("a free port")
+        );
+        let failing = MockServer::start().await;
+        Mock::given(path("/generate"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&failing)
+            .await;
+        let garbled = MockServer::start().await;
+        Mock::given(path("/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+            .mount(&garbled)
+            .await;
+        for base in [unreachable, failing.uri(), garbled.uri()] {
+            let config = crate::config::Config {
+                model_tools_url: Some(base.clone()),
+                ..crate::config::Config::for_tests()
+            };
+            let state = AppState::new(config, None);
+            let mut imports = BTreeMap::new();
+            imports.insert("core".to_owned(), "id: core".to_owned());
+            let answer = compile_artifacts(&state, "id: x", &imports).await;
+            assert!(
+                matches!(&answer, Err(ApiError::Unavailable(why)) if why == "the model tools service did not answer"),
+                "{base}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn a_published_model_whose_source_cannot_be_read_is_not_checked_as_new() {
         let state = AppState::new(crate::config::Config::for_tests(), None);

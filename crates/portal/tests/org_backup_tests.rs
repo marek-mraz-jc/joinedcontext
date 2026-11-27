@@ -719,6 +719,82 @@ async fn the_bundle_leaves_the_portal_only_encrypted_to_both_recipients() {
     assert_eq!(download.status, StatusCode::OK, "{}", download.text);
 }
 
+/// A first save names the secret access key it lacks; a later save without one keeps the key
+/// already sealed; an endpoint the production egress refuses is refused naming the field
+/// before anything is saved (T-7909).
+#[tokio::test]
+async fn a_target_save_keeps_its_sealed_key_and_names_what_it_lacks() {
+    let world = world("alfa", "Enabled").await;
+    let mut keyless = target(&world.endpoint);
+    keyless
+        .as_object_mut()
+        .expect("object")
+        .remove("secretAccessKey");
+    let refused = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(keyless.clone()),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(refused.text.contains("secretAccessKey"), "{}", refused.text);
+
+    let first = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(target(&world.endpoint)),
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
+    let sealed = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved")
+        .sealed_secret;
+    keyless["keepDays"] = json!(30);
+    let again = send(&world.state, person("ada"), "PUT", DOOR, Some(keyless)).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.text);
+    let kept = world
+        .state
+        .org_backups
+        .target("alfa", "configuration")
+        .await
+        .expect("read")
+        .expect("saved");
+    assert_eq!(kept.sealed_secret, sealed);
+    assert!(!again.text.contains(SECRET), "{}", again.text);
+
+    let mut guarded = world.state.clone();
+    guarded.org_backup_egress = std::sync::Arc::new(org_backup::Egress::default());
+    let refused = send(
+        &guarded,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(target(&world.endpoint)),
+    )
+    .await;
+    assert_eq!(
+        refused.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        refused.text
+    );
+    assert!(refused.text.contains("endpoint"), "{}", refused.text);
+}
+
 #[tokio::test]
 async fn a_configuration_target_without_recipients_is_refused_naming_the_field() {
     let world = world("alfa", "Enabled").await;

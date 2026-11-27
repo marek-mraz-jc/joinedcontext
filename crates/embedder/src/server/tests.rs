@@ -200,6 +200,29 @@ async fn the_quota_starts_again_after_a_minute_and_admits_exactly_the_limit() {
     assert!(a.charge(u32::MAX).is_err(), "no overflow past the limit");
 }
 
+/// A count whose lock a panic left poisoned is still read: the quota keeps counting, never
+/// admits past the limit and never panics on the caller.
+#[tokio::test]
+async fn a_poisoned_quota_still_counts() {
+    let w = world(Limits::default(), 2, 0).await;
+    let service = Arc::clone(&w.service);
+    std::thread::spawn(move || {
+        let _held = service.deployments[0].used.lock().expect("lock");
+        panic!("poison the quota on purpose");
+    })
+    .join()
+    .expect_err("the thread panicked");
+    let a = &w.service.deployments[0];
+    assert!(a.used.is_poisoned());
+    assert_eq!(a.charge(2), Ok(()), "up to the limit");
+    assert!(a.charge(1).is_err(), "one past the limit");
+    assert_eq!(
+        w.service.deployments[1].charge(1),
+        Ok(()),
+        "another deployment"
+    );
+}
+
 /// A model that fails is a 503 the caller can retry, naming neither the text nor the cause.
 #[tokio::test]
 async fn a_failing_model_is_a_503_without_the_cause() {

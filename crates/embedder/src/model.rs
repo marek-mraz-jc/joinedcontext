@@ -55,6 +55,9 @@ enum Engine {
     /// A model that fails every text, for the service's refusal of a failed embedding.
     #[cfg(test)]
     Broken,
+    /// A model whose run panics, for the task that ends without an answer.
+    #[cfg(test)]
+    Panics,
 }
 
 /// The loaded model. Cloning shares it; one embedding runs at a time, on `threads` ONNX Runtime
@@ -198,6 +201,8 @@ impl Engine {
             Self::Fake { millis } => return Ok(fake(text, *millis)),
             #[cfg(test)]
             Self::Broken => return Err(Error::Model("embedding failed: broken".into())),
+            #[cfg(test)]
+            Self::Panics => panic!("the model run panicked"),
         };
         let encoding = embedded(tokenizer.encode(text, true))?;
         let tokens = encoding.get_ids().len();
@@ -405,6 +410,26 @@ mod tests {
         );
     }
 
+    /// A run that panics ends its blocking task without an answer: an error naming the
+    /// embedding, and the model held by it is refused next, not hung.
+    #[tokio::test]
+    async fn a_panicking_run_is_an_error_and_poisons_the_model() {
+        let embedder = Embedder {
+            engine: Arc::new(Mutex::new(Engine::Panics)),
+            turns: Turns::new(),
+        };
+        let err = embedder.embed(Kind::Query, &["q".into()]).await.err();
+        assert!(
+            matches!(&err, Some(Error::Model(m)) if m.starts_with("embedding failed: ")),
+            "{err:?}"
+        );
+        let err = embedder.passages(&["p".into()]).await.err();
+        assert!(
+            matches!(&err, Some(Error::Model(m)) if m == "an earlier embedding panicked"),
+            "{err:?}"
+        );
+    }
+
     /// A fresh directory under the system's temp dir, holding `files`.
     fn dir_with(name: &str, files: &[(&str, &[u8])]) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("jc-embedder-{name}-{}", std::process::id()));
@@ -551,11 +576,10 @@ mod tests {
             .iter()
             .position(|who| who == "question")
             .expect("answered");
+        let first = &done[..done.len().min(5)];
         assert_eq!(
-            at,
-            3,
-            "only the passage running when it came went before it: {:?}",
-            &done[..5]
+            at, 3,
+            "only the passage running when it came went before it: {first:?}"
         );
         assert!(waited <= Duration::from_millis(10), "waited {waited:?}");
         assert_eq!(done.len(), 501);

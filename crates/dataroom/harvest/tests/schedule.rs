@@ -331,6 +331,10 @@ fn sunday_reads_as_seven_and_a_range_end_that_is_no_number_is_refused() {
     assert!(cron_matches("23 3 * * 6-7", sunday).unwrap());
     assert!(!cron_matches("23 3 * * 7", at(3, 23)).unwrap(), "a Monday");
     assert!(cron_matches("23 3 * * 1-x", sunday).is_err());
+    // A range start that is no number, in any field, is refused the same way.
+    assert!(cron_matches("23 3 * * x-5", sunday).is_err());
+    assert!(cron_matches("x-5 3 * * *", sunday).is_err());
+    assert!(cron_matches("23 -3 * * *", sunday).is_err());
 }
 
 #[test]
@@ -374,6 +378,41 @@ async fn the_spawned_scheduler_runs_every_source_in_its_first_minute() {
         f.calls.load(Ordering::SeqCst),
         1,
         "one run, no second in the same minute"
+    );
+}
+
+/// After the first minute's run of everything, each later minute runs the sources due in it:
+/// a clock stepping one minute per check reaches 03:23, the hub source's minute, and runs it
+/// once more; the minutes around it run nothing.
+#[tokio::test(start_paused = true)]
+async fn the_spawned_scheduler_runs_the_sources_due_in_each_later_minute() {
+    let (w, store, f) = scheduled_world(0).await;
+    // Each check reads the clock twice (the wait, then the minute): two reads per minute.
+    let reads = Arc::new(AtomicUsize::new(0));
+    let clock = {
+        let reads = reads.clone();
+        move || {
+            let n = i64::try_from(reads.fetch_add(1, Ordering::SeqCst) / 2).expect("small");
+            TimestampTz(
+                at(3, 22)
+                    .0
+                    .checked_add(jiff::SignedDuration::from_mins(n))
+                    .expect("in range"),
+            )
+        }
+    };
+    let handle = scheduler(&w, store, f.clone(), true).spawn_with_clock(clock);
+    for _ in 0..600 {
+        if f.calls.load(Ordering::SeqCst) >= 2 && reads.load(Ordering::SeqCst) >= 8 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+    handle.abort();
+    assert_eq!(
+        f.calls.load(Ordering::SeqCst),
+        2,
+        "the start's run at 03:22, the due run at 03:23, none at 03:24"
     );
 }
 

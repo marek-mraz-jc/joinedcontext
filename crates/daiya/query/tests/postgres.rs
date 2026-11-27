@@ -94,6 +94,8 @@ fn macros_expand_like_grafana() {
         ("$__unixEpochFilter()", "missing time column"),
         ("$__timeFilter(ts; DROP)", "unsafe column identifier"),
         ("$__time(a b)", "unsafe column identifier"),
+        ("$__timeEpoch(a b)", "unsafe column identifier"),
+        ("$__unixEpochFilter(t; DROP)", "unsafe column identifier"),
         ("$__timeGroup(ts)", "needs time column and interval"),
         ("$__unixEpochGroup(ts)", "needs time column and interval"),
         ("$__timeGroup(ts, soon)", "error parsing interval"),
@@ -168,6 +170,9 @@ fn the_checker_refuses_malformed_and_foreign_sql_with_a_reason() {
             "parenthesised join",
         ),
         ("SELECT * FROM ((SELECT 1) s)", "parenthesised join"),
+        // An alias with a column list reads as a call and is refused before the FROM check.
+        ("SELECT * FROM metrics AS m(a, b)", "function 'm'"),
+        ("SELECT * FROM metrics \"m\"(a)", "quoted function call"),
     ] {
         let err = validate_readonly_select("A", sql, &v).unwrap_err();
         assert!(

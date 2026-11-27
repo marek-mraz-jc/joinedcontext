@@ -573,9 +573,10 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
     let mut types = Vec::with_capacity(entities.len());
     let mut observed_times = Vec::with_capacity(entities.len());
     let mut has_observed = false;
-    let mut cols: BTreeMap<String, (Vec<Value>, Option<String>)> = attr_order
+    // Per attribute of `attr_order` (no name twice), its values and its unit.
+    let mut cols: Vec<(Vec<Value>, Option<String>)> = attr_order
         .iter()
-        .map(|a| (a.clone(), (Vec::with_capacity(entities.len()), None)))
+        .map(|_| (Vec::with_capacity(entities.len()), None))
         .collect();
 
     for e in entities {
@@ -596,7 +597,7 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
         types.push(t_str);
 
         let mut newest_obs: Option<i64> = None;
-        for a_name in &attr_order {
+        for (a_name, (vec, u_slot)) in attr_order.iter().zip(cols.iter_mut()) {
             let raw_attr = obj.get(a_name);
             let inst = match raw_attr {
                 Some(Value::Array(arr)) => arr.first(),
@@ -614,14 +615,11 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
                     .get("unitCode")
                     .and_then(Value::as_str)
                     .and_then(|u| grafana_unit(Some(u)));
-                let v = extract_ngsi_value(inst_val, lang);
-                if let Some((vec, u_slot)) = cols.get_mut(a_name) {
-                    vec.push(v);
-                    if u_slot.is_none() && unit.is_some() {
-                        *u_slot = unit;
-                    }
+                vec.push(extract_ngsi_value(inst_val, lang));
+                if u_slot.is_none() && unit.is_some() {
+                    *u_slot = unit;
                 }
-            } else if let Some((vec, _)) = cols.get_mut(a_name) {
+            } else {
                 vec.push(Value::Null);
             }
         }
@@ -646,18 +644,16 @@ fn entities_to_table_frame(ref_id: &str, entities: &[Value], model: &Value) -> F
         });
     }
 
-    for a_name in attr_order {
-        if let Some((values, unit)) = cols.remove(&a_name) {
-            let field_type = infer_field_type(&values);
-            fields.push(FieldColumn {
-                name: a_name,
-                field_type,
-                unit,
-                display_name: None,
-                labels: BTreeMap::new(),
-                values,
-            });
-        }
+    for (a_name, (values, unit)) in attr_order.into_iter().zip(cols) {
+        let field_type = infer_field_type(&values);
+        fields.push(FieldColumn {
+            name: a_name,
+            field_type,
+            unit,
+            display_name: None,
+            labels: BTreeMap::new(),
+            values,
+        });
     }
 
     Frame {
@@ -867,11 +863,8 @@ impl Datasource for NgsiLdDatasource {
                     .collect::<Vec<_>>()
                     .join("&");
 
-                let url = if qs.is_empty() {
-                    format!("{}{path}", self.base_ngsi_url())
-                } else {
-                    format!("{}{path}?{qs}", self.base_ngsi_url())
-                };
+                // Never empty: every request carries its `limit`.
+                let url = format!("{}{path}?{qs}", self.base_ngsi_url());
 
                 let resp = self
                     .guard

@@ -620,6 +620,25 @@ mod tests {
         assert_eq!(policy.spec["rules"][1]["assignee"]["id"], "leads");
     }
 
+    /// A rule without an assignee and a user id that is no text are left as they are, and
+    /// nothing changes for them (T-7909).
+    #[test]
+    fn a_rule_without_an_assignee_and_a_number_for_a_user_are_left_alone() {
+        let mirror = Mirror::new();
+        mirror.upsert(envelope(
+            "Policy",
+            "odd",
+            "helsinki",
+            json!({ "rules": [
+                { "effect": "allow" },
+                { "assignee": { "kind": "user", "id": 7 } }
+            ] }),
+        ));
+        let plan = plan(&mirror, &[user(JANA, "jana@hel.fi", "jana")]);
+        assert!(plan.repositories.is_empty(), "{:?}", plan.repositories);
+        assert!(plan.unresolved.is_empty());
+    }
+
     fn caller(client: Option<&str>, groups: &[&str]) -> CurrentUser {
         use crate::auth::session::{Identity, Session};
         CurrentUser(Session {

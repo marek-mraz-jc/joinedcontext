@@ -16,7 +16,7 @@ use crate::graph::{
 };
 use crate::profile::{
     CatalogueMember, Compact, Contact, Context, DatasetMember, DcatProfile, DistributionMember,
-    Profile, TermsMember,
+    TermsMember,
 };
 use dataroom_core::{
     Catalogue, ContactKind, ContactPoint, DataroomError, Dataset, Distribution, Publisher, Result,
@@ -80,14 +80,12 @@ fn inline_and_check_jsonld(val: &mut Value, limits: &RdfLimits, depth: usize) ->
 }
 
 /// The installed profile that carries the context at `iri`, so it is read and never fetched.
-fn offline_context(iri: &str) -> Option<(&'static Profile, &'static Context)> {
+fn offline_context(iri: &str) -> Option<&'static Context> {
     DcatProfile::installed().find_map(|installed| {
-        let profile = installed.manifest();
-        let context = profile.contexts.iter().find(|c| {
+        installed.manifest().contexts.iter().find(|c| {
             c.prefixes.iter().any(|p| iri.starts_with(p.as_str()))
                 || c.suffixes.iter().any(|s| iri.ends_with(s.as_str()))
-        })?;
-        Some((profile, context))
+        })
     })
 }
 
@@ -102,19 +100,9 @@ fn resolve_and_validate_context(ctx_val: &mut Value, depth: usize) -> Result<()>
     match ctx_val {
         Value::String(url) => {
             let trimmed = url.trim();
-            if let Some((profile, context)) = offline_context(trimmed) {
-                let mut parsed: Value =
-                    serde_json::from_str(profile.file(&context.file)).map_err(|e| {
-                        DataroomError::Rdf(format!("built-in {} context: {e}", profile.id))
-                    })?;
-                if let Some(inner) = parsed.get_mut("@context") {
-                    if let Some(map) = inner.as_object_mut() {
-                        for (term, meaning) in &context.add {
-                            map.insert(term.clone(), meaning.clone());
-                        }
-                    }
-                    *ctx_val = inner.take();
-                }
+            if let Some(context) = offline_context(trimmed) {
+                // Parsed, with its added terms, when the profiles load.
+                ctx_val.clone_from(&context.resolved);
                 Ok(())
             } else if trimmed == "https://schema.org/" || trimmed == "http://schema.org/" {
                 *ctx_val = json!({ "@vocab": "http://schema.org/" });
@@ -255,7 +243,7 @@ impl KeywordAliases {
 }
 
 /// Writes `val` as JSON with each object's keys ordered by [`KeywordAliases::rank`].
-fn write_ordered_json(val: &Value, aliases: &KeywordAliases, out: &mut String) -> Result<()> {
+fn write_ordered_json(val: &Value, aliases: &KeywordAliases, out: &mut String) {
     match val {
         Value::Array(items) => {
             out.push('[');
@@ -263,7 +251,7 @@ fn write_ordered_json(val: &Value, aliases: &KeywordAliases, out: &mut String) -
                 if i > 0 {
                     out.push(',');
                 }
-                write_ordered_json(item, aliases, out)?;
+                write_ordered_json(item, aliases, out);
             }
             out.push(']');
         }
@@ -275,21 +263,16 @@ fn write_ordered_json(val: &Value, aliases: &KeywordAliases, out: &mut String) -
                 if i > 0 {
                     out.push(',');
                 }
-                out.push_str(&json_text(k)?);
+                // `Value`'s `Display` is `serde_json`'s compact text (string escaping, number
+                // format), and it cannot fail.
+                out.push_str(&Value::from(k.as_str()).to_string());
                 out.push(':');
-                write_ordered_json(v, aliases, out)?;
+                write_ordered_json(v, aliases, out);
             }
             out.push('}');
         }
-        scalar => out.push_str(&json_text(scalar)?),
+        scalar => out.push_str(&scalar.to_string()),
     }
-    Ok(())
-}
-
-/// A JSON scalar or key written by `serde_json` (string escaping, number format).
-fn json_text<T: serde::Serialize + ?Sized>(v: &T) -> Result<String> {
-    serde_json::to_string(v)
-        .map_err(|e| DataroomError::Rdf(format!("serialize normalized JSON-LD: {e}")))
 }
 
 /// Parses a JSON-LD byte slice using `oxjsonld::JsonLdParser`, enforcing [`RdfLimits`] (A1).
@@ -314,7 +297,7 @@ pub fn parse_jsonld_bytes(bytes: &[u8], limits: &RdfLimits) -> Result<RdfGraph> 
     let mut aliases = KeywordAliases::default();
     aliases.collect(&val);
     let mut normalized = String::with_capacity(bytes.len());
-    write_ordered_json(&val, &aliases, &mut normalized)?;
+    write_ordered_json(&val, &aliases, &mut normalized);
     let normalized_bytes = normalized.into_bytes();
 
     let parser = JsonLdParser::new()

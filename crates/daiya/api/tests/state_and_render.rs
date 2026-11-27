@@ -641,7 +641,8 @@ fn fixed_board() -> Value {
         "templating": { "list": [
             { "name": "all", "type": "custom", "current": { "value": "$__all" }, "allValue": ".*" },
             { "name": "one", "type": "custom", "current": { "value": "x" } },
-            { "name": "unset", "type": "custom", "allValue": "*" }
+            { "name": "unset", "type": "custom", "allValue": "*" },
+            { "name": "noall", "type": "custom", "current": { "value": "$__all" } }
         ]},
         "panels": [
             {
@@ -678,7 +679,10 @@ fn fixed_board() -> Value {
               "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
             { "id": 8, "type": "table", "title": "Rows",
               "transformations": [{ "id": "seriesToRows", "options": {} }],
-              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] }
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }, { "refId": "C", "datasource": { "uid": "fixed" } }] },
+            { "id": 9, "type": "table", "title": "Unknown sort column",
+              "options": { "sortBy": [{ "displayName": "nope", "desc": true }] },
+              "targets": [{ "refId": "A", "datasource": { "uid": "fixed" } }] }
         ]
     })
 }
@@ -747,7 +751,7 @@ async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_
     let (w, fixed) = fixed_world().await;
     let admin = Subject::authenticated("admin", vec![ORG], vec![]);
     // Saved values: `$__all` reads as its allValue, a current value as itself, an unset
-    // variable as its allValue.
+    // variable as its allValue; `$__all` without an allValue is no value.
     panel_view(&w.state, &admin, ORG, "fx", 1, PanelTimeRange::default())
         .await
         .unwrap();
@@ -760,6 +764,14 @@ async fn panel_view_resolves_saved_variables_the_default_range_the_interval_and_
             ("unset".to_owned(), "*".to_owned()),
         ])
     );
+    // A sort by a column no frame has keeps the frames as they came.
+    let unsorted = panel_view(&w.state, &admin, ORG, "fx", 9, PanelTimeRange::default())
+        .await
+        .expect("an unknown sort column is no error");
+    let plain = panel_view(&w.state, &admin, ORG, "fx", 5, PanelTimeRange::default())
+        .await
+        .expect("reads");
+    assert_eq!(unsorted.frame_sets, plain.frame_sets);
     // A wide range: never finer than 11 000 points, so 100 s over 1.1e9 ms.
     let wide = PanelTimeRange {
         from: Some("1700000000000".into()),

@@ -656,6 +656,49 @@ mod tests {
         }
     }
 
+    /// A full map whose buckets all went idle past two minutes drops them for a new address;
+    /// a limiter a panicking thread left poisoned still admits (T-7909).
+    #[test]
+    fn idle_buckets_make_room_and_a_poisoned_limiter_still_admits() {
+        let start = Instant::now();
+        let mut map = HashMap::new();
+        for n in 0..MAX_BUCKETS {
+            admit(&mut map, &format!("10.1.{}.{}", n / 256, n % 256), start);
+        }
+        assert_eq!(map.len(), MAX_BUCKETS);
+        assert!(admit(&mut map, "new", start + Duration::from_secs(121)));
+        assert_eq!(map.len(), 1);
+
+        let poisoned = std::thread::spawn(|| {
+            let _held = RATE_LIMITER.lock().expect("lock");
+            panic!("poison the limiter");
+        })
+        .join();
+        assert!(poisoned.is_err());
+        assert!(check_rate_limit("poisoned-limiter-test"));
+    }
+
+    /// Eviction counts files only: a folder in the cache is neither weighed nor removed.
+    #[test]
+    fn eviction_weighs_files_and_leaves_folders() {
+        let root = std::env::temp_dir().join(format!(
+            "jc-bm-evict-{}-{:?}",
+            std::process::id(),
+            Instant::now()
+        ));
+        std::fs::create_dir_all(root.join("sub")).expect("sub");
+        std::fs::write(root.join("old.png"), [0u8; 64]).expect("old");
+        save_and_evict(&root, &root.join("new.png"), &[1u8; 64], 100);
+        assert!(root.join("sub").is_dir());
+        let left: Vec<_> = std::fs::read_dir(&root)
+            .expect("dir")
+            .flatten()
+            .filter(|e| e.path().is_file())
+            .collect();
+        assert_eq!(left.len(), 1, "{left:?}");
+        std::fs::remove_dir_all(&root).expect("cleanup");
+    }
+
     #[test]
     fn many_fresh_addresses_never_grow_the_bucket_map_past_its_cap() {
         let mut map = HashMap::new();

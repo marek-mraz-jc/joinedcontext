@@ -848,6 +848,9 @@ pub fn convert_v2beta1_to_v1(doc: &Value) -> CrResult<Value> {
     Ok(out)
 }
 
+// `migrate_to_latest` reads every step past 41 as 42.
+const _: () = assert!(MIN_SUPPORTED_SCHEMA_VERSION == 36 && LATEST_SCHEMA_VERSION == 42);
+
 /// Runs the full migration chain to `schemaVersion: 42` (R1).
 ///
 /// - Converts v2beta1 documents to v1 first if needed.
@@ -897,8 +900,8 @@ pub fn migrate_to_latest(
             39 => migrate_v39(dashboard),
             40 => migrate_v40(dashboard),
             41 => migrate_v41(dashboard),
-            42 => migrate_v42(dashboard),
-            _ => {}
+            // The range starts at 36 or later and ends at 42 (asserted below `migrate_to_latest`).
+            _ => migrate_v42(dashboard),
         }
         steps_applied.push(step);
     }

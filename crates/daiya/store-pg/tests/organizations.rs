@@ -145,6 +145,22 @@ async fn a_database_of_the_release_before_keeps_its_numbers_ids_and_rows() {
         .unwrap()
         .unwrap();
     assert!(old.retired && old.number == 3);
+    let by_number = first
+        .find_org(installation, OrgKey::Number(11))
+        .await
+        .unwrap();
+    assert_eq!(
+        by_number,
+        Some(again.clone()),
+        "the number names the live one"
+    );
+    assert_eq!(
+        first
+            .find_org(installation, OrgKey::Number(999))
+            .await
+            .unwrap(),
+        None
+    );
     assert_eq!(first.list_orgs(installation).await.unwrap().len(), 5);
     let elsewhere = InstallationId::from_u128(2);
     assert!(first.list_orgs(elsewhere).await.unwrap().is_empty());

@@ -542,6 +542,16 @@ async fn row_queries_refuse_what_the_set_lacks_and_compare_times_only_with_times
         Box::new(Cond::Not(Box::new(Cond::IsNull { path: vec![time] }))),
     );
     assert_eq!(store.read_rows(org, query).await.unwrap().rows.len(), 1);
+    // A NUL reaches no row (the API refuses it first): the database's refusal is a 500.
+    let mut query = RowQuery::every(set, ReadScope::All);
+    query.window.filter = Cond::Compare {
+        path: vec![set.key().to_owned()],
+        op: CompareOp::Eq,
+        value: json!("a\u{0}b"),
+    };
+    let err = store.read_rows(org, query).await.unwrap_err();
+    assert_eq!(err.status_code(), 500, "{err}");
+    assert!(err.to_string().contains("index rows"), "{err}");
 }
 
 #[tokio::test]

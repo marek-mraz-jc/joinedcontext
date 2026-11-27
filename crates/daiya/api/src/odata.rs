@@ -1102,6 +1102,20 @@ mod tests {
 
     /// Each odata-table refusal keeps its kind: a property the set lacks and a bad request are
     /// the caller's 400, an unserved option 501, a source failure 500.
+    /// A path that is no resource (the batch or metadata address) has no query options.
+    #[test]
+    fn a_path_that_is_no_resource_has_no_query_options() {
+        let model = odata_csdl::Model {
+            version: odata_csdl::CsdlVersion::V4_01,
+            references: vec![],
+            schemas: vec![],
+        };
+        for path in ["$batch", "$metadata"] {
+            let options = parse_odata_query_options(&model, path, None).expect(path);
+            assert_eq!(options, odata_url::QueryOptions::default(), "{path}");
+        }
+    }
+
     #[test]
     fn each_table_error_keeps_its_kind_and_names_the_property() {
         let unknown = map_table_error(TableError::UnknownProperty("colour".into()));

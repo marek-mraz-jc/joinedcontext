@@ -1417,10 +1417,9 @@ mod tests {
     }
 
     fn refusal(body: &str) -> String {
-        match shapes(body) {
-            Ok(_) => panic!("shapes must be refused:\n{body}"),
-            Err(e) => e.to_string(),
-        }
+        shapes(body)
+            .expect_err("shapes must be refused")
+            .to_string()
     }
 
     /// A shape reaching itself through `sh:node`, `sh:or`, `sh:and`, `sh:not` or a property's
