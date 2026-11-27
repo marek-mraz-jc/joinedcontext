@@ -45,24 +45,21 @@ pub(super) fn tool_specs(offered: &[OperationSummary]) -> Vec<ToolSpec> {
     offered
         .iter()
         .map(|op| {
-            let mut schema = op.input_schema.clone();
-            if !schema.is_object() {
-                schema = json!({ "type": "object", "properties": {} });
-            }
-            if let Some(object) = schema.as_object_mut() {
-                object
-                    .entry("type")
-                    .or_insert_with(|| Value::String("object".into()));
-                if let Some(properties) =
-                    object.get_mut("properties").and_then(Value::as_object_mut)
-                {
-                    properties.remove("project");
-                }
+            // A schema that is no object is an object schema of no members.
+            let mut schema =
+                op.input_schema.as_object().cloned().unwrap_or_else(|| {
+                    [("properties".to_owned(), json!({}))].into_iter().collect()
+                });
+            schema
+                .entry("type")
+                .or_insert_with(|| Value::String("object".into()));
+            if let Some(properties) = schema.get_mut("properties").and_then(Value::as_object_mut) {
+                properties.remove("project");
             }
             ToolSpec {
                 name: Cow::Owned(op.name.clone()),
                 description: Cow::Owned(format!("{}. {}", op.title, op.description)),
-                input_schema: schema,
+                input_schema: Value::Object(schema),
             }
         })
         .collect()
@@ -283,7 +280,7 @@ impl Driver {
                 let (_, problem) = err.into_api_error().into_document();
                 let reason = problem
                     .get("detail")
-                    .or_else(|| problem.get("title"))
+                    .or(problem.get("title"))
                     .and_then(Value::as_str)
                     .unwrap_or("refused")
                     .to_owned();
@@ -511,7 +508,9 @@ mod tests {
         odd.input_schema = json!("no schema");
         let mut untyped = odd.clone();
         untyped.input_schema = json!({ "properties": { "project": {}, "q": {} } });
-        let specs = tool_specs(&[odd, untyped]);
+        let mut memberless = odd.clone();
+        memberless.input_schema = json!({ "type": "object", "required": [] });
+        let specs = tool_specs(&[odd, untyped, memberless]);
         assert_eq!(
             specs[0].input_schema,
             json!({ "type": "object", "properties": {} })
@@ -519,6 +518,11 @@ mod tests {
         assert_eq!(
             specs[1].input_schema,
             json!({ "type": "object", "properties": { "q": {} } })
+        );
+        // T-7923: an object schema without members is offered as it is.
+        assert_eq!(
+            specs[2].input_schema,
+            json!({ "type": "object", "required": [] })
         );
     }
 

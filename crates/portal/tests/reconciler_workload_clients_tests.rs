@@ -452,6 +452,142 @@ async fn a_new_account_gets_a_client_named_by_its_project_key_and_a_live_one_kee
     // replaces in parallel: jc-core's registry_tests and streams::identity::tests hold it.
 }
 
+/// T-7924: with the registry, the id a client gets: an account the realm's listing already
+/// names keeps its id, a name that is no label keeps the derived id, a realm that fails the
+/// lookup of a keyed new account fails that account alone, and an account of a project the
+/// registry does not key is converged under its derived id.
+#[tokio::test]
+async fn keyed_client_ids_follow_the_listing_the_label_and_the_realm() {
+    use jc_types::ProjectId;
+    let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    let organization = format!("wcorg-{}", ProjectId::mint().path_segment());
+    sqlx::query(
+        "INSERT INTO organizations (name, host, state, created_by) VALUES ($1, $1 || '.example', 'active', 'test')",
+    )
+    .bind(&organization)
+    .execute(&pool)
+    .await
+    .expect("an Organization");
+    let project = format!("wk-{}", ProjectId::mint().path_segment());
+    joinedcontext_portal::project_ids::key(&pool, &organization, &project)
+        .await
+        .expect("key")
+        .expect("a keyed project");
+    let unkeyed = format!("wu-{}", ProjectId::mint().path_segment());
+
+    let listed = managed_client("uuid-kpi", &project, "kpi", "env-dept", "kpi");
+    let keycloak = realm(json!([listed.clone()])).await;
+    client_lookup(&keycloak, &format!("{project}-kpi"), json!([listed])).await;
+    client_lookup(
+        &keycloak,
+        &format!("{project}-7-feed"),
+        json!([managed_client(
+            "uuid-7", &project, "7-feed", "env-dept", "feed7"
+        )]),
+    )
+    .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REALM}/clients")))
+        .and(query_param(
+            "clientId",
+            format!("{project}-ingest").as_str(),
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&keycloak)
+        .await;
+    client_lookup(
+        &keycloak,
+        &format!("{unkeyed}-feed"),
+        json!([managed_client(
+            "uuid-feed",
+            &unkeyed,
+            "feed",
+            "env-dept",
+            "feed"
+        )]),
+    )
+    .await;
+    for uuid in ["uuid-kpi", "uuid-7", "uuid-feed"] {
+        mappers(&keycloak, uuid, json!([])).await;
+    }
+
+    let outcomes = sync(&keycloak)
+        .with_keys(pool.clone())
+        .with_host_runner(false)
+        .converge(
+            &mirror_with(vec![
+                account(&project, "kpi", Some(("env-dept", "kpi")), "space-writer"),
+                account(
+                    &project,
+                    "7-feed",
+                    Some(("env-dept", "feed7")),
+                    "space-writer",
+                ),
+                account(
+                    &project,
+                    "ingest",
+                    Some(("env-dept", "ingest")),
+                    "space-writer",
+                ),
+                account(&unkeyed, "feed", Some(("env-dept", "feed")), "space-writer"),
+            ]),
+            &Bentos::new(),
+        )
+        .await;
+
+    let error_of = |label: String| {
+        outcomes
+            .iter()
+            .find(|o| o.app == label)
+            .unwrap_or_else(|| panic!("{label}: {outcomes:?}"))
+            .error
+            .clone()
+    };
+    assert_eq!(
+        error_of(format!("{project}/ingest")).as_deref(),
+        Some("GET /clients: 500 Internal Server Error")
+    );
+    for label in [
+        format!("{project}/kpi"),
+        format!("{project}/7-feed"),
+        format!("{unkeyed}/feed"),
+    ] {
+        assert_eq!(error_of(label), None, "{outcomes:?}");
+    }
+    let looked_up: std::collections::BTreeSet<String> = keycloak
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(key, _)| key == "clientId")
+                .map(|(_, id)| id.into_owned())
+        })
+        .collect();
+    assert_eq!(
+        looked_up,
+        std::collections::BTreeSet::from([
+            format!("{project}-kpi"),
+            format!("{project}-7-feed"),
+            format!("{project}-ingest"),
+            format!("{unkeyed}-feed"),
+        ]),
+        "only the ids each account keeps are asked for"
+    );
+    assert!(
+        bodies(&keycloak, "POST", &format!("{REALM}/clients"))
+            .await
+            .is_empty(),
+        "no client is created"
+    );
+}
+
 #[tokio::test]
 async fn an_account_holding_a_portal_role_gets_the_portal_audience() {
     let keycloak = realm(json!([])).await;
@@ -1063,6 +1199,56 @@ async fn a_removed_accounts_tokens_are_revoked_with_its_client() {
     assert_eq!(revoked.lock().expect("the list").len(), 1);
 }
 
+/// T-7924: a removed client whose service-account user the realm answers without an id has
+/// nothing to revoke: the client goes, nothing is revoked and nothing is reported.
+#[tokio::test]
+async fn a_removed_client_whose_user_has_no_id_is_deleted_without_a_revoke_or_warning() {
+    let listed = json!([managed_client(
+        "uuid-air",
+        "helsinki",
+        "air-adapter",
+        "env-dept",
+        "adapter"
+    )]);
+    let gone = mirror_with(vec![account(
+        "helsinki",
+        "air-adapter",
+        None,
+        "space-writer",
+    )]);
+    let revoked = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let into = std::sync::Arc::clone(&revoked);
+    let revoke: joinedcontext_portal::reconciler::workload_clients::Revoke =
+        std::sync::Arc::new(move |subject: String| {
+            let into = std::sync::Arc::clone(&into);
+            Box::pin(async move { into.lock().expect("the list").push(subject) })
+        });
+    let keycloak = realm(listed).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REALM}/clients/uuid-air/service-account-user"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "username": "sa" })))
+        .mount(&keycloak)
+        .await;
+
+    let outcomes = sync(&keycloak)
+        .with_revoke(revoke)
+        .converge(&gone, &Bentos::new())
+        .await;
+
+    assert_eq!(
+        wrote(&keycloak).await,
+        vec![format!("DELETE {REALM}/clients/uuid-air")]
+    );
+    assert_eq!(outcomes[0].error, None, "{outcomes:?}");
+    assert!(outcomes[0].warnings.is_empty(), "{outcomes:?}");
+    assert!(
+        revoked.lock().expect("the list").is_empty(),
+        "nothing to revoke"
+    );
+}
+
 /// PF-47: a second account binding a subject another account's client already holds gets no
 /// client, so a later proposal can never take a pod's identity from the account that had it.
 #[tokio::test]
@@ -1105,6 +1291,55 @@ async fn a_second_binding_of_a_held_subject_is_refused() {
     assert!(
         wrote(&keycloak).await.is_empty(),
         "nothing is created for the second binding"
+    );
+}
+
+/// T-7924: with a host runner, a refused second binding is still refused before the realm is
+/// asked, and the runner keeps no secret for it: only the project pipeline clients carry one.
+#[tokio::test]
+async fn a_refused_binding_on_a_host_runner_keeps_no_secret() {
+    let holder = managed_client("uuid-air", "helsinki", "air-adapter", "env-dept", "adapter");
+    let keycloak = realm(json!([holder.clone()])).await;
+    client_lookup(&keycloak, "helsinki-air-adapter", json!([holder])).await;
+    mappers(&keycloak, "uuid-air", json!([])).await;
+
+    let sync = sync(&keycloak).with_host_runner(true);
+    let outcomes = sync
+        .converge(
+            &mirror_with(vec![
+                account(
+                    "helsinki",
+                    "air-adapter",
+                    Some(("env-dept", "adapter")),
+                    "space-writer",
+                ),
+                account(
+                    "kosice",
+                    "squatter",
+                    Some(("env-dept", "adapter")),
+                    "space-writer",
+                ),
+            ]),
+            &Bentos::new(),
+        )
+        .await;
+
+    let refused = outcomes
+        .iter()
+        .find(|o| o.app == "kosice/squatter")
+        .and_then(|o| o.error.as_deref())
+        .unwrap_or_default();
+    assert!(
+        refused.contains("already opens the client of helsinki/air-adapter"),
+        "{refused}"
+    );
+    assert!(
+        outcomes.iter().any(|o| o.app == "kosice/pipelines"),
+        "the host runner's project client is converged beside it: {outcomes:?}"
+    );
+    assert!(
+        !sync.host_secrets_by_project().contains_key("kosice"),
+        "no secret for the refused binding's project"
     );
 }
 
@@ -1800,6 +2035,66 @@ async fn the_apps_job_accounts_follow_the_apps_jobs() {
         app_job_accounts_run(&without_jobs, &["appjob-zilina-kpi", "token-service"]).await;
     assert!(applied.is_empty(), "{applied:?}");
     assert_eq!(deleted, vec!["appjob-zilina-kpi".to_owned()]);
+}
+
+/// T-7924: two Apps with jobs get their Kubernetes ServiceAccounts in name order, and a stale
+/// one the cluster refuses to delete is named in what failed, the others still applied.
+#[tokio::test]
+async fn two_apps_job_accounts_apply_in_order_and_a_refused_delete_is_named() {
+    use joinedcontext_portal::apps::kube::KubeClient;
+    use joinedcontext_portal::reconciler::workload_clients::converge_app_job_service_accounts;
+
+    let api = MockServer::start().await;
+    let base = format!("/api/v1/namespaces/{IDENTITIES}/serviceaccounts");
+    Mock::given(method("PATCH"))
+        .and(path_regex(format!("^{base}/[^/]+$")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(base.clone()))
+        .and(query_param(
+            "labelSelector",
+            "joinedcontext.com/app-job-identity=true",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "items": [
+            { "metadata": { "name": "appjob-zilina-gone" } },
+        ] })))
+        .mount(&api)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path(format!("{base}/appjob-zilina-gone")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "busy" })))
+        .mount(&api)
+        .await;
+    let mirror = mirror_with(vec![
+        wasm_app("kpi", hourly()),
+        app_endpoint("kpi", SLUG),
+        wasm_app("alerts", hourly()),
+        app_endpoint("alerts", "a2bq6xm4ty7nc3wk5rdh2jzfa4"),
+    ]);
+
+    let kube = KubeClient::with_token(&api.uri(), "token").expect("a client");
+    let failed = converge_app_job_service_accounts(&kube, &mirror, IDENTITIES).await;
+
+    let [refused] = failed.as_slice() else {
+        panic!("one failure: {failed:?}");
+    };
+    assert!(refused.starts_with("appjob-zilina-gone: "), "{refused}");
+    let applied: Vec<String> = api
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "PATCH")
+        .map(|r| {
+            r.url
+                .path()
+                .trim_start_matches(&format!("{base}/"))
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(applied, ["appjob-zilina-alerts", "appjob-zilina-kpi"]);
 }
 
 /// An account with no workload whose credentials are `credentials`.

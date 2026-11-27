@@ -389,11 +389,42 @@ mod tests {
         for secret in ["__Host-jc_csrf", "Bearer", "access_token", "Set-Cookie"] {
             assert!(!around.contains(secret), "{secret} in the document");
         }
-        if let Ok(dir) = std::env::var("JC_PREVIEW_OUT") {
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(format!("{dir}/template.html"), html).unwrap();
-            std::fs::write(format!("{dir}/template.csp"), &doc.csp).unwrap();
-        }
+        export(std::env::var("JC_PREVIEW_OUT").ok(), &doc);
+    }
+
+    /// Writes `doc` into `dir` for the browser check in `sdk/e2e`; nothing without a `dir`.
+    fn export(dir: Option<String>, doc: &Document) {
+        let Some(dir) = dir else { return };
+        std::fs::create_dir_all(&dir).expect("the export folder");
+        std::fs::write(format!("{dir}/template.html"), &doc.html).expect("the document");
+        std::fs::write(format!("{dir}/template.csp"), &doc.csp).expect("the policy");
+    }
+
+    /// T-7924: the export for `sdk/e2e` writes the document and its policy side by side into a
+    /// folder it makes, and nothing at all without one.
+    #[test]
+    fn the_export_writes_the_document_and_its_policy_or_nothing() {
+        let doc = Document {
+            html: "<!doctype html><title>t</title>".to_owned(),
+            csp: "default-src 'none'".to_owned(),
+        };
+        let dir = std::env::temp_dir().join(format!(
+            "portal-preview-export-{}-{:?}",
+            std::process::id(),
+            std::time::SystemTime::now()
+        ));
+        export(None, &doc);
+        assert!(!dir.exists());
+        export(Some(dir.join("out").display().to_string()), &doc);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("out/template.html")).expect("written"),
+            doc.html
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("out/template.csp")).expect("written"),
+            doc.csp
+        );
+        std::fs::remove_dir_all(&dir).expect("cleaned up");
     }
 
     /// The embeds answer through the `RustEmbed` trait as they do directly: the template holds

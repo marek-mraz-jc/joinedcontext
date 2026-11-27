@@ -882,7 +882,8 @@ pub fn edit(
             ));
         }
         if hidden.is_empty() {
-            if let Some(projection) = spec["projection"].as_object_mut() {
+            // `get_mut`, not an index: indexing a missing key would write `projection: null`.
+            if let Some(projection) = spec.get_mut("projection").and_then(Value::as_object_mut) {
                 projection.remove("hiddenAttributes");
                 if projection.is_empty() {
                     remove_key(spec, "projection");
@@ -1145,6 +1146,29 @@ mod tests {
             )
             .is_err_and(|reason| reason.contains("'not a name' is not an attribute name")),
             "a bad hidden attribute is refused"
+        );
+    }
+
+    /// T-7923: showing every attribute of an endpoint that hides none, beside a new title, leaves
+    /// it without a projection, never one written as `null`, and records no change of it.
+    #[test]
+    fn showing_every_attribute_of_an_endpoint_that_hides_none_changes_nothing() {
+        let edited = edit(
+            &endpoints(),
+            &edit_of(
+                json!({ "name": "helsinki-weather", "title": "Weather", "hiddenAttributes": [] }),
+            ),
+        )
+        .expect("edits");
+        let spec = &edited.endpoint["spec"];
+        assert!(spec.get("projection").is_none(), "{spec}");
+        assert!(
+            edited
+                .changes
+                .iter()
+                .all(|change| change.field != "hiddenAttributes"),
+            "{:?}",
+            edited.changes
         );
     }
 

@@ -502,10 +502,16 @@ fn edit_file(
         replace: replace.to_owned(),
     };
     let (applied, refused) = patch::apply_where(files, &[block], code::writable, code::REFUSAL);
-    match (applied.first(), refused.first()) {
-        (Some(done), _) => (format!("{}: {}", done.path, done.how), true),
-        (None, Some(no)) => (format!("{}: {}", no.path, no.reason), false),
-        (None, None) => ("nothing to apply".to_owned(), false),
+    match applied.first() {
+        Some(done) => (format!("{}: {}", done.path, done.how), true),
+        // One block is applied or refused, never neither: the answer is its refusal.
+        None => (
+            refused
+                .iter()
+                .map(|no| format!("{}: {}", no.path, no.reason))
+                .collect(),
+            false,
+        ),
     }
 }
 
@@ -1534,6 +1540,34 @@ mod tests {
         assert_eq!(summary(&[]), "");
     }
 
+    /// T-7923: a call with a path that neither reads nor changes a file leaves an earlier read
+    /// of that file standing, and a change that names no path names no changed file.
+    #[test]
+    fn a_call_that_neither_reads_nor_changes_keeps_the_read_and_a_pathless_change_names_none() {
+        let mut check = reading(1, "src/A.tsx", "ignored");
+        check.answer.calls[0].name = "check".into();
+        check.results[0].1 = "ok".into();
+        let rounds = [
+            reading(0, "src/A.tsx", "first-file"),
+            check,
+            reading(2, "src/C.tsx", "third-file"),
+        ];
+        let kept = kept_reads(&rounds);
+        assert!(kept.contains("first-file"), "{kept}");
+        assert!(
+            !kept.contains("third-file"),
+            "the last round is not kept: {kept}"
+        );
+
+        let mut pathless = round(0);
+        pathless.answer.calls[0].input = json!({ "content": "x" });
+        pathless.results[0].1 = "refused".into();
+        assert_eq!(
+            summary(&[pathless]),
+            "Earlier in this turn, one line per tool call:\n- write_file: refused\n"
+        );
+    }
+
     /// T-2467: the model reading a file the request already carries costs one line, until the
     /// file changes.
     #[test]
@@ -2100,6 +2134,108 @@ mod tests {
         );
     }
 
+    /// The files of an App that passes the check: the template entry's imports all there.
+    pub(super) fn building_files() -> BTreeMap<String, String> {
+        BTreeMap::from([
+            (
+                "src/App.tsx".to_owned(),
+                "export default function App() { return <div />; }\n".to_owned(),
+            ),
+            ("src/app.css".to_owned(), String::new()),
+            ("src/components/components.css".to_owned(), String::new()),
+            ("src/design-tokens.json".to_owned(), "{}".to_owned()),
+        ])
+    }
+
+    /// T-7923: a check with nothing changed publishes nothing and answers ok, a tool the turn
+    /// does not have is named back as a failed step, and the model's words end the turn.
+    #[tokio::test]
+    async fn a_check_of_unchanged_files_publishes_nothing_and_an_unknown_tool_is_named() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/llm/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "content": [
+                    { "type": "tool_use", "id": "c", "name": "check", "input": {} },
+                    { "type": "tool_use", "id": "r", "name": "launch_rockets", "input": {} }
+                ],
+                "usage": { "input_tokens": 1_000, "output_tokens": 10 },
+            })))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/v1/llm/messages"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "content": [{ "type": "text", "text": "Nothing needed changing." }],
+                "usage": { "input_tokens": 1_000, "output_tokens": 10 },
+            })))
+            .mount(&server)
+            .await;
+        let driver = edit_driver(&server).await;
+        assert_eq!(driver.check_files(&building_files()), Vec::<String>::new());
+        let mut files = building_files();
+        let mut conversation = Vec::new();
+        let shown = driver
+            .edit_turn(
+                &mut files,
+                &mut BTreeMap::new(),
+                &mut conversation,
+                "check it",
+                None,
+            )
+            .await
+            .expect("the turn ends");
+        assert!(shown.is_none(), "nothing was published");
+        assert_eq!(files, building_files());
+        assert_eq!(conversation[0].1, "Nothing needed changing.");
+        let steps: Vec<Value> = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "tool")
+            .map(|event| event.payload)
+            .collect();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert_eq!(
+            (&steps[0]["tool"], &steps[0]["status"]),
+            (&json!("check"), &json!("ok"))
+        );
+        assert_eq!(steps[1]["status"], "failed");
+        assert_eq!(steps[1]["result"], "no tool named 'launch_rockets'");
+    }
+
+    /// T-7923: a model call the provider refuses ends the edit turn with the reason, and no
+    /// file changes.
+    #[tokio::test]
+    async fn a_refused_model_call_ends_the_edit_turn_with_its_reason() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        let driver = edit_driver(&server).await;
+        let mut files = BTreeMap::from([("src/App.tsx".to_owned(), "app".to_owned())]);
+        let failed = driver
+            .edit_turn(
+                &mut files,
+                &mut BTreeMap::new(),
+                &mut Vec::new(),
+                "add a form",
+                None,
+            )
+            .await
+            .err()
+            .unwrap_or_default();
+        assert!(!failed.is_empty(), "the turn fails with its reason");
+        assert_eq!(files["src/App.tsx"], "app");
+        assert_eq!(server.received_requests().await.expect("recorded").len(), 1);
+    }
+
     /// T-2467: a model that makes one trivial call after another is cut off at the ceiling
     /// with a sentence the person reads, instead of burning the profile's 120 steps.
     #[tokio::test]
@@ -2231,6 +2367,277 @@ mod function_tool_tests {
         let (said, ok) = driver.call_function_tool(&input).await;
         assert!(said.starts_with("the functions do not build:\n"), "{said}");
         assert!(!ok);
+    }
+
+    /// A driver on a store whose database is down.
+    fn on_a_dead_store() -> Driver {
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(crate::test_db::dead_pool());
+        // A placed project, so a run's lookup reaches the database and fails there.
+        crate::agents::oneshot::placed(&state);
+        Driver::for_tests(state, "helsinki")
+    }
+
+    /// A realm that hands the Portal a service token, as `state`'s Keycloak client.
+    async fn with_realm(state: &mut AppState) -> wiremock::MockServer {
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/realms/bb/protocol/openid-connect/token",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "portal-service-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        state.oidc = Some(std::sync::Arc::new(client));
+        realm
+    }
+
+    /// A proxy that hands out the run's data credential.
+    async fn proxy_with_credential(server: &wiremock::MockServer) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/internal/runs/test-run/data-credential",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "token": "jcd_run" })),
+            )
+            .mount(server)
+            .await;
+    }
+
+    /// T-7923: a store that cannot be read is said to the model as the store's failure, by the
+    /// function call and by the preview's errors, and neither reads as a success.
+    #[tokio::test]
+    async fn a_store_that_fails_is_said_by_the_function_and_the_preview_tools() {
+        let driver = on_a_dead_store();
+        let (said, ok) = driver.call_function_tool(&json!({ "name": "count" })).await;
+        assert!(!ok);
+        assert!(!said.is_empty() && said != "the run is gone", "{said}");
+        let (said, ok) = driver.preview_errors_tool(0).await;
+        assert!(!ok);
+        assert!(!said.is_empty() && said != NO_PREVIEW_ERRORS, "{said}");
+    }
+
+    /// T-7923: a run's function call carries the run's data credential when the proxy hands
+    /// one out, and an installation with no jc-functions address says so and calls nothing.
+    #[tokio::test]
+    async fn a_function_call_with_no_runtime_says_the_runtime_is_missing() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let _realm = with_realm(&mut state).await;
+        let proxy = wiremock::MockServer::start().await;
+        proxy_with_credential(&proxy).await;
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = proxy.uri();
+        driver
+            .state
+            .agents
+            .create_run(&run(
+                json!({ "functions/count.ts": "export default () => 1;\n" }),
+            ))
+            .await
+            .expect("stored");
+        assert_eq!(
+            driver
+                .call_function_tool(&json!({ "name": "count", "query": { "limit": 5 } }))
+                .await,
+            (
+                "this Portal has no jc-functions address (JC_FUNCTIONS_URL)".to_owned(),
+                false
+            )
+        );
+        let asked = proxy.received_requests().await.expect("recorded");
+        assert_eq!(asked.len(), 1, "the credential was asked for once");
+    }
+
+    /// The outcomes a jc-functions stub answers, one per invocation, then 429 for ever.
+    struct Outcomes(Vec<Value>, std::sync::atomic::AtomicUsize);
+
+    impl wiremock::Respond for Outcomes {
+        fn respond(&self, _: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let at = self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            match self.0.get(at) {
+                Some(outcome) => wiremock::ResponseTemplate::new(200).set_body_json(outcome),
+                None => wiremock::ResponseTemplate::new(429),
+            }
+        }
+    }
+
+    /// T-7923, SDK-18: what a function answered reaches the model as its status and body with
+    /// its logs; its error is an error, a refused data read is said as the run's missing
+    /// identity, entities whose personal marks cannot be read are withheld, and a full runtime
+    /// is its refusal. Needs the SDK's server module (`sdk/dist`).
+    #[tokio::test]
+    async fn a_functions_outcome_reaches_the_model_as_status_body_and_logs() {
+        if !crate::agents::kit::sdk_built_or_skip(
+            crate::agents::kit::functions_server().is_some(),
+            "functions-server.js",
+        ) {
+            return;
+        }
+        let runtime = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/invoke"))
+            .respond_with(Outcomes(
+                vec![
+                    json!({ "status": 200, "body": { "n": 1 }, "error": null, "logs": ["counted"] }),
+                    json!({ "status": 500, "error": { "message": "boom" } }),
+                    json!({ "status": 401, "error": { "message": "Authentication Required" } }),
+                    json!({ "status": 200, "body": [
+                        { "id": "urn:ngsi-ld:GtfsStop:1", "type": "GtfsStop", "name": "Kamppi" }
+                    ] }),
+                ],
+                std::sync::atomic::AtomicUsize::new(0),
+            ))
+            .mount(&runtime)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.functions_url = Some(runtime.uri());
+        let mut state = AppState::new(config, None);
+        let _realm = with_realm(&mut state).await;
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "DataModel".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("riders", "helsinki"),
+            spec: json!({}),
+            status: None,
+        });
+        let proxy = wiremock::MockServer::start().await;
+        proxy_with_credential(&proxy).await;
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = proxy.uri();
+        driver
+            .state
+            .agents
+            .create_run(&run(
+                json!({ "functions/count.ts": "export default () => 1;\n" }),
+            ))
+            .await
+            .expect("stored");
+        let input = json!({ "name": "count" });
+        assert_eq!(
+            driver.call_function_tool(&input).await,
+            (
+                "status 200\n{\"n\":1}\nlogs: [\"counted\"]".to_owned(),
+                true
+            )
+        );
+        let (said, ok) = driver.call_function_tool(&input).await;
+        assert!(!ok);
+        assert!(said.starts_with("status 500\nerror: "), "{said}");
+        assert!(said.contains("boom"), "{said}");
+        assert_eq!(
+            driver.call_function_tool(&input).await,
+            (FUNCTION_READS_DATA.to_owned(), false)
+        );
+        let (said, ok) = driver.call_function_tool(&input).await;
+        assert!(!ok);
+        assert!(!said.contains("Kamppi"), "{said}");
+        assert!(
+            said.contains("personal attributes cannot be withheld"),
+            "{said}"
+        );
+        assert_eq!(
+            driver.call_function_tool(&input).await,
+            ("jc-functions is full".to_owned(), false)
+        );
+    }
+
+    /// T-7923: the turn's end says "Done." for a model that said nothing, and publishes changed
+    /// files that pass the check as the next version, with the model's words.
+    #[tokio::test]
+    async fn the_turns_end_says_done_for_no_words_and_publishes_what_passes() {
+        let driver = driver();
+        driver
+            .state
+            .agents
+            .create_run(&run(json!({})))
+            .await
+            .expect("stored");
+        let mut files = super::tests::building_files();
+        let mut conversation = Vec::new();
+        let shown = driver
+            .finish_turn(
+                &mut files,
+                &mut BTreeMap::new(),
+                &mut conversation,
+                "look",
+                "  ",
+                false,
+                None,
+            )
+            .await
+            .expect("ended");
+        assert!(shown.is_none());
+        assert_eq!(conversation, [("look".to_owned(), "Done.".to_owned())]);
+
+        let shown = driver
+            .finish_turn(
+                &mut files,
+                &mut BTreeMap::new(),
+                &mut conversation,
+                "make it a div",
+                " It is a div now. ",
+                true,
+                None,
+            )
+            .await
+            .expect("ended")
+            .expect("published");
+        assert_eq!(shown.version, 1);
+        assert_eq!(conversation[1].1, "It is a div now.");
+        let stored = driver
+            .state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("the run");
+        assert_eq!(stored.files["src/App.tsx"], files["src/App.tsx"]);
+    }
+
+    /// T-7923: a call the provider did not count is counted on the run and said as a usage
+    /// frame with the run's total; a store that cannot count it ends the step with the store's
+    /// failure.
+    #[tokio::test]
+    async fn an_uncounted_call_is_counted_on_the_run_and_said_with_its_total() {
+        let driver = driver();
+        driver
+            .state
+            .agents
+            .create_run(&run(json!({})))
+            .await
+            .expect("stored");
+        driver
+            .record_call(&ToolAnswer::default(), 400, 3)
+            .await
+            .expect("recorded");
+        let frames: Vec<Value> = driver
+            .state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "usage")
+            .map(|event| event.payload)
+            .collect();
+        assert_eq!(frames.len(), 1);
+        assert_eq!(frames[0]["tokensThisStep"], 400);
+        assert_eq!(frames[0]["cumulativeTokens"], 400);
+        assert_eq!(frames[0]["step"], 3);
+
+        assert!(on_a_dead_store()
+            .record_call(&ToolAnswer::default(), 400, 1)
+            .await
+            .is_err());
     }
 
     /// SDK-14: the frame's errors since the version on screen, the newest window of them with

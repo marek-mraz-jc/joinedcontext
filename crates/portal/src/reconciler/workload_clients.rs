@@ -377,15 +377,8 @@ fn pipeline_accounts(mirror: &Mirror, namespace: &str, bentos: &Bentos) -> Vec<B
                 "",
                 space_of,
             );
-            let Some(binding) = derived
-                .account
-                .workload
-                .as_ref()
-                .map(|w| w.kubernetes.clone())
-            else {
-                continue;
-            };
-            accounts.push(BoundAccount {
+            // `derive` binds every Pipeline's account to the runner's `namespace`.
+            accounts.extend(derived.account.workload.map(|workload| BoundAccount {
                 project: project.clone(),
                 name: derived.name,
                 reach: Reach::Pipeline(named_endpoints(
@@ -394,9 +387,9 @@ fn pipeline_accounts(mirror: &Mirror, namespace: &str, bentos: &Bentos) -> Vec<B
                     &slugs,
                     source_slug(mirror, &project, &spec, &slugs),
                 )),
-                auth: Auth::Workload(binding),
+                auth: Auth::Workload(workload.kubernetes),
                 reports: true,
-            });
+            }));
         }
         accounts.push(harness_account(&project, namespace));
     }
@@ -1603,6 +1596,133 @@ mod tests {
         assert!(registry(&Value::Null).is_empty());
     }
 
+    const SLUG: &str = "k7m2qz4tv6xh3n5jb2ryd3wcfa";
+    const READ: &str = "r5wq3n7kcm2xt4zb6hdy2vfja3";
+
+    fn envelope(
+        kind: &str,
+        project: &str,
+        name: &str,
+        spec: Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, project),
+            spec,
+            status: None,
+        }
+    }
+
+    /// The `zilina` Pipeline `drepo` writing through the Endpoint `zilina-uniza`.
+    fn drepo() -> crate::resource::ResourceEnvelope {
+        envelope(
+            "Pipeline",
+            "zilina",
+            "drepo",
+            json!({
+                "class": "scheduled",
+                "schedule": "23 3 * * 2",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": "uniza-drepo" } },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:zilina.sk:zilina-uniza:zilina-uniza",
+                "output": { "type": "CreativeWork", "mode": "upsert" },
+            }),
+        )
+    }
+
+    /// `drepo`, its Endpoint naming its space by reference, a second Endpoint `zilina-read`, and
+    /// a Pipeline whose manifest does not parse.
+    fn pipelines_mirror() -> Mirror {
+        let mirror = Mirror::new();
+        mirror.upsert(drepo());
+        mirror.upsert(envelope(
+            "Endpoint",
+            "zilina",
+            "zilina-uniza",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "zilina-uniza" },
+                    "slug": SLUG, "audience": "organization" }),
+        ));
+        mirror.upsert(envelope(
+            "Endpoint",
+            "zilina",
+            "zilina-read",
+            json!({ "contextSpaceRef": "zilina-uniza", "slug": READ, "audience": "organization" }),
+        ));
+        mirror.upsert(envelope(
+            "Pipeline",
+            "zilina",
+            "broken",
+            json!({ "class": 42 }),
+        ));
+        mirror
+    }
+
+    /// T-7924: a Pipeline whose Endpoint names its space by reference (`{kind, name}`) still
+    /// gets its account, bound in the runner's namespace and reaching that Endpoint; a Pipeline
+    /// whose manifest does not parse gets none, and the project's harness principal stands
+    /// beside them.
+    #[test]
+    fn pipeline_accounts_read_a_space_reference_and_skip_a_broken_manifest() {
+        let accounts = pipeline_accounts(&pipelines_mirror(), "runner-ns", &Bentos::new());
+        let names: Vec<&str> = accounts.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["pl-drepo", "pl-pipeline-test"]);
+        assert!(
+            matches!(&accounts[0].reach, Reach::Pipeline(slugs) if slugs == &[SLUG.to_owned()]),
+            "{:?}",
+            accounts[0].reach
+        );
+        assert_eq!(
+            accounts[0].binding().map(|b| b.namespace.as_str()),
+            Some("runner-ns")
+        );
+    }
+
+    /// T-7924: a host runner's own pipeline clients skip a Pipeline whose manifest does not
+    /// parse: `drepo` gets its client, the harness and the project's `pipelines` client stand
+    /// beside it, and nothing is made for the broken one.
+    #[test]
+    fn host_pipeline_accounts_skip_a_broken_manifest() {
+        let accounts = host_pipeline_accounts(&pipelines_mirror(), &Bentos::new(), true);
+        let names: BTreeSet<&str> = accounts.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            names,
+            BTreeSet::from(["pipelines", "pl-drepo", "pl-pipeline-test"])
+        );
+        assert!(accounts
+            .iter()
+            .all(|a| matches!(a.auth, Auth::External(ClientCredential::Secret))));
+    }
+
+    /// T-7924: an Endpoint source named without a project, or under the Pipeline's own, is
+    /// read from the Pipeline's own project's slugs; one the project lacks has none.
+    #[test]
+    fn a_source_of_the_pipelines_own_project_is_its_own_slug() {
+        let mirror = pipelines_mirror();
+        let slugs = endpoint_slugs(&mirror, "zilina");
+        for (reference, want) in [
+            (
+                json!({ "kind": "Endpoint", "name": "zilina-read" }),
+                Some(READ),
+            ),
+            (
+                json!({ "kind": "Endpoint", "name": "zilina-read", "namespace": "zilina" }),
+                Some(READ),
+            ),
+            (json!({ "kind": "Endpoint", "name": "absent" }), None),
+        ] {
+            let mut spec = drepo().spec;
+            spec["source"] =
+                json!({ "endpointRef": reference, "query": { "type": "CreativeWork" } });
+            let spec: jc_core::kinds::PipelineSpec =
+                serde_json::from_value(spec).expect("a Pipeline spec");
+            assert_eq!(
+                source_slug(&mirror, "zilina", &spec, &slugs).as_deref(),
+                want,
+                "{reference}"
+            );
+        }
+    }
+
     fn scopes(names: &[&str]) -> Vec<KcNamed> {
         names
             .iter()
@@ -1666,6 +1786,294 @@ mod tests {
         assert_eq!(found.len(), 1, "{found:?}");
         assert!(found[0].contains(PROJECT_ATTRIBUTE), "{found:?}");
         assert!(crate::reconciler::app_clients::drift(&want, &want).is_empty());
+    }
+
+    /// A sync of the realm `r` on `server`.
+    fn sync_on(server: &wiremock::MockServer) -> WorkloadClientSync {
+        WorkloadClientSync::new(
+            &format!("{}/realms/r", server.uri()),
+            "portal-api".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL")
+    }
+
+    /// The project pipeline client of `project`, whose secret a host runner takes.
+    fn host_account(project: &str) -> BoundAccount {
+        BoundAccount {
+            project: project.to_owned(),
+            name: crate::reconciler::streams::PIPELINE_ACCOUNT.to_owned(),
+            reach: Reach::Internal,
+            auth: Auth::External(ClientCredential::Secret),
+            reports: true,
+        }
+    }
+
+    /// An account bound to a workload: never a host runner's.
+    fn workload_account(project: &str) -> BoundAccount {
+        BoundAccount {
+            project: project.to_owned(),
+            name: "adapter".to_owned(),
+            reach: Reach::Internal,
+            auth: Auth::Workload(KubernetesBinding {
+                namespace: "env-dept".to_owned(),
+                service_account: "adapter".to_owned(),
+            }),
+            reports: false,
+        }
+    }
+
+    /// Poisons the host secrets' lock: a holder panics after writing `secret` for `account`.
+    fn poison(sync: &WorkloadClientSync, account: &BoundAccount, secret: &str) {
+        let key = (account.project.clone(), host_variable(account));
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut held = sync.host_secrets.write().expect("not poisoned yet");
+            held.insert(key, secret.to_owned());
+            panic!("T-7924: a holder of the host secrets panics");
+        }));
+        assert!(caught.is_err());
+        assert!(sync.host_secrets.is_poisoned());
+    }
+
+    /// T-7924: a lock a panicked holder left poisoned still answers what it holds: the runner's
+    /// secrets by project, and the last secret a failed run keeps; an account no host runner
+    /// takes keeps nothing.
+    #[test]
+    fn a_poisoned_host_secrets_lock_still_serves_the_last_secrets() {
+        let server_less = WorkloadClientSync::new(
+            "http://127.0.0.1:1/realms/r",
+            "portal-api".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        let account = host_account("t7924-poison");
+        poison(&server_less, &account, "last-secret");
+        let variable = host_variable(&account);
+        assert_eq!(
+            server_less.host_secrets_by_project(),
+            BTreeMap::from([(
+                "t7924-poison".to_owned(),
+                BTreeMap::from([(variable.clone(), "last-secret".to_owned())])
+            )])
+        );
+        let mut secrets = HostSecrets::new();
+        server_less.keep_host_secret(&workload_account("t7924-poison"), &mut secrets);
+        assert!(secrets.is_empty(), "a workload account keeps nothing");
+        server_less.keep_host_secret(&account, &mut secrets);
+        assert_eq!(
+            secrets,
+            BTreeMap::from([(
+                ("t7924-poison".to_owned(), variable),
+                "last-secret".to_owned()
+            )])
+        );
+    }
+
+    /// T-7924: a host runner's secret read: an account no host runner takes is not read; a
+    /// managed client listed without an id is left as it is; a lookup the realm fails, and a
+    /// client that holds no secret, keep the last secret and name the failure, never a value.
+    #[tokio::test]
+    async fn a_host_secret_that_cannot_be_read_keeps_the_last_one_and_says_why() {
+        use wiremock::matchers::{method, path};
+        let project = "t7924-read";
+        let account = host_account(project);
+        let variable = host_variable(&account);
+        let id = Mirror::new().client_id(project, &account.name);
+        let client = |uuid: Option<&str>| {
+            let mut client = json!({ "clientId": id, "attributes": {
+                MANAGED_BY: MANAGED_VALUE, ACCOUNT_ATTRIBUTE: account.label() } });
+            if let Some(uuid) = uuid {
+                client["id"] = json!(uuid);
+            }
+            client
+        };
+
+        // Not a host runner's account: nothing is asked.
+        let server = wiremock::MockServer::start().await;
+        let sync = sync_on(&server);
+        let mut secrets = HostSecrets::new();
+        let mut outcome = ClientOutcome::of("x");
+        sync.read_host_secret(
+            "t",
+            &Mirror::new(),
+            &workload_account(project),
+            &mut secrets,
+            &mut outcome,
+        )
+        .await;
+        assert!(secrets.is_empty() && outcome.error.is_none());
+        assert!(server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+
+        // Listed without an id: left alone, quietly.
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([client(None)])))
+            .mount(&server)
+            .await;
+        sync.read_host_secret("t", &Mirror::new(), &account, &mut secrets, &mut outcome)
+            .await;
+        assert!(secrets.is_empty() && outcome.error.is_none(), "{outcome:?}");
+
+        // A refused lookup, and a client with an empty secret: the last secret stays.
+        let refused = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&refused)
+            .await;
+        let empty = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!([client(Some("u1"))])),
+            )
+            .mount(&empty)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients/u1/client-secret"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "value": "" })),
+            )
+            .mount(&empty)
+            .await;
+        for (server, said) in [
+            (
+                &refused,
+                format!("reading the secret of {id}: GET /clients: 500 Internal Server Error"),
+            ),
+            (&empty, format!("the realm holds no secret for {id}")),
+        ] {
+            let sync = sync_on(server);
+            sync.host_secrets
+                .write()
+                .expect("a lock")
+                .insert((project.to_owned(), variable.clone()), "last-secret".into());
+            let mut secrets = HostSecrets::new();
+            let mut outcome = ClientOutcome::of("x");
+            sync.read_host_secret("t", &Mirror::new(), &account, &mut secrets, &mut outcome)
+                .await;
+            assert_eq!(outcome.error.as_deref(), Some(said.as_str()));
+            assert_eq!(
+                secrets
+                    .get(&(project.to_owned(), variable.clone()))
+                    .map(String::as_str),
+                Some("last-secret")
+            );
+        }
+    }
+
+    /// T-7924: a Portal without the pipelines' namespace keeps a managed `pl-` client it cannot
+    /// judge and warns once; the run still replaces the runner's secrets, through a lock a
+    /// panicked holder left poisoned, so a project that is gone loses its secret.
+    #[tokio::test]
+    async fn a_kept_pipeline_client_is_warned_about_and_a_poisoned_lock_is_replaced() {
+        use wiremock::matchers::{method, path, query_param};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/realms/r/protocol/openid-connect/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients"))
+            .and(query_param("briefRepresentation", "false"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([{
+                "id": "uuid-pl", "clientId": "t7924-kept-pl-drepo",
+                "attributes": { MANAGED_BY: MANAGED_VALUE, ACCOUNT_ATTRIBUTE: "t7924-kept/pl-drepo" },
+            }])))
+            .mount(&server)
+            .await;
+        let sync = sync_on(&server).with_host_runner(false);
+        poison(&sync, &host_account("t7924-gone"), "gone-secret");
+
+        let (outcomes, log) =
+            crate::reconciler::logged(sync.converge(&Mirror::new(), &Bentos::new())).await;
+
+        assert!(outcomes.is_empty(), "{outcomes:?}");
+        assert!(
+            sync.host_secrets().is_empty(),
+            "the gone project's secret is out"
+        );
+        assert!(
+            log.contains("managed pipeline or App job clients exist"),
+            "{log}"
+        );
+        assert!(log.contains("t7924-kept/pl-drepo"), "{log}");
+        let asked = server.received_requests().await.unwrap_or_default();
+        assert!(
+            asked.iter().all(|r| r.method.as_str() != "DELETE"),
+            "the kept client is not deleted"
+        );
+        // A second run keeps it again and says nothing more.
+        let ((), again) = crate::reconciler::logged(async {
+            sync.converge(&Mirror::new(), &Bentos::new()).await;
+        })
+        .await;
+        assert!(
+            !again.contains("managed pipeline or App job clients exist"),
+            "{again}"
+        );
+    }
+
+    /// T-7924: a registry that cannot be read fails the account before the realm is asked; an
+    /// account the realm's listing already names, or whose name is no label of the key, keeps
+    /// the id it has without a lookup.
+    #[tokio::test]
+    async fn a_new_client_id_is_minted_only_for_a_label_the_realm_holds_nothing_under() {
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy("postgres://portal:portal@127.0.0.1:1/portal")
+            .expect("a lazy pool");
+        let sync = WorkloadClientSync::new(
+            "http://127.0.0.1:1/realms/r",
+            "portal-api".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL")
+        .with_keys(dead);
+        let mirror = Mirror::new();
+        let outcome = sync
+            .converge_one("t", &mirror, &workload_account("t7924-keys"), &[], &[])
+            .await;
+        let error = outcome.error.as_deref().unwrap_or_default();
+        assert!(
+            error.starts_with("its project id was not read: "),
+            "{error}"
+        );
+
+        let key =
+            || jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint());
+        mirror.set_workload_clients(BTreeMap::from([(
+            "t7924-keys-adapter".to_owned(),
+            "t7924-keys/adapter".to_owned(),
+        )]));
+        let held = sync
+            .new_client_id(
+                "t",
+                &mirror,
+                &workload_account("t7924-keys"),
+                "t7924-keys-adapter",
+                key(),
+            )
+            .await;
+        assert_eq!(held, Ok(None), "a listed client keeps its id");
+        let mut unlabelled = workload_account("t7924-keys");
+        unlabelled.name = "7-adapter".to_owned();
+        let kept = sync
+            .new_client_id("t", &mirror, &unlabelled, "t7924-keys-7-adapter", key())
+            .await;
+        assert_eq!(
+            kept,
+            Ok(None),
+            "a name that is no label keeps the derived id"
+        );
     }
 
     #[test]

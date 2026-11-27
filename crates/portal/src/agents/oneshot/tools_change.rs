@@ -256,7 +256,8 @@ impl Driver {
             return Ok(Worked::Done(prose));
         }
 
-        let mut current = serde_json::to_value(&current).map_err(|err| err.to_string())?;
+        // A manifest of strings and JSON values always serializes.
+        let mut current = serde_json::to_value(&current).unwrap_or_default();
         share::remove_key(&mut current, "status");
         let Some(patch) = params.patch.as_ref() else {
             // A call without a patch reads the manifest first, so the next one names real fields.
@@ -915,7 +916,8 @@ impl Driver {
         }
         let domain = crate::api::assistant::project_org_domain(&self.state, &self.project);
         let model = model_change::apply(&model_change::blank(&domain, name), operations)?;
-        let source = serde_norway::to_string(&model).map_err(|err| err.to_string())?;
+        // A model that applies is a JSON value, which YAML always writes.
+        let source = serde_norway::to_string(&model).unwrap_or_default();
         crate::api::datamodels::check_source(
             &self.state,
             &self.identity,
@@ -2186,9 +2188,112 @@ mod new_dashboard_tests {
         );
     }
 
+    /// T-7924: a source the forge holds but that is no YAML is a change that cannot be made,
+    /// said with the parser's reason; nothing opens.
+    #[tokio::test]
+    async fn a_model_source_that_is_no_yaml_cannot_be_changed() {
+        let (driver, forge) = world().await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", "'projects/helsinki/spaces/helsinki/datamodels/broken.linkml.yaml'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "b",
+                "Content": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "classes: [unclosed")
+            })))
+            .mount(&forge)
+            .await;
+        put(
+            &driver.state,
+            "DataModel",
+            "broken",
+            json!({ "contextSpaceRef": "helsinki", "linkml": "broken.linkml.yaml" }),
+        );
+        let reason = model_change(&driver, "broken", &[], false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.starts_with("error: the source of data model 'broken' could not be read: "),
+            "{reason}"
+        );
+    }
+
+    /// T-7924: a change the model tools compile opens the model's editor with the operations,
+    /// and a model answer without words of its own says what opened.
+    #[tokio::test]
+    async fn a_model_change_that_compiles_opens_the_editor_on_its_operations() {
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "errors": [] })))
+            .mount(&tools)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.model_tools_url = Some(tools.uri());
+        let (driver, _forge) = world_with(config).await;
+        let described: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
+            { "op": "setSlot", "name": "name", "field": "description", "value": "The station's name" }
+        ]))
+        .expect("operations");
+        let prose = model_change(&driver, "bikes", &described, true)
+            .await
+            .done()
+            .expect("ends");
+        assert_eq!(
+            prose,
+            "Opened the data model 'bikes' with the change; review it and save it."
+        );
+        let events = driver
+            .state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .expect("events");
+        let opened: Vec<&Value> = events
+            .iter()
+            .filter(|event| event.kind == "navigate")
+            .map(|event| &event.payload)
+            .collect();
+        assert_eq!(opened.len(), 1, "{opened:?}");
+        assert_eq!(opened[0]["route"], "/projects/helsinki/datamodels");
+        assert_eq!(
+            opened[0]["prefill"]["operations"][0]["op"], "setSlot",
+            "{opened:?}"
+        );
+        let step = events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "tool")
+            .expect("a step");
+        assert_eq!(step.payload["status"], "ok", "{:?}", step.payload);
+        assert_eq!(step.payload["output"]["checked"], true);
+    }
+
+    /// T-7924: a drafted Layer that is no manifest at all is refused by name before any dry run,
+    /// and the refusal carries the manifest it refused.
+    #[tokio::test]
+    async fn a_drafted_layer_that_is_no_manifest_is_refused_before_the_dry_run() {
+        let (driver, _forge) = world().await;
+        let broken = json!({ "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Layer",
+            "metadata": { "name": "bad-layer", "namespace": 5 }, "spec": {} });
+        let (reason, refused) = driver
+            .dry_run_drafted(std::slice::from_ref(&broken))
+            .await
+            .expect_err("refused");
+        assert!(
+            reason.starts_with("the platform's check refuses Layer 'bad-layer': "),
+            "{reason}"
+        );
+        assert_eq!(refused, broken);
+    }
+
     /// The forge serving the `bikes` model's source, and the project around it: a public and a
     /// private endpoint over the space, one existing layer on each, one existing dashboard.
     async fn world() -> (Driver, MockServer) {
+        world_with(crate::config::Config::for_tests()).await
+    }
+
+    /// [`world`] on the installation `config` says.
+    async fn world_with(config: crate::config::Config) -> (Driver, MockServer) {
         let forge = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/odata/Repositories(Owner='org',Name='manifests')/Shako.File(Path=@p,Ref=@r)")).and(query_param("@p", "'projects/helsinki/spaces/helsinki/datamodels/bikes.linkml.yaml'"))
@@ -2207,8 +2312,7 @@ mod new_dashboard_tests {
             .await;
         let client = ShakoClient::new(forge.uri().parse().expect("url"), "org", "manifests", "t")
             .expect("a forge client");
-        let state =
-            AppState::new(crate::config::Config::for_tests(), None).with_shako(Arc::new(client));
+        let state = AppState::new(config, None).with_shako(Arc::new(client));
         put(
             &state,
             "ContextSpace",
@@ -3588,6 +3692,138 @@ mod change_resource_tests {
         assert!(page(json!({ "dataSourceRef": { "name": "nowhere" } }))
             .await
             .contains("names no http(s) URL"));
+    }
+
+    /// T-7924: a manifest the parser refused brings no schema for a kind the platform has none
+    /// of, and asks no tool for it.
+    #[tokio::test]
+    async fn a_parse_refusal_of_a_kind_without_a_schema_brings_none() {
+        let (driver, state) = steward();
+        let findings = format!("the {NOT_PARSED}: unknown field `x`");
+        assert_eq!(
+            driver.schema_reply("Nope", &findings, &json!({})).await,
+            Ok(None)
+        );
+        assert_eq!(
+            driver.schema_reply("Entity", &findings, &json!({})).await,
+            Ok(None)
+        );
+        assert!(events(&state, "tool").await.is_empty());
+    }
+
+    /// T-7924: a pipeline whose test cannot run on this installation (no runner) opens with a
+    /// card that says why, never as a refusal.
+    #[tokio::test]
+    async fn a_pipeline_test_that_cannot_run_is_an_untested_card() {
+        let (driver, state) = steward();
+        put(
+            &state,
+            "DataSource",
+            "feed",
+            json!({ "type": "http", "http": { "url": "https://x.example/a.json" } }),
+        );
+        let manifest = json!({
+            "apiVersion": API_VERSION, "kind": "Pipeline",
+            "metadata": { "name": "load", "namespace": "helsinki" },
+            "spec": { "source": { "dataSourceRef": { "kind": "DataSource", "name": "feed" } } }
+        });
+        let tested = driver
+            .tested("Pipeline", &manifest, None)
+            .await
+            .expect("untested, never refused");
+        let card = tested.card.expect("a card");
+        assert_eq!(card["source"], json!({ "dataSource": "feed" }), "{card}");
+        assert!(
+            card["untested"].as_str().is_some_and(|why| !why.is_empty()),
+            "{card}"
+        );
+        assert!(tested.verdict.is_none());
+    }
+
+    /// T-7924, AG-45, PF-57: on the last round a new source whose feed fails its test still
+    /// opens its form, kept without a verdict so the strict gate holds it, and the person reads
+    /// what is still wrong first; with rounds left it goes back to the model.
+    #[tokio::test]
+    async fn a_new_source_whose_feed_fails_opens_its_form_unfinished_on_the_last_round() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let runner = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex("/streams/"))
+            .respond_with(
+                ResponseTemplate::new(400)
+                    .set_body_json(json!({ "lint_errors": ["line 3: expected a mapping"] })),
+            )
+            .mount(&runner)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        Mock::given(method("DELETE"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_runner_url = Some(runner.uri());
+        config.pipeline_test_capture_url = Some("http://127.0.0.1:9".to_owned());
+        let state = AppState::new(config, None);
+        // A project of its own: the runner holds one test per project at a time.
+        let project = "t7924-red-feed";
+        let mut driver = Driver::for_tests(state.clone(), project);
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let operations: Vec<&str> = crate::ops::registry().iter().map(|op| op.name).collect();
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": operations,
+            "kinds": [{ "kind": "DataSource", "verbs": ["read", "propose"] }],
+        } }));
+        let create = || ChangeResource {
+            kind: "DataSource".into(),
+            name: "feed".into(),
+            create: true,
+            patch: Some(json!({ "spec": { "type": "http", "http": {
+                "url": "https://93.184.215.14/feed.json" } } })),
+            ..Default::default()
+        };
+        let again = worked(&driver, create(), false)
+            .await
+            .again()
+            .expect("goes back while rounds are left");
+        assert!(
+            again.starts_with("error: the change's test is not green: the feed "),
+            "{again}"
+        );
+        let prose = worked(&driver, create(), true).await.done().expect("ends");
+        assert!(
+            prose.starts_with("Opened 'feed' with the change; review it and propose it.\n\nIts test is not green yet: the feed "),
+            "{prose}"
+        );
+        assert!(prose.contains("finish it there and check it"), "{prose}");
+        let draft = state
+            .drafts
+            .get(project, "DataSource", "feed")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert!(draft.verdict.is_none(), "no verdict: the gate holds it");
+        let steps = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default();
+        let opened = steps
+            .iter()
+            .rev()
+            .find(|event| event.kind == "tool" && event.payload["status"] == "ok")
+            .expect("the opening step");
+        assert_eq!(opened.payload["output"]["checked"], false);
+        assert!(
+            opened.payload["output"]["unfinished"]
+                .as_str()
+                .is_some_and(|why| why.starts_with("the feed ")),
+            "{:?}",
+            opened.payload
+        );
     }
 
     /// A SyncSource has no switch field: a pause written as one goes back naming the pause

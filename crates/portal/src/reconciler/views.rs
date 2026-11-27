@@ -5820,7 +5820,8 @@ mod tests {
     /// broker door writes them as a poll's instead of one line per view.
     #[tokio::test]
     async fn a_reconciler_read_carries_the_background_mark() {
-        let mark = crate::health_probe::MARK.get_or_init(|| "a-test-mark".to_owned());
+        let _ = crate::health_probe::MARK.set("a-test-mark".to_owned());
+        let mark = crate::health_probe::MARK.get().expect("the mark is set");
         let server = broker().await;
         Mock::given(method("GET"))
             .and(path(format!("/q/views/{SLUG}")))
@@ -7041,8 +7042,93 @@ mod tests {
     /// renders from the platform's `senzor.linkml.yaml` fixture.
     #[tokio::test]
     async fn the_writer_converges_the_jc_broker() {
-        let Some(named) = jc_broker() else { return };
-        let (broker, token_file) = named;
+        let Some((broker, token_file)) = jc_broker() else {
+            return;
+        };
+        converges(broker, token_file).await;
+    }
+
+    /// T-7924: the same create, change and delete against an in-memory broker that holds what
+    /// is PUT under its path, so the writer's whole cycle runs in every `cargo test`, not only
+    /// in ci-full where the real `-jc` broker is started.
+    #[tokio::test]
+    async fn the_writer_converges_an_in_memory_broker() {
+        let fake = MockServer::start().await;
+        Mock::given(wiremock::matchers::any())
+            .respond_with(InMemoryBroker::default())
+            .mount(&fake)
+            .await;
+        converges(fake.uri(), token_file()).await;
+        let asked = fake.received_requests().await.unwrap_or_default();
+        assert!(!asked.is_empty());
+        let bearer = format!("Bearer {TOKEN}");
+        for request in &asked {
+            let sent = request.headers.get("authorization");
+            assert_eq!(
+                sent.and_then(|v| v.to_str().ok()),
+                Some(bearer.as_str()),
+                "every call carries the admin token: {} {}",
+                request.method,
+                request.url
+            );
+        }
+    }
+
+    /// The `/q` surface of a `-jc` broker, in memory: a PUT holds its body under its path, a
+    /// DELETE drops it, a GET answers it (a rule document wrapped as `{"document": ...}`), the
+    /// view and rule-document lists, and the schemas' sizes in `/q/health`; nothing held is 404.
+    #[derive(Default)]
+    struct InMemoryBroker(std::sync::Mutex<BTreeMap<String, Value>>);
+
+    impl wiremock::Respond for InMemoryBroker {
+        fn respond(&self, request: &wiremock::Request) -> ResponseTemplate {
+            let at = request.url.path().to_owned();
+            let mut held = lock(&self.0);
+            let verb = request.method.as_str();
+            if verb == "PUT" {
+                let body: Value = serde_json::from_slice(&request.body).unwrap_or(Value::Null);
+                held.insert(at, body);
+                return ResponseTemplate::new(200);
+            }
+            if verb == "DELETE" {
+                held.remove(&at);
+                return ResponseTemplate::new(200);
+            }
+            let under = |prefix: &str| -> serde_json::Map<String, Value> {
+                held.iter()
+                    .filter_map(|(path, body)| {
+                        path.strip_prefix(prefix)
+                            .map(|id| (id.to_owned(), body.clone()))
+                    })
+                    .collect()
+            };
+            let answer = match at.as_str() {
+                "/q/views" => Some(Value::Object(under("/q/views/"))),
+                "/q/policy" => Some(Value::Object(under("/q/policy/"))),
+                "/q/health" => {
+                    let schemas: serde_json::Map<String, Value> = under("/q/schemas/")
+                        .into_iter()
+                        .map(|(tenant, schema)| {
+                            (tenant, json!({ "bytes": schema.to_string().len() }))
+                        })
+                        .collect();
+                    Some(json!({ "schemas": schemas }))
+                }
+                path if path.starts_with("/q/policy/") => held
+                    .get(path)
+                    .map(|document| json!({ "document": document })),
+                path => held.get(path).cloned(),
+            };
+            match answer {
+                Some(body) => ResponseTemplate::new(200).set_body_json(body),
+                None => ResponseTemplate::new(404),
+            }
+        }
+    }
+
+    /// [`the_writer_converges_the_jc_broker`] against the broker at `broker`, whose admin token
+    /// `token_file` holds.
+    async fn converges(broker: String, token_file: PathBuf) {
         let token = std::fs::read_to_string(&token_file).expect("the token file reads");
         let token = token.trim();
         let http = reqwest::Client::new();

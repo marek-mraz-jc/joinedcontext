@@ -1336,6 +1336,63 @@ mod tests {
         );
     }
 
+    /// T-7923: a count names no attribute to read, so the read asks for every attribute; a full
+    /// page goes back to the model for a pipeline while drafts are left.
+    #[tokio::test]
+    async fn a_count_reads_no_attribute_and_a_full_page_goes_back_for_a_pipeline() {
+        let (driver, _state, source) =
+            answering(json!([{ "id": "urn:ngsi-ld:Bike:1", "type": "Bike" }])).await;
+        let prose = driver
+            .kpi(
+                Ok(kpi_call(json!({ "agg": "count", "attribute": "" }))),
+                "",
+                &mut all_helsinki(),
+                &mut vec![Vec::new()],
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("computed");
+        assert!(!prose.is_empty());
+        let asked = source.received_requests().await.unwrap_or_default();
+        let url = asked.last().expect("a read").url.to_string();
+        assert!(
+            url.contains("type=Bike") && !url.contains("attrs="),
+            "{url}"
+        );
+
+        let rows: Vec<serde_json::Value> = (0..super::KPI_ROWS)
+            .map(|i| json!({ "id": format!("urn:ngsi-ld:Bike:{i}"), "type": "Bike", "n": 1 }))
+            .collect();
+        let (driver, state, _source) = answering(json!(rows)).await;
+        let reason = driver
+            .kpi(
+                Ok(kpi_call(json!({}))),
+                "",
+                &mut all_helsinki(),
+                &mut vec![Vec::new()],
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("draft_kpi_pipeline"), "{reason}");
+        let said = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == "thought")
+            .count();
+        assert_eq!(
+            said, 0,
+            "nothing is said to the person while drafts are left"
+        );
+    }
+
     /// The read carries the attribute and the filter; an endpoint with no space of its own
     /// is the project's, and the model's own words are what the person reads.
     #[tokio::test]
@@ -1544,6 +1601,88 @@ mod tests {
             .is_some());
     }
 
+    /// T-7923: a pipeline runner that refuses the test stream makes the test red: the model
+    /// reads the runner's words, the page and that it was a page of the source while drafts are
+    /// left; on the last draft the person reads that the kept draft is still not green. A count
+    /// reads the source page without an attribute.
+    #[tokio::test]
+    async fn a_runner_that_refuses_the_test_turns_it_red_and_goes_back_then_ends() {
+        let (mut driver, state, source) = answering(json!([
+            { "id": "urn:ngsi-ld:BikeHireDockingStation:1", "type": "BikeHireDockingStation" }
+        ]))
+        .await;
+        let runner = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path_regex("^/resources/rate_limit/"))
+            .respond_with(wiremock::ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path_regex("^/streams/"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(400)
+                    .set_body_json(json!({ "lint_errors": ["the mapping does not parse"] })),
+            )
+            .mount(&runner)
+            .await;
+        let mut config = (*driver.state.config).clone();
+        config.pipeline_runner_url = Some(runner.uri());
+        config.pipeline_test_capture_url = Some("http://127.0.0.1:9".to_owned());
+        driver.state.config = std::sync::Arc::new(config);
+        let call: crate::agents::kpi_pipeline::DraftKpiPipeline = serde_json::from_value(json!({
+            "name": "bikes-count", "type": "BikeHireDockingStation", "agg": "count", "every": "15m"
+        }))
+        .expect("a call");
+
+        let reason = driver
+            .kpi_pipeline(
+                Ok(call.clone()),
+                "",
+                &mut all_helsinki(),
+                &mut Vec::new(),
+                false,
+            )
+            .await
+            .expect("the run goes on")
+            .again()
+            .expect("a red test goes back");
+        assert!(
+            reason.contains("is not green")
+                && reason.contains("the mapping does not parse")
+                && reason.contains("a page of the source"),
+            "{reason}"
+        );
+        let read = source.received_requests().await.unwrap_or_default();
+        let url = read.last().expect("a read").url.to_string();
+        assert!(!url.contains("attrs="), "{url}");
+        let events = tool_events(&state).await;
+        let last = events.last().expect("a step");
+        assert_eq!(last["status"], "failed");
+        assert!(
+            last["error"]
+                .as_str()
+                .is_some_and(|error| error.starts_with("the test is not green: ")),
+            "{last}"
+        );
+
+        let prose = driver
+            .kpi_pipeline(Ok(call), "", &mut all_helsinki(), &mut Vec::new(), true)
+            .await
+            .expect("the run goes on")
+            .done()
+            .expect("the last draft ends");
+        assert!(
+            prose.contains("'bikes-count' is drafted but its test is still not green"),
+            "{prose}"
+        );
+        assert!(state
+            .drafts
+            .get("helsinki", "Pipeline", "bikes-count")
+            .await
+            .expect("drafts")
+            .is_some());
+    }
+
     /// No endpoint read in the conversation: the pipeline is tested on an empty page, and a new
     /// indicator space's drafts are named for the person beside the pipeline's form.
     #[tokio::test]
@@ -1662,6 +1801,31 @@ mod tests {
             prose.contains("outside what this assistant may do"),
             "{prose}"
         );
+    }
+
+    /// T-7923: an endpoint whose manifest carries a credential-shaped value is rendered but not
+    /// kept, and the person reads the store's reason, which names the field and the secretRef.
+    #[tokio::test]
+    async fn an_endpoint_holding_a_credential_is_not_kept_and_says_why() {
+        let (driver, state, _source) = kpi_world(200).await;
+        let prose = driver
+            .share(
+                Ok(share_call(json!({ "title": "Bearer abcdefghijklmnop" }))),
+                "",
+            )
+            .await
+            .expect("the run goes on");
+        assert!(
+            prose.contains("not kept as a draft, so no form opens: ")
+                && prose.contains("secretRef"),
+            "{prose}"
+        );
+        assert!(state
+            .drafts
+            .get("helsinki", "Endpoint", "helsinki-open")
+            .await
+            .expect("drafts")
+            .is_none());
     }
 
     /// space_complete outside the profile is refused; a call the operation refuses is a failed

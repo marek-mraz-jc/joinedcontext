@@ -582,6 +582,31 @@ mod tests {
         );
     }
 
+    /// T-7924: an agreement that grants nothing is reported in the log by its project, its name
+    /// and why, and the run grants nothing for it.
+    #[tokio::test]
+    async fn an_agreement_that_grants_nothing_is_logged_with_its_name_and_why() {
+        let offers = BTreeMap::from([(
+            ("helsinki".to_owned(), "air-offer".to_owned()),
+            offer(&["ep-a"], "odrl:read"),
+        )]);
+        let agreements = [(
+            "espoo".to_owned(),
+            "elsewhere".to_owned(),
+            agreement("accepted", json!({})),
+        )];
+        let (granted, log) = crate::reconciler::logged(async {
+            compile_all(&agreements, &offers, |_, _| offered())
+        })
+        .await;
+        assert!(granted.is_empty(), "{granted:?}");
+        assert!(log.contains("an agreement grants nothing"), "{log}");
+        assert!(
+            log.contains("espoo") && log.contains("elsewhere") && log.contains("air-offer"),
+            "{log}"
+        );
+    }
+
     /// The agreement's own filters where the offer names none: a scope, a time fence.
     #[test]
     fn an_agreement_fills_the_dimensions_the_offer_leaves_open() {

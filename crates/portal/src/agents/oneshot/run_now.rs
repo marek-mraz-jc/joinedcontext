@@ -58,7 +58,7 @@ impl Driver {
             .and_then(|()| name.ok_or_else(|| format!("{RUN} names the pipeline: name it")))
             .and_then(|name| {
                 // Registered: `check` found it.
-                let op = crate::ops::find(RUN).ok_or_else(|| RUN.to_owned())?;
+                let op = crate::ops::find(RUN).ok_or(RUN.to_owned())?;
                 let (identity, state) = (&self.identity, &self.state);
                 crate::ops::may_try(op, identity, state, &self.project, Some(input))
                     .map(|()| name)
@@ -251,18 +251,125 @@ mod tests {
         let taken = driver
             .run_answer(&json!({ "answer": "run:counters-load" }))
             .await;
-        assert!(
-            matches!(&taken, Ok(Some(Taken::Done(_)))),
-            "the Portal takes the answer"
-        );
-        if let Ok(Some(Taken::Done(prose))) = taken {
-            assert!(prose.contains("did not start"), "{prose}");
-            assert!(prose.contains("no pipeline runner"), "{prose}");
-        }
+        let Ok(Some(Taken::Done(prose))) = taken else {
+            panic!("the Portal takes the answer");
+        };
+        assert!(prose.contains("did not start"), "{prose}");
+        assert!(prose.contains("no pipeline runner"), "{prose}");
         let tools = events(&driver, "tool").await;
         assert_eq!(tools.len(), 1, "{tools:?}");
         assert_eq!(tools[0]["tool"], RUN);
         assert_eq!(tools[0]["input"]["name"], "counters-load");
+    }
+
+    /// A steward's Portal with a pipeline runner whose queue holds `harvest`, a pipeline that
+    /// polls on a nightly schedule and so runs from the queue (PL-78).
+    async fn queued_world() -> (Driver, MockServer) {
+        use crate::reconciler::streams::{Bentos, StreamDeployer};
+        use std::sync::Arc;
+        let runner = MockServer::start().await;
+        Mock::given(method("PUT"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "active": true })))
+            .mount(&runner)
+            .await;
+        let envelope = |kind: &str, name: &str, spec: Value| crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: kind.into(),
+            metadata: crate::resource::ObjectMeta::new(name, "helsinki"),
+            spec,
+            status: None,
+        };
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "helsinki-all",
+            json!({
+                "contextSpaceRef": "helsinki",
+                "slug": "abc123456789012345678901234",
+                "audience": "public",
+                "enabledRepresentations": ["ngsi-ld"]
+            }),
+        ));
+        state.mirror.upsert(envelope(
+            "DataSource",
+            "harvest",
+            json!({ "type": "http", "http": { "url": "https://example.org/data.json" } }),
+        ));
+        state.mirror.upsert(envelope(
+            "Pipeline",
+            "harvest",
+            json!({
+                "class": "scheduled",
+                "schedule": "0 5 * * *",
+                "source": { "dataSourceRef": { "kind": "DataSource", "name": "harvest" } },
+                "compute": { "kind": "bloblang", "bloblang": "root = this" },
+                "targetEndpoint": "urn:ngsi-ld:Endpoint:example.org:helsinki:helsinki-all"
+            }),
+        ));
+        let deployer = Arc::new(StreamDeployer::new(runner.uri()));
+        let forge = crate::forge::ShakoClient::new(
+            "http://127.0.0.1:9".parse().expect("url"),
+            "o",
+            "r",
+            "t",
+        )
+        .expect("a forge client");
+        let syncer = crate::reconciler::Syncer::new(Arc::new(forge), Arc::clone(&state.mirror))
+            .with_streams(Arc::clone(&deployer));
+        let state = state.with_syncer(Arc::new(syncer));
+        deployer
+            .converge(&state.mirror, &Bentos::new(), &Default::default())
+            .await;
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity.roles = vec![state.config.bootstrap_admins.clone()];
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": [RUN],
+            "kinds": [{ "kind": "Pipeline", "verbs": ["read", "propose"] }],
+        } }));
+        (driver, runner)
+    }
+
+    /// T-7924: the confirmed run of a queued pipeline is queued, the person reads its run id,
+    /// and the pipeline's page opens, where the run shows how it ended.
+    #[tokio::test]
+    async fn the_confirmed_run_is_queued_and_opens_the_pipelines_page() {
+        let (driver, _runner) = queued_world().await;
+        let taken = driver.run_answer(&json!({ "answer": "run:harvest" })).await;
+        let Ok(Some(Taken::Done(prose))) = taken else {
+            panic!("the Portal takes the answer");
+        };
+        assert!(
+            prose.contains("Pipeline harvest is queued as run "),
+            "{prose}"
+        );
+        assert!(prose.contains("its page shows how it ended"), "{prose}");
+        let tools = events(&driver, "tool").await;
+        assert_eq!(tools[0]["tool"], RUN, "{tools:?}");
+        assert_eq!(tools[0]["status"], "ok", "{tools:?}");
+        let opened = events(&driver, "navigate").await;
+        assert_eq!(opened.len(), 1, "{opened:?}");
+        assert!(
+            opened[0]["route"]
+                .as_str()
+                .is_some_and(|route| route.contains("harvest")),
+            "{opened:?}"
+        );
+        // The thought the person reads is the same sentence.
+        let thoughts = events(&driver, "thought").await;
+        assert!(
+            thoughts
+                .iter()
+                .any(|thought| thought["text"] == prose.as_str()),
+            "{thoughts:?}"
+        );
     }
 
     /// A conversation switched to reading after the question runs nothing.
@@ -298,7 +405,8 @@ mod tests {
         let driver = steward();
         for segment in crate::connectors::SEGMENTS.iter().map(|segment| segment.0) {
             let (_, offered) = driver.connector_offered(segment);
-            assert!(!offered.iter().any(|op| op.name == RUN), "{segment}");
+            // A segment has no writes at all, so the run is not among them either.
+            assert!(offered.is_empty(), "{segment}");
         }
     }
 

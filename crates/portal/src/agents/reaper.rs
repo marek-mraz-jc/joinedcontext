@@ -204,6 +204,74 @@ mod tests {
         assert_eq!(after.status, AgentRunStatus::AwaitingApproval.as_str());
     }
 
+    /// T-7924: a database that refuses to move a run: the expired run is not reaped and the log
+    /// names it, and a run whose Change was closed on the forge is not counted as ended; both
+    /// stay as they were.
+    #[tokio::test]
+    async fn a_store_that_refuses_the_end_reaps_and_ends_nothing() {
+        use wiremock::matchers::{method, path};
+        let scratch = crate::test_db::scratch().await;
+        let mirror = scratch.placed("helsinki").await;
+        let server = wiremock::MockServer::start().await;
+        let shako =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("a url"), "o", "r", "t")
+                .expect("a client");
+        let mut state = AppState::new(Config::for_tests(), None).with_shako(Arc::new(shako));
+        state.agents = Arc::new(AgentStore::new(Some(scratch.pool.clone()), mirror));
+        let mut expired = run("r-old", "helsinki", "2020-01-01T00:00:00Z");
+        expired.expires_at = "2020-01-01T00:20:00Z".to_owned();
+        state.agents.create_run(&expired).await.expect("a run");
+        let mut waiting = run("r-wait", "helsinki", "2026-09-12T10:00:00Z");
+        waiting.status = AgentRunStatus::AwaitingApproval.as_str().to_owned();
+        waiting.expires_at = "2999-01-01T00:00:00Z".to_owned();
+        state.agents.create_run(&waiting).await.expect("a run");
+        state
+            .agents
+            .set_merge_request("r-wait", 5)
+            .await
+            .expect("its change");
+        wiremock::Mock::given(method("GET"))
+            .and(path(
+                "/odata/Repositories(Owner='o',Name='r')/PullRequests(5)",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "Number": 5, "HtmlUrl": "h", "State": "closed", "Merged": false,
+                    "Title": "t", "Head": "portal/create-app-city-bikes-overview-00000005",
+                    "HeadSha": "abc", "Base": "main", "BaseSha": "b"
+                })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        scratch.refuse("agent_runs", "UPDATE").await;
+
+        let (reaped, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+                reap_expired(&state).await
+            })
+            .await;
+        assert_eq!(reaped, 0);
+        assert!(log.contains("failed to reap expired agent run"), "{log}");
+        assert!(log.contains("r-old"), "{log}");
+        assert_eq!(end_closed_publications(&state).await, 0);
+
+        for (id, status) in [
+            ("r-old", AgentRunStatus::Queued),
+            ("r-wait", AgentRunStatus::AwaitingApproval),
+        ] {
+            let after = state
+                .agents
+                .get_run(id)
+                .await
+                .expect("read")
+                .expect("the run");
+            assert_eq!(after.status, status.as_str(), "{id}");
+        }
+        drop(state);
+        scratch.remove().await;
+    }
+
     #[tokio::test(start_paused = true)]
     async fn the_leader_reaps_on_every_tick_and_a_follower_never() {
         let leader = AppState::new(Config::for_tests(), None);

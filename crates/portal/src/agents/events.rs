@@ -180,7 +180,8 @@ mod tests {
     }
 
     /// A lagging inbox whose store cannot answer goes on with what the channel still holds: the
-    /// run sees fewer events, never none (T-7912).
+    /// run sees fewer events, never none (T-7912). T-7924: and it says so, naming the run and
+    /// how many events it missed.
     #[tokio::test]
     async fn a_lagging_inbox_with_a_store_that_cannot_answer_goes_on_live() {
         let hub = AgentEventHub::new();
@@ -194,11 +195,20 @@ mod tests {
             one.seq = seq;
             hub.broadcast(&one).await;
         }
-        let next = tokio::time::timeout(std::time::Duration::from_secs(5), inbox.recv(&store))
-            .await
-            .expect("an answer in time")
-            .expect("an event");
+        let (next, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+                tokio::time::timeout(std::time::Duration::from_secs(5), inbox.recv(&store))
+                    .await
+                    .expect("an answer in time")
+                    .expect("an event")
+            })
+            .await;
         assert!(next.seq > 1, "the lost head is skipped: {}", next.seq);
+        assert!(
+            log.contains("a lagging run could not read the events it missed"),
+            "{log}"
+        );
+        assert!(log.contains("r1") && log.contains("missed"), "{log}");
     }
 
     #[tokio::test]

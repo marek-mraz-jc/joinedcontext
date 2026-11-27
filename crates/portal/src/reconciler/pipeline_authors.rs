@@ -297,9 +297,10 @@ impl Realm {
             };
             self.names.insert(key.clone(), names);
         }
-        if let Some(names) = self.names.get(&key) {
-            identity.groups.extend(names.iter().cloned());
-        }
+        // Asked above when it was not held, so `key` is always there.
+        identity
+            .groups
+            .extend(self.names.get(&key).into_iter().flatten().cloned());
         Ok(identity)
     }
 }
@@ -519,6 +520,29 @@ mod tests {
         assert_eq!(
             judged(&mirror, &rights, &client).await.as_deref(),
             Some("author lost access to source Endpoint ep-a, target Endpoint ep-a")
+        );
+    }
+
+    /// T-7924: a proposer and an approver who both lost the same Endpoints name each reference
+    /// once, and the run logs how many pipelines it read and how many it asked the forge for.
+    #[tokio::test]
+    async fn two_authors_missing_the_same_references_name_each_once() {
+        let mirror = world();
+        unbind(&mirror, "dev-a");
+        let (_server, client) = forge(MERGED).await;
+        let rights = AuthorRights::new("portal-approver".into(), None);
+        let (reason, log) = crate::reconciler::logged(judged(&mirror, &rights, &client)).await;
+        assert_eq!(
+            reason.as_deref(),
+            Some("author lost access to source Endpoint ep-a, target Endpoint ep-a")
+        );
+        assert!(
+            log.contains("the authors of the pipelines were read (PL-95)"),
+            "{log}"
+        );
+        assert!(
+            log.contains("pipelines=1") && log.contains("forge_asked=1"),
+            "{log}"
         );
     }
 
