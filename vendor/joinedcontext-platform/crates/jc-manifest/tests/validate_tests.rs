@@ -229,6 +229,24 @@ fn a_layout_1_organization_validates_in_place_through_the_assembling_entry() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A layout 1 organization that does not load through the assembling entry point is one
+/// finding, as `run` gives it; a blank `JC_ENVIRONMENT` renders as no environment at all.
+#[test]
+fn a_layout_1_organization_that_does_not_load_is_one_finding_through_the_assembling_entry() {
+    // Blank is read as unset, so no other test of this binary sees a different environment.
+    std::env::set_var("JC_ENVIRONMENT", " ");
+    let dir = valid_repo("layout-1-unloadable");
+    write(
+        &dir,
+        "projects/ovzdusie/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: [\n",
+    );
+    let report = validate::run_assembled(&dir, &jc_manifest::assemble::Directories::default());
+    assert_eq!(report.findings.len(), 1, "{:#?}", report.findings);
+    assert_eq!(report.checked, 0);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The open-data Endpoints the reconciler marks: a public read-only Endpoint binds no write
 /// Policy (EP-187).
 #[test]
@@ -2237,6 +2255,24 @@ fn an_assistant_selects_inside_its_reach_and_excludes_declared_endpoints() {
     assert_eq!(found.len(), 2, "{found:?}");
     assert!(found[0].contains("`missing`") && found[0].contains("project `ovzdusie`"));
     assert!(found[1].contains("`doprava/roads`"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// MF-58: a project or space outside the deployment's own project and `scope.projects` is
+/// named as out of reach, not as undeclared.
+#[test]
+fn an_assistant_selecting_outside_its_reach_is_told_to_widen_its_scope() {
+    let dir = valid_repo("assistant-reach");
+    let report = selecting_deployment(
+        &dir,
+        "  select: { projects: [doprava], spaces: [doprava/roads] }\n",
+    );
+    let found = citing(&report, "MF-58");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found[0].contains("project `doprava`") && found[0].contains("add it to scope.projects")
+    );
+    assert!(found[1].contains("`doprava/roads`") && found[1].contains("add it to scope.projects"));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
