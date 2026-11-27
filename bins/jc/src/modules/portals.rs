@@ -1379,6 +1379,22 @@ mod desk_tests {
         names
     }
 
+    /// Without an Organization there is nothing to follow: no task starts.
+    #[tokio::test]
+    async fn no_organization_starts_no_follower() {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn dataroom_core::Store> =
+            Arc::new(dataroom_store_memory::MemoryStore::new());
+        let tasks = TaskTracker::new();
+        follow(
+            writer(store, dir.path()),
+            Vec::new(),
+            &CancellationToken::new(),
+            &tasks,
+        );
+        assert!(tasks.is_empty());
+    }
+
     #[tokio::test]
     async fn a_round_writes_moves_and_deletes_further_portals_and_their_sources() {
         let dir = tempfile::tempdir().unwrap();
@@ -1457,6 +1473,22 @@ mod desk_tests {
             .expect("the further catalogue");
         assert_eq!(
             held.publisher_uri.as_deref(),
+            Some("https://city.test/id/city")
+        );
+        // The default portal declares into the Organization's own catalogue.
+        let mut with_default = done.clone();
+        with_default.insert("d".into(), portal("default", serde_json::json!([])));
+        declare(&w, &both, &with_default, &declared).await;
+        let own = dataroom_core::Store::get_catalogue(
+            faults.as_ref(),
+            orgs[0].org_id,
+            orgs[0].catalogue_id,
+        )
+        .await
+        .unwrap()
+        .expect("the own catalogue");
+        assert_eq!(
+            own.publisher_uri.as_deref(),
             Some("https://city.test/id/city")
         );
         // A source that cannot be deleted keeps the manifest that held it.
