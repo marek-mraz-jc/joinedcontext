@@ -617,3 +617,42 @@ async fn no_store_or_no_registry_is_unavailable() {
         "the store is not asked"
     );
 }
+
+/// TEN-15: a keyed project's App writes under the keyed prefix and reads the old one until its
+/// files moved, so a GET URL names the old key while only that prefix holds the file.
+#[tokio::test]
+async fn a_keyed_project_writes_keyed_and_hands_out_the_old_key_it_still_reads() {
+    let store = store(4).await;
+    let state = common::on_database(state(&store, json!(["files"]))).await;
+    let pool = state.db.clone().expect("a pool");
+    common::keyed_project(&state, &pool, PROJECT, "helsinki").await;
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, PROJECT)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    let keyed = joinedcontext_portal::apps::files::keyed_prefix(&key, &app_id(PROJECT, APP));
+
+    let (status, body, text) = call(
+        &state,
+        "POST",
+        "/old.txt:url",
+        json!({ "method": "GET" }).to_string().into_bytes(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert!(
+        body["url"]
+            .as_str()
+            .is_some_and(|url| url.contains(&format!("/apps/{}old.txt?", prefix()))),
+        "{text}"
+    );
+    let (status, _, text) = call(&state, "PUT", "/new.txt", b"new".to_vec()).await;
+    assert_eq!(status, StatusCode::CREATED, "{text}");
+    assert!(
+        asked(&store, "PUT")
+            .await
+            .contains(&format!("/apps/{keyed}new.txt")),
+        "{:?}",
+        asked(&store, "PUT").await
+    );
+}

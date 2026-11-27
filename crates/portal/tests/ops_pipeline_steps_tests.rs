@@ -598,6 +598,20 @@ async fn validating_refuses_a_space_without_a_model_too_many_records_and_a_stran
         nothing.text
     );
 
+    let aimless = send(
+        &state,
+        person("jana"),
+        "POST",
+        &op("edges", "jc_pipeline_validate"),
+        Some(json!({ "records": one, "pipeline": {
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+            "metadata": { "name": "aimless", "namespace": "edges" },
+            "spec": { "steps": [] } } })),
+    )
+    .await;
+    assert!(aimless.status.is_client_error(), "{}", aimless.text);
+    assert!(aimless.text.contains("no target space"), "{}", aimless.text);
+
     let many: Vec<Value> = (0..101).map(|n| json!({ "id": n })).collect();
     let too_many = send(
         &state,
@@ -1040,5 +1054,45 @@ async fn a_planned_data_source_on_a_private_or_unknown_host_or_of_another_plan_i
         StatusCode::UNPROCESSABLE_ENTITY,
         "{}",
         alone.text
+    );
+}
+
+/// A planned source that streams is not sampled before its approval: the answer says to give the
+/// sample as text.
+#[tokio::test]
+async fn a_planned_streaming_source_is_sampled_only_once_approved() {
+    let state = state("streams", None);
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("streams", "jc_change_plan"),
+        Some(
+            json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "live",
+            "manifest": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "DataSource",
+                "metadata": { "name": "live", "namespace": "streams" },
+                "spec": { "type": "mqtt", "mqtt": {
+                    "urls": ["tcp://93.184.215.14:1883"], "topics": ["city/#"] } } } }] }),
+        ),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let id = json_of(&answer.text)["planId"]
+        .as_str()
+        .expect("a planId")
+        .to_owned();
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("streams", "jc_pipeline_sample_source"),
+        Some(json!({ "dataSource": "live", "planId": id })),
+    )
+    .await;
+    assert!(answer.status.is_client_error(), "{}", answer.text);
+    assert!(
+        answer.text.contains("of type mqtt") && answer.text.contains("only over http"),
+        "{}",
+        answer.text
     );
 }

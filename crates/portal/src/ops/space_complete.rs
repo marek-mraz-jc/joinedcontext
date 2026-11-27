@@ -1540,8 +1540,9 @@ fn no_credential_in(
     Ok(())
 }
 
-/// The first http(s) address a README names, as the source it describes.
-fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
+/// The first http(s) address a README names, as the source it describes. Public for the
+/// `space_described_source` fuzz target: the README is an uploaded file.
+pub fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
     content
         .split_whitespace()
         .map(|word| word.trim_matches(|c| matches!(c, '(' | ')' | '<' | '>' | '"' | '\'')))
@@ -1551,7 +1552,8 @@ fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
 
 /// The source a `.env` file describes: `URL`, or an MQTT host and topic, or Kafka brokers and a
 /// topic. A password, secret or token in it becomes a `secretRef` to fill in, never a value.
-fn source_in_env(content: &str, space_name: &str) -> Option<(String, Value, Vec<Finding>)> {
+/// Public for the `space_described_source` fuzz target: the file is uploaded.
+pub fn source_in_env(content: &str, space_name: &str) -> Option<(String, Value, Vec<Finding>)> {
     let mut env_map = BTreeMap::new();
     for line in content.lines() {
         let trimmed = line.trim();

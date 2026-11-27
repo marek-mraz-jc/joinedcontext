@@ -752,3 +752,86 @@ async fn a_folder_sorts_folders_first_and_a_deep_or_missing_path_is_refused() {
     .await;
     assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text());
 }
+
+/// A commit's diff: a removal has no after side, a binary file is named binary without a patch,
+/// files past the thirtieth are listed without one; a file the forge no longer holds is not found.
+#[tokio::test]
+async fn a_commit_diff_names_removals_binaries_and_the_files_past_its_cap() {
+    let (server, state) = world().await;
+    let mut changed = vec![
+        json!({ "filename": "README.md", "status": "deleted" }),
+        json!({ "filename": "logo.png", "status": "modified" }),
+    ];
+    changed.extend((0..30).map(|n| json!({ "filename": format!("x{n}.txt"), "status": "added" })));
+    Mock::given(method("GET"))
+        .and(path(format!("/odata/Repositories('{CONFIG_ID}')/Compare")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "files": changed })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let commit = doors::call(
+        "jc_repository_commit",
+        &session(steward()),
+        &state,
+        input("jc_repository_commit"),
+    )
+    .await;
+    assert_eq!(commit.status, StatusCode::OK, "{}", commit.text());
+    let files = commit.body["files"].as_array().expect("files");
+    assert_eq!(files.len(), 32, "{}", commit.text());
+    assert_eq!(files[0]["status"], "deleted");
+    assert_eq!(files[1]["binary"], true, "{}", files[1]);
+    assert!(files[31].get("patch").is_none(), "{}", files[31]);
+    assert_eq!(commit.body["truncated"], true, "{}", commit.text());
+
+    get_with(
+        &server,
+        &format!("/odata/Repositories('{CONFIG_ID}')/Tree"),
+        "Ref",
+        "dev",
+        json!({ "Sha": ROOT, "Tree": [{ "Path": "gone.txt", "Type": "blob", "Size": 1, "Sha": "g" }] }),
+    )
+    .await;
+    let gone = doors::call(
+        "jc_repository_file",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config", "path": "gone.txt", "ref": "dev" }),
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.text());
+}
+
+/// A repository with no branch yet is empty, no error; a forge failing the root read is said.
+#[tokio::test]
+async fn an_empty_repository_is_empty_and_a_failing_root_read_is_an_error() {
+    let (server, state) = world().await;
+    let empty = doors::call(
+        "jc_repository_get",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie_dash" }),
+    )
+    .await;
+    assert_eq!(empty.status, StatusCode::OK, "{}", empty.text());
+    assert_eq!(empty.body["empty"], true, "{}", empty.text());
+    assert!(empty.body.get("readme").is_none(), "{}", empty.text());
+    Mock::given(method("GET"))
+        .and(path(format!("/odata/Repositories('{APP_ID}')/Tree")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .mount(&server)
+        .await;
+    let failed = doors::call(
+        "jc_repository_get",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie_dash" }),
+    )
+    .await;
+    assert!(
+        failed.status.is_server_error(),
+        "{}: {}",
+        failed.status,
+        failed.text()
+    );
+}

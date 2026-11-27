@@ -38,6 +38,8 @@ bin = [
   { name = "feedback", path = "fuzz_targets/feedback.rs", test = false, doc = false, bench = false },
   { name = "odata_function_call", path = "fuzz_targets/odata_function_call.rs", test = false, doc = false, bench = false },
   { name = "mentions", path = "fuzz_targets/mentions.rs", test = false, doc = false, bench = false },
+  { name = "repository_path", path = "fuzz_targets/repository_path.rs", test = false, doc = false, bench = false },
+  { name = "space_described_source", path = "fuzz_targets/space_described_source.rs", test = false, doc = false, bench = false },
   { name = "bundle_head", path = "fuzz_targets/bundle_head.rs", test = false, doc = false, bench = false },
   { name = "trash_entity", path = "fuzz_targets/trash_entity.rs", test = false, doc = false, bench = false },
   { name = "dashboard_check", path = "fuzz_targets/dashboard_check.rs", test = false, doc = false, bench = false },

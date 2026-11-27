@@ -2217,6 +2217,32 @@ mod tests {
         Some(serde_norway::to_string(&persons(users)).expect("yaml"))
     }
 
+    /// A bundle built where the installation's realm holds the people carries the Organization's
+    /// members file, and only its members.
+    #[tokio::test]
+    async fn a_bundle_of_an_installation_realm_carries_its_members_file() {
+        let realm = two_organizations().await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.people = Some(Arc::new(
+            crate::people::People::new(
+                &format!("{}/realms/jc", realm.uri()),
+                "portal".into(),
+                crate::auth::client_auth::ClientAuth::Secret("s".into()),
+            )
+            .expect("a realm URL"),
+        ));
+        let (bytes, _) = build_bundle(&state, "hel", "admin")
+            .await
+            .expect("a bundle");
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("a zip");
+        let mut text = String::new();
+        zip.by_name(PEOPLE_PATH)
+            .expect("the members file")
+            .read_to_string(&mut text)
+            .expect("text");
+        assert!(text.contains("aino") && !text.contains("eero"), "{text}");
+    }
+
     #[tokio::test]
     async fn an_organization_bundle_holds_its_people_as_id_username_and_email_only() {
         let realm = two_organizations().await;

@@ -191,6 +191,50 @@ async fn opening_records_the_workspace_and_cuts_its_branch_from_main() {
     assert_eq!(body(&listed.text)["items"][0]["name"], "air-v2");
 }
 
+/// A branch an earlier workspace of the name left is deleted and cut again from main; a forge
+/// that cuts no branch leaves no record behind.
+#[tokio::test]
+async fn opening_recuts_a_left_branch_and_records_nothing_when_no_branch_is_cut() {
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "exists" })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.text);
+    assert_eq!(calls(&server, "POST", "/Shako.DeleteBranch").await.len(), 1);
+    assert_eq!(calls(&server, "POST", "/Shako.CreateBranch").await.len(), 2);
+
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert!(answer.status.is_server_error(), "{}", answer.text);
+    let listed = send(&state, steward(), "GET", WS, None).await;
+    assert_eq!(body(&listed.text)["items"], json!([]), "{}", listed.text);
+}
+
 #[tokio::test]
 async fn opening_refuses_a_bad_name_title_or_ttl_and_a_second_of_the_same_name() {
     let (_server, state) = world().await;
@@ -423,6 +467,68 @@ async fn compare_names_a_removal_against_mains_change_as_the_whole_file() {
     assert_eq!(conflict["path"], AIR, "{cmp}");
     assert_eq!(conflict["fields"][0]["ours"], "removed");
     assert_eq!(conflict["fields"][0]["theirs"], "changed");
+}
+
+/// The mirror image: the workspace changed a file main removed; the conflict is the whole file,
+/// changed on ours and removed on theirs.
+#[tokio::test]
+async fn compare_names_mains_removal_against_the_workspaces_change_as_the_whole_file() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    tree(&server, "workspace/air-v2", &[(AIR, "s-ours")]).await;
+    tree(&server, "base1", &[(AIR, "s-base")]).await;
+    tree(&server, "main", &[]).await;
+    file(&server, "workspace/air-v2", &space("en", 12)).await;
+    file(&server, "base1", &space("en", 10)).await;
+    let compare = ops::find("jc_workspace_compare").unwrap();
+    let cmp = ops::call(
+        compare,
+        &Caller::new(steward(), Via::Session),
+        &state,
+        PROJECT,
+        json!({ "name": "air-v2" }),
+    )
+    .await
+    .expect("compared");
+    let conflict = &cmp["conflicts"][0];
+    assert_eq!(conflict["path"], AIR, "{cmp}");
+    assert_eq!(conflict["fields"][0]["ours"], "changed", "{cmp}");
+    assert_eq!(conflict["fields"][0]["theirs"], "removed", "{cmp}");
+}
+
+/// A workspace already brought back as an open change is not brought back a second time.
+#[tokio::test]
+async fn bringing_back_twice_names_the_change_already_open() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    changed(&server, &space("en", 10), "s-base").await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 5, "HtmlUrl": "https://shako.example/pulls/5", "State": "open",
+            "Title": "workspace air-v2: Air", "Head": "workspace/air-v2", "Base": "main",
+            "CreatedAt": "2026-09-18T10:00:00Z", "Author": "jana",
+            "Mergeable": true, "Merged": false }] })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        &format!("{WS}/air-v2/propose"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("already brought back as chg-00000005"),
+        "{}",
+        answer.text
+    );
+    assert!(calls(&server, "POST", "/Shako.OpenPullRequest")
+        .await
+        .is_empty());
 }
 
 #[tokio::test]
