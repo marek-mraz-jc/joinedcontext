@@ -262,8 +262,22 @@ async fn a_catalogue_draft_is_for_who_may_propose_the_endpoint() {
     let refused = call("jc_catalogue_draft", &mcp(viewer()), &state, input.clone()).await;
     assert_status(&refused, StatusCode::FORBIDDEN, "viewer");
     // The project has no CkanInstance to publish to: the steward is past the grant.
-    let drafted = call("jc_catalogue_draft", &mcp(steward()), &state, input).await;
+    let drafted = call("jc_catalogue_draft", &mcp(steward()), &state, input.clone()).await;
     assert_status(&drafted, StatusCode::CONFLICT, "steward");
+    // Once the project has one, the draft names it as where the Endpoint publishes to.
+    state.mirror.upsert(envelope(
+        "CkanInstance",
+        "opendata",
+        PROJECT,
+        json!({ "organizationDefault": PROJECT }),
+    ));
+    let drafted = call("jc_catalogue_draft", &mcp(steward()), &state, input).await;
+    assert_status(&drafted, StatusCode::OK, "steward with a CkanInstance");
+    assert_eq!(
+        drafted.body["publish"]["ckan"]["instanceRef"]["name"], "opendata",
+        "{}",
+        drafted.text()
+    );
 }
 
 #[tokio::test]

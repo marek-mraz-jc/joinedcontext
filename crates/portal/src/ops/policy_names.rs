@@ -331,6 +331,26 @@ classes:
         serde_norway::from_str(MODEL).expect("the test model parses")
     }
 
+    /// A model source that does not parse judges nothing, and a space whose model cannot be read
+    /// has none to judge by (T-7921).
+    #[tokio::test]
+    async fn an_unreadable_model_judges_nothing() {
+        let spec = json!({
+            "contextSpaceRef": "air",
+            "information": [{ "entities": [{"type": "OnStreetParking"}], "propertyNames": ["x"] }],
+        });
+        assert!(of_model(&spec, "parking", "classes: [unclosed").is_empty());
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "ContextSpace".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("air", "doprava"),
+            spec: json!({ "dataModelRef": { "name": "parking" } }),
+            status: None,
+        });
+        assert!(space_model(&state, "doprava", &spec).await.is_none());
+    }
+
     #[test]
     fn a_name_the_class_lacks_is_an_error_on_its_field() {
         let spec = json!({

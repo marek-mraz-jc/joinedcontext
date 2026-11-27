@@ -227,6 +227,23 @@ async fn a_policy_reader_reads_the_policy_that_refused_them() {
     );
 }
 
+/// The MCP door's jc_attribute_explain answers what the route answers (T-7921).
+#[tokio::test]
+async fn the_explain_operation_answers_the_routes_policy() {
+    use joinedcontext_portal::ops::{self, Caller, Via};
+    let r = rig().await;
+    prohibiting(&r.gateway).await;
+    let op = ops::find("jc_attribute_explain").expect("registered");
+    let caller = Caller::new(who("steward"), Via::Mcp);
+    let input = json!({ "name": "air", "type": "AirQualityObserved", "attribute": "no2", "action": "write" });
+    let answer = ops::call(op, &caller, &r.state, "helsinki", input)
+        .await
+        .map_err(|err| format!("{err:?}"))
+        .expect("an answer");
+    assert_eq!(answer["policy"], "no2-frozen", "{answer}");
+    assert_eq!(answer["decision"], false, "{answer}");
+}
+
 /// A decision no Policy took (no grant at all) names none and hides none: there is nothing the
 /// reader could be shown.
 #[tokio::test]

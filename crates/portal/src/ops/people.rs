@@ -589,9 +589,10 @@ mod tests {
         let members = json!({ "members": [{ "user": "id-group-1" }, { "user": "id-jana" }] });
         mirror.upsert(envelope("Group", ORG_NAMESPACE, "pipeliners", members));
         for item in [
+            // A subject naming neither a person nor a Group (a service account) reaches no one.
             binding(
                 "a",
-                json!([{ "user": "id-jana" }]),
+                json!([{ "user": "id-jana" }, { "serviceAccount": "bot" }]),
                 "viewer",
                 json!({ "project": "doprava" }),
             ),
@@ -633,7 +634,7 @@ mod tests {
         // What deleting each binding takes: the person alone, or the Group that carries them.
         assert_eq!(
             (found["id-jana"][0].subjects, &found["id-jana"][0].group),
-            (1, &None)
+            (2, &None)
         );
         assert_eq!(found["id-jana"][1].group.as_deref(), Some("pipeliners"));
         assert!(members_of(&mirror, "elsewhere").is_empty());
