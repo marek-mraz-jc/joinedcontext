@@ -290,6 +290,50 @@ async fn jetstream_unsent_acks_leave_the_message_redelivered() {
 
 /// Two instances on one durable (pull) and two on one queue (push with deliver group) each
 /// process every message exactly once between them.
+/// A consumer deleted under a reading input ends its message stream: the read fails as not
+/// connected, for a pull durable (the server's 409) and for a bound push consumer with an idle
+/// heartbeat (the heartbeats stop).
+#[tokio::test]
+async fn a_consumer_deleted_under_the_reader_fails_the_read_as_not_connected() {
+    let Some(srv) = start_server("jetstream_consumer_deleted", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, _) = make_ctx("org-a", Some("org_a"));
+    add_stream(&srv.url, "GONE", &["org_a.gone.>"]).await;
+    let ctx = js(&srv.url).await;
+    let stream = ctx.get_stream("GONE").await.unwrap();
+    stream
+        .create_consumer(jetstream::consumer::push::Config {
+            durable_name: Some("pushed".into()),
+            deliver_subject: "_INBOX.pushed".into(),
+            idle_heartbeat: Duration::from_millis(500),
+            ack_policy: jetstream::consumer::AckPolicy::Explicit,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for cfg in [
+        serde_json::json!({"durable": "pulled", "subject": "org_a.gone.>"}),
+        serde_json::json!({"durable": "pushed", "bind": true, "stream": "GONE"}),
+    ] {
+        let mut v = serde_json::json!({"urls": [srv.url]});
+        v.as_object_mut()
+            .unwrap()
+            .extend(cfg.as_object().unwrap().clone());
+        let name = cfg["durable"].as_str().unwrap().to_string();
+        let mut i = input(&reg, &sctx, serde_json::json!({"nats_jetstream": v})).await;
+        stream.delete_consumer(&name).await.unwrap();
+        let r = tokio::time::timeout(Duration::from_secs(20), i.read_batch(&sctx))
+            .await
+            .unwrap_or_else(|_| panic!("{name}: the read ends within 20 s"));
+        assert!(
+            matches!(r, Err(ekiben_core::CoreError::NotConnected)),
+            "{name}: {:?}",
+            r.map(|_| ())
+        );
+    }
+}
+
 #[tokio::test]
 async fn jetstream_instances_share_a_durable_and_a_queue_group() {
     let Some(srv) = start_server("jetstream_share", &[], &[]) else {
@@ -733,6 +777,10 @@ async fn nats_kv_revisions_updates_purges_and_keys_on_a_real_bucket() {
     };
     let created = run(proc("org_a_ops", "create", "k", None), "v1").await;
     assert!(!created.is_errored(), "{:?}", created.error_get());
+    // A key the client refuses fails create with the reason, not as an existing key.
+    let refused = run(proc("org_a_ops", "create", "two words", None), "v1").await;
+    let err = refused.error_get().expect("refused").to_string();
+    assert!(err.starts_with("nats: key cannot be empty"), "{err}");
     let r1 = created.meta_get_str("nats_kv_revision");
     let updated = run(proc("org_a_ops", "update", "k", Some(&r1)), "v2").await;
     assert!(!updated.is_errored(), "{:?}", updated.error_get());

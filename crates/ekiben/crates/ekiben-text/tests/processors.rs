@@ -302,6 +302,22 @@ async fn jq_recursion_loops_and_deep_results_fail_the_message_not_the_process() 
     assert_eq!(bytes(&out[0][0]), "[1,1,1]");
 }
 
+/// A panic inside jaq fails that message only: jaq-std's regex captures map byte to character
+/// offsets in one forward pass, and a repeated alternation reports group 2 before group 1, so
+/// the lookup unwraps None. The batch's other message still runs.
+#[tokio::test]
+async fn a_panic_inside_jaq_fails_that_message_and_the_batch_runs_on() {
+    let out = run(
+        "jq:\n  query: '[match(\"(?:(a)|(b))+\").captures[].offset]'\n",
+        &["\"ba\"", "\"ab\""],
+    )
+    .await;
+    let err = out[0][0].error_get().expect("the panicking message fails");
+    assert_eq!(err.to_string(), "jq query failed inside the evaluator");
+    assert!(out[0][1].error_get().is_none());
+    assert_eq!(bytes(&out[0][1]), "[0,1]");
+}
+
 /// The OS refusing the evaluation thread fails the message with the reason. Fault injected: the test
 /// reruns itself alone, caps its own address space 256 MiB above what it holds (prlimit), and the
 /// thread's 1 GiB stack no longer fits.

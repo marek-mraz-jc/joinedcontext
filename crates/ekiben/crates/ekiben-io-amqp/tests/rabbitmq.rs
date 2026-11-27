@@ -143,3 +143,66 @@ async fn consumes_acks_requeues_and_rejects() {
     assert_eq!(q.message_count(), 0, "every message acked or rejected");
     let _ = ch.queue_delete(queue.into(), Default::default()).await;
 }
+
+/// An ack sent after the input closed its connection goes nowhere (lapin poisons the acker on
+/// close): the broker already put the unacked message back, so it is read again, never lost.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_ack_after_close_fails_and_the_message_stays_queued() {
+    let Ok(url) = std::env::var("AMQP_TEST_URL") else {
+        eprintln!("AMQP_TEST_URL unset: skipped");
+        return;
+    };
+    let queue = format!("ekiben-late-ack-{}", std::process::id());
+    let conn = Connection::connect(&url, ConnectionProperties::default())
+        .await
+        .expect("publisher connects");
+    let ch = conn.create_channel().await.expect("channel");
+    ch.queue_declare(
+        queue.clone().into(),
+        QueueDeclareOptions::default(),
+        FieldTable::default(),
+    )
+    .await
+    .expect("declare");
+    ch.basic_publish(
+        "".into(),
+        queue.clone().into(),
+        BasicPublishOptions::default(),
+        b"late",
+        BasicProperties::default(),
+    )
+    .await
+    .expect("publish")
+    .await
+    .expect("confirm");
+    let mut input = AmqpInput::from_config(&ComponentConfig {
+        label: String::new(),
+        component_type: "amqp_0_9".into(),
+        config: json!({"urls": [url], "queue": queue, "prefetch_count": 1}),
+        processors: Vec::new(),
+    })
+    .expect("builds");
+    let c = ctx();
+    let (b, ack) = next(&mut input, &c).await;
+    assert_eq!(text(&b), "late");
+    input.close().await.expect("close");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let q = ch
+        .queue_declare(
+            queue.clone().into(),
+            QueueDeclareOptions {
+                passive: true,
+                ..QueueDeclareOptions::default()
+            },
+            FieldTable::default(),
+        )
+        .await
+        .expect("passive declare");
+    assert_eq!(
+        q.message_count(),
+        1,
+        "the unacked message went back to the queue"
+    );
+    let _ = ch.queue_delete(queue.into(), Default::default()).await;
+}
