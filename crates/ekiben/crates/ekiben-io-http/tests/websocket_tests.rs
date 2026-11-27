@@ -265,6 +265,28 @@ async fn bento_input_websocket_test_websocket_open_msg() {
     );
 }
 
+/// A server that completes the handshake and closes at once: sending the open messages fails
+/// the connect, named, instead of reading from a dead socket.
+#[tokio::test]
+async fn an_open_message_the_closed_server_cannot_take_fails_the_connect() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            drop(handshake(stream).await);
+        }
+    });
+    let (reg, ctx, _stop) = context(true, Environment::new());
+    let big = "x".repeat(64 * 1024);
+    let mut input = build(
+        json!({"url": format!("ws://{addr}/ws"), "open_messages": vec![big; 32]}),
+        &ctx,
+        &reg,
+    );
+    let err = input.connect(&ctx).await.expect_err("refused");
+    assert!(err.to_string().contains("websocket open message: "), "{err}");
+}
+
 /// A header case: name, the configured headers, and the headers the server must see.
 type HeaderCase = (&'static str, Value, Vec<(&'static str, &'static str)>);
 
