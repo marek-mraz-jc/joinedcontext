@@ -121,9 +121,7 @@ pub fn validate_full_ref_name(refname: &str) -> ShakoResult<()> {
             "reference '{refname}' must be HEAD or under refs/heads/, refs/tags/, or refs/pull/"
         )));
     }
-    gix_validate::reference::name(refname.as_bytes().into()).map_err(|e| {
-        ShakoError::Unprocessable(format!("invalid git reference '{refname}': {e}"))
-    })?;
+    // Path components first (naming the component), then Git's own rules for the rest.
     for comp in refname.split('/') {
         if comp.is_empty() || comp == "." || comp == ".." || comp.eq_ignore_ascii_case(".git") {
             return Err(ShakoError::Unprocessable(format!(
@@ -131,6 +129,9 @@ pub fn validate_full_ref_name(refname: &str) -> ShakoResult<()> {
             )));
         }
     }
+    gix_validate::reference::name(refname.as_bytes().into()).map_err(|e| {
+        ShakoError::Unprocessable(format!("invalid git reference '{refname}': {e}"))
+    })?;
     Ok(())
 }
 
@@ -372,6 +373,33 @@ mod tests {
         assert!(validate_repo_or_owner_name("a..b", "repository").is_err());
         assert!(validate_full_ref_name("").is_err());
         assert!(validate_full_ref_name(&format!("refs/heads/{}", "a".repeat(250))).is_err());
+        for bad in [
+            "refs/heads//x",
+            "refs/heads/",
+            "refs/heads/../x",
+            "refs/heads/./x",
+            "refs/heads/.git",
+            "refs/tags/.GIT/x",
+        ] {
+            let err = validate_full_ref_name(bad).expect_err(bad);
+            assert!(
+                err.to_string().contains("invalid component"),
+                "{bad:?}: {err}"
+            );
+        }
+        for bad in [
+            "refs/heads/a b",
+            "refs/heads/a..b",
+            "refs/heads/x.lock",
+            "refs/heads/.hidden",
+        ] {
+            let err = validate_full_ref_name(bad).expect_err(bad);
+            assert!(
+                err.to_string().contains("invalid git reference"),
+                "{bad:?}: {err}"
+            );
+        }
+        assert!(validate_full_ref_name("refs/pull/7/head").is_ok());
         for bad in ["", "/lead", "trail/", "a..b"] {
             assert!(validate_branch_name(bad).is_err(), "{bad:?}");
         }
