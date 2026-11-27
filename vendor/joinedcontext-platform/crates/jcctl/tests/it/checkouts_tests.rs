@@ -4,7 +4,7 @@
 use crate::common;
 
 use common::{temp_dir, write, ENDPOINT, ORG, PROJECT, SPACE};
-use jcctl::commands::checkouts::{mounted_secret, sync, Options};
+use jcctl::commands::checkouts::{mounted_secret, sync, sync_with, Options};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -366,6 +366,35 @@ fn a_full_pass_removes_a_stray_project_with_its_cache_and_leaves_dot_entries() {
     std::fs::write(projects.join("stray-file"), "x").expect("a stray file");
     let said = sync(&org, &projects, &options).expect_err("a file is not a project folder");
     assert!(said.contains("stray-file"), "{said}");
+}
+
+/// A full pass through a resolver that keeps no cache (`jc` reads its forge over HTTP) removes a
+/// stray project all the same; a projects directory the pass may write but not list is an error
+/// naming it.
+#[cfg(unix)]
+#[test]
+fn a_pass_without_a_cache_removes_a_stray_project_and_an_unlistable_directory_is_named() {
+    use jc_manifest::assemble::Directories;
+    use std::os::unix::fs::PermissionsExt;
+    let (_forge, work, org, options) = setup("checkouts-no-cache");
+    let projects = temp_dir("checkouts-no-cache-projects");
+    let resolver = Directories(std::collections::BTreeMap::from([(
+        "ovzdusie".to_owned(),
+        work.clone(),
+    )]));
+    std::fs::create_dir_all(projects.join("leftover")).expect("a stray project");
+    let pass = sync_with(&org, &projects, &options, &resolver).expect("a pass");
+    assert_eq!(pass.len(), 1);
+    assert_eq!(pass[0].result, Ok(work.clone()));
+    assert!(!projects.join("leftover").exists(), "the stray folder goes");
+    assert!(!projects.join(".cache").exists(), "no cache was made");
+
+    std::fs::set_permissions(&projects, std::fs::Permissions::from_mode(0o300))
+        .expect("write-only");
+    let said = sync_with(&org, &projects, &options, &resolver);
+    std::fs::set_permissions(&projects, std::fs::Permissions::from_mode(0o755)).expect("listable");
+    let said = said.expect_err("the directory cannot be listed");
+    assert!(said.contains(&projects.display().to_string()), "{said}");
 }
 
 /// A plain folder where the link goes is replaced by the link; one that cannot be removed leaves

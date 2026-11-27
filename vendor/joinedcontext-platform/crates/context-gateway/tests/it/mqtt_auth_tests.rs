@@ -863,6 +863,50 @@ async fn the_router_admits_the_runner_from_its_hosts_addresses_only() {
     );
 }
 
+/// ADR-N-048 §2.10: on the internal router, the Portal's tokenless capture subscriber is admitted
+/// from what the configured Portal host resolves to, and from nowhere when no host is configured.
+#[tokio::test]
+async fn the_router_admits_the_capture_from_the_portals_addresses_only() {
+    let f = Fixture::new("capture-router");
+    let gateway = Gateway::new(
+        Broker::new("http://broker.invalid:1026"),
+        Box::new(PolicyPdp),
+        "banskabystrica.sk",
+    )
+    .authenticate(Arc::new(f.realm.verifier()), f.accounts.clone(), None);
+    gateway.replace_brokers(f.brokers.clone());
+    let gateway = Arc::new(gateway);
+    let ask = |host: Option<&str>, ipaddr: &str| {
+        let app = proxied(internal_router(
+            Arc::clone(&gateway),
+            None,
+            host.map(str::to_owned),
+            None,
+            None,
+        ));
+        let body = json!({
+            "clientid": "jc-portal-capture-mqtt-ovzdusie-probe", "username": "jc-portal-capture",
+            "password": "", "ipaddr": ipaddr
+        })
+        .to_string();
+        async move {
+            let request = Request::post("/internal/mqtt/auth")
+                .header("content-type", "application/json")
+                .header("l5d-client-id", PROBE)
+                .body(Body::from(body))
+                .expect("a request");
+            let response = app.oneshot(request).await.expect("answers");
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .expect("a body");
+            serde_json::from_slice::<Value>(&bytes).expect("json")["result"].clone()
+        }
+    };
+    assert_eq!(ask(Some("localhost"), "127.0.0.1").await, "allow");
+    assert_eq!(ask(Some("localhost"), PORTAL_POD).await, "deny");
+    assert_eq!(ask(None, "127.0.0.1").await, "deny");
+}
+
 /// T-5893: the internal router resolves the brokers' headless Service and admits the tokenless
 /// runner from what it lists; without the host, or for a caller that is no declared broker, the
 /// runner's name stays refused there.

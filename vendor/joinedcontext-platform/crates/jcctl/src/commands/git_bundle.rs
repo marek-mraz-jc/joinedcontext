@@ -53,15 +53,18 @@ pub enum BundleError {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, BundleError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|err| BundleError::Git {
-            args: args.join(" "),
-            message: err.to_string(),
-        })?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(dir).args(args);
+    output_of(command, args)
+}
+
+/// What a git `command` run with `args` printed, trimmed; `Err` naming `args` when it does not
+/// start or exits non-zero.
+fn output_of(mut command: Command, args: &[&str]) -> Result<String, BundleError> {
+    let output = command.output().map_err(|err| BundleError::Git {
+        args: args.join(" "),
+        message: err.to_string(),
+    })?;
     if !output.status.success() {
         return Err(BundleError::Git {
             args: args.join(" "),
@@ -334,4 +337,30 @@ pub fn import(dir: &Path, out_dir: &Path) -> Result<Imported, BundleError> {
     Ok(Imported {
         repositories: landed,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A git that does not start, and one that exits non-zero, are each a git error naming the
+    /// arguments and the reason.
+    #[test]
+    fn a_git_that_does_not_start_or_fails_names_its_arguments() {
+        let err = output_of(
+            Command::new("/nonexistent/jc-no-git"),
+            &["bundle", "create"],
+        )
+        .expect_err("nothing runs");
+        let shown = err.to_string();
+        assert!(shown.starts_with("git bundle create: "), "{shown}");
+        assert!(shown.len() > "git bundle create: ".len(), "{shown}");
+        let err =
+            git(&std::env::temp_dir(), &["no-such-subcommand-of-git"]).expect_err("git refuses");
+        let shown = err.to_string();
+        assert!(
+            shown.starts_with("git no-such-subcommand-of-git: "),
+            "{shown}"
+        );
+    }
 }

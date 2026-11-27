@@ -1152,4 +1152,75 @@ mod tests {
         ));
         assert_eq!(reported.len(), 1);
     }
+
+    fn gateway() -> Gateway {
+        Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "hel.fi",
+        )
+    }
+
+    /// T-6793: a warn window that has passed refuses as under enforce, and says so once; a
+    /// mismatch reported again within the hour is counted and not logged again.
+    #[test]
+    fn a_passed_warn_window_refuses_and_a_repeated_mismatch_is_counted() {
+        let mut gateway = gateway();
+        gateway.urn_owner_prefix = crate::config::UrnOwnerPrefix::Warn {
+            until: std::time::SystemTime::UNIX_EPOCH,
+        };
+        for _ in 0..2 {
+            let owner = gateway.urn_owner("city").expect("an owner");
+            assert!(!owner.warn);
+            assert_eq!(owner.domain, "hel.fi");
+        }
+        assert!(gateway.urn_owner_warn_ended.load(Ordering::Relaxed));
+        let foreign = [("urn:ngsi-ld:A:fi_esp:1".to_owned(), "fi_esp".to_owned())];
+        gateway.urn_owner_mismatched("s", "praha", &foreign);
+        gateway.urn_owner_mismatched("s", "praha", &foreign);
+        let reported = gateway
+            .urn_owner_reported
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        assert_eq!(reported.len(), 1, "one pair, logged once");
+    }
+
+    /// A request of unknown length takes the share of the largest body the gateway accepts.
+    #[tokio::test]
+    async fn a_body_of_unknown_length_takes_the_largest_share() {
+        let gateway = gateway();
+        let share = gateway.write_share(None).await.expect("a share");
+        let largest = u32::try_from(gateway.max_request_body().div_ceil(1024))
+            .unwrap_or(u32::MAX)
+            .clamp(1, gateway.write_budget_kib);
+        assert_eq!(share.num_permits(), largest as usize);
+    }
+
+    /// RFC 8707: the host a request came in on names the hub and a server as a resource beside
+    /// the deployment's public URL; without a public URL, the host alone.
+    #[tokio::test]
+    async fn the_host_a_request_came_in_on_is_an_audience() {
+        let gateway = gateway();
+        let server = crate::mcp::server::McpServer::org_all();
+        let (hub, served) = HOST_BASE
+            .scope("https://kraj.test".to_owned(), async {
+                (gateway.hub_audiences(), gateway.server_audiences(&server))
+            })
+            .await;
+        assert_eq!(
+            hub,
+            [
+                HUB_AUDIENCE.to_owned(),
+                format!("https://kraj.test{HUB_PATH}")
+            ]
+        );
+        assert_eq!(
+            served,
+            [
+                server.client(),
+                format!("https://kraj.test{}", server.path())
+            ]
+        );
+        assert_eq!(gateway.server_audiences(&server), [server.client()]);
+    }
 }

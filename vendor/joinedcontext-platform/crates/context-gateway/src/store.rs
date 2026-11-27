@@ -333,16 +333,21 @@ pub fn space_tenant(
 ) -> Result<Tenant, String> {
     match names {
         TenantNames::Segment => {
-            Tenant::segment(&repo.space_segment(project, space)).map_err(|err| err.to_string())
+            Tenant::segment(&repo.space_segment(project, space)).map_err(reason)
         }
         TenantNames::ProjectKey => {
             let organization = repo.space_organization(project)?;
             let name = tenant_name(project, space, String::new, names)?;
             jc_core::names::TenantName::parse(&name)
                 .and_then(|name| Tenant::keyed(&name, &organization))
-                .map_err(|err| err.to_string())
+                .map_err(reason)
         }
     }
+}
+
+/// The words of a name that is not a tenant.
+fn reason(err: jc_core::Error) -> String {
+    err.to_string()
 }
 
 /// [`space_tenant`], with the operator event for a space that gets none: its Endpoints answer
@@ -512,6 +517,11 @@ pub fn load(dir: &Path) -> Result<Tables, jc_manifest::loader::LoadError> {
     load_named(dir, TenantNames::from_env())
 }
 
+/// The installation's environment, `JC_ENVIRONMENT`, when it names one; a blank value names none.
+fn environment_of(value: Option<String>) -> Option<String> {
+    value.filter(|value| !value.trim().is_empty())
+}
+
 /// [`load`] with the tenants named as `names` says, whatever the environment holds.
 pub fn load_named(
     dir: &Path,
@@ -553,9 +563,7 @@ pub fn load_from(
             (!slug.starts_with('.')).then(|| (slug, entry.path()))
         })
         .collect();
-    let environment = std::env::var("JC_ENVIRONMENT")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    let environment = environment_of(std::env::var("JC_ENVIRONMENT").ok());
     let mut renders = checkouts
         .renders
         .lock()
@@ -817,9 +825,7 @@ pub fn load_with_previews(
         provenance,
     ) = load_from(dir, checkouts)?;
     let mut provenance = provenance;
-    let environment = std::env::var("JC_ENVIRONMENT")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
+    let environment = environment_of(std::env::var("JC_ENVIRONMENT").ok());
     for (prefix, root) in previews.map(crate::previews::listed).unwrap_or_default() {
         let access = crate::previews::access_of(&root);
         let repo = match Repository::load_preview_salted(
@@ -1830,6 +1836,8 @@ mod tests {
                 ("server.yaml", manifest("McpServer", "city", "all", "  members: 5\n")),
                 ("mapping.yaml", manifest("Mapping", "city", "m", "  artifacts: 5\n")),
                 ("assistant.yaml", manifest("AssistantDeployment", "city", "chat", "  enabled: maybe\n")),
+                ("projection.yaml", manifest("ModelProjection", "city", "narrow", "  nonsense: 1\n")),
+                ("model.yaml", manifest("DataModel", "city", "air-model", "  nonsense: 1\n")),
             ],
         );
         assert!(tables.0.is_empty(), "no Endpoint");
@@ -1902,6 +1910,14 @@ mod tests {
             "t7896-keyed".to_owned(),
             jc_types::ProjectKey::new(jc_types::OrgId::mint(), jc_types::ProjectId::mint()),
         )]));
+        let same = BTreeMap::from([(
+            "t7896-keyed".to_owned(),
+            super::project_key("t7896-keyed").expect("published"),
+        )]);
+        assert!(
+            !super::publish_project_keys(same),
+            "the same keys again change nothing"
+        );
         let keyed = tenant_name("t7896-keyed", "air", String::new, TenantNames::ProjectKey)
             .expect("a key and a space name");
         assert!(keyed.ends_with("__air"), "{keyed}");
@@ -1912,6 +1928,70 @@ mod tests {
             TenantNames::ProjectKey,
         );
         assert!(bad.expect_err("not a label").contains("lower-case"));
+    }
+
+    /// A space whose segment is no space name has no tenant, and the error names why.
+    #[test]
+    fn a_segment_that_is_no_space_name_is_no_tenant() {
+        let dir = std::env::temp_dir().join(format!(
+            "gw-store-unit-segment-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a repository");
+        let repo = super::Repository::load(&dir).expect("an empty repository loads");
+        let _ = std::fs::remove_dir_all(&dir);
+        let refused = super::space_tenant(&repo, "City", "Air", super::TenantNames::Segment);
+        assert!(refused.is_err(), "{refused:?}");
+        let tenant = super::space_tenant(&repo, "city", "air", super::TenantNames::Segment)
+            .expect("a segment tenant");
+        assert_eq!(tenant.as_str(), "city-air");
+    }
+
+    /// `JC_ENVIRONMENT` names an environment only with a value that is not blank.
+    #[test]
+    fn a_blank_environment_names_none() {
+        assert_eq!(super::environment_of(None), None);
+        assert_eq!(super::environment_of(Some("  ".into())), None);
+        assert_eq!(
+            super::environment_of(Some("dev".into())).as_deref(),
+            Some("dev")
+        );
+    }
+
+    /// EP-127: an Endpoint's own publisher and desk stay; one without a block takes its
+    /// Project's; without a Project publisher the block is as written.
+    #[test]
+    fn an_endpoint_keeps_its_own_publisher_and_desk() {
+        let project: jc_core::kinds::ProjectCatalog = serde_json::from_value(json!({
+            "publisher": {"name": {"en": "City"}},
+            "contactPoint": {"name": "Desk", "email": "desk@city.test"}
+        }))
+        .expect("a project catalog");
+        let publisher = super::ProjectPublisher {
+            title: BTreeMap::new(),
+            description: BTreeMap::new(),
+            domain: None,
+            catalog: project.clone(),
+        };
+        let own = jc_core::kinds::Catalog {
+            publisher: Some(
+                serde_json::from_value(json!({"name": {"en": "Own"}})).expect("a publisher"),
+            ),
+            contact_point: Some(
+                serde_json::from_value(json!({"name": "Own desk", "email": "own@city.test"}))
+                    .expect("a desk"),
+            ),
+            ..Default::default()
+        };
+        let kept = super::with_publisher(Some(own.clone()), Some(&publisher)).expect("a block");
+        assert_eq!(kept.publisher, own.publisher);
+        assert_eq!(kept.contact_point, own.contact_point);
+        let filled = super::with_publisher(None, Some(&publisher)).expect("a block");
+        assert_eq!(filled.publisher, Some(project.publisher));
+        assert_eq!(filled.contact_point, project.contact_point);
+        assert!(super::with_publisher(None, None).is_none());
     }
 
     /// T-6868 (I-4): an Organization manifest whose spec does not parse is no Organization a
@@ -2015,6 +2095,15 @@ mod tests {
                  information: [{{ entities: [{{ type: Event }}] }}]\n"
             )
         };
+        let pipeline = |name: &str| {
+            format!(
+                "{header} Pipeline\nmetadata:\n  name: {name}\n  namespace: helsinki\nspec:\n  \
+                 class: auto\n  period: 30m\n  source:\n    \
+                 dataSourceRef: {{ kind: DataSource, name: feed }}\n  \
+                 targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:events:events-a\n  \
+                 output:\n    type: Event\n    mode: upsert\n"
+            )
+        };
         for (file, body) in [
             (
                 "space.yaml",
@@ -2025,7 +2114,11 @@ mod tests {
             ),
             (
                 "a.yaml",
-                endpoint("events-a", "aaaaaaaaaaaaaaaaaaaaaaaaaa", "a-read"),
+                endpoint(
+                    "events-a",
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "a-read, urn:ngsi-ld:Policy:hel.fi:events:pl-sync-w-1",
+                ),
             ),
             (
                 "b.yaml",
@@ -2033,16 +2126,9 @@ mod tests {
             ),
             ("a-read.yaml", policy("a-read")),
             ("b-read.yaml", policy("b-read")),
-            (
-                "pipeline.yaml",
-                format!(
-                    "{header} Pipeline\nmetadata:\n  name: load\n  namespace: helsinki\nspec:\n  \
-                     class: auto\n  period: 30m\n  source:\n    \
-                     dataSourceRef: {{ kind: DataSource, name: feed }}\n  \
-                     targetEndpoint: urn:ngsi-ld:Endpoint:hel.fi:events:events-a\n  \
-                     output:\n    type: Event\n    mode: upsert\n"
-                ),
-            ),
+            ("pipeline.yaml", pipeline("load")),
+            // A Pipeline grant the Endpoint lists as well is bound once.
+            ("sync.yaml", pipeline("sync")),
         ] {
             std::fs::write(dir.join(file), body).expect("a manifest");
         }
@@ -2057,7 +2143,7 @@ mod tests {
             names.sort();
             names
         };
-        assert_eq!(names("events-a"), ["a-read", "pl-load-w-1"]);
+        assert_eq!(names("events-a"), ["a-read", "pl-load-w-1", "pl-sync-w-1"]);
         assert_eq!(names("events-b"), ["b-read"]);
     }
 
@@ -2604,6 +2690,9 @@ mod tests {
 
         assert_eq!(read("inside.blobl").as_deref(), Some("root = this"));
         assert_eq!(read("x.blobl"), None);
+        // A directory inside the repository is no artifact either: it does not read as text.
+        std::fs::create_dir_all(repo.join("projects/folder.blobl")).expect("a directory");
+        assert_eq!(read("folder.blobl"), None);
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -2628,5 +2717,10 @@ mod tests {
         assert_eq!(escaped, PathBuf::from("/etc/passwd"));
         assert!(!escaped.starts_with(root), "{}", escaped.display());
         assert_eq!(normalize(&root.join("../../etc/passwd")), None);
+        // A relative path that starts at `.` keeps the rest of it.
+        assert_eq!(
+            normalize(Path::new("./projects/model.schema.json")),
+            Some(PathBuf::from("projects/model.schema.json"))
+        );
     }
 }

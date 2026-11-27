@@ -325,9 +325,9 @@ mod tests {
             .await
             .expect("a free port");
         let port = listener.local_addr().expect("an address").port();
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, app,
+        )));
         format!("http://127.0.0.1:{port}")
     }
 

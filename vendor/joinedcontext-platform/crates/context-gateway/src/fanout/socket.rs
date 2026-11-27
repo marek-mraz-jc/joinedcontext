@@ -15,7 +15,8 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use tokio::time::Instant;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message;
@@ -455,11 +456,13 @@ async fn upstream(gateway: Arc<Gateway>, hub: Arc<Hub>, headers: HeaderMap) {
             }
         };
         backoff = Duration::from_secs(1);
+        let (to_broker, from_broker) = socket.split();
         let ended = run(
             &gateway,
             &hub,
             &headers,
-            socket,
+            to_broker,
+            from_broker,
             resume.take(),
             &mut started,
         )
@@ -500,16 +503,18 @@ async fn hold(gateway: &Gateway, hub: &Arc<Hub>) {
     }
 }
 
-/// One upstream connection, until it ends; what a resume needs when it ended by its lifetime.
+/// One upstream connection, the two halves of its socket, until it ends; what a resume needs
+/// when it ended by its lifetime.
 async fn run(
     gateway: &Arc<Gateway>,
     hub: &Arc<Hub>,
     headers: &HeaderMap,
-    socket: Upstream,
+    mut to_broker: impl futures_util::Sink<Message> + Unpin,
+    mut from_broker: impl futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
     resume: Option<(String, String, u64)>,
     started: &mut bool,
 ) -> Option<(String, String, u64)> {
-    let (mut to_broker, mut from_broker) = socket.split();
     let mut name = String::new();
     let mut token = String::new();
     let mut seq = 0_u64;
@@ -701,9 +706,8 @@ async fn read_view(
     mut each: impl FnMut(Value),
 ) -> bool {
     static TURNS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(SNAPSHOTS);
-    let Ok(_turn) = TURNS.acquire().await else {
-        return false;
-    };
+    // Nothing closes this static semaphore, so the acquire waits for a turn and never fails.
+    let _turn = TURNS.acquire().await;
     let mut offset = 0;
     let mut limit = PAGE;
     while offset < bound() {
@@ -805,19 +809,7 @@ pub async fn session(
     let (name, token) = named.clone().unwrap_or_default();
     let mut seq = 0_u64;
     let mut sent = Kept::default();
-    let welcome =
-        json!({"metadata": {"x-op": "x-welcome", "x-connection": name, "x-resume-token": token}});
-    let mut ended = if named.is_none() {
-        Some(Ended::Closing("unavailable"))
-    } else if to_client
-        .send(ws::Message::text(welcome.to_string()))
-        .await
-        .is_err()
-    {
-        Some(Ended::Closed)
-    } else {
-        None
-    };
+    let mut ended = welcome(&mut to_client, named.as_ref()).await;
     let mut ping = tokio::time::interval(PING);
     ping.tick().await;
     // When the oldest ping the client has not answered yet went out.
@@ -967,9 +959,26 @@ fn tick(
     }
 }
 
+/// Greets the client with its connection name and resume token: how the session ends when it
+/// cannot, with no name (no randomness) or with the client gone.
+async fn welcome(
+    to_client: &mut (impl futures_util::Sink<ws::Message> + Unpin),
+    named: Option<&(String, String)>,
+) -> Option<Ended> {
+    let Some((name, token)) = named else {
+        return Some(Ended::Closing("unavailable"));
+    };
+    let welcome =
+        json!({"metadata": {"x-op": "x-welcome", "x-connection": name, "x-resume-token": token}});
+    match to_client.send(ws::Message::text(welcome.to_string())).await {
+        Ok(()) => None,
+        Err(_) => Some(Ended::Closed),
+    }
+}
+
 /// Sends one frame within [`STALL`]: how the session ends when it cannot.
 async fn deliver(
-    to_client: &mut SplitSink<WebSocket, ws::Message>,
+    to_client: &mut (impl futures_util::Sink<ws::Message> + Unpin),
     message: ws::Message,
 ) -> Option<Ended> {
     match tokio::time::timeout(STALL, to_client.send(message)).await {
@@ -1155,6 +1164,8 @@ fn resume(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::IntoFuture;
+    use tokio_tungstenite::tungstenite::Error;
 
     fn hub_with_closed(sent: &[u64]) -> (Hub, u64) {
         let hub = Hub::new("s", 10);
@@ -1336,10 +1347,10 @@ mod tests {
             Ok(()),
             "e1 lingers"
         );
+        let keys = format!("{:?}", hubs.keys());
         assert!(
             !hubs.contains_key("e1") && hubs.contains_key("idle"),
-            "{:?}",
-            hubs.keys()
+            "{keys}"
         );
 
         let person = upstream_headers(
@@ -1901,12 +1912,14 @@ mod tests {
         let socket = connect(&gateway, "s", &HeaderMap::new())
             .await
             .expect("connect");
+        let (to_broker, from_broker) = socket.split();
         let mut started = false;
         let ended = run(
             &gateway,
             &hub,
             &HeaderMap::new(),
-            socket,
+            to_broker,
+            from_broker,
             resume,
             &mut started,
         )
@@ -1962,6 +1975,80 @@ mod tests {
         );
         assert!(read.iter().any(|r| r.contains("x-subscribe")), "{read:?}");
         assert_eq!(hub.refused(), Some(503));
+    }
+
+    /// A sink that answers its sends with `results`, one each, in order.
+    fn scripted_sink<T>(
+        results: Vec<Result<(), Error>>,
+    ) -> std::pin::Pin<Box<impl futures_util::Sink<T, Error = Error>>> {
+        Box::pin(futures_util::sink::unfold(
+            results.into_iter(),
+            |mut results, _: T| async move {
+                results.next().expect("a scripted send").map(|()| results)
+            },
+        ))
+    }
+
+    /// The broker's frames `frames`, then nothing more: the run never reads the end.
+    fn broker_frames(
+        frames: Vec<Value>,
+    ) -> impl futures_util::Stream<Item = Result<Message, Error>> + Unpin {
+        futures_util::stream::iter(frames.into_iter().map(|frame| Ok(text(frame))))
+            .chain(futures_util::stream::pending())
+    }
+
+    /// A broker gone when the upstream sends its first message, or when it subscribes again after
+    /// a resume the broker no longer holds, ends the run with nothing to resume; a repeated
+    /// welcome is read past.
+    #[tokio::test]
+    async fn a_broker_gone_under_a_send_ends_the_run() {
+        let gateway = Arc::new(gateway_at(nowhere()));
+        let (hub, _queue) = busy_hub();
+        let welcome = json!({"metadata": {"x-op": "x-welcome", "x-connection": "c1", "x-resume-token": "t1"}});
+        let mut started = false;
+        let ended = run(
+            &gateway,
+            &hub,
+            &HeaderMap::new(),
+            scripted_sink(vec![Err(Error::ConnectionClosed)]),
+            broker_frames(vec![welcome.clone()]),
+            None,
+            &mut started,
+        )
+        .await;
+        assert_eq!(ended, None);
+        // A second welcome on the same upstream sends the first message no second time (the
+        // sink takes one send only): the run reads on, and the broker's close is resumable
+        // under the name the last welcome gave.
+        let again = json!({"metadata": {"x-op": "x-welcome", "x-connection": "c2", "x-resume-token": "t2"}});
+        let ended = run(
+            &gateway,
+            &hub,
+            &HeaderMap::new(),
+            scripted_sink(vec![Ok(())]),
+            futures_util::stream::iter([
+                Ok(text(welcome.clone())),
+                Ok(text(again)),
+                Ok(Message::Close(None)),
+            ]),
+            None,
+            &mut started,
+        )
+        .await;
+        assert_eq!(ended, Some(("c2".into(), "t2".into(), 0)));
+        let lost = json!({"metadata": {"x-op": "x-result", "x-id": "resume", "x-status": 410}});
+        let ended = run(
+            &gateway,
+            &hub,
+            &HeaderMap::new(),
+            scripted_sink(vec![Ok(()), Err(Error::ConnectionClosed)]),
+            broker_frames(vec![welcome, lost]),
+            Some(("c0".into(), "t0".into(), 3)),
+            &mut started,
+        )
+        .await;
+        assert_eq!(ended, None);
+        assert!(!started);
     }
 
     /// A broker that closes ends the run resumable; a hub no longer held ends it on the tick.
@@ -2025,19 +2112,23 @@ mod tests {
             .await
             .expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("address"));
-        tokio::spawn(async move { axum::serve(listener, broker).await });
+        tokio::spawn(axum::serve(listener, broker).into_future());
         let gateway = Arc::new(gateway_at(url));
+        let mut read = 0;
+        fn count(read: &mut usize) -> impl FnMut(Value) + '_ {
+            move |_| *read += 1
+        }
         for slug in ["refused", "huge", "object"] {
             assert!(
-                !read_view(&gateway, slug, HeaderMap::new(), |_| {}).await,
+                !read_view(&gateway, slug, HeaderMap::new(), count(&mut read)).await,
                 "{slug}"
             );
         }
-        let mut read = 0;
-        assert!(read_view(&gateway, "full", HeaderMap::new(), |_| read += 1).await);
-        assert_eq!(read, bound());
         let unreachable = gateway_at(nowhere());
-        assert!(!read_view(&unreachable, "s", HeaderMap::new(), |_| {}).await);
+        assert!(!read_view(&unreachable, "s", HeaderMap::new(), count(&mut read)).await);
+        assert_eq!(read, 0, "a failed read hands over nothing");
+        assert!(read_view(&gateway, "full", HeaderMap::new(), count(&mut read)).await);
+        assert_eq!(read, bound());
         let refused = Arc::new(Hub::new("refused", 10));
         let (_, refused_queue) = refused.open(
             crate::fanout::hub::tests_support::endpoint(),
@@ -2087,6 +2178,58 @@ mod tests {
         let (code, texts) = close_code(&mut ws).await;
         assert_eq!(code, Some(NORMAL));
         assert!(texts.iter().any(|t| t.contains("overflow")), "{texts:?}");
+    }
+
+    /// The welcome is not sent without a name, and a client gone before it ends the session; a
+    /// frame the client does not take within [`STALL`] ends it with `overflow`, one it cannot
+    /// take ends it as closed.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_session_ends_when_it_cannot_greet_or_deliver() {
+        let named = ("c1".to_owned(), "t1".to_owned());
+        let mut taken = futures_util::sink::drain();
+        assert_eq!(
+            welcome(&mut taken, None).await,
+            Some(Ended::Closing("unavailable"))
+        );
+        assert_eq!(welcome(&mut taken, Some(&named)).await, None);
+        let mut gone = scripted_sink(vec![Err(Error::ConnectionClosed)]);
+        assert_eq!(welcome(&mut gone, Some(&named)).await, Some(Ended::Closed));
+        let mut gone = scripted_sink(vec![Err(Error::ConnectionClosed)]);
+        let frame = ws::Message::text("x");
+        assert_eq!(deliver(&mut gone, frame.clone()).await, Some(Ended::Closed));
+        let mut stalled = Box::pin(futures_util::sink::unfold((), |(), _: ws::Message| {
+            std::future::pending::<Result<(), Error>>()
+        }));
+        assert_eq!(
+            deliver(&mut stalled, frame).await,
+            Some(Ended::Closing("overflow"))
+        );
+    }
+
+    /// API/07 §3: a client silent past [`IDLE`] with no subscription ends `idle` at the next
+    /// tick, without another ping.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_silent_client_without_a_subscription_ends_idle() {
+        let url = served().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("connect");
+        let greeted = ws.next().await.expect("a frame").expect("a readable frame");
+        assert!(greeted.to_text().expect("text").contains("x-welcome"));
+        // Nothing is read while the clock jumps past the idle bound, so no ping is answered:
+        // the first tick finds the client silent and no ping outstanding. The frames after it
+        // are read without a deadline of their own, which the paused clock would run out.
+        tokio::time::advance(IDLE + PING / 2).await;
+        let mut texts = Vec::new();
+        let code = loop {
+            match ws.next().await.expect("a frame").expect("a readable frame") {
+                Message::Close(frame) => break frame.map(|f| u16::from(f.code)),
+                // a ping or a binary frame reads as no text
+                other => texts.push(other.to_text().unwrap_or_default().to_owned()),
+            }
+        };
+        assert_eq!(code, Some(NORMAL));
+        assert!(texts.iter().any(|t| t.contains("\"idle\"")), "{texts:?}");
     }
 
     /// API/07 §3: a silent client is pinged.

@@ -523,6 +523,12 @@ async fn the_open_data_host_answers_an_endpoint_that_is_not_open_data_as_unknown
         let (status, body) = get_as(&app, Some("opendata"), &path).await;
         assert_eq!(status, StatusCode::OK, "{path}: {body}");
     }
+    // An address that names no Endpoint, space or server is the gateway's own: the open data
+    // host answers it as the API host does.
+    assert_eq!(
+        get_as(&app, Some("opendata"), "/livez").await,
+        get_as(&app, None, "/livez").await
+    );
     // The API host and no host role: every Endpoint, space and server as today.
     for role in [Some("api"), None] {
         for path in [

@@ -1328,6 +1328,17 @@ fn drift_options(args: &[&str]) -> Option<(bool, Option<PathBuf>, Connection)> {
 
 /// Converges the platform and prints the per-resource result (CC-18, CC-20).
 fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> ExitCode {
+    apply_on(dir, options, live, &mut InMemory::new())
+}
+
+/// [`apply`], replayed on `platform`: the command replays on an empty [`InMemory`], a test on
+/// one that refuses what it is handed.
+fn apply_on(
+    dir: &Path,
+    options: commands::apply::Options,
+    live: Connection,
+    platform: &mut dyn jcctl::platform::Platform,
+) -> ExitCode {
     let repo = match Repository::load(dir) {
         Ok(repo) => repo,
         Err(err) => return fail(&err.to_string()),
@@ -1345,8 +1356,7 @@ fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> Exi
             return fail(&err);
         }
     }
-    let mut platform = InMemory::new();
-    let report = match commands::apply::run(&repo, &mut platform, options) {
+    let report = match commands::apply::run(&repo, platform, options) {
         Ok(report) => report,
         Err(err) => return fail(&err.to_string()),
     };
@@ -2236,9 +2246,10 @@ mod tests {
 
         let a_file = std::env::temp_dir().join(format!("jcctl-a-file-{}", std::process::id()));
         std::fs::write(&a_file, "x").expect("a file");
-        let code = checkouts_every(&nowhere, &a_file, &options, true, interval, |_| {
-            unreachable!("a single pass never waits")
-        });
+        // The real wait: a single pass that called it would sleep the whole interval.
+        let started = std::time::Instant::now();
+        let code = checkouts_every(&nowhere, &a_file, &options, true, interval, pause);
+        assert!(started.elapsed() < interval, "a single pass never waits");
         assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
         assert!(pause(std::time::Duration::from_millis(1)));
         let _ = std::fs::remove_file(&a_file);
@@ -2367,6 +2378,78 @@ mod tests {
             "a gateway that does not answer fails the Endpoint"
         );
         let _ = std::fs::remove_dir_all(&repo_dir);
+    }
+
+    /// EP-174, EP-67: `publish ckan` over a public Endpoint with two catalogues to choose from
+    /// reports it unplanned and fails; an instance whose URL carries credentials fails its
+    /// Endpoint before anything is sent.
+    #[test]
+    fn publish_ckan_fails_on_what_it_cannot_plan_or_open() {
+        const ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n";
+        let instance = |name: &str, url: &str| {
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  url: {url}\n  apiTokenRef: {{ name: ckan-open-data, key: apiToken }}\n  organizationDefault: mesto\n"
+            )
+        };
+        let options = |repo_dir: &Path| PublishCkanOptions {
+            repo_dir: repo_dir.to_path_buf(),
+            project: "ovzdusie".to_owned(),
+            host: "https://data.example.org".to_owned(),
+            organization_title: None,
+            docs_url: None,
+            // Set in every test process, so the token is there; the client refuses before it
+            // is sent anywhere.
+            api_token_env: Some("PATH".to_owned()),
+            age_key_file: None,
+            withdraw: false,
+        };
+        let endpoints = "projects/ovzdusie/spaces/ovzdusie/endpoints/public-air.yaml";
+        // The rest of a repository that validates: the run reads only a valid one.
+        let valid = |root: &Path| {
+            put(
+                root,
+                "org.yaml",
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Organization\nmetadata:\n  name: bb\n  namespace: org\nspec:\n  domain: bb.sk\n  locales: [\"sk\"]\n  defaultLocale: sk\n",
+            );
+            put(
+                root,
+                "projects/ovzdusie/project.yaml",
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: ovzdusie\n  namespace: org\nspec:\n  organizationRef: bb\n",
+            );
+            put(
+                root,
+                "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n",
+            );
+            put(root, endpoints, ENDPOINT);
+        };
+
+        let two = apply_dir("publish-two-catalogues");
+        valid(&two);
+        put(
+            &two,
+            "projects/ovzdusie/ckan/a.yaml",
+            &instance("a", "https://a.example.org"),
+        );
+        put(
+            &two,
+            "projects/ovzdusie/ckan/b.yaml",
+            &instance("b", "https://b.example.org"),
+        );
+        reviewed(&two);
+        assert_eq!(publish_ckan(&options(&two)), ExitCode::FAILURE);
+
+        let credentialed = apply_dir("publish-credentialed");
+        valid(&credentialed);
+        put(
+            &credentialed,
+            "projects/ovzdusie/ckan/open-data.yaml",
+            &instance("open-data", "https://user:pass@catalogue.example.org"),
+        );
+        reviewed(&credentialed);
+        assert_eq!(publish_ckan(&options(&credentialed)), ExitCode::FAILURE);
+        let _ = std::fs::remove_dir_all(&two);
+        let _ = std::fs::remove_dir_all(&credentialed);
     }
 
     /// F-PLT3-019: `--org-domain` names the domain it rewrites; a bare value is refused.
@@ -2835,8 +2918,13 @@ mod tests {
             "projects/air/spaces/air/entities/seed/stations.json",
             r#"[{"id":"urn:ngsi-ld:AirQualityObserved:bb.sk:air:1","type":"AirQualityObserved","index":{"type":"Property","value":1}}]"#,
         );
-        // A run with a gateway writes only from the reviewed main (P-14): a clean commit that
-        // `origin/main` names.
+        reviewed(&root);
+        root
+    }
+
+    /// `root` made a reviewed main (P-14): a clean commit that `origin/main` names, as a run
+    /// with a gateway or a catalogue writes only from.
+    fn reviewed(root: &Path) {
         for args in [
             &["init", "-q", "-b", "main"][..],
             &["add", "-A"],
@@ -2853,13 +2941,12 @@ mod tests {
         ] {
             let ok = std::process::Command::new("git")
                 .arg("-C")
-                .arg(&root)
+                .arg(root)
                 .args(args)
                 .status()
                 .is_ok_and(|status| status.success());
             assert!(ok, "git {args:?}");
         }
-        root
     }
 
     /// A gateway named on the command line, with its token in a file beside the repository.
@@ -2941,11 +3028,11 @@ mod tests {
             "apiVersion: joinedcontext.com/v1alpha1\nkind: NoSuchKind\nmetadata:\n  name: x\n",
         );
         for dir in [broken, apply_dir("gone").join("not-there")] {
+            let shown = dir.display().to_string();
             assert_eq!(
                 apply(&dir, CONFIRMED, Connection::default()),
                 ExitCode::FAILURE,
-                "{}",
-                dir.display()
+                "{shown}"
             );
         }
     }
@@ -2973,6 +3060,77 @@ mod tests {
         ] {
             assert_eq!(
                 apply(&repo, options, Connection::default()),
+                ExitCode::SUCCESS
+            );
+        }
+    }
+
+    /// A platform that lists `listing` for every collection, refuses every write and takes
+    /// every deletion.
+    struct Refusing {
+        listing: Result<Vec<jcctl::loader::RawManifest>, String>,
+    }
+
+    impl jcctl::platform::Platform for Refusing {
+        fn list(
+            &self,
+            _project: &str,
+            _plural: &str,
+        ) -> Result<Vec<jcctl::loader::RawManifest>, jcctl::platform::PlatformError> {
+            self.listing
+                .clone()
+                .map_err(jcctl::platform::PlatformError::Unavailable)
+        }
+
+        fn put(
+            &mut self,
+            _manifest: &jcctl::loader::RawManifest,
+        ) -> Result<(), jcctl::platform::PlatformError> {
+            Err(jcctl::platform::PlatformError::Unavailable(
+                "the platform refuses every write".to_owned(),
+            ))
+        }
+
+        fn delete(
+            &mut self,
+            _id: &jcctl::loader::ResourceId,
+        ) -> Result<(), jcctl::platform::PlatformError> {
+            Ok(())
+        }
+    }
+
+    /// CC-18: a platform that cannot be listed fails the run; one that refuses the writes has
+    /// each refusal and each resource of a later wave reported, a stray deleted or left in
+    /// place as the flags say, and the run still reads the repository to its end.
+    #[test]
+    fn a_platform_that_refuses_is_reported_resource_by_resource() {
+        let repo = seeded_repository("refusing");
+        let mut unlisted = Refusing {
+            listing: Err("the platform is down".to_owned()),
+        };
+        assert_eq!(
+            apply_on(&repo, CONFIRMED, Connection::default(), &mut unlisted),
+            ExitCode::FAILURE
+        );
+        let stray: jcctl::loader::RawManifest = serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "ContextSpace",
+            "metadata": { "name": "stray", "namespace": "air" },
+            "spec": { "isSandbox": false },
+        }))
+        .expect("a manifest");
+        for options in [
+            CONFIRMED,
+            commands::apply::Options {
+                prune: true,
+                confirm_deletions: false,
+            },
+        ] {
+            let mut refusing = Refusing {
+                listing: Ok(vec![stray.clone()]),
+            };
+            assert_eq!(
+                apply_on(&repo, options, Connection::default(), &mut refusing),
                 ExitCode::SUCCESS
             );
         }

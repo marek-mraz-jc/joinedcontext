@@ -698,8 +698,9 @@ fn render_manifests(
         parameters
             .render(&mut manifest)
             .map_err(|err| refused(at(chunk.document_index), err))?;
-        let text = serde_norway::to_string(&manifest)
-            .map_err(|err| refused(at(chunk.document_index), err))?;
+        // A JSON value holds string keys and finite numbers only, so it always serializes (as
+        // `validate` relies on too).
+        let text = serde_norway::to_string(&manifest).unwrap_or_default();
         // Where `parse_yaml_documents` places it in the render: the first at line 1, each later
         // one at its `---`.
         let start_line = written + 1;
@@ -972,18 +973,26 @@ impl GitCheckouts<'_> {
     }
 
     fn git(&self, credential: Option<(&Basic, &str)>, args: &[&str]) -> Result<String, String> {
-        let output = git_command(credential, args)
-            .output()
-            .map_err(|err| format!("git does not run: {err}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "git {}: {}",
-                args.first().copied().unwrap_or_default(),
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        output_of(
+            git_command(credential, args),
+            args.first().copied().unwrap_or_default(),
+        )
     }
+}
+
+/// What a git `command` printed, trimmed; `Err` when it does not start, or names its `step` and
+/// what it wrote to stderr when it exits non-zero.
+fn output_of(mut command: std::process::Command, step: &str) -> Result<String, String> {
+    let output = command
+        .output()
+        .map_err(|err| format!("git does not run: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git {step}: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
 }
 
 /// One git invocation. A credential goes to its repository's URL alone (T-5702): the header is
@@ -1173,6 +1182,19 @@ mod tests {
         let shown = String::from_utf8_lossy(&out.stdout);
         assert!(shown.contains("PATH="), "{shown}");
         assert!(!shown.contains("CARGO_MANIFEST_DIR="), "{shown}");
+    }
+
+    /// A git that is not there is named as such, never as a failed step; one that fails names
+    /// its step and what it wrote.
+    #[test]
+    fn a_git_that_does_not_start_or_fails_is_named() {
+        let missing = std::process::Command::new("/nonexistent/jc-no-git");
+        let err = super::output_of(missing, "clone").expect_err("nothing runs");
+        assert!(err.starts_with("git does not run: "), "{err}");
+        let failing = git_command(None, &["no-such-subcommand-of-git"]);
+        let err = super::output_of(failing, "no-such-subcommand-of-git").expect_err("git fails");
+        assert!(err.starts_with("git no-such-subcommand-of-git: "), "{err}");
+        assert!(err.len() > "git no-such-subcommand-of-git: ".len(), "{err}");
     }
 
     /// T-5702 (F-PLT3-008): an unscoped `http.extraHeader` went with every request of the

@@ -204,10 +204,12 @@ impl Kept {
         self.bytes = self.bytes.saturating_add(text.len());
         self.items.push_back((seq, text));
         while self.items.len() > KEPT || self.bytes > KEPT_BYTES {
-            let Some((_, gone)) = self.items.pop_front() else {
-                break;
-            };
-            self.bytes = self.bytes.saturating_sub(gone.len());
+            // An empty deque holds no bytes, so the loop ends with the last item.
+            let bytes = self.bytes;
+            self.bytes = self
+                .items
+                .pop_front()
+                .map_or(0, |(_, gone)| bytes.saturating_sub(gone.len()));
         }
     }
 
@@ -285,12 +287,23 @@ impl Answer {
 
 /// A connection opened before its upgrade: dropped without [`Joined::take`] (the upgrade
 /// failed and no session ever runs), it leaves the hub, so it never holds a space-cap slot.
-pub struct Joined(Option<(Arc<Hub>, u64, Arc<Queue>)>);
+pub struct Joined {
+    hub: Arc<Hub>,
+    conn: u64,
+    queue: Arc<Queue>,
+    /// Still owns the connection: no session took it.
+    owned: bool,
+}
 
 impl Joined {
     /// Guards connection `conn` of `hub`.
     pub fn new(hub: Arc<Hub>, conn: u64, queue: Arc<Queue>) -> Self {
-        Joined(Some((hub, conn, queue)))
+        Joined {
+            hub,
+            conn,
+            queue,
+            owned: true,
+        }
     }
 
     /// Records that the token the upgrade admitted was issued at the unix second `issued` (its
@@ -298,25 +311,22 @@ impl Joined {
     /// marked after the token but before the gateway's list held it, so after the upgrade
     /// was admitted, still ends the connection (S-3-12). Never later than the open second.
     pub fn issued(&self, issued: i64) {
-        if let Some((hub, conn, _)) = &self.0 {
-            if let Some(conn) = hub.state().conns.get_mut(conn) {
-                conn.issued = conn.issued.min(issued);
-            }
+        if let Some(conn) = self.hub.state().conns.get_mut(&self.conn) {
+            conn.issued = conn.issued.min(issued);
         }
     }
 
     /// The connection, for the session that now owns its close.
     pub fn take(mut self) -> (Arc<Hub>, u64, Arc<Queue>) {
-        self.0
-            .take()
-            .unwrap_or_else(|| unreachable!("taken once, by value"))
+        self.owned = false;
+        (Arc::clone(&self.hub), self.conn, Arc::clone(&self.queue))
     }
 }
 
 impl Drop for Joined {
     fn drop(&mut self) {
-        if let Some((hub, conn, _)) = self.0.take() {
-            hub.discard(conn);
+        if self.owned {
+            self.hub.discard(self.conn);
         }
     }
 }
@@ -441,10 +451,10 @@ impl Hub {
                 .iter()
                 .min_by_key(|(_, closed)| closed.at)
                 .map(|(name, _)| name.clone());
-            let Some(gone) = oldest.and_then(|name| state.closed.remove(&name)) else {
-                break;
-            };
-            bytes = bytes.saturating_sub(kept(&gone));
+            // An empty map holds no bytes, so the loop ends with the last held connection.
+            bytes = oldest
+                .and_then(|name| state.closed.remove(&name))
+                .map_or(0, |gone| bytes.saturating_sub(kept(&gone)));
         }
         if state.conns.is_empty() {
             state.idle_since = Some(now);
@@ -592,16 +602,15 @@ impl Hub {
         let Some(c) = state.conns.get_mut(&conn) else {
             return Answer::problem(410, "Gone", "the connection is closed");
         };
-        let Some(n) = c.subs.iter().find(|(_, s)| s.id == id).map(|(n, _)| *n) else {
+        let n = c.subs.iter().find(|(_, s)| s.id == id).map(|(n, _)| *n);
+        let Some(sub) = n.and_then(|n| c.subs.remove(&n)) else {
             return Answer::problem(
                 404,
                 "ResourceNotFound",
                 "no such subscription on this connection",
             );
         };
-        if let Some(sub) = c.subs.remove(&n) {
-            state.index.remove(sub.filter);
-        }
+        state.index.remove(sub.filter);
         state.forget_unwatched();
         Answer {
             status: 204,
@@ -629,6 +638,7 @@ impl Hub {
         reads: impl Fn(&Subject, &Endpoint) -> bool,
     ) -> Vec<u64> {
         let mut state = self.state();
+        let state = &mut *state;
         let mut gone = Vec::new();
         let mut rescope = false;
         for (id, conn) in &mut state.conns {
@@ -661,18 +671,15 @@ impl Hub {
                 None => "view-removed",
             };
             conn.queue.push(Out::Closing(reason));
+            // A closing connection leaves the index now: no change applied after this sends it
+            // more.
+            for (_, sub) in std::mem::take(&mut conn.subs) {
+                state.index.remove(sub.filter);
+            }
             gone.push(*id);
         }
         if rescope {
             state.rescope = RESCOPE_READS;
-        }
-        // A closing connection leaves the index now: no change applied after this sends it more.
-        for id in &gone {
-            if let Some(conn) = state.conns.get_mut(id) {
-                for (_, sub) in std::mem::take(&mut conn.subs) {
-                    state.index.remove(sub.filter);
-                }
-            }
         }
         state.forget_unwatched();
         gone
@@ -737,15 +744,13 @@ impl Hub {
     /// T-6776, since the hub cannot tell what left the caller's scope.
     pub fn rescope_failed(&self) {
         let mut state = self.state();
+        let state = &mut *state;
         state.rescoping = false;
         state.rescope = 0;
-        let ids: Vec<u64> = state.conns.keys().copied().collect();
-        for id in ids {
-            if let Some(conn) = state.conns.get_mut(&id) {
-                conn.queue.push(Out::Closing("endpoint-changed"));
-                for (_, sub) in std::mem::take(&mut conn.subs) {
-                    state.index.remove(sub.filter);
-                }
+        for conn in state.conns.values_mut() {
+            conn.queue.push(Out::Closing("endpoint-changed"));
+            for (_, sub) in std::mem::take(&mut conn.subs) {
+                state.index.remove(sub.filter);
             }
         }
         state.forget_unwatched();
@@ -907,17 +912,18 @@ impl State {
             return;
         }
         let delta = changed(previous.and_then(expanded).as_ref(), &full);
-        for (conn_id, filters) in by_conn {
-            let Some(conn) = self.conns.get(&conn_id) else {
-                continue;
-            };
-            for filter in filters {
+        // A filter in the index is a subscription of a held connection: every call that drops
+        // a connection or a subscription takes its filters out of the index with it.
+        let held = by_conn
+            .into_iter()
+            .filter_map(|(conn, filters)| self.conns.get(&conn).map(|c| (c, filters)));
+        for (conn, filters) in held {
+            let subs = conn.subs.values().filter(|s| filters.contains(&s.filter));
+            for sub in subs {
+                let filter = sub.filter;
                 if !self.index.decides(filter, &full, (&delta, created), core()) {
                     continue;
                 }
-                let Some(sub) = conn.subs.values().find(|s| s.filter == filter) else {
-                    continue;
-                };
                 let mut data = match asks_sys_attrs(&sub.body) {
                     true => stamped.clone(),
                     false => entity.clone(),
@@ -930,9 +936,7 @@ impl State {
                     entity: id.to_owned(),
                     body: notification(&sub.id, data, at),
                 });
-                if let Some(held) = self.index.get_mut(filter) {
-                    held.sent(at);
-                }
+                self.index.sent(filter, at);
             }
         }
     }
@@ -950,10 +954,10 @@ impl State {
                 by_conn.entry(filter >> SUB_BITS).or_default().push(filter);
             }
         }
-        for (conn_id, filters) in by_conn {
-            let Some(conn) = self.conns.get(&conn_id) else {
-                continue;
-            };
+        let held = by_conn
+            .into_iter()
+            .filter_map(|(conn, filters)| self.conns.get(&conn).map(|c| (c, filters)));
+        for (conn, filters) in held {
             let subscriptions = conn
                 .subs
                 .values()
@@ -1057,10 +1061,7 @@ fn without_sys_attrs(entity: &mut Value) {
 fn notification(subscription: &str, entity: Value, at: jc_time::TimestampTz) -> Value {
     json!({
         // The id only has to differ per notification; it guards nothing.
-        "id": format!(
-            "urn:ngsi-ld:Notification:{}",
-            random_name().unwrap_or_else(|| at.0.as_microsecond().to_string())
-        ),
+        "id": notification_id(random_name(), at),
         "type": "Notification",
         "subscriptionId": subscription,
         "notifiedAt": at.to_rfc3339_opts(jc_time::SecondsFormat::Millis, true),
@@ -1068,12 +1069,25 @@ fn notification(subscription: &str, entity: Value, at: jc_time::TimestampTz) -> 
     })
 }
 
+/// A Notification's id: `random`, or the microsecond `at` when the generator failed.
+fn notification_id(random: Option<String>, at: jc_time::TimestampTz) -> String {
+    let name = random.unwrap_or_else(|| at.0.as_microsecond().to_string());
+    format!("urn:ngsi-ld:Notification:{name}")
+}
+
 /// 128 random bits, base32 (lower case), as a connection name, a resume token or an id; `None`
 /// when the system generator fails, since a fixed value would make every resume token the same.
 pub fn random_name() -> Option<String> {
     use ring::rand::SecureRandom;
+    random_from(|bytes| ring::rand::SystemRandom::new().fill(bytes))
+}
+
+/// [`random_name`] of the bytes `fill` writes.
+fn random_from(
+    fill: impl FnOnce(&mut [u8]) -> Result<(), ring::error::Unspecified>,
+) -> Option<String> {
     let mut bytes = [0_u8; 16];
-    if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
+    if fill(&mut bytes).is_err() {
         tracing::error!("the system random generator failed");
         return None;
     }
@@ -1103,9 +1117,8 @@ fn base32(bytes: [u8; 16]) -> String {
             out.push(char::from(ALPHABET[((buffer >> bits) & 31) as usize]));
         }
     }
-    if bits > 0 {
-        out.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
-    }
+    // 128 bits leave 3 over: the last character carries them.
+    out.push(char::from(ALPHABET[((buffer << (5 - bits)) & 31) as usize]));
     out
 }
 
@@ -1486,7 +1499,7 @@ mod tests {
         let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
         let two = bus("urn:ngsi-ld:Vehicle:2", 2.0, "y");
         let (hub, conn, queue, sub) = seeded(&[one.clone(), two.clone()]);
-        subscribe(&hub, conn, json!({"q": "speed>1"}));
+        let fast = subscribe(&hub, conn, json!({"q": "speed>1"}));
         hub.apply(
             bus("urn:ngsi-ld:Vehicle:2", 3.0, "y"),
             jc_time::TimestampTz::now(),
@@ -1496,25 +1509,74 @@ mod tests {
         hub.rescope(vec![one], jc_time::TimestampTz::now());
         let (items, overflowed) = queue.take();
         assert!(!overflowed);
-        let names = |items: &[Out]| -> Vec<(String, Vec<String>)> {
-            items
-                .iter()
-                .filter_map(|item| match item {
-                    Out::OutOfScope {
-                        entity,
-                        subscriptions,
-                    } => Some((entity.clone(), subscriptions.clone())),
-                    _ => None,
-                })
-                .collect()
-        };
-        assert_eq!(items.len(), 1, "the queued change of 2 is gone: {items:?}");
-        let (entity, mut subs) = names(&items).remove(0);
-        subs.sort();
-        assert_eq!(entity, "urn:ngsi-ld:Vehicle:2");
-        assert_eq!(subs.len(), 2, "both filters matched it: {subs:?}");
-        assert!(subs.contains(&sub));
+        // The queued change of 2 is gone; both filters matched it, in the order they were made.
+        assert_eq!(
+            items,
+            [Out::OutOfScope {
+                entity: "urn:ngsi-ld:Vehicle:2".into(),
+                subscriptions: vec![sub, fast],
+            }]
+        );
         assert_eq!(hub.subscriptions(conn), 2, "the connection stays");
+    }
+
+    /// T-6776: a filter that is a candidate for the entity that left but never selected it is
+    /// not named in its `x-out-of-scope`; a held entity that does not expand (no type) names no
+    /// filter at all; a read row that is no entity or has no id is not held.
+    #[test]
+    fn out_of_scope_names_only_the_filters_that_selected_the_entity() {
+        let one = bus("urn:ngsi-ld:Vehicle:1", 1.0, "x");
+        let (hub, conn, queue, sub) = seeded(std::slice::from_ref(&one));
+        // `!=` is no indexable term: the filter is a candidate of every Vehicle.
+        subscribe(&hub, conn, json!({"q": "speed!=1"}));
+        hub.seed(json!({"id": "urn:ngsi-ld:Vehicle:9"}));
+        assert_eq!(hub.entities(), 2);
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(hub.rescope_now());
+        hub.rescope(
+            vec![json!(5), json!({"type": "Vehicle"})],
+            jc_time::TimestampTz::now(),
+        );
+        assert_eq!(
+            queue.take().0,
+            [Out::OutOfScope {
+                entity: "urn:ngsi-ld:Vehicle:1".into(),
+                subscriptions: vec![sub],
+            }]
+        );
+        assert_eq!(hub.entities(), 0, "no row without an id is held");
+    }
+
+    /// A change of the readable scope owed while the hub holds no table (due, or no filter) reads
+    /// nothing: the next snapshot reads the new scope whole, and a rescope read handed in then
+    /// changes nothing.
+    #[test]
+    fn a_rescope_owed_without_a_table_reads_nothing() {
+        let hub = Hub::new("s", 100);
+        let (conn, queue) = open(&hub);
+        subscribe(&hub, conn, json!({}));
+        hub.recheck(Some(&hiding("secret")), |_| true, |_, _| true);
+        assert!(!hub.rescope_now(), "the table is due");
+        hub.rescope(
+            vec![bus("urn:ngsi-ld:Vehicle:1", 1.0, "x")],
+            jc_time::TimestampTz::now(),
+        );
+        assert_eq!(hub.entities(), 0);
+        assert!(queue.take().0.is_empty());
+        assert!(hub.snapshot_now());
+        assert!(!hub.rescope_now(), "the owed reads were dropped");
+    }
+
+    /// A change that does not expand (no type) is held but sends nothing.
+    #[test]
+    fn a_change_that_does_not_expand_sends_nothing() {
+        let (hub, _, queue, _) = seeded(&[]);
+        hub.apply(
+            json!({"id": "urn:ngsi-ld:Vehicle:1", "speed": {"type": "Property", "value": 1}}),
+            jc_time::TimestampTz::now(),
+        );
+        assert_eq!(hub.entities(), 1);
+        assert!(queue.take().0.is_empty());
     }
 
     /// T-6776 (d): an entity read with fewer attributes is sent again without them.
@@ -1668,6 +1730,9 @@ mod tests {
         gone.issued(5);
         drop(gone);
         assert_eq!(hub.subscriptions(conn), 1);
+        // A personal read logged for a gone connection names no Endpoint and changes nothing.
+        hub.log_personal_read(998, &["urn:ngsi-ld:Vehicle:1".to_owned()]);
+        assert_eq!(hub.connections(), 1);
     }
 
     /// The upstream carries what the broker let this hub's identity read; a filter narrows it
@@ -1800,6 +1865,29 @@ mod tests {
         );
         assert_eq!(over.status, 400);
         assert_eq!(hub.subscriptions(conn), MAX_FILTERS);
+    }
+
+    /// An `x-update` whose body is no object keeps the held body, and a connection that has used
+    /// up its subscription numbers is refused, not wrapped onto another connection's filters.
+    #[test]
+    fn an_update_that_is_no_object_and_a_spent_numbering_are_answered() {
+        let hub = Hub::new("s", 100);
+        let (conn, _queue) = open(&hub);
+        let id = subscribe(&hub, conn, json!({"q": "speed>5"}));
+        let kept = hub.subscribe(conn, Some(&id), &json!(["not", "members"]), true);
+        assert_eq!(kept.status, 204, "{kept:?}");
+        assert_eq!(hub.subscriptions(conn), 1);
+        hub.state().conns.get_mut(&conn).expect("open").next = 1 << SUB_BITS;
+        let spent = hub.subscribe(
+            conn,
+            None,
+            &json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]}),
+            false,
+        );
+        assert_eq!(spent.status, 400);
+        let detail = spent.body.expect("a problem")["detail"].clone();
+        assert_eq!(detail, "this connection made too many subscriptions");
+        assert_eq!(hub.subscriptions(conn), 1, "nothing was added");
     }
 
     #[test]
@@ -1989,5 +2077,29 @@ mod tests {
             .bytes()
             .all(|c| c.is_ascii_lowercase() || (b'2'..=b'7').contains(&c)));
         assert_ne!(a, b);
+    }
+
+    /// A generator that fails gives no name (never a fixed one), and a notification then takes
+    /// its id from the instant.
+    #[test]
+    fn a_failed_generator_names_nothing_and_a_notification_falls_back_to_the_instant() {
+        assert_eq!(random_from(|_| Err(ring::error::Unspecified)), None);
+        assert_eq!(
+            random_from(|bytes| {
+                bytes.fill(0);
+                Ok(())
+            }),
+            Some("a".repeat(26))
+        );
+        let at: jc_time::TimestampTz = "2026-10-25T01:30:00.000001Z".parse().expect("an instant");
+        let id = notification_id(None, at);
+        assert_eq!(
+            id,
+            format!("urn:ngsi-ld:Notification:{}", at.0.as_microsecond())
+        );
+        assert_eq!(
+            notification_id(Some("n".into()), at),
+            "urn:ngsi-ld:Notification:n"
+        );
     }
 }

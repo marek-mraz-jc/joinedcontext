@@ -516,9 +516,9 @@ mod tests {
             .await
             .expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("address"));
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, stub).await;
-        });
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, stub,
+        )));
         let grant: jc_core::kinds::PolicySpec = serde_norway::from_str(
             "contextSpaceRef: city\nassigner: did:web:example.org\n\
              assignee: { kind: role, id: public }\noperations: [queryEntity]\n\

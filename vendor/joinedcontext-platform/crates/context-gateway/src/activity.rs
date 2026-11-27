@@ -366,6 +366,7 @@ pub async fn follow(url: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::IntoFuture;
 
     fn call(caller: &str, tool: &str) -> Call {
         Call {
@@ -514,9 +515,7 @@ mod tests {
             .await
             .expect("a free port");
         let address = listener.local_addr().expect("the bound address");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(axum::serve(listener, app).into_future());
         (format!("http://{address}/v1/logs"), posted)
     }
 

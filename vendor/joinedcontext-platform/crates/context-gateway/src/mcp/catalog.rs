@@ -30,7 +30,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap};
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+// The tokio clock, the system clock in production, so a test can let a held list age.
+use tokio::time::Instant;
 
 /// The name a tool call gives the catalogue as its `endpoint`.
 pub(crate) const NAME: &str = "catalog";
@@ -670,6 +672,10 @@ fn shaped(entity: &Value, key_values: bool, attrs: Option<&[&str]>) -> Value {
 pub(crate) mod tests {
     use super::*;
 
+    /// The public catalogue's single flight is one lock for the process: the tests that read it
+    /// take turns, or one test's read is another's "a read is running".
+    static PUBLIC_READS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// T-5699, F-PLT2-021: the public catalogue is found under the rendered
     /// `{project}-catalog` space too, and a non-public one in that space is not it.
     #[test]
@@ -946,20 +952,23 @@ pub(crate) mod tests {
     /// the caller is answered the list it had (none here) instead of waiting on the broker.
     #[tokio::test(start_paused = true)]
     async fn a_public_catalogue_read_ends_at_the_member_deadline() {
+        let _turn = PUBLIC_READS.lock().await;
         let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
         let address = silent.local_addr().expect("addr");
-        // Holds every connection open for a minute of the paused clock, then lets go.
-        let holder = tokio::spawn(async move {
-            let mut held = Vec::new();
-            let _ = tokio::time::timeout(Duration::from_secs(60), async {
-                while let Ok((socket, _)) = silent.accept().await {
-                    held.push(socket);
-                }
-            })
-            .await;
-        });
+        // Holds every connection open until the test ends.
+        let held = futures_util::StreamExt::collect::<Vec<_>>(futures_util::stream::unfold(
+            silent,
+            |silent| async move {
+                silent
+                    .accept()
+                    .await
+                    .ok()
+                    .map(|(socket, _)| (socket, silent))
+            },
+        ));
+        let holder = tokio::spawn(held);
         let gateway = Gateway::new(
             crate::proxy::Broker::new(format!("http://{address}")),
             Box::new(crate::pdp::PolicyPdp),
@@ -973,18 +982,19 @@ pub(crate) mod tests {
         let asked = tokio::time::Instant::now();
         let read = public_entities(&gateway, &reach).await;
         assert!(read.is_empty());
-        // The broker holds the call for its minute: an answer before that is the deadline's
-        // cut, whatever the paused clock's auto-advance adds for the connect under load.
+        // The broker never answers: the read ends at the deadline's cut, not before it, and not
+        // at the broker's own 120 s.
         let took = asked.elapsed();
         assert!(took >= super::super::server::MEMBER_DEADLINE, "{took:?}");
         assert!(took < Duration::from_secs(60), "{took:?}");
-        holder.await.expect("the holder ends with its minute");
+        holder.abort();
     }
 
     /// A catalogue whose pages each answer within the member deadline is read whole, however
     /// long all its pages take together.
     #[tokio::test(start_paused = true)]
     async fn a_slow_public_catalogue_is_read_page_by_page() {
+        let _turn = PUBLIC_READS.lock().await;
         use std::sync::atomic::{AtomicUsize, Ordering};
         let pages = Arc::new(AtomicUsize::new(0));
         let served = Arc::clone(&pages);
@@ -1130,6 +1140,7 @@ pub(crate) mod tests {
     /// while another reads is answered that list at once rather than waiting for the read.
     #[tokio::test(start_paused = true)]
     async fn a_failed_or_running_public_read_answers_the_list_it_had() {
+        let _turn = PUBLIC_READS.lock().await;
         let (mode, delay) = (
             Arc::new(AtomicUsize::new(PAGE)),
             Arc::new(AtomicUsize::new(0)),
@@ -1154,6 +1165,7 @@ pub(crate) mod tests {
     /// A catalogue read that cannot be had and was never had is the empty list.
     #[tokio::test(start_paused = true)]
     async fn a_public_read_that_never_worked_is_the_empty_list() {
+        let _turn = PUBLIC_READS.lock().await;
         let (mode, delay) = (
             Arc::new(AtomicUsize::new(ERROR)),
             Arc::new(AtomicUsize::new(0)),

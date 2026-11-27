@@ -210,8 +210,8 @@ impl Reaper {
     /// refuses every request until a reload succeeds, so revocation never stops silently
     /// (T-4591), and the process it may share with other modules goes on. Started once, next to
     /// the server; it returns only when the runtime cancels the blocking task.
-    pub async fn run(self) -> tokio::task::JoinError {
-        ticking(self, Reaper::guarded).await
+    pub fn run(self) -> impl std::future::Future<Output = tokio::task::JoinError> + Send {
+        ticking(self, Reaper::guarded)
     }
 
     /// [`Self::tick`], its panic caught: the tables go stale, and the next tick reloads them

@@ -301,13 +301,19 @@ fn rules() -> RelationshipRules {
                 "courses": { "type": "array", "items": { "type": "string" },
                     "x-ngsi-ld-kind": "Relationship",
                     "x-ngsi-ld-relationship": end("Course", "many-to-many", "cascade") },
+                // Many lockers a teacher, each locker one teacher's.
+                "lockers": { "type": "array", "items": { "type": "string" },
+                    "x-ngsi-ld-kind": "Relationship",
+                    "x-ngsi-ld-relationship": { "target": "Locker", "inverse": "x",
+                        "cardinality": "one-to-many", "onDelete": "set-null", "unique": true } },
                 "name": { "type": "string" } } },
         "Lesson": { "properties": {
             "teacher": single("Teacher", "many-to-one", "cascade"),
             "name": { "type": "string" } } },
         "Building": { "properties": { "name": { "type": "string" } } },
         "Desk": { "properties": { "name": { "type": "string" } } },
-        "Course": { "properties": { "name": { "type": "string" } } }
+        "Course": { "properties": { "name": { "type": "string" } } },
+        "Locker": { "properties": { "name": { "type": "string" } } }
     } }))
 }
 
@@ -558,6 +564,43 @@ async fn a_desk_another_teacher_has_is_refused_and_nothing_is_written() {
     assert!(answer.writes().is_empty(), "{:?}", answer.writes());
 }
 
+/// A free locker a write names twice is one claim: it is asked of the broker once, and the
+/// write is no conflict with itself.
+#[tokio::test]
+async fn a_unique_target_named_twice_by_one_entity_is_one_claim() {
+    let mut held = campus();
+    held.push(entity("Locker", "k1", &[]));
+    let mut lockers = endpoint(CLASSES);
+    lockers
+        .policies
+        .push(policy("queryEntity, retrieveEntity", &["Locker"]));
+    let teacher = entity(
+        "Teacher",
+        "t1",
+        &[
+            ("school", link(&urn("School", "s1"))),
+            ("desk", link(&urn("Desk", "d1"))),
+            (
+                "lockers",
+                json!({ "type": "Relationship",
+                    "object": [urn("Locker", "k1"), urn("Locker", "k1")] }),
+            ),
+        ],
+    );
+    let answer = send_held(
+        held,
+        lockers,
+        &[],
+        Method::POST,
+        "/entityOperations/upsert",
+        Some(json!([teacher])),
+    )
+    .await;
+
+    assert!(answer.status.is_success(), "{}", answer.body);
+    assert!(answer.body.get("errors").is_none(), "{}", answer.body);
+}
+
 #[tokio::test]
 async fn a_teacher_rewriting_its_own_desk_and_a_free_desk_are_written() {
     let own = entity(
@@ -577,7 +620,6 @@ async fn a_teacher_rewriting_its_own_desk_and_a_free_desk_are_written() {
     )
     .await;
     assert!(answer.status.is_success(), "{}", answer.body);
-
     let free = entity(
         "Teacher",
         "t3",
@@ -690,6 +732,17 @@ async fn restrict_says_nothing_to_a_caller_who_may_not_delete_the_root() {
     assert!(answer.body.get("count").is_none(), "{}", answer.body);
     assert!(!answer.body.to_string().contains("s1"), "{}", answer.body);
     assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+}
+
+/// F-R2PLT2-002: a delete whose set-null edits the caller may write, of a root whose class no
+/// grant lets it delete, is refused and changes nothing.
+#[tokio::test]
+async fn a_delete_of_a_root_the_grants_refuse_changes_nothing() {
+    let answer = delete(&["Teacher"], &urn("Desk", "d1")).await;
+
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+    assert!(answer.held(&urn("Desk", "d1")).is_some());
 }
 
 #[tokio::test]
@@ -1121,6 +1174,35 @@ async fn a_batch_delete_refuses_the_kept_id_and_deletes_the_rest() {
         teacher.get("desk").is_none(),
         "set-null ran for the kept part"
     );
+}
+
+/// A batch delete is granted as `deleteBatch`, but what points at an id is said, and changed,
+/// only for a caller who may delete that entity itself: one granted the batch alone keeps the
+/// id and every dependent as it was.
+#[tokio::test]
+async fn a_batch_delete_by_a_caller_who_may_not_delete_the_entity_changes_nothing() {
+    let mut batch_only = endpoint(CLASSES);
+    batch_only.policies[0] = policy("deleteBatch", CLASSES);
+    let answer = send_to(
+        batch_only,
+        &[],
+        Method::POST,
+        "/entityOperations/delete",
+        Some(json!([urn("Desk", "d1")])),
+    )
+    .await;
+
+    assert_eq!(answer.status, StatusCode::MULTI_STATUS, "{}", answer.body);
+    let errors = answer.body["errors"].as_array().expect("the errors");
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert_eq!(errors[0]["entityId"], urn("Desk", "d1"));
+    assert_eq!(errors[0]["error"]["status"], 403);
+    assert!(answer.writes().is_empty(), "{:?}", answer.writes());
+    assert!(answer.held(&urn("Desk", "d1")).is_some());
+    let teacher = answer
+        .held(&urn("Teacher", "t1"))
+        .expect("the teacher stays");
+    assert_eq!(teacher["desk"]["object"], urn("Desk", "d1"));
 }
 
 /// F-SEC1-016: a batch past the broker's ceiling is refused before a single id is planned.

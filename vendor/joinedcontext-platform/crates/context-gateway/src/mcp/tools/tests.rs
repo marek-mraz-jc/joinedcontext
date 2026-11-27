@@ -974,7 +974,7 @@ fn a_tool_that_both_reads_and_writes_is_not_read_only() {
         name: "read_and_write",
         operations: &[Operation::QueryEntity, Operation::UpsertBatch],
         description: "",
-        shape: Shape::Own(|| serde_json::json!({})),
+        shape: Shape::Broker(&[]),
         result_key: "entities",
     };
     assert!(!mixed.read_only());

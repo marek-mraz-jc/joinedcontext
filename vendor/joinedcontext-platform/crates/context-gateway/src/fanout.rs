@@ -77,13 +77,17 @@ impl Filter {
     /// Records a notification sent now, which starts the filter's `throttling` window.
     pub fn sent(&mut self, at: jc_time::TimestampTz) {
         let stamp = at.to_rfc3339_opts(jc_time::SecondsFormat::Millis, true);
-        if let Some(sub) = self.sub.as_object_mut() {
-            let notification = sub
-                .entry("notification")
-                .or_insert_with(|| Value::Object(Map::new()));
-            if let Some(notification) = notification.as_object_mut() {
-                notification.insert("lastNotification".into(), Value::String(stamp));
-            }
+        // [`compile`] stores an object; a `notification` that is not one is left as written.
+        let notification = self
+            .sub
+            .as_object_mut()
+            .map(|sub| {
+                sub.entry("notification")
+                    .or_insert_with(|| Value::Object(Map::new()))
+            })
+            .and_then(Value::as_object_mut);
+        if let Some(notification) = notification {
+            notification.insert("lastNotification".into(), Value::String(stamp));
         }
     }
 
@@ -420,9 +424,9 @@ impl Index {
         self.filters.is_empty()
     }
 
-    /// One filter, to mark it [`Filter::sent`].
-    pub fn get_mut(&mut self, id: FilterId) -> Option<&mut Filter> {
-        self.filters.get_mut(&id)
+    /// Marks filter `id` [`Filter::sent`] at `at`; an id it does not hold changes nothing.
+    pub fn sent(&mut self, id: FilterId, at: jc_time::TimestampTz) {
+        self.filters.entry(id).and_modify(|filter| filter.sent(at));
     }
 
     /// Adds a filter under `id`, replacing the one held there (`x-update`).
@@ -497,16 +501,15 @@ impl Index {
             n: f64,
             id: FilterId,
         ) {
-            if let Some(bounds) = map.get_mut(attr) {
-                if let Some(ids) = bounds.get_mut(&Bound(n)) {
-                    ids.remove(&id);
-                    if ids.is_empty() {
-                        bounds.remove(&Bound(n));
-                    }
-                }
-                if bounds.is_empty() {
-                    map.remove(attr);
-                }
+            // A filter's bound is held under its attribute until the filter leaves.
+            let bounds = map.entry(attr.to_owned()).or_default();
+            let ids = bounds.entry(Bound(n)).or_default();
+            ids.remove(&id);
+            if ids.is_empty() {
+                bounds.remove(&Bound(n));
+            }
+            if bounds.is_empty() {
+                map.remove(attr);
             }
         }
         match &filter.key {
@@ -794,10 +797,21 @@ mod tests {
 
     fn sub(extra: Value) -> Value {
         let mut body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]});
-        if let (Some(body), Some(extra)) = (body.as_object_mut(), extra.as_object()) {
-            body.extend(extra.clone());
-        }
+        let extra = extra.as_object().expect("extra members").clone();
+        body.as_object_mut().expect("a body").extend(extra);
         body
+    }
+
+    /// A `notification` that is not an object is left as written by a sent notification; one
+    /// that is gets its `lastNotification`.
+    #[test]
+    fn a_sent_notification_stamps_only_an_object_notification() {
+        let mut f = filter(sub(json!({"notification": "as written"})));
+        f.sent(jc_time::TimestampTz::now());
+        assert_eq!(f.subscription()["notification"], json!("as written"));
+        let mut f = filter(sub(json!({"notification": {}})));
+        f.sent(jc_time::TimestampTz::now());
+        assert!(f.subscription()["notification"]["lastNotification"].is_string());
     }
 
     #[test]
@@ -841,6 +855,32 @@ mod tests {
             filter(json!({"type": "Subscription", "watchedAttributes": ["speed"]})).key,
             Key::Any
         );
+        // A term the index cannot key on is passed over: a bracketed or dotted path, an `!=`, a
+        // second bound, a range or a list of values, an Or inside the conjunction.
+        let types = Key::Types(vec![
+            "https://uri.etsi.org/ngsi-ld/default-context/Vehicle".to_owned()
+        ]);
+        for q in [
+            "address[locality]==\"x\"",
+            "speed!=3",
+            "speed==1..5",
+            "speed==1,2",
+            "(speed>1|speed<0);open!=true",
+        ] {
+            assert_eq!(filter(sub(json!({ "q": q }))).key, types, "{q}");
+        }
+        assert_eq!(
+            filter(sub(json!({"q": "speed>1;speed<9"}))).key,
+            Key::Lower(
+                "https://uri.etsi.org/ngsi-ld/default-context/speed".into(),
+                1.0
+            ),
+            "the first bound keys, the second is passed over"
+        );
+        // An area on another GeoProperty is matched by its types.
+        let other = json!({"georel": "near;maxDistance==500", "geometry": "Point",
+            "coordinates": [24.94, 60.17], "geoproperty": "observationSpace"});
+        assert_eq!(filter(sub(json!({ "geoQ": other }))).key, types);
         // A world-sized area is matched by its types, not by 4,096 cells and more.
         assert!(matches!(
             filter(sub(json!({"geoQ": {"georel": "within", "geometry": "Polygon",
@@ -905,6 +945,11 @@ mod tests {
                 sub(json!({"geoQ": "near;maxDistance==5"})),
                 "geoQ is an object",
             ),
+            (
+                json!({"type": "Subscription", "entities": [{"type": "Not A Name"}]}),
+                "grammar",
+            ),
+            (sub(json!({"watchedAttributes": ["type"]})), "expand"),
         ] {
             let refused = compile(&body, &ctx()).expect_err(says);
             assert!(refused.contains(says), "{body}: {refused}");
@@ -962,6 +1007,77 @@ mod tests {
         );
     }
 
+    /// The candidates of what the index cannot place: a document that is no object holds only
+    /// the filters on every change and on its types; a location with no coordinates, unreadable
+    /// ones, or one past the grid makes the entity a candidate of every geo filter; a
+    /// Relationship's object keys an equality; a list or a range is no canonical term.
+    #[test]
+    fn what_the_grid_or_the_keys_cannot_place_is_a_candidate_of_every_such_filter() {
+        let ctx = ctx();
+        let mut index = Index::default();
+        index.insert(
+            1,
+            filter(json!({"type": "Subscription", "watchedAttributes": ["speed"]})),
+        );
+        index.insert(
+            2,
+            filter(sub(
+                json!({"geoQ": {"georel": "near;maxDistance==500", "geometry": "Point",
+                "coordinates": [24.94, 60.17]}}),
+            )),
+        );
+        assert_eq!(index.candidates(&json!("no object"), &ctx), [1].into());
+        let location = |value: Value| json!({(antares_ql::geo::LOCATION_IRI): [{"type": "GeoProperty", "value": value}]});
+        let far = location(json!({"type": "Point", "coordinates": [1e308, 0.0]}));
+        assert_eq!(
+            index.candidates(&far, &ctx),
+            [1, 2].into(),
+            "no finite cell"
+        );
+        let wide = location(json!({"type": "Polygon",
+            "coordinates": [[[-170.0, -80.0], [170.0, -80.0], [170.0, 80.0], [-170.0, -80.0]]]}));
+        assert_eq!(
+            index.candidates(&wide, &ctx),
+            [1, 2].into(),
+            "past the grid"
+        );
+        let bare = json!({(antares_ql::geo::LOCATION_IRI): [
+            {"type": "GeoProperty", "value": {"type": "Point"}},
+            {"type": "GeoProperty", "value": {"type": "Point", "coordinates": "not json"}},
+        ]});
+        assert_eq!(
+            index.candidates(&bare, &ctx),
+            [1].into(),
+            "no cell to look up"
+        );
+        assert_eq!(
+            targets(&json!([{"object": "urn:ngsi-ld:Person:1"}]), &ctx),
+            [json!("urn:ngsi-ld:Person:1")]
+        );
+        assert_eq!(canonical_q(&QValue::List(vec![QValue::Num(1.0)])), None);
+        assert_eq!(
+            canonical_q(&QValue::Range(
+                Box::new(QValue::Num(1.0)),
+                Box::new(QValue::Num(2.0))
+            )),
+            None
+        );
+    }
+
+    /// A selector list naming one type twice indexes it once and leaves no trace when removed.
+    #[test]
+    fn a_type_named_twice_leaves_the_index_with_its_filter() {
+        let mut index = Index::default();
+        index.insert(
+            1,
+            filter(json!({"type": "Subscription",
+                "entities": [{"type": "Vehicle"}, {"type": "Vehicle"}]})),
+        );
+        assert_eq!(index.by_type.len(), 1);
+        assert!(index.remove(1).is_some());
+        assert!(index.by_type.is_empty() && index.is_empty());
+    }
+
     #[test]
     fn a_rewrite_of_the_same_value_notifies_nothing_and_a_watched_change_does() {
         let mut index = Index::default();
@@ -1004,16 +1120,16 @@ mod tests {
         let a = vehicle(1, 10.0, "bus", 24.9, 60.1);
         let b = vehicle(1, 12.0, "bus", 24.9, 60.1);
         assert_eq!(index.notified(&a, None, &ctx()), [1]);
-        index
-            .get_mut(1)
-            .expect("held")
-            .sent(jc_time::TimestampTz::now());
+        index.sent(1, jc_time::TimestampTz::now());
         assert!(index.notified(&b, Some(&a), &ctx()).is_empty());
-        index
-            .get_mut(1)
-            .expect("held")
-            .sent(jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(61));
+        index.sent(
+            1,
+            jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(61),
+        );
         assert_eq!(index.notified(&b, Some(&a), &ctx()), [1]);
+        // An id the index does not hold is no filter to mark.
+        index.sent(2, jc_time::TimestampTz::now());
+        assert_eq!(index.len(), 1);
     }
 
     /// PRF-04: distinct areas place at most [`MAX_GRID_CELLS`] cells on one hub's grid; a filter
@@ -1037,11 +1153,8 @@ mod tests {
             "{} cells placed",
             index.placed
         );
-        assert!(
-            index.grid.len() <= MAX_GRID_CELLS,
-            "{} grid entries",
-            index.grid.len()
-        );
+        let entries = index.grid.len();
+        assert!(entries <= MAX_GRID_CELLS, "{entries} grid entries");
         let inside_last = vehicle(1, 1.0, "bus", 63.0 * 0.7 + 0.3, 10.3);
         assert!(index.candidates(&inside_last, &ctx()).contains(&63));
         assert!(index.decides(63, &inside_last, (&BTreeSet::new(), true), &ctx()));

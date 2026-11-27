@@ -463,6 +463,27 @@ async fn a_read_that_would_leave_the_runs_repository_is_refused() {
     assert!(reached.is_empty(), "the forge was asked for {reached:?}");
 }
 
+/// AG-86: a forge base whose origin is opaque (a `file:` URL, a misconfiguration) has no origin a
+/// target can share, so the parsed target is never inside the run's repository and nothing is
+/// sent with the platform's token.
+#[tokio::test]
+async fn a_forge_base_without_an_origin_reaches_no_repository() {
+    let response = proxy("file:///srv/forge")
+        .oneshot(
+            authed("GET", "/v1/forge/pulls/1")
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body = body_of(response).await;
+    assert!(
+        body.contains("the forge operation leaves the run's repository"),
+        "{body}"
+    );
+}
+
 /// AG-35: the forge is told the platform's token and the workspace is told none of it, whatever
 /// the forge answers.
 #[tokio::test]

@@ -236,3 +236,25 @@ fn a_project_is_checked_with_its_parameters_and_its_slug() {
     let named = run_project(&project, Some("ovzdusie"), "example.org", &BTreeMap::new());
     assert!(named.is_valid(), "{:?}", messages(&named));
 }
+
+/// CC-90: a project repository whose `project.yaml` does not parse, or is missing, is one
+/// finding on `project.yaml` and nothing is checked.
+#[test]
+fn a_project_without_a_readable_project_file_is_one_finding_on_it() {
+    let project = project_repository("validate-own-malformed");
+    write(&project, "project.yaml", "kind: [\n");
+    let report = run_project(&project, None, "example.org", &BTreeMap::new());
+    assert_eq!(report.checked, 0);
+    assert_eq!(report.findings.len(), 1, "{:?}", messages(&report));
+    assert_eq!(report.findings[0].path, Path::new("project.yaml"));
+    assert!(!report.findings[0].message.is_empty());
+
+    std::fs::remove_file(project.join("project.yaml")).expect("remove project.yaml");
+    let report = run_project(&project, None, "example.org", &BTreeMap::new());
+    assert_eq!(report.findings.len(), 1, "{:?}", messages(&report));
+    assert!(
+        report.findings[0].message.contains("project.yaml"),
+        "{:?}",
+        messages(&report)
+    );
+}

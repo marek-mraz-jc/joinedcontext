@@ -301,12 +301,8 @@ mod tests {
                 .and_then(Value::as_array)
                 .map_or(0, Vec::len)
         };
-        assert!(
-            points(&shown) < points(&original) / 4,
-            "{} of {}",
-            points(&shown),
-            points(&original)
-        );
+        let (kept, had) = (points(&shown), points(&original));
+        assert!(kept < had / 4, "{kept} of {had}");
         assert_eq!(shown.get("type"), Some(&json!("Polygon")));
         assert!(polygons(&shown).is_some_and(|s| s.is_valid()));
         // the drawn area stays within a percent of the measured one

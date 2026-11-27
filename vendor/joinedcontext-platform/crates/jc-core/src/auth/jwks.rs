@@ -96,10 +96,12 @@ async fn fetch(
             .header(axum::http::header::HOST, authority.as_str())
             .uri(format!("http://{addr}{path}"));
     }
+    // Every part is a parsed `Uri`'s or a socket address's own text, so the request always
+    // builds; were it not, it is the URL that is bad.
     let request = request
         .body(Body::empty())
-        .map_err(|e| e.to_string())
-        .map_err(JwksError::Url)?;
+        .ok()
+        .ok_or(JwksError::Url("the JWKS URL names no request".to_owned()))?;
     let response = client
         .request(request)
         .await

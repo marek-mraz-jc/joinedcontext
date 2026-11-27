@@ -125,9 +125,13 @@ struct Answer {
 }
 
 async fn send(quality: Vec<QualityRule>, method: Method, uri: &str, body: Value) -> Answer {
+    send_to(endpoint(quality), method, uri, body).await
+}
+
+async fn send_to(endpoint: Endpoint, method: Method, uri: &str, body: Value) -> Answer {
     let (upstream, seen) = broker().await;
     let gateway = Arc::new(
-        Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint(quality)]),
+        Gateway::new(Broker::new(upstream), Box::new(PolicyPdp), DOMAIN).serve([endpoint]),
     );
     let response = router(gateway)
         .oneshot(
@@ -289,6 +293,30 @@ async fn a_forbidden_write_that_breaks_a_rule_answers_403() {
         Method::PUT,
         &format!("/entities/{ID}"),
         reading(-3.5),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);
+    assert!(
+        !answer.body.to_string().contains("pm10-positive"),
+        "{}",
+        answer.body
+    );
+    assert!(answer.broker_saw.is_empty());
+}
+
+/// A `PATCH …/attrs` that only `updateEntity` grants passes the write gate, which takes either
+/// operation for it (5.6.2), but a body breaking a rule is judged for `updateAttrs` alone: the
+/// caller learns it may not, never the rule's name: 403, not the rule's 400.
+#[tokio::test]
+async fn an_attribute_patch_granted_only_as_an_entity_update_learns_no_rule() {
+    let mut endpoint = endpoint(rules());
+    endpoint.policies[0].operations =
+        serde_json::from_value(json!(["updateEntity"])).expect("an operation list");
+    let answer = send_to(
+        endpoint,
+        Method::PATCH,
+        &format!("/entities/{ID}/attrs"),
+        json!({ "pm10": { "type": "Property", "value": -3.5, "unitCode": "GQ" } }),
     )
     .await;
     assert_eq!(answer.status, StatusCode::FORBIDDEN, "{}", answer.body);

@@ -320,11 +320,10 @@ pub fn pieces(text: &str, cap: usize) -> Vec<&str> {
     let mut out = Vec::new();
     let mut rest = text.trim();
     while !rest.is_empty() {
+        // `rest` starts with a character that is not a space and `cut` keeps at least that
+        // character, so no piece is empty.
         let at = cut(rest, cap);
-        let piece = rest[..at].trim();
-        if !piece.is_empty() {
-            out.push(piece);
-        }
+        out.push(rest[..at].trim_end());
         rest = rest[at..].trim_start();
     }
     out
@@ -690,6 +689,32 @@ mod tests {
         );
     }
 
+    /// T-3314: an encrypted PDF is not rewritten (its pages cannot be read without the key);
+    /// PDFium is handed it whole.
+    #[test]
+    fn an_encrypted_pdf_is_not_cut() {
+        let mut document = lopdf::Document::load_mem(&pdf(5)).expect("a PDF");
+        let id = lopdf::Object::string_literal(b"0123456789abcdef".to_vec());
+        document
+            .trailer
+            .set("ID", lopdf::Object::Array(vec![id.clone(), id]));
+        let state = lopdf::EncryptionState::try_from(lopdf::EncryptionVersion::V2 {
+            document: &document,
+            owner_password: "owner",
+            user_password: "reader",
+            key_length: 128,
+            permissions: lopdf::Permissions::default(),
+        })
+        .expect("an encryption");
+        document.encrypt(&state).expect("encrypted");
+        let mut bytes = Vec::new();
+        document.save_to(&mut bytes).expect("saved");
+        assert!(lopdf::Document::load_mem(&bytes)
+            .expect("still loads")
+            .is_encrypted());
+        assert!(first_pages(&bytes, 2).is_none());
+    }
+
     /// T-4070: a document is read only as a type the crawl follows, whatever its server says.
     #[test]
     fn a_document_is_read_only_as_a_document_type() {
@@ -813,14 +838,13 @@ mod tests {
         let text = sentence.repeat(20_000 / sentence.len() + 1);
         assert!(text.len() > 20_000);
         let split = pieces(&text, MAX_TEXT_BYTES);
-        assert!(split.len() >= 3, "{}", split.len());
+        let count = split.len();
+        assert!(count >= 3, "{count}");
         for piece in &split {
-            assert!(piece.len() <= MAX_TEXT_BYTES, "{}", piece.len());
-            assert!(
-                piece.ends_with('.'),
-                "cut inside a sentence: {:?}",
-                piece.chars().rev().take(20).collect::<String>()
-            );
+            let length = piece.len();
+            assert!(length <= MAX_TEXT_BYTES, "{length}");
+            let tail: String = piece.chars().rev().take(20).collect();
+            assert!(piece.ends_with('.'), "cut inside a sentence: {tail:?}");
         }
         let joined: String = split.join(" ");
         assert_eq!(joined, text.trim());
@@ -835,6 +859,45 @@ mod tests {
         assert_eq!(cut("aaaa bbbb\ncc dd", 12), 10);
         assert_eq!(pieces("short", MAX_TEXT_BYTES), vec!["short"]);
         assert_eq!(pieces("€", 1), vec!["€"]);
+    }
+
+    /// An HTML page that is not UTF-8 is not cleaned of its chrome but still read, its bad bytes
+    /// replaced, never refused.
+    #[tokio::test]
+    async fn an_html_page_that_is_not_utf8_is_still_read() {
+        let html =
+            b"<html><body><p>Mesto Zilina otvorilo \xff novu kniznicu pre deti.</p></body></html>";
+        let extracted = extract(html, "text/html", Some("sk"), 10)
+            .await
+            .expect("read lossily");
+        assert!(
+            extracted
+                .passages
+                .iter()
+                .any(|p| p.text.contains("novu kniznicu")),
+            "{extracted:?}"
+        );
+        assert!(!extracted.truncated);
+    }
+
+    /// T-7290: a page whose every passage carries a long heading goes over the passage cap only
+    /// once each passage is cut in pieces; the pieces are cut at the cap and say so.
+    #[tokio::test]
+    async fn pieces_over_the_passage_cap_are_cut_at_the_cap() {
+        let heading = "Žilinská ľadová plocha je otvorená denne a ".repeat(250);
+        let html = format!(
+            "<html><body><h1>{heading}</h1><p>{}</p></body></html>",
+            "Veta o meste Žilina a jeho štadióne. ".repeat(40_000)
+        );
+        let extracted = extract(html.as_bytes(), "text/html", Some("sk"), 10)
+            .await
+            .expect("extracted");
+        assert_eq!(extracted.passages.len(), super::MAX_PASSAGES);
+        assert!(extracted.truncated);
+        assert!(extracted
+            .passages
+            .iter()
+            .all(|p| p.text.len() <= MAX_TEXT_BYTES));
     }
 
     /// T-7290: the chunker prepends the headings above a passage to it, so a long heading (a

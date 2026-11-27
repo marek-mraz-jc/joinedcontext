@@ -304,10 +304,7 @@ mod tests {
                 let mut confirmed = false;
                 for _ in 0..50 {
                     tokio::task::yield_now().await;
-                    confirmed = gate.refusal("hel.fi").is_none();
-                    if confirmed {
-                        break;
-                    }
+                    confirmed |= gate.refusal("hel.fi").is_none();
                 }
                 assert!(confirmed, "a 304 confirms the list");
             }

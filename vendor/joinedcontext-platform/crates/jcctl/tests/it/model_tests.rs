@@ -940,6 +940,30 @@ fn organization_imports_carry_what_resolves_and_refuse_what_does_not() {
     );
     assert_eq!(carried(&dir, Some(&organization)).map(|c| c.len()), Ok(1));
 
+    // Two organization models, the one imported importing the other: the organization checkout
+    // read for the first serves the second, and both are carried.
+    let regions = ORGANIZATION_MODEL
+        .replace("stations", "regions")
+        .replace("Station", "Region");
+    common::write(&organization, "datamodels/regions/regions.yaml", &regions);
+    common::write(
+        &organization,
+        "datamodels/regions/regions.linkml.yaml",
+        "name: regions\n",
+    );
+    common::write(
+        &organization,
+        "datamodels/stations/stations.linkml.yaml",
+        "name: stations\nimports: [org.regions.v1]\n",
+    );
+    let names = carried(&dir, Some(&organization)).map(|models| {
+        models
+            .into_iter()
+            .map(|model| model.name)
+            .collect::<Vec<_>>()
+    });
+    assert_eq!(names, Ok(vec!["regions".to_owned(), "stations".to_owned()]));
+
     for (source, org, expected) in [
         (
             "name: zones\nimports: [org.Bad.v1]\n",

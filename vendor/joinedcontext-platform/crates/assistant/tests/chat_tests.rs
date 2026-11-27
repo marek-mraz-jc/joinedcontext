@@ -115,6 +115,11 @@ fn deployment(channel: Channel, per_conversation: u64, per_client: u32) -> Deplo
 }
 
 async fn world(test: &str, deployment: Deployment) -> World {
+    world_with(test, deployment, None).await
+}
+
+/// [`world`] whose deployment draws its maps and charts with the renderer at `viz`.
+async fn world_with(test: &str, deployment: Deployment, viz: Option<url::Url>) -> World {
     let embedder = Embedder::load(&model::model_dir(), 1).expect("the pinned model loads");
     let (admin, pool, name) = db::database(test).await;
     corpus::pages(
@@ -263,7 +268,7 @@ async fn world(test: &str, deployment: Deployment) -> World {
         questions: Arc::clone(&questions),
         answers: Default::default(),
         endpoint_base: url::Url::parse("https://data.hronov.example/").ok(),
-        viz: None,
+        viz,
         organization: "hronov".into(),
         contexts: Default::default(),
         turns: Default::default(),
@@ -1344,6 +1349,552 @@ async fn a_data_question_is_answered_from_the_endpoints_live_values() {
         .filter(|r| String::from_utf8_lossy(&r.body).contains("\"list_types\""))
         .count();
     assert_eq!(types_listed, 1, "the types are kept for ten minutes");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// The air Endpoint `SLUG` whose `query_entities` offers what a map source and a narrowing need
+/// and answers `entities`.
+async fn air_endpoint(gateway: &MockServer, entities: Value) {
+    let mcp = || Mock::given(method("POST")).and(path(format!("/api/endpoint/{SLUG}/mcp")));
+    let schema = json!({"type": "object", "properties": {
+        "type": {"type": "array", "items": {"type": "string"}, "minItems": 1},
+        "q": {"type": "string"}, "count": {"type": "boolean"}, "limit": {"type": "integer"},
+        "pick": {"type": "array"}, "format": {"type": "string"}, "cursor": {"type": "string"}}});
+    mcp()
+        .and(body_string_contains("tools/list"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1,
+            "result": {"tools": [
+                {"name": "list_types", "description": "Lists the entity types.", "inputSchema": {"type": "object"}},
+                {"name": "query_entities", "description": "Reads entities.", "inputSchema": schema}]}})))
+        .with_priority(1)
+        .mount(gateway)
+        .await;
+    let types = json!({"entityTypes": {"id": "urn:ngsi-ld:EntityTypeList:1", "type": "EntityTypeList", "typeList": ["AirQualityObserved"]}});
+    let answer = |text: String| {
+        ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {
+            "content": [{"type": "text", "text": text}]}}))
+    };
+    mcp()
+        .and(body_string_contains("\"list_types\""))
+        .respond_with(answer(types.to_string()))
+        .with_priority(1)
+        .mount(gateway)
+        .await;
+    mcp()
+        .and(body_string_contains("\"query_entities\""))
+        .respond_with(answer(entities.to_string()))
+        .with_priority(1)
+        .mount(gateway)
+        .await;
+}
+
+/// Two located stations of `of_all`, each part of the dataset at `part` when one is named.
+fn stations(of_all: u64, part: Option<&str>) -> Value {
+    let station = |id: &str, name: &str, no2: i64, lon: f64| {
+        let mut entity = json!({"id": format!("urn:ngsi-ld:AirQualityObserved:{id}"), "type": "AirQualityObserved",
+            "name": {"type": "Property", "value": name},
+            "no2": {"type": "Property", "value": no2, "observedAt": "2026-10-15T18:00:00Z"},
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [lon, 48.74]}}});
+        entity
+            .as_object_mut()
+            .expect("an entity")
+            .extend(part.map(|part| {
+                (
+                    "isPartOf".to_owned(),
+                    json!({"type": "Property", "value": part}),
+                )
+            }));
+        entity
+    };
+    json!({"entities": [station("snp", "Námestie SNP", 21, 19.15), station("stanica", "Železničná stanica", 34, 19.16)],
+        "total": of_all})
+}
+
+/// A public deployment whose air connector lists its types, so the router can send a read there.
+fn air_deployment() -> Deployment {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = vec!["list_types".into(), "query_entities".into()];
+    d
+}
+
+/// One more page of the `web` source of `hronov`, embedded, as a crawl would have stored it.
+async fn web_page(w: &World, url: &str, text: &str) {
+    let mut tx = assistant::project_scope(&w.pool, "hronov")
+        .await
+        .expect("scope");
+    let site: i64 = sqlx::query_scalar("SELECT id FROM sites WHERE source = 'web'")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("the web site");
+    let page: i64 = sqlx::query_scalar(
+        "INSERT INTO pages (site_id, project, url, depth) VALUES ($1, 'hronov', $2, 0) RETURNING id",
+    )
+    .bind(site)
+    .bind(url)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("page");
+    sqlx::query(
+        "INSERT INTO chunks (site_id, project, page_id, ordinal, url, text, lang, visibility) \
+         VALUES ($1, 'hronov', $2, 0, $3, $4, 'sk', 'public')",
+    )
+    .bind(site)
+    .bind(page)
+    .bind(url)
+    .bind(text)
+    .execute(&mut *tx)
+    .await
+    .expect("chunk");
+    tx.commit().await.expect("commit");
+    embed_missing(&w.pool, &w.state.embedder, "hronov", 100)
+        .await
+        .expect("embedded");
+}
+
+fn data_route() -> ResponseTemplate {
+    completion(
+        json!({"role": "assistant", "content": "{\"route\": \"data\", \"queries\": [\"NO2 Námestie SNP\"], \"data\": [{\"endpoint\": \"ovzdusie\", \"type\": \"AirQualityObserved\"}]}"}),
+        400,
+    )
+}
+
+/// T-7755: on a deployment with a renderer, a visitor's map of part of a read (2 of 30 stations)
+/// gets a map source of its own, bound to the deployment.
+#[tokio::test]
+async fn a_visitors_map_of_part_of_a_read_gets_its_map_source() {
+    let w = world_with(
+        "chatmapsource",
+        air_deployment(),
+        url::Url::parse("https://viz.hronov.example/").ok(),
+    )
+    .await;
+    air_endpoint(&w.gateway, stations(30, None)).await;
+    script_routed(
+        &w.proxy,
+        vec![data_route()],
+        vec![completion(
+            json!({"role": "assistant", "content": "{\"answers\": true}"}),
+            50,
+        )],
+        vec![completion(
+            json!({"role": "assistant", "content": "NO2 je 21 [1]."}),
+            930,
+        )],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "Aké je NO2 na Námestí SNP?"}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    let data = &events
+        .iter()
+        .find(|(n, _)| n == "data")
+        .unwrap_or_else(|| panic!("a table: {events:?}"))
+        .1;
+    assert!(
+        data["mapSource"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("/api/v1/d/hronov-obcania/map/")),
+        "{data}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A connector the manifest names without tools is offered every read tool; one that names
+/// only a write is never listed; a named server that cannot list its Endpoints is logged once an
+/// hour on a public channel, and both questions are answered.
+#[tokio::test]
+async fn a_connector_without_tools_reads_all_one_with_a_write_alone_is_not_listed() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = Vec::new();
+    d.spec.connectors.push(Connector {
+        endpoint: "hronov/catalog".into(),
+        tools: vec!["delete_everything".into()],
+        timeout_seconds: 5,
+    });
+    d.spec.mcp_server = Some("hronov/air".into());
+    let w = world("chatnotools", d).await;
+    let rag = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica\"]}"}),
+            130,
+        )
+    };
+    script_routed(
+        &w.proxy,
+        vec![rag(), rag()],
+        vec![],
+        vec![
+            streamed(&["Knižnica je otvorená do 18:00 [1]."], 60, 10),
+            streamed(&["Do 18:00 [1]."], 60, 10),
+        ],
+    )
+    .await;
+    for _ in 0..2 {
+        let (_, events, _) = answer_of(
+            &w.app,
+            ask(
+                json!({"message": "Dokedy je otvorená knižnica?"}),
+                Some(ORIGIN),
+            ),
+        )
+        .await;
+        assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+    }
+    let asked = w.gateway.received_requests().await.unwrap_or_default();
+    let listed = |slug: &str| {
+        asked
+            .iter()
+            .filter(|r| r.url.path().contains(slug))
+            .filter(|r| String::from_utf8_lossy(&r.body).contains("tools/list"))
+            .count()
+    };
+    assert!(listed(SLUG) >= 1, "the connector without tools is listed");
+    assert_eq!(listed(CATALOG_SLUG), 0, "a write alone lists nothing");
+    assert!(
+        asked.iter().any(|r| r.url.path() == "/api/mcp/hronov/air"),
+        "the named server was asked"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// AG-104: on the internal channel a connector whose tools cannot be listed is a failed step the
+/// person sees, and the question is answered without it.
+#[tokio::test]
+async fn an_internal_connector_that_cannot_be_listed_is_a_failed_step() {
+    let w = world("chatlistfailed", looped(50_000)).await;
+    script(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": "Neviem."}),
+            100,
+        )],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask_in_portal(
+            json!({"message": "Koľko je záznamov?"}),
+            Some(PORTAL_TOKEN),
+            Some("jana"),
+            Some(PERSON_TOKEN),
+        ),
+    )
+    .await;
+    assert!(
+        events.iter().any(|(n, d)| n == "tool"
+            && d["name"] == "tools/list"
+            && d["endpoint"] == "interne"
+            && d["status"] == "failed"),
+        "{events:?}"
+    );
+    assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-5929: a read the router names without `q` is narrowed to the dataset page the question's
+/// own search found, when that page serves the type from the Endpoint by `isPartOf`; rows that
+/// name a page the sources hold cite that page. A router slower than the question's own search
+/// narrows by that search's passages, a quick one by a search of its own.
+#[tokio::test]
+async fn a_read_is_narrowed_to_the_dataset_page_the_search_found() {
+    for (test, router_delay) in [("chatnarrowing", 0), ("chatnarrowfirst", 800)] {
+        narrowed_read(test, std::time::Duration::from_millis(router_delay)).await;
+    }
+}
+
+async fn narrowed_read(test: &str, router_delay: std::time::Duration) {
+    let w = world(test, air_deployment()).await;
+    let page = "https://data.hronov.example/dataset/ovzdusie-snp";
+    web_page(
+        &w,
+        page,
+        &format!(
+            "NO2 na Námestí SNP: merania ovzdušia stanice Námestie SNP. Dáta: \
+             https://data.hronov.example/api/endpoint/{SLUG}/ngsi-ld/v1/entities?type=AirQualityObserved&q=isPartOf==%22{page}%22"
+        ),
+    )
+    .await;
+    air_endpoint(&w.gateway, stations(2, Some(page))).await;
+    script_routed(
+        &w.proxy,
+        vec![data_route().set_delay(router_delay)],
+        vec![
+            completion(
+                json!({"role": "assistant", "content": "{\"answers\": true}"}),
+                50,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "{\"answers\": true}"}),
+                50,
+            ),
+        ],
+        vec![completion(
+            json!({"role": "assistant", "content": "NO2 je 21 [1]."}),
+            930,
+        )],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "Aké je NO2 na Námestí SNP?"}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    let reads: Vec<String> = w
+        .gateway
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .filter(|b| b.contains("\"query_entities\""))
+        .collect();
+    assert!(
+        reads
+            .iter()
+            .any(|b| b.contains("isPartOf==") && b.contains("ovzdusie-snp")),
+        "{reads:?}"
+    );
+    let citations = &events
+        .iter()
+        .find(|(n, _)| n == "citations")
+        .unwrap_or_else(|| panic!("citations: {events:?}"))
+        .1;
+    assert!(
+        citations
+            .as_array()
+            .is_some_and(|c| c.iter().any(|c| c["url"] == page)),
+        "{citations}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-4366: a table cited at its Endpoint's listing is linked to the dataset page the sources
+/// hold about that Endpoint instead, also when its rows name a dataset page the sources do not
+/// hold.
+#[tokio::test]
+async fn a_tables_listing_is_cited_at_the_page_that_names_its_endpoint() {
+    for (test, part) in [
+        ("chatendpointpage", None),
+        (
+            "chatendpointunheld",
+            Some("https://data.elsewhere.example/dataset/ovzdusie"),
+        ),
+    ] {
+        cited_at_endpoint_page(test, part).await;
+    }
+}
+
+async fn cited_at_endpoint_page(test: &str, part: Option<&str>) {
+    let w = world(test, air_deployment()).await;
+    let page = "https://data.hronov.example/dataset/ovzdusie";
+    web_page(
+        &w,
+        page,
+        &format!(
+            "Dataset kvality ovzdušia. Rozhranie: https://data.hronov.example/api/endpoint/{SLUG}"
+        ),
+    )
+    .await;
+    air_endpoint(&w.gateway, stations(2, part)).await;
+    script_routed(
+        &w.proxy,
+        vec![data_route()],
+        vec![
+            completion(
+                json!({"role": "assistant", "content": "{\"answers\": true}"}),
+                50,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "{\"answers\": true}"}),
+                50,
+            ),
+        ],
+        vec![completion(
+            json!({"role": "assistant", "content": "NO2 je 21 [1]."}),
+            930,
+        )],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "Aké je NO2 na Námestí SNP?"}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    let citations = &events
+        .iter()
+        .find(|(n, _)| n == "citations")
+        .unwrap_or_else(|| panic!("citations: {events:?}"))
+        .1;
+    assert_eq!(citations[0]["url"], page, "{citations}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// T-4366: a passage of an Endpoint's own address, which a visitor reads as JSON, is cited at
+/// the dataset page that names the Endpoint.
+#[tokio::test]
+async fn a_passage_at_an_endpoints_address_is_cited_at_its_dataset_page() {
+    let w = world("chatendpointpassage", air_deployment()).await;
+    let page = "https://data.hronov.example/dataset/ovzdusie";
+    web_page(
+        &w,
+        page,
+        &format!(
+            "Dataset kvality ovzdušia. Rozhranie: https://data.hronov.example/api/endpoint/{SLUG}"
+        ),
+    )
+    .await;
+    let address = format!("https://data.hronov.example/api/endpoint/{SLUG}/ngsi-ld/v1/entities");
+    web_page(
+        &w,
+        &address,
+        "Merané znečistenie: oxid dusičitý NO2 na stanici Námestie SNP v mikrogramoch.",
+    )
+    .await;
+    let answers = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"answers\": true}"}),
+            50,
+        )
+    };
+    script_routed(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"oxid dusičitý NO2 stanica\"]}"}),
+            130,
+        )],
+        vec![answers(), answers()],
+        vec![streamed(&["NO2 sa meria na Námestí SNP [1]."], 60, 10)],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "Kde sa meria oxid dusičitý NO2?"}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    let citations = &events
+        .iter()
+        .find(|(n, _)| n == "citations")
+        .unwrap_or_else(|| panic!("citations: {events:?}"))
+        .1;
+    assert_eq!(citations[0]["url"], page, "{citations}");
+    let calls = model_calls(&w.proxy).await;
+    let answer = calls_of(&calls, None)[0].to_string();
+    // The cited passage is the address's own, not the dataset page's.
+    let first = format!(r#"{{\"n\":1,\"url\":\"{address}\""#);
+    assert!(answer.contains(&first), "{answer}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// The first round's passages are judged beside the router only while the conversation's budget
+/// holds the judgement too: measured once with room, a budget of the router call alone asks no
+/// judge.
+#[tokio::test]
+async fn a_first_round_the_budget_cannot_judge_is_not_judged() {
+    let question = "Aká je cena parkovania v zóne B?";
+    let rag = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"parkovanie\"]}"}),
+            130,
+        )
+    };
+    let judged = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"answers\": true}"}),
+            50,
+        )
+    };
+    let w = world("chatjudgeroom", deployment(Channel::Public, 1_000_000, 10)).await;
+    script_routed(
+        &w.proxy,
+        vec![rag()],
+        vec![judged(), judged()],
+        vec![streamed(&["Neviem."], 60, 10)],
+    )
+    .await;
+    let (_, events, _) = answer_of(&w.app, ask(json!({"message": question}), Some(ORIGIN))).await;
+    let calls = model_calls(&w.proxy).await;
+    let checked = |events: &[(String, Value)]| {
+        events
+            .iter()
+            .filter(|(kind, data)| kind == "stage" && data["stage"] == "checking")
+            .count()
+    };
+    // Judged beside the router, the passages need no checking round of their own.
+    assert_eq!(checked(&events), 0, "{events:?}");
+    assert_eq!(calls_of(&calls, Some(JUDGE)).len(), 1, "{events:?}");
+    let router: u64 = (calls_of(&calls, Some(ROUTER))[0]["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .map(|m| m.to_string().chars().count())
+        .sum::<usize>()
+        / 4) as u64;
+    db::drop_database(w.admin, w.pool, &w.name).await;
+
+    // The router's own call and its answer allowance, and not one token more.
+    let w = world(
+        "chatjudgetight",
+        deployment(Channel::Public, router + 420, 10),
+    )
+    .await;
+    script_routed(
+        &w.proxy,
+        vec![rag()],
+        vec![judged(), judged()],
+        vec![streamed(&["Neviem."], 60, 10)],
+    )
+    .await;
+    let (_, events, _) = answer_of(&w.app, ask(json!({"message": question}), Some(ORIGIN))).await;
+    let calls = model_calls(&w.proxy).await;
+    assert_eq!(calls_of(&calls, Some(ROUTER)).len(), 1, "{events:?}");
+    // No judgement beside the router: the passages are checked in a round of their own.
+    assert!(checked(&events) > 0, "{events:?}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A router that has not answered in its hedge time is asked again; the answer goes on with the
+/// second reply and the first call is counted too.
+#[tokio::test]
+async fn a_slow_router_is_hedged_and_both_calls_are_counted() {
+    let w = world("chathedge", deployment(Channel::Public, 50_000, 10)).await;
+    let rag = || {
+        completion(
+            json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"knižnica\"]}"}),
+            130,
+        )
+    };
+    script_routed(
+        &w.proxy,
+        vec![rag().set_delay(std::time::Duration::from_secs(4)), rag()],
+        vec![],
+        vec![streamed(&["Do 18:00 [1]."], 60, 10)],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask(
+            json!({"message": "Dokedy je otvorená knižnica?"}),
+            Some(ORIGIN),
+        ),
+    )
+    .await;
+    assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+    let calls = model_calls_settled(&w.proxy, 3).await;
+    assert_eq!(calls_of(&calls, Some(ROUTER)).len(), 2);
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
@@ -2484,6 +3035,43 @@ async fn a_deployment_without_sources_offers_no_search() {
         .as_str()
         .expect("refusal");
     assert!(refused.contains("no tool of that name"), "{refused}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A search of a source that holds no passage tells the model the city's pages do not answer
+/// this, and cites nothing.
+#[tokio::test]
+async fn a_search_that_finds_no_passage_says_the_pages_do_not_answer() {
+    let mut empty_source = looped(50_000);
+    empty_source.spec.sources = vec!["archiv".into()];
+    let w = world("chatnopassage", empty_source).await;
+    script(
+        &w.proxy,
+        vec![
+            completion(tool_call("c1", "search", json!({"query": "knižnica"})), 100),
+            completion(json!({"role": "assistant", "content": "Neviem."}), 100),
+        ],
+    )
+    .await;
+    let (_, events, _) = answer_of(
+        &w.app,
+        ask_looped(json!({"message": "Dokedy je otvorená knižnica?"})),
+    )
+    .await;
+    assert!(
+        events
+            .iter()
+            .any(|(n, d)| n == "tool" && d["name"] == "search" && d["status"] == "done"),
+        "{events:?}"
+    );
+    let calls = model_calls(&w.proxy).await;
+    let told = calls[1].1["messages"][3]["content"]
+        .as_str()
+        .expect("the search's answer");
+    assert_eq!(
+        told,
+        "No passage matches. Say that the city's pages do not answer this."
+    );
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
@@ -4885,6 +5473,108 @@ async fn a_turn_past_its_resume_is_gone_and_a_map_source_spends_its_pages() {
         .await
         .expect("an answer");
     assert_eq!(response.status(), StatusCode::CONFLICT);
+
+    // The last page a source may serve is capped where the Endpoint has more.
+    Mock::given(method("POST"))
+        .and(path("/api/endpoint/bbsk-mosty/mcp"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1,
+            "result": {"content": [{"type": "text", "text": json!({"entities": [{
+                "id": "urn:ngsi-ld:Bridge:1", "name": "Most",
+                "location": {"type": "Point", "coordinates": [19.1, 48.7]}
+            }], "nextCursor": "more"}).to_string()}]}})),
+        )
+        .mount(&w.gateway)
+        .await;
+    let more = w
+        .state
+        .map_sources
+        .hold(
+            "hronov-obcania",
+            &visitor,
+            Read {
+                slug: "bbsk-mosty".into(),
+                ..read()
+            },
+            std::time::Instant::now(),
+        )
+        .expect("a source");
+    for _ in 1..MAX_PAGES {
+        w.state
+            .map_sources
+            .page("hronov-obcania", &visitor, &more, std::time::Instant::now());
+    }
+    let response = w
+        .app
+        .clone()
+        .oneshot(map_page_of(&more, None, Some(&proof), "203.0.113.7"))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    let body: Value = serde_json::from_slice(&bytes).expect("GeoJSON");
+    assert_eq!(body["capped"], true, "{body}");
+    assert!(body.get("next").is_none(), "{body}");
+    assert_eq!(body["features"].as_array().map(Vec::len), Some(1), "{body}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// What the chat logs, kept for a test to read.
+#[derive(Clone, Default)]
+struct Logged(Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Logged {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// T-5779: an anonymous visitor's question is logged with its deployment and cut at 200
+/// characters; a short one is logged whole.
+#[tokio::test]
+async fn a_visitors_question_is_logged_cut_past_its_bound() {
+    let logged = Logged::default();
+    let writer = logged.clone();
+    let _guard = tracing::subscriber::set_default(
+        tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish(),
+    );
+    let w = world("chatlogged", deployment(Channel::Public, 1_000_000, 10)).await;
+    script(&w.proxy, vec![plain("Áno."); 2]).await;
+    let long = format!("Je knižnica otvorená {}?", "dlho ".repeat(60));
+    for question in [long.as_str(), "Je knižnica otvorená?"] {
+        answer_of(&w.app, ask(json!({"message": question}), Some(ORIGIN))).await;
+    }
+    let text = String::from_utf8_lossy(
+        &logged
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+    )
+    .into_owned();
+    let lines: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("question asked"))
+        .collect();
+    assert_eq!(lines.len(), 2, "{text}");
+    assert!(lines.iter().all(|l| l.contains("hronov/")), "{text}");
+    assert!(
+        lines[0].contains("…") && !lines[0].contains(long.trim()),
+        "{text}"
+    );
+    assert!(lines[1].contains("Je knižnica otvorená?"), "{text}");
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 

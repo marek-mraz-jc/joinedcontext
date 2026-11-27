@@ -611,6 +611,16 @@ fn the_installations_organization_sets_the_limits_and_no_other() {
     );
 }
 
+/// A registry entry that is no manifest stops the assembly: the organization is refused whole,
+/// naming the entry, rather than served without the project it registers.
+#[test]
+fn a_registry_entry_that_does_not_parse_refuses_the_assembly() {
+    let (org, checkouts) = organization("broken-registry");
+    write(&org, "projects/broken.yaml", "kind: [unclosed\n");
+    let error = store::load_from(&org, Some(&checkouts)).expect_err("the registry does not read");
+    assert!(error.to_string().contains("broken"), "{error}");
+}
+
 /// A checkouts directory that is not there is the error of reading it, naming the path; a
 /// registered project whose checkout is missing is left out and the others load.
 #[test]

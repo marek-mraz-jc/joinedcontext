@@ -145,6 +145,11 @@ type Asked = Arc<Mutex<Vec<HashMap<String, String>>>>;
 
 /// A realm token endpoint answering every exchange with `status`.
 async fn realm_answering(status: StatusCode) -> (String, Asked) {
+    realm_issuing(status, EXCHANGED).await
+}
+
+/// [`realm_answering`], issuing `token`.
+async fn realm_issuing(status: StatusCode, token: &'static str) -> (String, Asked) {
     let asked: Asked = Arc::default();
     let kept = Arc::clone(&asked);
     let app = Router::new().route(
@@ -153,7 +158,7 @@ async fn realm_answering(status: StatusCode) -> (String, Asked) {
             let kept = Arc::clone(&kept);
             async move {
                 kept.lock().expect("lock").push(form);
-                (status, Json(json!({ "access_token": EXCHANGED })))
+                (status, Json(json!({ "access_token": token })))
             }
         }),
     );
@@ -338,6 +343,20 @@ async fn a_failed_exchange_answers_502_or_503_and_forwards_nothing() {
         assert!(!body.to_string().contains(&caller), "{body}");
         assert!(broker.hops.lock().expect("hops").is_empty());
     }
+
+    // A token that cannot be a header value is no token to forward: a 500, and no hop.
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let (url, _) = realm_issuing(StatusCode::OK, "a token\nwith a line break").await;
+    let (status, body) = send(
+        gateway(&realm, &broker.url, federations(false), Some(url)),
+        Method::GET,
+        HUB_SLUG,
+        Some(&caller),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(!body.to_string().contains("line break"), "{body}");
+    assert!(broker.hops.lock().expect("hops").is_empty());
 
     // No exchanger configured: the same 503, never a hop as somebody else.
     let broker = common::BrokerStub::start(vec![json!([])]).await;

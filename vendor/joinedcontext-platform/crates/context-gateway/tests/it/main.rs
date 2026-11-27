@@ -116,6 +116,7 @@ mod host_organization_tests;
 mod hub_federation_tests;
 mod identity_attrs_tests;
 mod leak_sweep_tests;
+mod loadtest_read_tests;
 mod many_brokers_tests;
 mod many_types_download_tests;
 mod mcp_anonymous_read_only_tests;

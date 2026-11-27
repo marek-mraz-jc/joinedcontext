@@ -1197,6 +1197,157 @@ mod tests {
             .contains("Most A"));
     }
 
+    /// The schema of a read that can count, filter and page.
+    fn counting() -> Value {
+        json!({"type": "object", "properties": {"type": {"type": "array"}, "q": {"type": "string"},
+            "count": {"type": "boolean"}, "limit": {"type": "integer"}, "pick": {"type": "array"}}})
+    }
+
+    /// A page of part of the matching bridges, one of them located, on a deployment with a map
+    /// renderer: how many of all have a location is one more count with `location` beside the
+    /// read's `q`, and the table carries a map; a table that only counted carries none.
+    #[tokio::test]
+    async fn a_located_part_of_the_type_is_counted_with_location_and_mapped() {
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("location"))
+            .respond_with(answered(&json!({"total": 7, "entities": []}).to_string()))
+            .mount(&gateway)
+            .await;
+        let parts = Parts::new();
+        let schema = counting();
+        let connectors = [connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", schema.clone())],
+            None,
+        )];
+        let viz = url::Url::parse("https://viz.dev.joinedcontext.com/").expect("a renderer");
+        let mut ask = parts.ask(&connectors);
+        ask.viz = Some(&viz);
+        let page = || Table {
+            endpoint: "hronov/most".into(),
+            entity_type: "Bridge".into(),
+            columns: vec!["id".into(), "name".into()],
+            rows: vec![vec![json!("urn:ngsi-ld:Bridge:a"), json!("Most A")]],
+            units: vec![None, None],
+            geometries: vec![Some(json!({"type": "Point", "coordinates": [19.1, 48.7]}))],
+            total: Some(30),
+            ..Table::default()
+        };
+        let arguments = json!({"type": ["Bridge"], "q": "name~=\"M\""});
+        let mut table = page();
+        finish(
+            &ask,
+            &connectors[0],
+            &schema,
+            &mut table,
+            (&arguments, &arguments),
+            None,
+        )
+        .await;
+        assert_eq!((table.total, table.located), (Some(30), Some(7)));
+        assert!(table.map.is_some(), "{table:?}");
+
+        let mut counted = page();
+        counted.counted = true;
+        finish(
+            &ask,
+            &connectors[0],
+            &schema,
+            &mut counted,
+            (&arguments, &arguments),
+            None,
+        )
+        .await;
+        assert_eq!(counted.located, Some(7));
+        assert!(counted.map.is_none());
+    }
+
+    /// A count and a split whose gateway answers after the scan's deadline count nothing, rather
+    /// than hold the answer.
+    #[tokio::test]
+    async fn a_count_or_a_split_past_the_scan_deadline_counts_nothing() {
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                answered(&json!({"total": 7, "entities": [{"managerName": "BBSK"}]}).to_string())
+                    .set_delay(SCAN_DEADLINE + Duration::from_secs(1)),
+            )
+            .mount(&gateway)
+            .await;
+        let parts = Parts::new();
+        let schema = counting();
+        let mut slow = connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", schema.clone())],
+            None,
+        );
+        slow.surface.timeout = SCAN_DEADLINE * 3;
+        let connectors = [slow];
+        let ask = parts.ask(&connectors);
+        let arguments = json!({"type": ["Bridge"]});
+        let (count, split) = tokio::join!(
+            count_of(&ask, &connectors[0], &schema, &arguments, None),
+            counted(&ask, &connectors[0], &schema, &arguments, "managerName"),
+        );
+        assert_eq!(count, None);
+        assert!(split.is_none());
+    }
+
+    /// A history whose places cannot be read in time, or whose tool would not take the read of
+    /// them, keeps its ids for names.
+    #[tokio::test]
+    async fn a_history_whose_names_are_late_or_not_askable_keeps_the_ids() {
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                answered(
+                    &json!({"entities": [{"id": "urn:ngsi-ld:Bridge:a", "type": "Bridge", "name": "Most A"}]})
+                        .to_string(),
+                )
+                .set_delay(Duration::from_secs(1)),
+            )
+            .mount(&gateway)
+            .await;
+        let history = json!([{"id": "urn:ngsi-ld:Bridge:a", "type": "Bridge",
+            "bridgedLength": [{"type": "Property", "value": 9.0, "observedAt": "2026-10-01T08:00:00Z"}]}])
+        .to_string();
+        let arguments = json!({"type": ["Bridge"], "attrs": ["bridgedLength"]});
+        let parts = Parts::new();
+        let open = json!({"type": "object", "properties": {"type": {"type": "array"},
+            "id": {"type": "array"}, "limit": {"type": "integer"}}});
+        let late = [connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", open)],
+            None,
+        )];
+        let read = ("Bridge", history.as_str(), &arguments);
+        let table = history_of(&parts.ask(&late), &late[0], read, Duration::from_millis(50))
+            .await
+            .expect("a table");
+        assert_eq!(table.rows[0][0], json!("a"));
+        let narrow = json!({"type": "object", "properties": {"type": {"type": "array"},
+            "id": {"type": "array"}, "limit": {"type": "integer", "maximum": 0}}});
+        let refused = [connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", narrow)],
+            None,
+        )];
+        let table = history_of(
+            &parts.ask(&refused),
+            &refused[0],
+            read,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect("a table");
+        assert_eq!(table.rows[0][0], json!("a"));
+    }
+
     /// The register as measured on 2026-11-22: 1,651 bridges, their managers' own names.
     fn managers() -> Vec<Option<Value>> {
         let groups: [(&str, usize); 8] = [
@@ -1607,6 +1758,39 @@ mod tests {
         assert!(history(&json!({"entities": []}).to_string(), &json!({})).is_none());
     }
 
+    /// An entity with no id is skipped; a second method of the same attribute is not mixed into
+    /// the first; a sum or a minimum is read as one; a few moments off the hour are per period.
+    #[test]
+    fn a_history_skips_what_has_no_id_and_keeps_one_method_per_attribute() {
+        let mixed = json!({"entities": [
+            {"type": "AirQualityObserved", "pm10": {"sum": [[1, "2026-10-01T00:00:00Z"]]}},
+            {"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved", "name": "Senzor",
+             "pm10": {"sum": [[3, "2026-10-01T00:00:00Z"], [4, "2026-10-01T06:00:00Z"]]}},
+            {"id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved",
+             "pm10": {"min": [[2, "2026-10-01T00:00:00Z"]]}}]});
+        let read = history(&mixed.to_string(), &json!({"attrs": ["pm10"]})).expect("a history");
+        assert_eq!(read.ids, ["urn:ngsi-ld:AirQualityObserved:a"]);
+        assert_eq!(read.made.method, "sum");
+        assert_eq!(read.made.per, "hour");
+        let values: Vec<f64> = read.rows.iter().map(|(_, _, v)| *v).collect();
+        assert_eq!(values, [3.0, 4.0]);
+
+        let least = json!({"id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved",
+            "pm10": {"min": [[2, "2026-10-01T00:17:00Z"], [5, "2026-10-01T03:42:30Z"]]}});
+        let read = history(&least.to_string(), &json!({})).expect("a history");
+        assert_eq!(
+            (read.made.method.as_str(), read.made.per),
+            ("min", "period")
+        );
+        assert_eq!(read.rows.len(), 2);
+    }
+
+    /// A history with no moment at all is read per day.
+    #[test]
+    fn no_moment_reads_per_day() {
+        assert_eq!(calendar(&BTreeSet::new(), true, &json!({})), Calendar::Day);
+    }
+
     #[test]
     fn a_history_across_new_year_is_a_dated_line_and_two_places_get_a_legend() {
         let start = time::macros::datetime!(2025-12-15 00:00 UTC);
@@ -1805,6 +1989,12 @@ mod tests {
         let mut day = month.clone();
         day["timeAt"] = json!("2026-11-22T00:00:00Z");
         assert_eq!(history_arguments(&schema, &day, now), day);
+        // Averages asked with no period: sent as they are.
+        let mut bare = month.clone();
+        bare.as_object_mut()
+            .expect("an object")
+            .remove("aggrPeriodDuration");
+        assert_eq!(history_arguments(&schema, &bare, now), bare);
     }
 
     #[test]

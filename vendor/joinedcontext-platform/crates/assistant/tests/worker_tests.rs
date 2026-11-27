@@ -275,6 +275,19 @@ fn the_snapshot_keeps_valid_deployments_and_servers_and_names_a_claimed_public_i
     assert!(snapshot
         .servers
         .contains_key(&("bb".to_owned(), "tools".to_owned())));
+    // A projects folder that is not there adds no project and loses none of the organization's.
+    let missing = worker::snapshot(&Checkout {
+        organization: dir.join("org"),
+        projects: Some(dir.join("no-such-layout")),
+        assembly: dir.join(".assembly"),
+    })
+    .expect("the checkout reads without its projects folder");
+    let names: Vec<&str> = missing
+        .deployments
+        .iter()
+        .map(|d| d.name.as_str())
+        .collect();
+    assert_eq!(names, ["a", "b"]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
