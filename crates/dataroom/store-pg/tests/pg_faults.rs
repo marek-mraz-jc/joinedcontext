@@ -137,6 +137,44 @@ async fn a_refused_step_is_a_storage_error_naming_it() {
     db.drop_it().await;
 }
 
+/// The organization set and the catalogue refused: the error names the catalogue step. A
+/// `set_config` ahead of `pg_catalog` on the search path refuses only `jc.catalogue`.
+#[tokio::test]
+async fn a_refused_catalogue_setting_is_a_storage_error_naming_it() {
+    let Some(db) =
+        Scratch::create("a_refused_catalogue_setting_is_a_storage_error_naming_it").await
+    else {
+        return;
+    };
+    db.run(
+        "CREATE FUNCTION public.set_config(name text, value text, is_local boolean)
+         RETURNS text LANGUAGE plpgsql AS $$
+         BEGIN
+             IF name = 'jc.catalogue' THEN
+                 RAISE EXCEPTION 'jc.catalogue refused';
+             END IF;
+             RETURN pg_catalog.set_config(name, value, is_local);
+         END $$",
+    )
+    .await;
+    let pool = db.limited().await;
+    let mut conn = pool.acquire().await.expect("connection");
+    sqlx::query("SET search_path TO public, pg_catalog")
+        .execute(&mut *conn)
+        .await
+        .expect("search path");
+    let (org, cat) = tenant();
+    set_tenant_config(&mut conn, org, None)
+        .await
+        .expect("the organization alone is set");
+    let msg = storage(set_tenant_config(&mut conn, org, Some(cat)).await);
+    assert!(msg.starts_with("set jc.catalogue"), "{msg}");
+    assert!(msg.contains("jc.catalogue refused"), "{msg}");
+    drop(conn);
+    pool.close().await;
+    db.drop_it().await;
+}
+
 #[tokio::test]
 async fn a_schema_missing_one_required_table_is_refused_by_its_name() {
     let Some(db) =
