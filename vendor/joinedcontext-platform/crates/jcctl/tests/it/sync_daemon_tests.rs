@@ -267,6 +267,139 @@ fn a_moved_source_becomes_a_reviewable_proposal() {
     assert_eq!(outcome.state.last_run_at, Some(HOUR));
 }
 
+/// A remote that answers one revision and lays out its checkout with `lay`.
+struct Tree {
+    lay: fn(&Path),
+}
+
+impl SyncRemote for Tree {
+    fn revision(&self, _origin: &SyncOrigin) -> Result<String, RemoteError> {
+        Ok("9f1c0de".to_owned())
+    }
+
+    fn checkout(
+        &self,
+        _origin: &SyncOrigin,
+        _revision: &str,
+        into: &Path,
+    ) -> Result<(), RemoteError> {
+        (self.lay)(into);
+        Ok(())
+    }
+}
+
+fn poll_tree(
+    dirs: &(PathBuf, PathBuf),
+    manifest: &RawManifest,
+    lay: fn(&Path),
+) -> Result<sync::Run, sync::SyncError> {
+    sync::poll(
+        manifest,
+        &State::default(),
+        HOUR,
+        &dirs.0,
+        &dirs.1,
+        &Tree { lay },
+    )
+}
+
+fn permissions(path: &Path, mode: u32) {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).expect("the mode is set");
+}
+
+/// MF-27: a checkout the selector cannot walk, read, trim or rewrite stops the run naming the
+/// path; a document that is only a comment is dropped.
+#[test]
+fn a_selector_that_cannot_walk_read_or_rewrite_the_checkout_stops_the_run() {
+    let selector = source(json!({ "selector": { "joinedcontext.com/tier": "standard" } }));
+    let comment: fn(&Path) = |into| {
+        std::fs::write(
+            into.join("space.yaml"),
+            format!("# a comment\n---\n{SANDBOX}"),
+        )
+        .expect("written");
+    };
+    let outcome = poll_tree(&dirs("selector-comment"), &selector, comment).expect("judged");
+    assert!(outcome.proposal.is_some(), "{outcome:?}");
+
+    let layouts: [fn(&Path); 4] = [
+        |into| {
+            let locked = into.join("locked");
+            std::fs::create_dir_all(&locked).expect("a directory");
+            permissions(&locked, 0o000);
+        },
+        |into| std::fs::write(into.join("binary.yaml"), [0xff_u8, 0xfe]).expect("written"),
+        |into| {
+            let sealed = into.join("sealed");
+            std::fs::create_dir_all(&sealed).expect("a directory");
+            std::fs::write(sealed.join("other.yaml"), OTHER).expect("written");
+            permissions(&sealed, 0o555);
+        },
+        |into| {
+            let path = into.join("both.yaml");
+            std::fs::write(&path, format!("{SANDBOX}---\n{OTHER}")).expect("written");
+            permissions(&path, 0o444);
+        },
+    ];
+    for (n, lay) in layouts.into_iter().enumerate() {
+        let dirs = dirs(&format!("selector-io-{n}"));
+        let got = poll_tree(&dirs, &selector, lay);
+        assert!(
+            matches!(got, Err(sync::SyncError::Io { .. })),
+            "{n}: {got:?}"
+        );
+        // Give the directories back, so the temp tree can be cleaned.
+        for entry in ["locked", "sealed"] {
+            let path = dirs.1.join("9f1c0de").join(entry);
+            if path.exists() {
+                permissions(&path, 0o755);
+            }
+        }
+    }
+}
+
+/// A workspace that cannot hold the checkout and a repository that does not load are errors;
+/// a resource the repository already holds is replaced by an update.
+#[test]
+fn a_blocked_workspace_a_broken_repository_and_a_replaced_resource() {
+    let blocked = dirs("blocked-workspace");
+    std::fs::remove_dir_all(&blocked.1).expect("the workspace goes");
+    std::fs::write(&blocked.1, "a file").expect("a file where the workspace goes");
+    let space: fn(&Path) =
+        |into| std::fs::write(into.join("space.yaml"), SANDBOX).expect("written");
+    let got = poll_tree(&blocked, &source(json!({})), space);
+    assert!(matches!(got, Err(sync::SyncError::Io { .. })), "{got:?}");
+
+    let broken = dirs("broken-repository");
+    std::fs::write(
+        broken.0.join("org.yaml"),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: NoSuchKind\nmetadata:\n  name: x\n",
+    )
+    .expect("a broken manifest");
+    let got = poll_tree(&broken, &source(json!({})), space);
+    assert!(matches!(got, Err(sync::SyncError::Import(_))), "{got:?}");
+
+    let held = dirs("replaced");
+    let at = held.0.join("projects/bb-doprava/spaces/regional-sandbox");
+    std::fs::create_dir_all(&at).expect("the space directory");
+    std::fs::write(
+        at.join("space.yaml"),
+        SANDBOX
+            .replace("namespace: regional", "namespace: bb-doprava")
+            .replace("isSandbox: true", "isSandbox: false"),
+    )
+    .expect("the held space");
+    let outcome = poll_tree(&held, &source(json!({})), space).expect("judged");
+    let proposal = outcome.proposal.expect("a proposal");
+    assert_eq!(
+        proposal.envelope["status"]["plan"]["update"],
+        json!(1),
+        "{}",
+        proposal.envelope
+    );
+}
+
 /// A source that has not moved costs one cheap call and proposes nothing (CC-18).
 #[test]
 fn a_source_that_has_not_moved_is_not_fetched() {

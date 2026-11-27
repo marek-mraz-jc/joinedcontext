@@ -173,7 +173,12 @@ fn spec_of(endpoint: &RawManifest) -> Result<EndpointSpec, PublishError> {
     if endpoint.kind != "Endpoint" {
         return Err(PublishError::NotAnEndpoint);
     }
-    serde_json::from_value(endpoint.spec.clone()).map_err(|e| PublishError::Spec(e.to_string()))
+    serde_json::from_value(endpoint.spec.clone()).map_err(spec_error)
+}
+
+/// A spec that does not read as what it should be.
+fn spec_error(error: serde_json::Error) -> PublishError {
+    PublishError::Spec(error.to_string())
 }
 
 /// The dataset one Endpoint becomes, or `None` when it is no dataset (EP-62, EP-174).
@@ -231,6 +236,7 @@ pub fn package_of(
         })
         .collect();
 
+    let mut listed = resources(&served, &url, record);
     let mut payload = json!({
         "name": name,
         "owner_org": organization,
@@ -240,7 +246,7 @@ pub fn package_of(
             None => format!("{url}/"),
         },
         "private": spec.audience != Audience::Public,
-        "resources": resources(&served, &url, record),
+        "resources": [],
         "extras": extras(record, &url, language),
     });
     // The record names an original dataset by its IRI only; the Endpoint's catalogue block
@@ -329,7 +335,7 @@ pub fn package_of(
         })
         .or_else(|| text(record.get("dct:license")));
     describe(
-        &mut payload["resources"],
+        &mut listed,
         &served,
         &Usage {
             dataset: name,
@@ -360,20 +366,20 @@ pub fn package_of(
         },
     );
     if let Some(slice) = slice {
-        narrow(&mut payload["resources"], &served, &url, slice);
+        narrow(&mut listed, &served, &url, slice);
+        payload["resources"] = Value::Array(listed);
         return Ok(payload);
     }
-    if let Some(list) = payload["resources"].as_array_mut() {
-        let feeds = feed_resources(
-            spec.feed_outputs(),
-            &url,
-            language,
-            spec.audience == Audience::Public,
-        );
-        let at = served.len().min(list.len());
-        let calendars = calendar_resources(calendars, &url, language);
-        list.splice(at..at, calendars.into_iter().chain(feeds));
-    }
+    let feeds = feed_resources(
+        spec.feed_outputs(),
+        &url,
+        language,
+        spec.audience == Audience::Public,
+    );
+    let at = served.len().min(listed.len());
+    let calendars = calendar_resources(calendars, &url, language);
+    listed.splice(at..at, calendars.into_iter().chain(feeds));
+    payload["resources"] = Value::Array(listed);
     Ok(payload)
 }
 
@@ -381,10 +387,7 @@ pub fn package_of(
 /// with its `type` and `q`, the OGC landing page replaced by one items resource per type, and
 /// the record resource pointing at the slice's own record. Every URL stays under the Endpoint,
 /// so its Policy decides each read (EP-66).
-fn narrow(resources: &mut Value, served: &[Representation], url: &str, slice: &CatalogDataset) {
-    let Some(list) = resources.as_array_mut() else {
-        return;
-    };
+fn narrow(list: &mut Vec<Value>, served: &[Representation], url: &str, slice: &CatalogDataset) {
     let query = slice.query();
     let mut out = Vec::with_capacity(list.len() + slice.types.len());
     for (index, mut resource) in std::mem::take(list).into_iter().enumerate() {
@@ -512,10 +515,7 @@ struct Usage<'a> {
 /// The served surfaces are the first resources, in `served` order. Code sits in indented
 /// blocks, which CKAN's Markdown shows as code. A text never carries a token: `$TOKEN` stands
 /// where the caller's own goes (EP-110).
-fn describe(resources: &mut Value, served: &[Representation], usage: &Usage) {
-    let Some(resources) = resources.as_array_mut() else {
-        return;
-    };
+fn describe(resources: &mut [Value], served: &[Representation], usage: &Usage) {
     for (resource, representation) in resources.iter_mut().zip(served) {
         let address = resource["url"].as_str().unwrap_or_default().to_owned();
         let mut said = usage.of(*representation, &address);
@@ -907,8 +907,6 @@ pub fn publish_views_on(
     };
     let mut desired: BTreeMap<&str, Value> = BTreeMap::new();
     for item in items {
-        let text =
-            |value| serde_json::to_string(value).map_err(|e| PublishError::Spec(e.to_string()));
         desired.insert(
             item.name.as_str(),
             json!({
@@ -917,9 +915,9 @@ pub fn publish_views_on(
                 "title": in_language(&item.title, language).unwrap_or_else(|| item.name.clone()),
                 "description": in_language(&item.description, language).unwrap_or_default(),
                 "jc_name": item.name,
-                "spec": text(&item.spec)?,
+                "spec": item.spec.to_string(),
                 // The renderer and the catalogue's view schema read `source` (T-4742).
-                "source": text(&serde_json::to_value(&item.data).map_err(|e| PublishError::Spec(e.to_string()))?)?,
+                "source": serde_json::to_value(&item.data).map_err(spec_error)?.to_string(),
                 "endpoint": spec.slug.as_str(),
             }),
         );
@@ -1300,7 +1298,7 @@ fn deleted(live: &Value) -> bool {
 ///
 /// The URL is always the representation's own URL under the Endpoint, so a download
 /// passes the gateway and its policy set rather than a copy nobody governs (EP-66).
-fn resources(enabled: &[Representation], url: &str, record: &Value) -> Value {
+fn resources(enabled: &[Representation], url: &str, record: &Value) -> Vec<Value> {
     let mut resources: Vec<Value> = enabled
         .iter()
         .map(|representation| {
@@ -1333,7 +1331,7 @@ fn resources(enabled: &[Representation], url: &str, record: &Value) -> Value {
                         published from (EP-63).",
     }));
     resources.extend(schema_resources(record));
-    Value::Array(resources)
+    resources
 }
 
 /// One resource per schema artifact the record lists, so a citizen browsing the catalogue
@@ -2196,6 +2194,253 @@ mod tests {
         let dataset = json!({ "name": "d", "owner_org": "mesto" });
         assert!(api.action("package_create", &dataset).is_ok());
         assert!(api.action("package_create", &dataset).is_err());
+    }
+
+    fn manifest(yaml: &str) -> RawManifest {
+        serde_norway::from_str(yaml).expect("the manifest parses")
+    }
+
+    /// An Endpoint `ovzdusie-public` with `extra` appended to its spec.
+    fn endpoint_with(audience: &str, extra: &str) -> RawManifest {
+        manifest(&format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: ovzdusie-public\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: {audience}\n  enabledRepresentations: [csv]\n{extra}"
+        ))
+    }
+
+    fn instance() -> CkanInstanceSpec {
+        serde_norway::from_str(
+            "url: https://data.example.sk\norganizationDefault: mesto\napiTokenRef: { name: ckan, key: apiToken }\n",
+        )
+        .expect("the instance spec parses")
+    }
+
+    fn extra_of(package: &Value, key: &str) -> Option<String> {
+        package["extras"]
+            .as_array()?
+            .iter()
+            .find(|extra| extra["key"] == key)
+            .and_then(|extra| extra["value"].as_str())
+            .map(str::to_owned)
+    }
+
+    /// An Endpoint whose spec does not read is a spec error, not a dataset.
+    #[test]
+    fn an_endpoint_with_a_spec_that_does_not_read_is_refused() {
+        let broken = manifest(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: x\nspec:\n  audience: 7\n",
+        );
+        let got = package(
+            &broken,
+            &instance(),
+            &json!({}),
+            &Settings::new("h.example"),
+        );
+        assert!(matches!(got, Err(PublishError::Spec(_))), "{got:?}");
+    }
+
+    /// A record without a title names the dataset by its name; the stated personal data and
+    /// the applicable laws become extras; a source too long for one extra is left out.
+    #[test]
+    fn the_catalog_statements_become_extras_and_an_oversized_source_is_dropped() {
+        let long = "a".repeat(MAX_EXTRA_BYTES + 10);
+        for (stated, code) in [
+            ("contains", "contains"),
+            ("does-not-contain", "does-not-contain"),
+        ] {
+            let endpoint = endpoint_with(
+                "public",
+                &format!(
+                    "  catalog:\n    personalData: {stated}\n    applicableLegislation: [\"http://data.europa.eu/eli/reg/2016/679/oj\"]\n    source:\n      - url: https://example.org/{long}\n        title: {{ sk: Zdroj }}\n        description: {{ sk: Popis }}\n"
+                ),
+            );
+            let got = package(
+                &endpoint,
+                &instance(),
+                &json!({}),
+                &Settings::new("h.example"),
+            )
+            .expect("a package")
+            .expect("a dataset");
+            assert_eq!(got["title"], "ovzdusie-public", "{got}");
+            assert_eq!(extra_of(&got, "personal_data").as_deref(), Some(code));
+            let laws = extra_of(&got, "applicable_legislation").expect("the laws");
+            assert!(laws.contains("2016/679"), "{laws}");
+            assert_eq!(extra_of(&got, "source"), None, "{got}");
+        }
+    }
+
+    /// Nothing fits: a source that is no object keeps its size, and no source is listed.
+    #[test]
+    fn a_source_extra_that_never_fits_is_none() {
+        let huge = json!("x".repeat(MAX_EXTRA_BYTES + 1));
+        assert_eq!(source_extra(vec![huge]), None);
+    }
+
+    /// A slice's record names the Endpoint under its `datasets/{name}`; another suffix is not it.
+    #[test]
+    fn a_slices_record_names_its_endpoint() {
+        let record = json!({ "@id": "https://data.example.sk/api/endpoint/s/datasets/n" });
+        assert_eq!(
+            public_base(&record, "s", Some("n")).as_deref(),
+            Some("https://data.example.sk/api/endpoint/s")
+        );
+        assert_eq!(public_base(&record, "s", Some("other")), None);
+    }
+
+    /// The calendar and feed surfaces have their own words and paths, though only their own
+    /// outputs list them.
+    #[test]
+    fn the_calendar_and_feed_surfaces_say_how_to_use_them() {
+        let usage = Usage {
+            dataset: "d",
+            entity_type: None,
+            entity_types: Vec::new(),
+            url: "https://data.example.sk/api/endpoint/s",
+            licence: None,
+            public: true,
+            documentation: None,
+        };
+        let address = "https://data.example.sk/api/endpoint/s/x";
+        assert!(usage
+            .of(Representation::Ical, address)
+            .contains("iCalendar"));
+        assert!(usage.of(Representation::Feed, address).contains("Atom"));
+        assert_eq!(distribution(Representation::Ical).1, "ICS");
+        assert_eq!(distribution(Representation::Feed).1, "Atom");
+    }
+
+    /// A CKAN that answers without ids and holds no resource with one.
+    struct Bare {
+        live: Value,
+        written: Vec<String>,
+    }
+
+    impl CkanApi for Bare {
+        fn show(&self, action: &str, _name: &str) -> Result<Option<Value>, CkanError> {
+            Ok(match action {
+                "organization_show" => None,
+                _ => Some(self.live.clone()),
+            })
+        }
+
+        fn action(&mut self, action: &str, _payload: &Value) -> Result<Value, CkanError> {
+            self.written.push(action.to_owned());
+            Ok(json!({}))
+        }
+    }
+
+    /// A missing organization is created under its own name when no title is set; a live
+    /// dataset without an id is updated by its name.
+    #[test]
+    fn an_update_without_an_id_and_an_untitled_organization() {
+        let endpoint = endpoint_with("public", "");
+        let mut api = Bare {
+            live: json!({ "name": "ovzdusie-public", "title": "old" }),
+            written: Vec::new(),
+        };
+        let got = publish(
+            &mut api,
+            &endpoint,
+            &instance(),
+            &json!({}),
+            &Settings::new("h.example"),
+        );
+        assert!(matches!(got, Ok(Outcome::Updated)), "{got:?}");
+        assert_eq!(api.written, ["organization_create", "package_update"]);
+    }
+
+    fn chart_yaml(title: &str) -> String {
+        format!(
+            "  catalog:\n    visualizations:\n      - name: no2\n{title}        data: {{ source: csv, type: AirQualityObserved }}\n        spec:\n          $schema: https://vega.github.io/schema/vega-lite/v5.json\n          data: {{ name: source }}\n          mark: bar\n"
+        )
+    }
+
+    /// No views for an Endpoint that publishes nothing, a dataset without a resource id, or a
+    /// later dataset of a list when the Endpoint declares its own charts; an untitled chart is
+    /// titled by its name.
+    #[test]
+    fn views_only_where_there_is_a_resource_and_a_list() {
+        let settings = Settings::new("h.example").in_language("sk");
+        let private = endpoint_with("organization", "");
+        let mut api = Bare {
+            live: json!({ "resources": [{ "url": "x" }] }),
+            written: Vec::new(),
+        };
+        let views = publish_views(&mut api, &private, &settings, &[]).expect("views");
+        assert_eq!(views, Views::default());
+        let declared = endpoint_with(
+            "public",
+            &chart_yaml("        title: {}\n        description: {}\n"),
+        );
+        let views =
+            publish_views_on(&mut api, &declared, "d", true, &settings, &[]).expect("views");
+        assert_eq!(views, Views::default());
+        api.live = json!({ "resources": [{ "id": "r1" }] });
+        let views =
+            publish_views_on(&mut api, &declared, "d", false, &settings, &[]).expect("views");
+        assert_eq!(views, Views::default());
+        assert!(api.written.is_empty(), "{:?}", api.written);
+        let views =
+            publish_views_on(&mut api, &declared, "d", true, &settings, &[]).expect("views");
+        assert_eq!(views.created, 1, "{views:?}");
+    }
+
+    /// A model that does not read leaves the chart titled by the attribute.
+    #[test]
+    fn a_chart_title_from_a_model_that_does_not_read() {
+        let title = chart_title(Some("a: ["), "AirQualityObserved", "pm10");
+        assert!(title.contains_key("sk"), "{title:?}");
+    }
+
+    /// The run's own `issued` wins over the live one; a context that is no object keeps the
+    /// measurements without the prefix.
+    #[test]
+    fn an_issued_of_its_own_and_a_plain_context() {
+        let desired = json!({ "extras": [{ "key": "issued", "value": "2026-01-01" }] });
+        let live = json!({ "extras": [{ "key": "issued", "value": "2025-01-01" }] });
+        assert_eq!(with_issued(desired.clone(), &live), desired);
+        let record = measured(
+            &json!({ "@context": "https://www.w3.org/ns/dcat.jsonld" }),
+            &Measurements {
+                pass_rate: Some(1.0),
+                freshness_seconds: None,
+            },
+        );
+        assert_eq!(record["@context"], "https://www.w3.org/ns/dcat.jsonld");
+        assert!(record["dqv:hasQualityMeasurement"].is_array());
+    }
+
+    /// A distribution without a textual digest is no schema artifact; one without a title is
+    /// named by its address and one without a media type has none.
+    #[test]
+    fn schema_artifacts_without_a_digest_title_or_media_type() {
+        let record = json!({ "dcat:distribution": [
+            { "spdx:checksum": { "spdx:checksumValue": 5 }, "dcat:accessURL": "https://h/a.json" },
+            { "spdx:checksum": { "spdx:checksumValue": "ab" }, "dcat:accessURL": "https://h/b.json" }
+        ]});
+        let got = schema_resources(&record);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0]["name"], "https://h/b.json");
+        assert!(got[0].get("mimetype").is_none(), "{got:?}");
+        assert_eq!(mimetype(&json!({ "@id": "x" })), json!({ "@id": "x" }));
+    }
+
+    /// A feed described in another language only takes that text; one without any keeps its own.
+    #[test]
+    fn a_feed_described_in_another_language_or_not_at_all() {
+        let feeds: Vec<jc_core::kinds::FeedOutput> = serde_json::from_value(json!([
+            {"name": "kultura", "description": {"sk": "Podujatia kultúry"},
+             "sources": [{"type": "Event", "preset": "event"}]},
+            {"name": "sport", "sources": [{"type": "Event", "preset": "event"}]}
+        ]))
+        .expect("the outputs parse");
+        let resources = feed_resources(&feeds, "https://h/api/endpoint/s", Some("en"), true);
+        let first = resources[0]["description"].as_str().unwrap_or_default();
+        assert!(first.starts_with("Podujatia kultúry"), "{first}");
+        let last = resources[resources.len() - 1]["description"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(last.starts_with("New and changed"), "{last}");
     }
 
     /// API/11 EP-159: one resource per calendar output, titled in the catalogue's language.

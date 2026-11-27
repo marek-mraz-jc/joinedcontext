@@ -255,3 +255,48 @@ fn the_migrate_command_lists_what_it_moved() {
     assert_eq!(again.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&again.stderr).contains("not empty"));
 }
+
+/// A migration without git, into a place no directory can be made, or over a project file it
+/// cannot read stops naming what failed.
+#[test]
+fn migrate_names_a_missing_git_an_unmakeable_target_and_an_unreadable_project() {
+    let source = layout_1("migrate-no-git");
+    let empty = temp_dir("migrate-no-git-path");
+    let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["migrate", "--repo-dir"])
+        .arg(&source)
+        .arg("--out-dir")
+        .arg(temp_dir("migrate-no-git-out"))
+        .env("PATH", &empty)
+        .output()
+        .expect("jcctl runs");
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("status --porcelain"), "{said}");
+
+    let blocker = temp_dir("migrate-blocked-out").join("a-file");
+    std::fs::write(&blocker, "not a directory\n").expect("a file");
+    let refused = migrate::run(&source, &blocker.join("out")).expect_err("no directory");
+    assert!(
+        matches!(refused, migrate::MigrateError::Io { .. }),
+        "{refused}"
+    );
+
+    let locked = layout_1("migrate-locked");
+    let project = locked.join("projects/doprava/project.yaml");
+    // The status stays clean: git is told the file is unchanged, as it is in what is committed.
+    git(
+        &locked,
+        &[
+            "update-index",
+            "--assume-unchanged",
+            "projects/doprava/project.yaml",
+        ],
+    );
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&project, std::fs::Permissions::from_mode(0o000)).expect("locked");
+    }
+    let refused = migrate::run(&locked, &temp_dir("migrate-locked-out")).expect_err("unreadable");
+    assert!(refused.to_string().contains("project.yaml"), "{refused}");
+}
