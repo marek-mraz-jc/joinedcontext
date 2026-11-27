@@ -563,28 +563,28 @@ impl Hub {
         name: &str,
         params: &Value,
         arguments: Map<String, Value>,
-    ) -> Answer {
+    ) -> Value {
         if let Some(refusal) = misrouted(&id, &arguments) {
-            return Answer::Json(refusal);
+            return refusal;
         }
         let cursors = match arguments.get("cursor") {
             None | Some(Value::Number(_)) => None,
             Some(Value::Object(cursors)) => Some(cursors.clone()),
             Some(_) => {
-                return Answer::Json(result(
+                return result(
                     id,
                     refused(
                         "`cursor` is the previous answer's nextCursor: an object of one cursor per Endpoint slug",
                         &Value::Null,
                     ),
-                ))
+                )
             }
         };
 
         // A selector can reach thousands: past ten the agent finds its Endpoint first (EP-121).
         let asking = cursors.as_ref().map_or(self.reach.len(), Map::len);
         if asking > MAX_FAN_OUT {
-            return Answer::Json(result(
+            return result(
                 id,
                 refused(
                     &format!(
@@ -592,7 +592,7 @@ impl Hub {
                     ),
                     &Value::Null,
                 ),
-            ));
+            );
         }
         let (member_deadline, late) = member_deadline(name);
         let mut failed: Vec<(usize, Value)> = Vec::new();
@@ -609,7 +609,7 @@ impl Hub {
                 }
             }
             match tools::hub_tool(&self.gateway, endpoint, subject, &self.reach, name) {
-                HubTool::Unknown => return Answer::Json(error(id, -32602, "unknown tool")),
+                HubTool::Unknown => return error(id, -32602, "unknown tool"),
                 HubTool::Ungranted(refusal) => {
                     failed.push((index, failure(&endpoint.slug, &refusal)));
                     continue;
@@ -638,30 +638,30 @@ impl Hub {
         }
         if asked.is_empty() && failed.is_empty() && cursors.is_none() {
             // No member this caller reads grants the tool: the server never listed it.
-            return Answer::Json(error(id, -32602, "unknown tool"));
+            return error(id, -32602, "unknown tool");
         }
 
         let mut results: Vec<(usize, Value)> = Vec::new();
         let mut next: BTreeMap<usize, (String, Value)> = BTreeMap::new();
         let deadline = tokio::time::Instant::now() + CALL_DEADLINE;
         while let Ok(Some(joined)) = tokio::time::timeout_at(deadline, runs.join_next()).await {
-            let Ok((index, endpoint, answer)) = joined else {
-                continue;
-            };
-            match answer {
-                Err(_) => {
-                    failed.push((index, json!({ "endpoint": endpoint.slug, "reason": late })))
-                }
-                Ok(answer) => match member_entry(&endpoint, &answer) {
-                    Ok((entry, cursor)) => {
-                        if let Some(cursor) = cursor {
-                            next.insert(index, (endpoint.slug.clone(), cursor));
-                        }
-                        results.push((index, entry));
+            // A run that panicked has no answer: it is settled below with the unanswered.
+            joined
+                .into_iter()
+                .for_each(|(index, endpoint, answer)| match answer {
+                    Err(_) => {
+                        failed.push((index, json!({ "endpoint": endpoint.slug, "reason": late })))
                     }
-                    Err(reason) => failed.push((index, reason)),
-                },
-            }
+                    Ok(answer) => match member_entry(&endpoint, &answer) {
+                        Ok((entry, cursor)) => {
+                            if let Some(cursor) = cursor {
+                                next.insert(index, (endpoint.slug.clone(), cursor));
+                            }
+                            results.push((index, entry));
+                        }
+                        Err(reason) => failed.push((index, reason)),
+                    },
+                });
         }
         // Past the call's deadline, or a run that ended without an answer: a failed member.
         runs.abort_all();
@@ -698,22 +698,19 @@ impl Hub {
         let answered_nothing = structured["results"].as_array().is_some_and(Vec::is_empty)
             && structured.contains_key("failed");
         let structured = Value::Object(structured);
-        Answer::Json(result(
+        result(
             id,
             json!({
                 "isError": answered_nothing,
                 // The members' data, fenced and marked as their own answers are (AG-21).
                 "content": [{
                     "type": "text",
-                    "text": super::untrusted::fence(
-                        BROKER_PREFACE,
-                        &serde_json::to_string(&structured).unwrap_or_else(|_| "null".to_owned()),
-                    ),
+                    "text": super::untrusted::fence(BROKER_PREFACE, &structured.to_string()),
                 }],
                 "structuredContent": structured,
                 "_meta": { "jc/untrusted": true },
             }),
-        ))
+        )
     }
 }
 
@@ -764,13 +761,14 @@ pub(crate) fn challenge(gateway: &Gateway, server: &McpServer) -> Response<Body>
         gateway.base_url(),
         server.path()
     );
-    if let Ok(challenge) =
-        HeaderValue::from_str(&format!("Bearer resource_metadata=\"{metadata}\""))
-    {
-        response
-            .headers_mut()
-            .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
-    }
+    // The base URL is a configured URL, so the value always forms.
+    HeaderValue::from_str(&format!("Bearer resource_metadata=\"{metadata}\""))
+        .into_iter()
+        .for_each(|challenge| {
+            response
+                .headers_mut()
+                .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
+        });
     response
 }
 
@@ -891,6 +889,248 @@ mod tests {
         assert_eq!(first.status(), StatusCode::ACCEPTED);
         let second = serve(gateway, public, posted(None, note)).await;
         assert_eq!(second.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A caller without a token is held to the anonymous allowance on a public server before the
+    /// server's own bucket: the second call from one address is 429 and says to sign in.
+    #[tokio::test]
+    async fn a_public_server_spends_the_anonymous_allowance_before_it_answers() {
+        let mut fresh = bare_gateway();
+        fresh.anonymous_mcp_rate_limit = jc_core::kinds::RateLimits {
+            requests_per_minute: 1,
+            burst: Some(1),
+        };
+        let gateway = Arc::new(fresh);
+        let address = format!("{}.{}.{}.{}", 198, 51, 100, 7);
+        let note = r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#;
+        let mut sent = Vec::new();
+        for _ in 0..2 {
+            let mut request = posted(None, note);
+            request.headers_mut().insert(
+                "x-forwarded-for",
+                HeaderValue::from_str(&address).expect("a header"),
+            );
+            sent.push(serve(Arc::clone(&gateway), server(Audience::Public), request).await);
+        }
+        assert_eq!(sent[0].status(), StatusCode::ACCEPTED);
+        assert_eq!(sent[1].status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(std::mem::take(sent[1].body_mut()), MAX_BODY)
+            .await
+            .expect("a body");
+        assert!(
+            String::from_utf8_lossy(&body).contains("callers without a token"),
+            "{}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+
+    /// A deployment's server with a member the gateway holds shows on a host only when that
+    /// member's project belongs to the host's Organization.
+    #[tokio::test]
+    async fn a_deployment_with_a_member_of_another_organization_is_not_found_on_the_host() {
+        let member = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        let gateway = bare_gateway().serve([member.clone()]);
+        let mut deployed = server(Audience::Public);
+        deployed.project = DEPLOYMENTS.to_owned();
+        deployed.members = vec![member.slug.clone()];
+        gateway.replace_servers(vec![deployed]);
+        let mut request = posted(None, "{}");
+        request
+            .extensions_mut()
+            .insert(HostOrganization("another-city".to_owned()));
+        let answer = message(
+            State(Arc::new(gateway)),
+            Path((DEPLOYMENTS.to_owned(), "mobility".to_owned())),
+            request,
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A server whose gateway names no authorization server has no resource metadata to give.
+    #[tokio::test]
+    async fn a_server_without_an_authorization_server_has_no_metadata() {
+        let gateway = bare_gateway();
+        gateway.replace_servers(vec![server(Audience::Organization)]);
+        let answer = protected_resource(
+            State(Arc::new(gateway)),
+            Path(("helsinki".to_owned(), "mobility".to_owned())),
+            posted(None, ""),
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A ServiceAccount acts in its own project whatever groups its token lists; a person acts in
+    /// the projects of their groups.
+    #[test]
+    fn a_service_account_acts_in_its_own_project_and_a_person_in_their_groups() {
+        use crate::auth::accounts::{Account, ServiceAccounts};
+        let gateway = bare_gateway();
+        gateway.replace_accounts(ServiceAccounts::new().with_account(
+            "helsinki-kpi",
+            Account {
+                name: "kpi".to_owned(),
+                project: "helsinki".to_owned(),
+                roles: Vec::new(),
+                delegates: false,
+                credentials_end: None,
+            },
+        ));
+        let claims = |azp: &str| -> Claims {
+            serde_json::from_value(json!({
+                "sub": "s", "iss": "https://realm.test", "exp": 1,
+                "azp": azp, "groups": ["/espoo"],
+            }))
+            .expect("claims")
+        };
+        assert_eq!(projects_of(&gateway, &claims("helsinki-kpi")), ["helsinki"]);
+        assert_eq!(projects_of(&gateway, &claims("mcp-local")), ["espoo"]);
+    }
+
+    fn fan_out_hub() -> Hub {
+        Hub {
+            gateway: Arc::new(bare_gateway()),
+            reach: Arc::from(vec![(
+                crate::fanout::hub::tests_support::endpoint(),
+                Subject::anonymous(),
+            )]),
+            caller: "caller".to_owned(),
+            server: Some(server(Audience::Public)),
+            reads_only: true,
+            host: None,
+        }
+    }
+
+    /// A read without `endpoint` that names a space another way, or a tool no member grants, is
+    /// refused before any member is asked.
+    #[tokio::test]
+    async fn a_fan_out_refuses_a_routing_argument_and_a_tool_no_member_grants() {
+        let hub = fan_out_hub();
+        let mut arguments = Map::new();
+        arguments.insert("space".to_owned(), json!("another"));
+        let routed = hub
+            .fan_out(json!(1), "query_entities", &json!({}), arguments)
+            .await;
+        assert_eq!(routed["error"]["code"], -32602);
+        assert!(
+            routed["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("routed by `endpoint` alone")),
+            "{routed}"
+        );
+        let unknown = hub
+            .fan_out(json!(2), "no_such_tool", &json!({}), Map::new())
+            .await;
+        assert_eq!(unknown["error"]["message"], "unknown tool");
+    }
+
+    /// Every tool a fan-out may ask is a tool of the hub's table, so `hub_tool` is never
+    /// `Unknown` for one that reached a member.
+    #[test]
+    fn every_fan_out_tool_is_a_tool_of_the_table() {
+        for name in FAN_OUT {
+            assert!(
+                tools::TOOLS.iter().any(|tool| tool.name == *name),
+                "{name} is no tool"
+            );
+        }
+    }
+
+    /// How one member's answer becomes a `results` entry or a `failed` one: its JSON-RPC error's
+    /// words, a tool error's sentence, its members minus the routing ones, and its cursor.
+    #[test]
+    fn a_members_answer_is_an_entry_a_failure_or_a_cursor() {
+        let member = crate::fanout::hub::tests_support::endpoint();
+        assert_eq!(
+            member_entry(&member, &json!({"error": {"message": "the view is down"}})).err(),
+            Some(json!({"endpoint": "s", "reason": "the view is down"}))
+        );
+        let tool_error = json!({"result": {"isError": true, "content": [{"text": "no grant"}]}});
+        assert_eq!(
+            member_entry(&member, &tool_error).err(),
+            Some(json!({"endpoint": "s", "reason": "no grant"}))
+        );
+        let (entry, cursor) = member_entry(
+            &member,
+            &json!({"result": {"isError": false, "structuredContent": {
+                "endpoint": "forged", "space": "forged", "total": 3, "nextCursor": "c1"
+            }}}),
+        )
+        .expect("an entry");
+        assert_eq!(
+            entry,
+            json!({"endpoint": "s", "space": "city", "total": 3, "nextCursor": "c1"})
+        );
+        assert_eq!(cursor, Some(json!("c1")));
+        let (entry, cursor) = member_entry(
+            &member,
+            &json!({"result": {"isError": false, "structuredContent": ["not", "an", "object"]}}),
+        )
+        .expect("an entry");
+        assert_eq!(entry, json!({"endpoint": "s", "space": "city"}));
+        assert_eq!(cursor, None);
+    }
+
+    /// A fan-out schema is made only of what the tool's own output schema has: one with no
+    /// `required` keeps no alternative, one with no `properties` gains none.
+    #[test]
+    fn the_output_schema_gains_only_what_it_can_hold() {
+        let input =
+            json!({ "properties": { "endpoint": { "type": "string" } }, "required": ["endpoint"] });
+        let mut tools = vec![
+            json!({ "name": "query_entities", "inputSchema": input, "outputSchema": { "type": "object" } }),
+            json!({ "name": "list_types", "inputSchema": input,
+                   "outputSchema": { "type": "object", "required": ["entityTypes"] } }),
+        ];
+        fan_out_schemas(&mut tools);
+        assert_eq!(tools[0]["outputSchema"], json!({ "type": "object" }));
+        assert!(tools[1]["outputSchema"].get("properties").is_none());
+        assert_eq!(
+            tools[1]["outputSchema"]["anyOf"],
+            json!([{ "required": ["entityTypes"] }, { "required": ["results"] }])
+        );
+    }
+
+    /// `accessLevel` names why a caller reads an Endpoint: its audience is public, the caller is a
+    /// ServiceAccount a grant reaches, a member of the Organization, or of a listed project.
+    #[test]
+    fn an_access_level_selects_by_why_the_caller_reads_the_endpoint() {
+        let selecting = |level: &str| McpServer {
+            select: Some(
+                serde_json::from_value(json!({ "accessLevel": [level] })).expect("a select"),
+            ),
+            ..server(Audience::Organization)
+        };
+        let person = Subject::default();
+        let workload = Subject {
+            service_account: Some("kpi".to_owned()),
+            ..Subject::default()
+        };
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        let reads = |level: &str, endpoint: &Endpoint, subject: &Subject| {
+            selecting(level).selects_level(endpoint, subject)
+        };
+        for (audience, subject, level) in [
+            (Audience::Public, &person, "public"),
+            (Audience::Organization, &workload, "grant"),
+            (Audience::Organization, &person, "organization"),
+            (Audience::ProjectList, &person, "project"),
+        ] {
+            endpoint.audience = audience;
+            assert!(reads(level, &endpoint, subject), "{level}");
+            for other in ["public", "grant", "organization", "project"] {
+                assert_eq!(
+                    reads(other, &endpoint, subject),
+                    other == level,
+                    "{level} vs {other}"
+                );
+            }
+        }
+        assert!(
+            server(Audience::Organization).selects_level(&endpoint, &person),
+            "no level asked"
+        );
     }
 
     /// A deployment's server shows on a host only through a member of the host's Organization.

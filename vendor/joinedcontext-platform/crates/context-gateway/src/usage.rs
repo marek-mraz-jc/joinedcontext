@@ -221,6 +221,7 @@ async fn post(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::PoisonError;
 
     #[test]
     fn a_route_names_its_surface_and_a_describing_page_none() {
@@ -332,6 +333,59 @@ mod tests {
         count("usage-test", data, 200, "anonymous");
         flush(&client, &format!("http://{addr}/ok"), None).await;
         assert_eq!(mine(take()), Vec::new());
+
+        // The follower posts what was counted once an interval, and what the Portal did not take
+        // goes with the next one.
+        let seen: std::sync::Arc<Mutex<Vec<serde_json::Value>>> = Arc::default();
+        let kept = Arc::clone(&seen);
+        let portal = axum::Router::new().route(
+            "/usage",
+            axum::routing::post(move |axum::Json(body): axum::Json<serde_json::Value>| {
+                let kept = Arc::clone(&kept);
+                async move {
+                    let mut posts = kept.lock().unwrap_or_else(PoisonError::into_inner);
+                    posts.push(body);
+                    // The first post is refused: its counts are kept for the second.
+                    if posts.len() == 1 {
+                        axum::http::StatusCode::SERVICE_UNAVAILABLE
+                    } else {
+                        axum::http::StatusCode::NO_CONTENT
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let portal_at = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, portal).await });
+        tokio::time::pause();
+        count("usage-test", data, 200, "anonymous");
+        let follower = tokio::spawn(follow(format!("http://{portal_at}/usage"), None));
+        for _ in 0..10 {
+            tokio::time::sleep(INTERVAL).await;
+            let posted = seen.lock().unwrap_or_else(PoisonError::into_inner).len();
+            if posted >= 2 {
+                break;
+            }
+        }
+        follower.abort();
+        let posts = seen.lock().unwrap_or_else(PoisonError::into_inner).clone();
+        assert!(posts.len() >= 2, "{posts:?}");
+        let counted = |post: &serde_json::Value| {
+            post["counts"]
+                .as_array()
+                .map(|counts| {
+                    counts
+                        .iter()
+                        .filter(|c| c["endpoint"] == "usage-test")
+                        .map(|c| c["count"].as_u64().unwrap_or_default())
+                        .sum::<u64>()
+                })
+                .unwrap_or_default()
+        };
+        assert_eq!(counted(&posts[0]), 1);
+        assert_eq!(counted(&posts[1]), 1, "the refused post's count came again");
     }
 
     /// Each kind from the claims of a token the realm signed; no token, or one it did not sign,
@@ -340,9 +394,9 @@ mod tests {
     fn a_verified_token_names_its_callers_kind() {
         let kind = |claims: serde_json::Value| {
             let mut base = serde_json::json!({"sub": "s", "iss": "i", "exp": 1});
-            if let (Some(base), Some(extra)) = (base.as_object_mut(), claims.as_object()) {
-                base.extend(extra.clone());
-            }
+            base.as_object_mut()
+                .expect("an object")
+                .extend(claims.as_object().expect("an object").clone());
             let claims: jc_core::auth::token::Claims =
                 serde_json::from_value(base).expect("claims");
             caller(Some(&claims))
@@ -407,11 +461,9 @@ mod tests {
             .route(
                 "/ok",
                 route_post(|Json(body): Json<serde_json::Value>| async move {
-                    if body["counts"][0]["count"] == 7 {
-                        StatusCode::NO_CONTENT
-                    } else {
-                        StatusCode::BAD_REQUEST
-                    }
+                    // The one post carries the one count of seven: another body fails the request.
+                    assert_eq!(body["counts"][0]["count"], 7);
+                    StatusCode::NO_CONTENT
                 }),
             )
             .route(

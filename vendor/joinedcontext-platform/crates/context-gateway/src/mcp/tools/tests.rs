@@ -77,6 +77,25 @@ fn every_broken_rule_is_named_without_the_value_sent() {
             json!(secret),
             "breaks the schema's not",
         ),
+        (
+            json!({"type": "string", "format": "email"}),
+            json!(secret),
+            "is not a email",
+        ),
+        // An alternative that wants two arguments names none of them singly.
+        (
+            json!({"anyOf": [{"required": ["id", "type"]}]}),
+            json!({"q": secret}),
+            "matches none of the shapes the schema allows",
+        ),
+        // An alternative that is no `required` at all.
+        (
+            json!({"anyOf": [{"type": "integer"}, {"required": ["id"]}]}),
+            json!({"q": secret}),
+            "matches none of the shapes the schema allows",
+        ),
+        // A schema that refuses everything has no keyword to name.
+        (json!(false), json!(secret), "is not what the schema allows"),
     ];
     for (schema, instance, named) in cases {
         let validator = jsonschema::draft7::new(&schema).expect("the schema compiles");
@@ -260,6 +279,8 @@ fn an_anonymous_long_read_is_refused_unless_it_is_bounded() {
         json!({ "attrs": ["a,b,c", "d,e,f"] }),
         json!({ "attrs": [1] }),
         json!({ "type": null, "id": "urn:ngsi-ld:T:1" }),
+        json!({ "type": 5 }),
+        json!({ "type": { "name": "T" } }),
         json!({ "id": many }),
         json!({ "limit": 21 }),
         json!({ "aggrPeriodDuration": null }),
@@ -957,4 +978,36 @@ fn a_tool_that_both_reads_and_writes_is_not_read_only() {
         result_key: "entities",
     };
     assert!(!mixed.read_only());
+}
+
+/// AG-31: a tool the table has no compiled validator for is refused whatever it is sent, never
+/// let through unchecked.
+#[test]
+fn a_tool_without_a_validator_refuses_every_call() {
+    let refused = super::validate(usize::MAX, &Map::new()).expect_err("no validator");
+    assert!(refused.contains("cannot be checked"), "{refused}");
+}
+
+/// ADR-N-025 2.8: a name the table does not hold is `Unknown` on any Endpoint, listed nowhere.
+#[test]
+fn a_tool_the_table_does_not_hold_is_unknown_to_the_hub() {
+    use super::{hub_tool, HubTool};
+    let gateway = crate::app::Gateway::new(
+        crate::proxy::Broker::new("http://localhost:9"),
+        Box::new(crate::pdp::PolicyPdp),
+        "example.org",
+    );
+    let endpoint = crate::fanout::hub::tests_support::endpoint();
+    let reach = [(
+        std::sync::Arc::clone(&endpoint),
+        crate::auth::subject::Subject::anonymous(),
+    )];
+    let unknown = hub_tool(
+        &gateway,
+        &endpoint,
+        &crate::auth::subject::Subject::anonymous(),
+        &reach,
+        "no_such_tool",
+    );
+    assert!(matches!(unknown, HubTool::Unknown));
 }

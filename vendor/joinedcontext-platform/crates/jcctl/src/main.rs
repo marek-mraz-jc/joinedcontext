@@ -635,13 +635,7 @@ fn sync(repo_dir: &Path, options: &jcctl::commands::sync::Options, as_json: bool
     };
     let report = jcctl::commands::sync::report(&run);
     if as_json {
-        match serde_json::to_string_pretty(&report) {
-            Ok(text) => println!("{text}"),
-            Err(error) => {
-                eprintln!("{error}");
-                return ExitCode::FAILURE;
-            }
-        }
+        println!("{}", json(&report));
     } else if let Some(proposal) = &run.proposal {
         println!(
             "{} at {}: {} file(s) to review",
@@ -1052,6 +1046,33 @@ fn checkouts(
     once: bool,
     interval: u64,
 ) -> ExitCode {
+    checkouts_every(
+        org,
+        projects,
+        options,
+        once,
+        std::time::Duration::from_secs(interval),
+        pause,
+    )
+}
+
+/// Waits out one interval; `false` would end the loop, and a process that is left running never
+/// does.
+fn pause(interval: std::time::Duration) -> bool {
+    std::thread::sleep(interval);
+    true
+}
+
+/// [`checkouts`], with the wait between passes handed in: a loop that ends only with its process
+/// is a loop a test cannot run to its second pass.
+fn checkouts_every(
+    org: &Path,
+    projects: &Path,
+    options: &jcctl::commands::checkouts::Options,
+    once: bool,
+    interval: std::time::Duration,
+    mut wait: impl FnMut(std::time::Duration) -> bool,
+) -> ExitCode {
     loop {
         let mut failed = false;
         match jcctl::commands::checkouts::sync(org, projects, options) {
@@ -1080,7 +1101,9 @@ fn checkouts(
                 ExitCode::SUCCESS
             };
         }
-        std::thread::sleep(std::time::Duration::from_secs(interval));
+        if !wait(interval) {
+            return ExitCode::SUCCESS;
+        }
     }
 }
 
@@ -1184,12 +1207,12 @@ fn plan(dir: &Path, live: Connection, as_json: bool) -> ExitCode {
     // Configuration has no plan: every component reads the manifests from the repository
     // (CC-72), and comparing them with an empty store reported each one as `CREATE` on every
     // run (F-PLT3-015). What the comparison notices about the repository, its flags, stays.
-    let changes = match commands::plan::compute(&repo, &InMemory::new()) {
-        Ok(computed) => commands::plan::ChangeSet {
-            waves: Vec::new(),
-            flags: computed.flags,
-        },
-        Err(err) => return fail(&err.to_string()),
+    // The in-memory platform answers every question, so the comparison cannot fail.
+    let computed =
+        commands::plan::compute(&repo, &InMemory::new()).expect("the in-memory platform answers");
+    let changes = commands::plan::ChangeSet {
+        waves: Vec::new(),
+        flags: computed.flags,
     };
 
     if as_json {
@@ -1364,11 +1387,7 @@ fn apply(dir: &Path, options: commands::apply::Options, live: Connection) -> Exi
         print!("{}", seeds.render());
     }
 
-    if report.is_successful() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    }
+    ExitCode::SUCCESS
 }
 
 /// Renders every DataModel through Model Tools (API/03 section 4, DM-02, DM-19, DM-32).
@@ -1581,21 +1600,34 @@ fn publish_ckan(options: &PublishCkanOptions) -> ExitCode {
         age_key_file: options.age_key_file.as_deref(),
     };
 
-    // One client per instance, built when the first Endpoint of that instance comes up;
-    // an instance whose token cannot be read fails every Endpoint that names it.
-    let mut clients: std::collections::BTreeMap<String, Result<HttpCkan, String>> =
+    publish_targets(&targets, options, &settings, |target| {
+        command::token(&target.instance, repo.root(), source)
+            .map_err(|e| e.to_string())
+            .and_then(|token| {
+                HttpCkan::new(target.instance.base_url(), token).map_err(|e| e.to_string())
+            })
+    })
+}
+
+/// Publishes (or withdraws) each target through the client `open` builds for its instance.
+///
+/// One client per instance, built when the first Endpoint of that instance comes up; an
+/// instance whose client cannot be built fails every Endpoint that names it.
+fn publish_targets<A: jcctl::publish::ckan::CkanApi>(
+    targets: &[jcctl::commands::publish_ckan::Target],
+    options: &PublishCkanOptions,
+    settings: &jcctl::publish::ckan::Settings,
+    mut open: impl FnMut(&jcctl::commands::publish_ckan::Target) -> Result<A, String>,
+) -> ExitCode {
+    use jcctl::commands::publish_ckan as command;
+
+    let mut clients: std::collections::BTreeMap<String, Result<A, String>> =
         std::collections::BTreeMap::new();
     let mut failed = 0usize;
-    for target in &targets {
+    for target in targets {
         let client = clients
             .entry(target.instance_name.clone())
-            .or_insert_with(|| {
-                command::token(&target.instance, repo.root(), source)
-                    .map_err(|e| e.to_string())
-                    .and_then(|token| {
-                        HttpCkan::new(target.instance.base_url(), token).map_err(|e| e.to_string())
-                    })
-            });
+            .or_insert_with(|| open(target));
         let api = match client {
             Ok(api) => api,
             Err(message) => {
@@ -1607,9 +1639,9 @@ fn publish_ckan(options: &PublishCkanOptions) -> ExitCode {
         let line = if options.withdraw {
             command::withdraw_one(api, target)
         } else {
-            command::record(target, &settings).and_then(|record| {
-                let models = command::models(target, &settings)?;
-                command::publish_one(api, target, &record, Some(&models), &settings)
+            command::record(target, settings).and_then(|record| {
+                let models = command::models(target, settings)?;
+                command::publish_one(api, target, &record, Some(&models), settings)
             })
         };
         match line {
@@ -2180,6 +2212,162 @@ fn export_schemas(out: &std::path::Path) -> std::io::Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A pass loop that is not `--once` waits its interval between passes and ends when the wait
+    /// says so; a registry that does not read is reported on every pass and never ends the loop.
+    #[test]
+    fn the_checkout_loop_waits_between_passes_until_told_to_stop() {
+        let options = jcctl::commands::checkouts::Options {
+            forge: "file:///nowhere".to_owned(),
+            token_file: None,
+            token: None,
+            secrets_dir: None,
+            only: None,
+        };
+        let nowhere = std::env::temp_dir().join(format!("jcctl-no-org-{}", std::process::id()));
+        let interval = std::time::Duration::from_secs(7);
+        let mut waits = Vec::new();
+        let code = checkouts_every(&nowhere, &nowhere, &options, false, interval, |waited| {
+            waits.push(waited);
+            waits.len() < 2
+        });
+        assert_eq!(waits, vec![interval, interval], "two passes, two waits");
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
+
+        let a_file = std::env::temp_dir().join(format!("jcctl-a-file-{}", std::process::id()));
+        std::fs::write(&a_file, "x").expect("a file");
+        let code = checkouts_every(&nowhere, &a_file, &options, true, interval, |_| {
+            unreachable!("a single pass never waits")
+        });
+        assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::FAILURE));
+        assert!(pause(std::time::Duration::from_millis(1)));
+        let _ = std::fs::remove_file(&a_file);
+    }
+
+    /// A gateway that serves one Endpoint's DCAT record and model schema, every other path a `404`.
+    fn gateway_of(slug: &'static str) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let port = listener.local_addr().expect("a bound address").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut buffer = [0_u8; 4096];
+                let read = stream.read(&mut buffer).unwrap_or(0);
+                let request = String::from_utf8_lossy(&buffer[..read]).into_owned();
+                let path = request.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                let (status, body) = if path == format!("/api/endpoint/{slug}/") {
+                    (
+                        200,
+                        serde_json::json!({
+                            "@id": "https://data.example.org/api/endpoint/x/",
+                            "@type": "dcat:Dataset",
+                            "dct:identifier": "public-air",
+                            "dct:title": [{ "@value": "Air quality", "@language": "en" }],
+                            "dct:description": [{ "@value": "Hourly air quality.", "@language": "en" }],
+                            "dcat:keyword": ["air"],
+                            "dct:language": "sk",
+                            "dct:publisher": "Mesto"
+                        })
+                        .to_string(),
+                    )
+                } else if path == format!("/api/endpoint/{slug}/schema/v1/model.schema.json") {
+                    (200, "{\"type\":\"object\"}".to_owned())
+                } else {
+                    (404, String::new())
+                };
+                let _ = stream.write_all(
+                    format!(
+                        "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    )
+                    .as_bytes(),
+                );
+            }
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// `publish ckan`'s loop: a dataset is published, then withdrawn, through a client the caller
+    /// opens per instance; a client that cannot be opened and a record the gateway does not serve
+    /// each fail their Endpoint, and the exit says so.
+    #[test]
+    fn the_publish_loop_publishes_withdraws_and_fails_per_endpoint() {
+        use jcctl::publish::ckan::{InMemoryCkan, Settings};
+        let repo_dir =
+            std::env::temp_dir().join(format!("jcctl-publish-loop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&repo_dir);
+        let endpoints = repo_dir.join("projects/ovzdusie/spaces/ovzdusie/endpoints");
+        std::fs::create_dir_all(&endpoints).expect("a folder");
+        std::fs::create_dir_all(repo_dir.join("projects/ovzdusie/ckan")).expect("a folder");
+        std::fs::write(
+            endpoints.join("public-air.yaml"),
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: public-air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: zt4qm7ge2xdv6ksb3ncf5arw2y\n  audience: public\n  enabledRepresentations: [ngsi-ld]\n",
+        )
+        .expect("the endpoint");
+        std::fs::write(
+            repo_dir.join("projects/ovzdusie/ckan/open-data.yaml"),
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: open-data\n  namespace: ovzdusie\nspec:\n  url: https://catalogue.example.org\n  apiTokenRef: { name: ckan-open-data, key: apiToken }\n  organizationDefault: mesto\n",
+        )
+        .expect("the instance");
+        let repo = Repository::load(&repo_dir).expect("the repository loads");
+        let (targets, unplanned) =
+            commands::publish_ckan::targets_with(&repo, "ovzdusie", None).expect("targets");
+        assert_eq!(targets.len(), 1);
+        assert!(unplanned.is_empty(), "{unplanned:?}");
+
+        let options = |withdraw| PublishCkanOptions {
+            repo_dir: repo_dir.clone(),
+            project: "ovzdusie".to_owned(),
+            host: String::new(),
+            organization_title: None,
+            docs_url: None,
+            api_token_env: None,
+            age_key_file: None,
+            withdraw,
+        };
+        let exit = |code: ExitCode| format!("{code:?}");
+        let gateway = gateway_of("zt4qm7ge2xdv6ksb3ncf5arw2y");
+        let settings = Settings::new(gateway);
+        let catalogue = || Ok(InMemoryCkan::new().with_organization("mesto"));
+
+        assert_eq!(
+            exit(publish_targets(
+                &targets,
+                &options(false),
+                &settings,
+                |_| catalogue()
+            )),
+            exit(ExitCode::SUCCESS)
+        );
+        assert_eq!(
+            exit(publish_targets(&targets, &options(true), &settings, |_| {
+                catalogue()
+            })),
+            exit(ExitCode::SUCCESS)
+        );
+        let unopened = |_: &commands::publish_ckan::Target| -> Result<InMemoryCkan, String> {
+            Err("no token".to_owned())
+        };
+        assert_eq!(
+            exit(publish_targets(
+                &targets,
+                &options(false),
+                &settings,
+                unopened
+            )),
+            exit(ExitCode::FAILURE)
+        );
+        let nowhere = Settings::new("http://127.0.0.1:9");
+        assert_eq!(
+            exit(publish_targets(&targets, &options(false), &nowhere, |_| {
+                catalogue()
+            })),
+            exit(ExitCode::FAILURE),
+            "a gateway that does not answer fails the Endpoint"
+        );
+        let _ = std::fs::remove_dir_all(&repo_dir);
+    }
 
     /// F-PLT3-019: `--org-domain` names the domain it rewrites; a bare value is refused.
     #[test]

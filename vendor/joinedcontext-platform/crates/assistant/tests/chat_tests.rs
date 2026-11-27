@@ -4606,6 +4606,439 @@ fn verdict(body: Value, origin: Option<&str>, client: &str) -> Request<Body> {
         .expect("a request")
 }
 
+/// The deployment's settings changed in the snapshot the service reads, as the worker's minute
+/// would change them.
+fn edit_spec(w: &World, mut change: impl FnMut(&mut AssistantDeploymentSpec)) {
+    let mut held = w.state.snapshot.write().expect("the snapshot");
+    let mut snapshot = held.as_ref().clone();
+    for deployment in &mut snapshot.deployments {
+        change(&mut deployment.spec);
+    }
+    *held = Arc::new(snapshot);
+}
+
+fn plain(text: &str) -> ResponseTemplate {
+    completion(json!({"role": "assistant", "content": text}), 50)
+}
+
+/// A manifest that slipped past `jc-core` without a budget or a rate limit is not served to a
+/// visitor, and an internal one without a budget says an administrator sets it; a question past
+/// the characters the budget allows is refused.
+#[tokio::test]
+async fn an_anonymous_deployment_without_a_budget_or_a_rate_limit_is_not_served() {
+    let w = world("chatnobudget", deployment(Channel::Public, 50_000, 10)).await;
+    let ask_it = |message: &str| ask(json!({"message": message}), Some(ORIGIN));
+    edit_spec(&w, |spec| spec.rate_limit = None);
+    let (status, body, _) = answer_of(&w.app, ask_it("Kedy je zber?")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
+    assert_eq!(
+        body[0].1["detail"],
+        "No assistant is published under this id."
+    );
+    edit_spec(&w, |spec| {
+        spec.budget = None;
+        spec.rate_limit = Some(RateLimit {
+            requests_per_minute: 100,
+            per_client_per_minute: 10,
+            per_client_per_hour: 600,
+            per_client_per_day: 6_000,
+            per_client_per_month: 6_000,
+            streams_per_client: 2,
+        });
+    });
+    let (status, body, _) = answer_of(&w.app, ask_it("Kedy je zber?")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body:?}");
+    assert!(model_calls(&w.proxy).await.is_empty());
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A visitor's second question while the first is still streamed is told to wait five seconds,
+/// and the slot comes back when the first is done.
+#[tokio::test]
+async fn a_second_question_while_the_first_streams_is_told_to_wait() {
+    let mut one = deployment(Channel::Public, 50_000, 10);
+    if let Some(rate) = one.spec.rate_limit.as_mut() {
+        rate.streams_per_client = 1;
+    }
+    let w = world("chatstreams", one).await;
+    let slow = std::time::Duration::from_millis(900);
+    script(&w.proxy, vec![plain("Áno.").set_delay(slow); 4]).await;
+    let first = w
+        .app
+        .clone()
+        .oneshot(ask(json!({"message": "Kedy je zber?"}), Some(ORIGIN)))
+        .await
+        .expect("an answer");
+    assert_eq!(first.status(), StatusCode::OK);
+    let (status, body, headers) =
+        answer_of(&w.app, ask(json!({"message": "A ešte?"}), Some(ORIGIN))).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    assert_eq!(
+        headers.get("retry-after").and_then(|v| v.to_str().ok()),
+        Some("5")
+    );
+    assert!(body[0].1["detail"]
+        .as_str()
+        .is_some_and(|d| d.contains("Ešte odpovedám")));
+    let _ = axum::body::to_bytes(first.into_body(), 1 << 20).await;
+    let (status, _, _) = answer_of(&w.app, ask(json!({"message": "A ešte?"}), Some(ORIGIN))).await;
+    assert_eq!(status, StatusCode::OK, "the slot is free again");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// An internal assistant has no rate limit and so no stream to close: its visitor past their
+/// share of the day, and the assistant past its day, are refused all the same.
+#[tokio::test]
+async fn an_internal_assistant_past_its_share_or_its_day_is_refused_with_no_stream_to_close() {
+    let mut inside = looped(1_000_000);
+    if let Some(budget) = inside.spec.budget.as_mut() {
+        budget.cost_per_day_usd = 1.0;
+    }
+    let w = world("chatinsidecap", inside).await;
+    let answered = || {
+        ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": "Áno."}}],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 10, "total_tokens": 50, "cost": 0.2}
+        }))
+    };
+    script(&w.proxy, vec![answered(), answered(), answered()]).await;
+    let (status, _, _) = answer_of(&w.app, ask_looped(json!({"message": "Kedy je zber?"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body, _) = answer_of(&w.app, ask_looped(json!({"message": "A ešte?"}))).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body:?}");
+    assert_eq!(body[0].1["title"], "Visitor Limit Reached");
+    // The share is wide now; the day's own cap, 0.2 spent of 0.15, is what refuses.
+    edit_spec(&w, |spec| {
+        if let Some(budget) = spec.budget.as_mut() {
+            budget.visitor_share_percent = 1_000;
+            budget.cost_per_day_usd = 0.15;
+        }
+    });
+    let (status, body, _) = answer_of(&w.app, ask_looped(json!({"message": "A potom?"}))).await;
+    assert!(limited(&body), "{status} {body:?}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// The windows of a visitor's own routes: a busy deployment asks its visitors more work for a
+/// token, a client that asks for tokens past ten a minute is told to wait, and so is one that
+/// reads map pages past the window.
+#[tokio::test]
+async fn the_token_challenge_and_map_routes_hold_their_windows() {
+    let w = world("chatwindows", deployment(Channel::Public, 50_000, 10)).await;
+    edit_spec(&w, |spec| {
+        if let Some(rate) = spec.rate_limit.as_mut() {
+            rate.requests_per_minute = 5;
+            rate.per_client_per_minute = 50;
+        }
+    });
+    script(&w.proxy, vec![plain("Áno."); 6]).await;
+    let challenge = || {
+        Request::builder()
+            .uri("/api/v1/d/hronov-obcania/challenge")
+            .header("origin", ORIGIN)
+            .body(Body::empty())
+            .expect("a request")
+    };
+    let easy = w.app.clone().oneshot(challenge()).await.expect("an answer");
+    assert_eq!(easy.status(), StatusCode::OK);
+    let easy = axum::body::to_bytes(easy.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    for n in 0..4 {
+        let (status, _, _) = answer_of(
+            &w.app,
+            ask_from(
+                json!({"message": "Kedy je zber?"}),
+                Some(ORIGIN),
+                &format!("198.51.100.{n}"),
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+    let busy = w.app.clone().oneshot(challenge()).await.expect("an answer");
+    let busy = axum::body::to_bytes(busy.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    let difficulty =
+        |body: &[u8]| serde_json::from_slice::<Value>(body).expect("json")["difficulty"].clone();
+    assert_ne!(
+        difficulty(&busy),
+        difficulty(&easy),
+        "a busy assistant asks for more work"
+    );
+
+    let token = |client: &str| {
+        Request::builder()
+            .method("POST")
+            .uri("/api/v1/d/hronov-obcania/token")
+            .header("content-type", "application/json")
+            .header("origin", ORIGIN)
+            .header("x-forwarded-for", format!("{client}, 10.0.0.1"))
+            .body(Body::from(
+                json!({"challenge": "x", "nonce": "y"}).to_string(),
+            ))
+            .expect("a request")
+    };
+    for _ in 0..10 {
+        let response = w
+            .app
+            .clone()
+            .oneshot(token("192.0.2.5"))
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    let response = w
+        .app
+        .clone()
+        .oneshot(token("192.0.2.5"))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key("retry-after"));
+
+    // Map pages: past the window every request is told to wait, found or not.
+    let proof = visitor_token(&w.state, "hronov-obcania", "9").await;
+    let mut last = StatusCode::OK;
+    for _ in 0..=assistant::chat::map_source::PAGES_PER_MINUTE {
+        last = w
+            .app
+            .clone()
+            .oneshot(map_page_of("unknown", None, Some(&proof), "203.0.113.50"))
+            .await
+            .expect("an answer")
+            .status();
+    }
+    assert_eq!(last, StatusCode::TOO_MANY_REQUESTS);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A turn whose answer was done more than two minutes ago is gone, not missing; a map source
+/// that has served every page is spent, and one whose page the Endpoint does not answer as a
+/// list is a 502.
+#[tokio::test]
+async fn a_turn_past_its_resume_is_gone_and_a_map_source_spends_its_pages() {
+    use assistant::chat::map_source::{Read, MAX_PAGES};
+    let w = world("chatgonespent", deployment(Channel::Public, 50_000, 10)).await;
+    let proof = visitor_token(&w.state, "hronov-obcania", "0").await;
+    let day = unix_now() / 86_400;
+    let visitor = w.state.limits.lock().await.visitor("203.0.113.7", day);
+    let (id, turn) = w
+        .state
+        .turns
+        .start("hronov-obcania", &visitor, std::time::Instant::now())
+        .expect("a turn");
+    turn.finish(std::time::Instant::now() - std::time::Duration::from_secs(150));
+    let response = w
+        .app
+        .clone()
+        .oneshot(resume_of(&id, None, Some(&proof)))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::GONE);
+
+    let read = || Read {
+        slug: "bbsk-registre".into(),
+        kind: "Bridge".into(),
+        q: None,
+        timeout: std::time::Duration::from_secs(5),
+        fields: vec!["name".into()],
+    };
+    Mock::given(method("POST"))
+        .and(path("/api/endpoint/bbsk-registre/mcp"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1,
+            "result": {"content": [{"type": "text", "text": "not a list of entities"}]}})),
+        )
+        .mount(&w.gateway)
+        .await;
+    let source = w
+        .state
+        .map_sources
+        .hold(
+            "hronov-obcania",
+            &visitor,
+            read(),
+            std::time::Instant::now(),
+        )
+        .expect("a source");
+    let response = w
+        .app
+        .clone()
+        .oneshot(map_page_of(&source, None, Some(&proof), "203.0.113.7"))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    for _ in 0..MAX_PAGES {
+        w.state.map_sources.page(
+            "hronov-obcania",
+            &visitor,
+            &source,
+            std::time::Instant::now(),
+        );
+    }
+    let response = w
+        .app
+        .clone()
+        .oneshot(map_page_of(&source, None, Some(&proof), "203.0.113.7"))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A verdict the store cannot keep is a 503 in words, and an assistant with no rate limit takes
+/// a verdict from the person it serves without a window of its own.
+#[tokio::test]
+async fn a_verdict_the_store_cannot_keep_is_a_503_and_an_unlimited_assistant_takes_it() {
+    let w = world(
+        "chatverdictdown",
+        deployment(Channel::Public, 1_000_000, 10),
+    )
+    .await;
+    script(&w.proxy, vec![plain("Áno."); 2]).await;
+    let (_, events, _) = answer_of(&w.app, ask(json!({"message": "a"}), Some(ORIGIN))).await;
+    let id = events[0].1["id"].as_str().expect("an id").to_owned();
+    let url = std::env::var("JC_ASSISTANT_TEST_DATABASE_URL").expect("the test database");
+    let options: sqlx::postgres::PgConnectOptions = url.parse().expect("a database URL");
+    let owner = PgPool::connect_with(options.database(&w.name))
+        .await
+        .expect("the owner connects");
+    sqlx::query("ALTER TABLE feedback RENAME TO feedback_away")
+        .execute(&owner)
+        .await
+        .expect("the table goes");
+    let response = w
+        .app
+        .clone()
+        .oneshot(verdict(
+            json!({"conversation": id, "turn": 1, "verdict": "up"}),
+            Some(ORIGIN),
+            "198.51.100.30",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    assert!(String::from_utf8_lossy(&bytes).contains("could not be stored"));
+    sqlx::query("ALTER TABLE feedback_away RENAME TO feedback")
+        .execute(&owner)
+        .await
+        .expect("the table is back");
+    owner.close().await;
+    edit_spec(&w, |spec| spec.rate_limit = None);
+    let response = w
+        .app
+        .clone()
+        .oneshot(verdict(
+            json!({"conversation": id, "turn": 1, "verdict": "up"}),
+            Some(ORIGIN),
+            "198.51.100.31",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A rag deployment connects nothing and a data one searches nothing; a long question from a
+/// visitor is cut for the log; a model that never answers cuts the answer at the outer timeout
+/// with an error event the visitor can read; a reader of an internal answer who leaves ends its
+/// loop and frees its slot.
+#[tokio::test]
+async fn a_rag_or_data_deployment_a_long_question_and_a_silent_model_are_each_answered_or_cut() {
+    let w = world("chatshapes", deployment(Channel::Public, 50_000, 10)).await;
+    script(&w.proxy, vec![plain("Áno."); 8]).await;
+    let routes =
+        |name: &str| serde_json::from_value(json!({"routes": name})).expect("answer settings");
+    edit_spec(&w, |spec| spec.answer = Some(routes("rag")));
+    let calls_before = w.gateway.received_requests().await.expect("recorded").len();
+    let long = "Kedy je zber? ".repeat(60);
+    let (status, events, _) = answer_of(&w.app, ask(json!({"message": long}), Some(ORIGIN))).await;
+    assert_eq!(status, StatusCode::OK, "{events:?}");
+    assert_eq!(
+        w.gateway.received_requests().await.expect("recorded").len(),
+        calls_before,
+        "a rag answer connects nothing"
+    );
+    edit_spec(&w, |spec| spec.answer = Some(routes("data")));
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Kedy je zber?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{events:?}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// The outer timeout: a model that does not answer in 30 seconds ends the answer with a 504
+/// error event, which the visitor can resume and which is kept in the transcript as timed out.
+#[tokio::test]
+async fn a_model_that_does_not_answer_ends_the_answer_at_the_outer_timeout() {
+    let w = world("chattimeout", deployment(Channel::Public, 50_000, 10)).await;
+    // The outer timeout is 30 seconds, or the data loop's seconds and the answer's 25, if more.
+    edit_spec(&w, |spec| {
+        spec.answer = serde_json::from_value(json!({"maxDataSeconds": 1})).ok();
+    });
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .respond_with(plain("Neskoro.").set_delay(std::time::Duration::from_secs(45)))
+        .mount(&w.proxy)
+        .await;
+    let began = std::time::Instant::now();
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Kedy je zber?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let took = began.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(40),
+        "{took:?} {events:?}"
+    );
+    let cut = events
+        .iter()
+        .find(|(name, data)| name == "error" && data["status"] == 504)
+        .expect("a 504 event");
+    assert_eq!(cut.1["title"], "Answer Took Too Long");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// A reader of an internal answer who leaves before it is done: nothing holds it for a resume,
+/// so the answer's loop is closed and the question's slot comes back.
+#[tokio::test]
+async fn an_internal_reader_who_leaves_closes_the_answer_and_frees_the_slot() {
+    let w = world("chatleft", looped(50_000)).await;
+    script(
+        &w.proxy,
+        vec![plain("Áno.").set_delay(std::time::Duration::from_millis(700)); 2],
+    )
+    .await;
+    let slots = w.questions.available_permits();
+    let response = w
+        .app
+        .clone()
+        .oneshot(ask_looped(json!({"message": "Kedy je zber?"})))
+        .await
+        .expect("an answer");
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(response);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while w.questions.available_permits() < slots && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        w.questions.available_permits(),
+        slots,
+        "the slot is free again"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// A store that is down is a 503 in words for a question that continues a conversation and for
 /// a verdict; a history turn past the cap and an unknown assistant are refused before either.
 #[tokio::test]
@@ -6891,6 +7324,29 @@ async fn the_mcp_search_reads_a_named_publisher_first_and_says_when_the_store_is
     .await;
     assert_eq!(status, StatusCode::OK, "{held}");
     assert_eq!(held["publishers"], json!(["hronov"]), "{held}");
+    // A passage whose language is not known counts as a passage and names no language.
+    let mut tx = assistant::project_scope(&w.pool, "trutnov")
+        .await
+        .expect("scope");
+    sqlx::query("UPDATE chunks SET lang = NULL WHERE project = 'trutnov'")
+        .execute(&mut *tx)
+        .await
+        .expect("an unknown language");
+    tx.commit().await.expect("commit");
+    let (status, unknown) = internal_post(
+        &w.app,
+        "/internal/v1/sources",
+        json!({"sources": [{"project": "trutnov", "source": "web"}]}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        (status, unknown),
+        (
+            StatusCode::OK,
+            json!({"passages": 1, "publishers": ["trutnov"], "languages": {}})
+        )
+    );
     let web = json!([{"project": "hronov", "source": "web"}]);
     for (uri, body) in [
         ("/internal/v1/sources", json!({"sources": []})),

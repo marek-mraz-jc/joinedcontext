@@ -1139,10 +1139,15 @@ async fn read_languages(
             *counts.entry(lang).or_default() += n;
         }
     }
+    Ok(ranked_languages(counts))
+}
+
+/// The [`MAX_LANGUAGES`] languages with the most passages, most first, equal counts by name.
+fn ranked_languages(counts: HashMap<String, i64>) -> Vec<String> {
     let mut ranked: Vec<(String, i64)> = counts.into_iter().collect();
     ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     ranked.truncate(MAX_LANGUAGES);
-    Ok(ranked.into_iter().map(|(lang, _)| lang).collect())
+    ranked.into_iter().map(|(lang, _)| lang).collect()
 }
 
 /// A background read in flight, by key; the key is free again when it is dropped, a panic
@@ -1486,6 +1491,14 @@ impl AnswerCache {
             .get(slug)
             .filter(|(at, _)| at.elapsed() < life)
             .map(|(_, listed)| listed.clone())
+    }
+
+    /// A listing kept `age` ago, for a test of what a stale one still answers.
+    #[cfg(test)]
+    pub(super) fn keep_listing_aged(&self, slug: &str, age: Duration, listed: Vec<Value>) {
+        if let Ok(mut tools) = self.tools.lock() {
+            tools.insert(slug.to_owned(), (Instant::now() - age, listed));
+        }
     }
 
     pub fn keep_listing(&self, slug: &str, listed: Vec<Value>) {
@@ -4713,6 +4726,541 @@ mod tests {
                 .await
                 .as_deref(),
             Some("https://data.example/dataset/manifest")
+        );
+    }
+
+    /// The sources' languages: the read is kept when it succeeds and leaves a fresh one alone, a
+    /// store that fails keeps nothing and says so, a hold a panic poisoned still lets the read end,
+    /// and the most frequent are named, equal counts by name.
+    #[tokio::test]
+    async fn warming_the_languages_keeps_what_it_read_and_says_when_it_could_not() {
+        let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let ask = parts.ask(&[]);
+        let cache = AnswerCache::default();
+        // Nothing to read in no sources: an empty list, kept and fresh.
+        warm_languages(&cache, ask.pool, "d/a", &[], true).await;
+        assert_eq!(cache.languages_of("d/a#public"), (Some(Vec::new()), true));
+        // A fresh read is not read again: a read of this source would fail, the store being down.
+        let sources = vec![("hronov".to_owned(), vec!["web".to_owned()])];
+        warm_languages(&cache, ask.pool, "d/a", &sources, true).await;
+        assert!(!log.text().contains("could not be read"), "{}", log.text());
+        // A store that is down keeps nothing, says so, and frees the key for the next read.
+        warm_languages(&cache, ask.pool, "d/b", &sources, true).await;
+        assert_eq!(cache.languages_of("d/b#public"), (None, false));
+        assert!(
+            log.text().contains("languages could not be read"),
+            "{}",
+            log.text()
+        );
+        assert!(Reading::start(&cache.reading_languages, "d/b#public").is_some());
+        // A poisoned hold: the read ends, keeps nothing and does not panic.
+        poison(&cache.languages);
+        warm_languages(&cache, ask.pool, "d/c", &[], true).await;
+        assert_eq!(cache.languages_of("d/c#public"), (None, false));
+
+        let counts = HashMap::from([
+            ("sk".to_owned(), 5),
+            ("en".to_owned(), 5),
+            ("cs".to_owned(), 5),
+            ("hu".to_owned(), 2),
+            ("de".to_owned(), 1),
+            ("uk".to_owned(), 1),
+        ]);
+        assert_eq!(ranked_languages(counts), ["cs", "en", "sk", "hu"]);
+    }
+
+    /// A deployment with no sources has nothing to search: no embedding is waited for, and the
+    /// step says why. A catalogue search that fails is said and leaves no dataset page.
+    #[tokio::test]
+    async fn a_search_over_no_sources_is_empty_and_a_failing_catalogue_search_is_said() {
+        let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let ask = parts.ask(&[]);
+        let found = search_index(&ask, "knižnica", 5).await.expect("no sources");
+        assert_eq!(found, (Vec::new(), "time: no sources to search".to_owned()));
+        assert!(search(&ask, "knižnica").await.expect("none").is_empty());
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut over = parts.ask(&[]);
+        over.sources = &sources;
+        assert!(datasets(&over, &["knižnica".to_owned()]).await.is_empty());
+        assert!(
+            log.text().contains("a catalogue search failed"),
+            "{}",
+            log.text()
+        );
+        // And a search the question makes that fails is a failed step, which the answer survives.
+        let (tx, mut rx) = tokio::sync::mpsc::channel(8);
+        assert!(searched(&over, &tx, "knižnica").await.is_none());
+        let mut statuses = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Event::Tool { status, .. } = event {
+                statuses.push(status);
+            }
+        }
+        assert_eq!(statuses, ["started", "failed"]);
+        assert!(log.text().contains("search failed"), "{}", log.text());
+    }
+
+    /// A public listing in its backoff answers the last one it kept, however old, or says that it
+    /// waits; a type list with no type is no Endpoint to show.
+    #[tokio::test]
+    async fn a_listing_in_its_backoff_answers_the_last_one_kept_or_says_it_waits() {
+        let cache = AnswerCache::default();
+        let surface = super::super::mcp::Surface {
+            gateway: "http://127.0.0.1:9".into(),
+            slug: "slow".into(),
+            timeout: Duration::from_secs(1),
+            token: None,
+        };
+        let http = reqwest::Client::new();
+        cache.failed("slow");
+        let waiting = listing(&cache, &http, &surface).await;
+        assert!(
+            waiting.is_err_and(|why| why.contains("failed lately")),
+            "nothing kept, so it says it waits"
+        );
+        let stale = (
+            Instant::now() - TOOLS_LIFE - Duration::from_secs(1),
+            vec![json!({"name": "query_entities"})],
+        );
+        cache
+            .tools
+            .lock()
+            .expect("the tools")
+            .insert("slow".into(), stale);
+        let kept = listing(&cache, &http, &surface).await;
+        assert_eq!(kept, Ok(vec![json!({"name": "query_entities"})]));
+
+        // An Endpoint whose list holds no type is left out, and none is missing.
+        let tool = |name: &str| super::super::mcp::Tool {
+            name: name.into(),
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+        };
+        let mut empty = connector("http://127.0.0.1:9", "bare", &[], None);
+        empty.tools = vec![tool("list_types"), tool("query_entities")];
+        cache.keep_types("bare", Vec::new());
+        let (live, missing) = live_of(&cache, &http, "d/a", &[empty], None).await;
+        assert!(live.is_empty() && missing.is_empty());
+    }
+
+    /// An Endpoint's public listing needs a base that paths join onto.
+    #[tokio::test]
+    async fn a_type_listing_needs_a_base_a_path_joins_onto() {
+        let parts = Parts::new();
+        let mut ask = parts.ask(&[]);
+        let page = url::Url::parse("https://data.example/").expect("a url");
+        ask.endpoint_base = Some(&page);
+        assert_eq!(
+            type_listing(&ask, "most", "Bridge").as_deref(),
+            Some(
+                "https://data.example/api/endpoint/most/ngsi-ld/v1/entities?type=Bridge&limit=1000"
+            )
+        );
+        let none = url::Url::parse("mailto:clerk@data.example").expect("a url");
+        ask.endpoint_base = Some(&none);
+        assert_eq!(type_listing(&ask, "most", "Bridge"), None);
+        ask.endpoint_base = None;
+        assert_eq!(type_listing(&ask, "most", "Bridge"), None);
+    }
+
+    /// A page lookup answers what it kept (a page, or none), is left alone while it backs off,
+    /// and a lookup that panicked counts as one that waited out its deadline.
+    #[tokio::test]
+    async fn a_page_lookup_answers_what_it_kept_and_is_left_alone_while_it_backs_off() {
+        let parts = Parts::new();
+        let endpoint = connector("http://127.0.0.1:9", "most", &[], None);
+        let ask = parts.ask(&[]);
+        let page = "https://data.example/dataset/mosty";
+        let key = page_key(&ask, "rows most Bridge");
+        ask.cache
+            .keep_page(&key, PageKept::Answered(Instant::now(), Some(page.into())));
+        assert_eq!(
+            page_step(&ask, &endpoint, "Bridge").await,
+            Some(Some(page.to_owned()))
+        );
+        ask.cache
+            .keep_page(&key, PageKept::Answered(Instant::now(), None));
+        assert_eq!(page_step(&ask, &endpoint, "Bridge").await, Some(None));
+        let waiting = PageKept::Missed(1, Instant::now() + Duration::from_secs(60));
+        ask.cache.keep_page(&key, waiting.clone());
+        assert_eq!(page_step(&ask, &endpoint, "Bridge").await, Some(None));
+        assert_eq!(
+            dataset_or(&ask, &endpoint, "Bridge", "[]", None).await,
+            None
+        );
+
+        let endpoint_key = page_key(&ask, "endpoint most");
+        ask.cache.keep_page(&endpoint_key, waiting);
+        assert_eq!(endpoint_page(&ask, "most").await.expect("no error"), None);
+        ask.cache.keep_page(
+            &endpoint_key,
+            PageKept::Answered(Instant::now(), Some(page.into())),
+        );
+        assert_eq!(
+            endpoint_page(&ask, "most")
+                .await
+                .expect("no error")
+                .as_deref(),
+            Some(page)
+        );
+
+        fn boom() -> Result<Option<String>, crate::Error> {
+            std::panic::resume_unwind(Box::new("poisoned on purpose"))
+        }
+        let cache = AnswerCache::default();
+        let looked = kept_lookup(&cache, "k", Duration::from_secs(5), async { boom() }).await;
+        assert!(matches!(looked, Ok(Looked::Deadline)), "{looked:?}");
+        assert_eq!(
+            cache.page_of("k"),
+            Err(None),
+            "it is left alone for a while"
+        );
+    }
+
+    /// A page lookup that waits on a store that never answers is cut at its deadline: the table
+    /// links no page, the step says so, and the line says which Endpoint.
+    #[tokio::test]
+    async fn a_page_lookup_on_a_silent_store_is_cut_at_its_deadline_and_says_so() {
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let port = silent.local_addr().expect("an address").port();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(10))
+            .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
+            .expect("a lazy pool");
+        let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let endpoint = connector("http://127.0.0.1:9", "most", &[], None);
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&[]);
+        ask.pool = &pool;
+        ask.sources = &sources;
+        // The step: the lookup waited out its deadline.
+        assert_eq!(page_step(&ask, &endpoint, "Bridge").await, Some(None));
+        // The rows name a page the store must check, and the store does not answer in time.
+        let rows = json!([{"id": "urn:ngsi-ld:Bridge:a", "isPartOf": {"value": "https://data.example/dataset/mosty"}}])
+            .to_string();
+        assert_eq!(
+            dataset_or(&ask, &endpoint, "Bridge", &rows, None).await,
+            None
+        );
+        assert!(
+            log.text().contains("was not found within its deadline"),
+            "{}",
+            log.text()
+        );
+        drop(silent);
+    }
+
+    /// A reader who left ends the table reads and the search rounds.
+    #[tokio::test]
+    async fn a_reader_who_left_ends_the_reads_and_the_search_rounds() {
+        let parts = Parts::new();
+        let ask = parts.ask(&[]);
+        let (gone, left) = tokio::sync::mpsc::channel(8);
+        drop(left);
+        assert!(read_tables(&ask, &[], Vec::new(), &gone).await.is_none());
+        let judging = std::sync::atomic::AtomicBool::new(true);
+        let call = Call {
+            model: None,
+            max_tokens: 10,
+            json: false,
+            provider: None,
+            reasoning: Default::default(),
+        };
+        let (mut spent, mut found) = (
+            Spent::default(),
+            Found {
+                hits: Vec::new(),
+                asked: Vec::new(),
+                rounds: 0,
+            },
+        );
+        let q = Question {
+            ask: &ask,
+            history: &[],
+            question: "kde je knižnica",
+            events: &gone,
+            languages: &[],
+            now: "now",
+            judging: &judging,
+        };
+        assert!(
+            !search_rounds(
+                q,
+                &mut spent,
+                &call,
+                &mut found,
+                vec!["knižnica".into()],
+                true
+            )
+            .await
+        );
+        assert_eq!(
+            found.rounds, 1,
+            "the round is counted before the reader is found gone"
+        );
+    }
+
+    /// An answer that cannot be read as a list of organizations leaves the last list standing, and
+    /// says so; a dataset page the sources hold for an Endpoint links the holding.
+    #[tokio::test]
+    async fn a_catalogue_whose_organizations_are_no_list_is_said_and_a_kept_page_is_linked() {
+        use wiremock::matchers::{body_partial_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let (log, _guard) = crate::chat::test_world::Log::capture();
+        let gateway = MockServer::start().await;
+        let text = |value: Value| json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [{"type": "text", "text": value.to_string()}]}});
+        Mock::given(method("POST"))
+            .and(path("/api/endpoint/cat/mcp"))
+            .and(body_partial_json(
+                json!({"params": {"name": "query_entities"}}),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(text(json!({"count": 3}))))
+            .mount(&gateway)
+            .await;
+        let tool = |name: &str| super::super::mcp::Tool {
+            name: name.into(),
+            description: String::new(),
+            input_schema: json!({"type": "object"}),
+        };
+        let mut catalogue = connector(&gateway.uri(), "cat", &[], None);
+        catalogue.endpoint = "slovensko/catalog".into();
+        catalogue.tools = vec![tool("query_entities")];
+        let (cache, http) = (AnswerCache::default(), reqwest::Client::new());
+        warm(&cache, &http, &[catalogue]).await;
+        assert!(cache.publishers_of("cat").is_empty());
+        assert!(
+            log.text().contains("organizations could not be read"),
+            "{}",
+            log.text()
+        );
+
+        let parts = Parts::new();
+        let ask = parts.ask(&[]);
+        let page = "https://data.example/dataset/mosty";
+        ask.cache.keep_page(
+            &page_key(&ask, "endpoint cat"),
+            PageKept::Answered(Instant::now(), Some(page.into())),
+        );
+        let hit = |url: &str| Hit {
+            url: url.into(),
+            ..Default::default()
+        };
+        let linked = holdings_linked(
+            &ask,
+            vec![
+                (
+                    "cat".to_owned(),
+                    hit("https://api.example/api/endpoint/cat/"),
+                ),
+                (
+                    "zzz".to_owned(),
+                    hit("https://api.example/api/endpoint/zzz/"),
+                ),
+            ],
+        )
+        .await;
+        assert_eq!(linked[0].1.url, page, "the page the sources hold");
+        assert_eq!(
+            linked[1].1.url, "https://api.example/api/endpoint/zzz/",
+            "an Endpoint with no page keeps the address"
+        );
+    }
+
+    /// The router call and its token endpoint on one mock server; `slow` answers the first call
+    /// after the hedge's three seconds, `second` is what the call beside it gets.
+    async fn router_proxy(
+        slow: wiremock::ResponseTemplate,
+        second: wiremock::ResponseTemplate,
+    ) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer};
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(slow)
+            .up_to_n_times(1)
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(second)
+            .mount(&proxy)
+            .await;
+        proxy
+    }
+
+    fn routed_reply(text: &str) -> wiremock::ResponseTemplate {
+        wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 5, "total_tokens": 45, "cost": 0.0001},
+        }))
+    }
+
+    fn router_call() -> Call<'static> {
+        Call {
+            model: None,
+            max_tokens: 50,
+            json: false,
+            provider: None,
+            reasoning: Default::default(),
+        }
+    }
+
+    /// A router that has not answered in [`ROUTER_HEDGE`] is asked again beside it: the second
+    /// call's answer wins and the first, left running, is charged as its twin; when the second
+    /// call fails the first is waited for and the hedge is a route note, not a priced call.
+    #[tokio::test]
+    async fn a_slow_router_is_asked_again_and_the_hedge_is_charged_or_noted() {
+        let late = || routed_reply("late").set_delay(ROUTER_HEDGE + Duration::from_millis(600));
+        let messages = [json!({"role": "user", "content": "kde je knižnica"})];
+
+        let proxy = router_proxy(late(), routed_reply("quick")).await;
+        let mut parts = Parts::new();
+        parts.model_at(&proxy.uri());
+        let ask = parts.ask(&[]);
+        let (reply, took, twin) = route_call(&ask, &router_call(), &messages).await;
+        assert_eq!(reply.expect("the second call answered").text, "quick");
+        assert!(took >= ROUTER_HEDGE && took < ROUTER_HEDGE + Duration::from_millis(500));
+        assert_eq!(
+            twin.expect("the first call is charged as its twin").text,
+            "quick"
+        );
+        let steps = ask.trace.steps();
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.name == "router_hedge" && s.kind == "model"),
+            "{steps:?}"
+        );
+
+        let proxy = router_proxy(late(), wiremock::ResponseTemplate::new(400)).await;
+        let mut parts = Parts::new();
+        parts.model_at(&proxy.uri());
+        let ask = parts.ask(&[]);
+        let (reply, _, twin) = route_call(&ask, &router_call(), &messages).await;
+        assert_eq!(reply.expect("the first call answered").text, "late");
+        assert!(twin.is_none(), "a failed second call is no cost to pay");
+        let steps = ask.trace.steps();
+        let noted = steps
+            .iter()
+            .find(|s| s.name == "router_hedge")
+            .expect("a hedge step");
+        assert_eq!(noted.kind, "route");
+        assert_eq!(
+            noted.output.as_deref(),
+            Some("first call answered; the other failed")
+        );
+    }
+
+    /// A round's searches that are still out [`SEARCH_WAVE`] after the first came back are
+    /// dropped: the reader sees the search failed, and the trace says how many were cut.
+    #[tokio::test]
+    async fn a_search_that_is_out_a_wave_after_its_round_began_to_answer_is_cut() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+        struct Embeds;
+        impl Respond for Embeds {
+            fn respond(&self, req: &Request) -> ResponseTemplate {
+                let body: Value = serde_json::from_slice(&req.body).expect("a JSON body");
+                let texts = body["input"].as_array().expect("an input");
+                let data: Vec<Value> = (0..texts.len())
+                    .map(|index| {
+                        json!({"index": index, "embedding": vec![0.1_f32; jc_embedder::DIMENSIONS]})
+                    })
+                    .collect();
+                let answer = ResponseTemplate::new(200).set_body_json(json!({
+                    "model": jc_embedder::MODEL,
+                    "model_sha256": jc_embedder::MODEL_SHA256,
+                    "data": data,
+                }));
+                if texts
+                    .iter()
+                    .any(|t| t.as_str().is_some_and(|t| t.contains("slow")))
+                {
+                    answer.set_delay(Duration::from_secs(12))
+                } else {
+                    answer
+                }
+            }
+        }
+        let embedder = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&embedder)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(Embeds)
+            .mount(&embedder)
+            .await;
+        let mut parts = Parts::new();
+        parts.embedder_at(&embedder.uri());
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&[]);
+        ask.sources = &sources;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let judging = std::sync::atomic::AtomicBool::new(true);
+        let q = Question {
+            ask: &ask,
+            history: &[],
+            question: "kde je knižnica",
+            events: &tx,
+            languages: &[],
+            now: "now",
+            judging: &judging,
+        };
+        let mut spent = Spent::default();
+        let mut found = Found {
+            hits: Vec::new(),
+            asked: Vec::new(),
+            rounds: 0,
+        };
+        let began = Instant::now();
+        let queries = vec!["fast knižnica".to_owned(), "slow knižnica".to_owned()];
+        assert!(search_rounds(q, &mut spent, &router_call(), &mut found, queries, true).await);
+        assert!(
+            began.elapsed() < Duration::from_secs(8),
+            "the slow search is not waited for"
+        );
+        let mut statuses = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Event::Tool { name, status, .. } = event {
+                statuses.push((name, status));
+            }
+        }
+        // Started twice; the fast search failed on the store that is down, the slow one was cut.
+        assert_eq!(statuses.iter().filter(|(_, s)| *s == "started").count(), 2);
+        assert_eq!(statuses.iter().filter(|(_, s)| *s == "failed").count(), 2);
+        let steps = ask.trace.steps();
+        let cut = steps
+            .iter()
+            .find(|s| s.name == "search_wave")
+            .expect("a wave note");
+        assert_eq!(cut.output.as_deref(), Some("1 of 2 searches cut"));
+        assert_eq!(found.asked.len(), 2);
+    }
+
+    /// An absence's markers are read to the end: a bracket left open is text.
+    #[test]
+    fn an_open_bracket_in_an_absence_is_left_as_it_is() {
+        assert_eq!(
+            absence_cites_no_page("The data does not cover it [1", &[]),
+            "The data does not cover it [1"
         );
     }
 

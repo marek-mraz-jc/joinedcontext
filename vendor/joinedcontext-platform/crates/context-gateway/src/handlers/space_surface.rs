@@ -282,6 +282,74 @@ mod tests {
         assert_eq!(localized(&BTreeMap::new(), "air"), json!("air"));
     }
 
+    fn space(description: &str, sandbox: bool, mcp: bool) -> Space {
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        if mcp {
+            endpoint
+                .representations
+                .push(jc_core::kinds::Representation::Mcp);
+        }
+        Space {
+            endpoint: std::sync::Arc::new(endpoint),
+            title: BTreeMap::from([(String::new(), "City air".to_owned())]),
+            description: if description.is_empty() {
+                BTreeMap::new()
+            } else {
+                BTreeMap::from([(String::new(), description.to_owned())])
+            },
+            is_sandbox: sandbox,
+            default_locale: Some("sk".to_owned()),
+        }
+    }
+
+    /// The record, its Turtle and its page name the same children; a described space says so in
+    /// each, a sandbox says it is not lasting, and the MCP child follows the representation.
+    #[test]
+    fn the_three_serializations_describe_one_space() {
+        let described = space("Air of the <city>", true, true);
+        let record = dataset(&described, "https://gw.example");
+        assert_eq!(record["dct:description"], json!("Air of the <city>"));
+        assert_eq!(record["dct:language"], json!("sk"));
+        assert_eq!(
+            record["adms:status"],
+            json!("http://purl.org/adms/status/UnderDevelopment")
+        );
+        let paths: Vec<&str> = record["dcat:service"]
+            .as_array()
+            .expect("services")
+            .iter()
+            .filter_map(|service| service["@id"].as_str())
+            .collect();
+        assert_eq!(paths.len(), 3, "{paths:?}");
+        assert!(paths[1].ends_with("/cs/city/mcp"), "{paths:?}");
+
+        let turtle = dataset_turtle(&described, "https://gw.example");
+        assert!(
+            turtle.contains("dct:description \"Air of the <city>\""),
+            "{turtle}"
+        );
+        assert!(turtle.contains("/cs/city/mcp>"), "{turtle}");
+        assert!(
+            turtle.contains("dct:conformsTo <https://modelcontextprotocol.io"),
+            "{turtle}"
+        );
+
+        let page = dataset_html(&described, "https://gw.example");
+        assert!(page.contains("Air of the &lt;city&gt;"), "{page}");
+        assert!(page.contains("<code>mcp</code>"), "{page}");
+
+        let bare = space("", false, false);
+        let record = dataset(&bare, "");
+        assert!(record.get("dct:description").is_none());
+        assert!(record.get("adms:status").is_none());
+        let turtle = dataset_turtle(&bare, "");
+        assert!(!turtle.contains("dct:description"), "{turtle}");
+        assert!(!turtle.contains("/mcp>"), "{turtle}");
+        let listed = catalog(&[std::sync::Arc::new(bare)], "https://gw.example");
+        assert_eq!(listed["dcat:dataset"][0]["dct:identifier"], json!("city"));
+        assert_eq!(catalog(&[], "")["dcat:dataset"], json!([]));
+    }
+
     #[test]
     fn a_title_from_a_manifest_cannot_close_the_page_it_is_rendered_in() {
         assert_eq!(

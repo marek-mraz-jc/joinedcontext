@@ -297,3 +297,45 @@ fn the_client_refuses_urls_it_cannot_use_and_answers_it_will_not_guess_at() {
         .to_string()
         .starts_with("the connection to Model Tools failed"));
 }
+
+/// A name that does not resolve, a peer that closes on a request it never read (the write or the
+/// read breaks), each name the failure rather than hang.
+#[test]
+fn a_name_that_does_not_resolve_and_a_peer_that_hangs_up_are_named() {
+    let unresolved =
+        request("http://no-such-host.invalid:8080", "/healthz", None).expect_err("no such host");
+    assert!(matches!(unresolved, HttpError::Connect(_)), "{unresolved}");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            drop(stream);
+        }
+    });
+    // A body no socket buffer holds, to a peer that has already closed: the write breaks.
+    let body = "x".repeat(32 * 1024 * 1024);
+    let broken = request(&url, "/infer", Some(&body)).expect_err("the peer hung up");
+    assert!(matches!(broken, HttpError::Io(_)), "{broken:?}");
+}
+
+/// A peer that closes with the request unread resets the connection: the read breaks.
+#[test]
+fn a_connection_reset_before_the_answer_is_an_io_error() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("a client");
+        // Wait until the request is in the receive buffer, then close without reading it.
+        let _ = rx.recv_timeout(std::time::Duration::from_millis(300));
+        drop(stream);
+    });
+    let tx2 = tx.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = tx2.send(());
+    });
+    let broken = request(&url, "/healthz", None).expect_err("reset");
+    assert!(matches!(broken, HttpError::Io(_)), "{broken:?}");
+}

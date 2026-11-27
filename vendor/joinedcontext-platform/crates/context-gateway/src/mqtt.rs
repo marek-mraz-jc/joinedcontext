@@ -179,9 +179,10 @@ pub fn brokers_of(repo: &Repository) -> Brokers {
         let spec = serde_json::from_value::<MqttBrokerSpec>(resource.manifest.spec.clone())
             .map_err(|error| error.to_string())
             .and_then(|spec| spec.validate().map(|()| spec).map_err(|e| e.to_string()))
-            .and_then(|spec| {
-                let sources = spec.source_ranges().map_err(|e| e.to_string())?;
-                Ok((spec, sources))
+            .map(|spec| {
+                // `validate` has read the list: it cannot fail here.
+                let sources = spec.source_ranges().unwrap_or_default();
+                (spec, sources)
             });
         match spec {
             Ok((spec, sources)) => {
@@ -1163,5 +1164,23 @@ mod tests {
                 .count(),
             5
         );
+    }
+
+    /// A table of a full house of clients drops the ones idle for a second, and keeps the rest.
+    #[test]
+    fn idle_buckets_go_when_the_table_is_full() {
+        let rates = Rates::default();
+        let start = std::time::Instant::now();
+        for client in 0..RATE_BUCKETS {
+            assert!(rates.admit("mqtt-p-b", &format!("c{client}"), 5, start));
+        }
+        let later = start + std::time::Duration::from_secs(2);
+        assert!(rates.admit("mqtt-p-b", "late", 5, later));
+        let held = rates
+            .buckets
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len();
+        assert_eq!(held, 1, "every bucket idle for a second was dropped");
     }
 }

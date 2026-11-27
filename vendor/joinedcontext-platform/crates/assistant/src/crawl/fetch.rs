@@ -191,6 +191,10 @@ pub fn is_url_allowed(url: &Url, allow_plain_http: bool) -> bool {
     if !url.username().is_empty() || url.password().is_some() {
         return false;
     }
+    // A URL with no host (`mailto:`, `data:`) names no server at all.
+    if url.host().is_none() {
+        return false;
+    }
     match url.scheme() {
         "https" => {}
         "http" if allow_plain_http => {}
@@ -207,8 +211,7 @@ pub fn is_url_allowed(url: &Url, allow_plain_http: bool) -> bool {
                 return false;
             }
         }
-        Some(url::Host::Domain(_)) => {}
-        None => return false,
+        Some(url::Host::Domain(_)) | None => {}
     }
     true
 }
@@ -368,8 +371,8 @@ mod tests {
         is_url_allowed(&Url::parse(url).expect("a URL"), false)
     }
 
-    /// Public address literals pass; an http(s) URL always has a host, so the guard's no-host
-    /// arm is a defence no parsed crawl URL reaches.
+    /// Public address literals pass; a URL with no host (`mailto:`, `data:`) is refused whatever
+    /// the scheme rule says, and an http(s) URL always has a host.
     #[test]
     fn a_public_address_literal_is_allowed_and_every_web_url_has_a_host() {
         assert!(allowed("https://93.184.216.34/"));
@@ -384,6 +387,7 @@ mod tests {
             &Url::parse("data:text/plain,x").expect("a URL"),
             true
         ));
+        assert!(!allowed("mailto:clerk@example.org"));
     }
 
     /// A body the server cuts short is a failed read naming the error, never a short page.

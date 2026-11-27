@@ -265,6 +265,26 @@ fn a_single_file_bundle_with_a_broken_document_is_rejected_by_source() {
     let _ = std::fs::remove_dir_all(&dest);
 }
 
+/// A document that is only comments, between two real ones, is skipped, not rejected.
+#[test]
+fn a_comment_only_document_between_two_manifests_is_skipped() {
+    let dir = temp_dir("import-comment-doc");
+    let file = dir.join("bundle.yaml");
+    std::fs::write(
+        &file,
+        format!(
+            "{}---\n# nothing here\n\n---\n{}",
+            common::SPACE,
+            common::ENDPOINT
+        ),
+    )
+    .expect("bundle");
+    let dest = temp_dir("import-comment-doc-dest");
+    let report = collect(&file, &dest, &options("ovzdusie")).expect("import collects");
+    assert!(report.is_acceptable(), "{:?}", report.rejections);
+    assert_eq!(report.imported.len(), 2);
+}
+
 #[test]
 fn an_anchored_id_pattern_moves_to_the_importing_organisation() {
     // T-0826: a registration and a Policy anchor their coverage with a pattern, which is a URN
@@ -663,6 +683,52 @@ fn the_command_writes_the_bundle_and_reports_what_it_did() {
 
     let _ = std::fs::remove_dir_all(&source);
     let _ = std::fs::remove_dir_all(&dest);
+}
+
+/// The command prints the report as JSON even when the bundle is refused, and names the path it
+/// cannot write when the repository has a folder where a manifest goes.
+#[test]
+fn the_command_reports_a_refusal_as_json_and_a_blocked_write_by_path() {
+    let source = temp_dir("import-cli-json-bad-src");
+    write_file(
+        &source,
+        "bad.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Telepath\nmetadata:\n  name: t\n  namespace: vzduch\nspec: {}\n",
+    );
+    let dest = destination("import-cli-json-bad-dest");
+    let output = run(&[
+        "import",
+        source.to_str().unwrap(),
+        "--repo-dir",
+        dest.to_str().unwrap(),
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let report: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("stdout is one JSON document");
+    assert_eq!(report["summary"]["imported"], 0);
+    assert!(
+        report["summary"]["rejected"].as_u64().unwrap_or(0) >= 1,
+        "{report}"
+    );
+
+    let good = bundle("import-cli-blocked-src");
+    let blocked = destination("import-cli-blocked-dest");
+    std::fs::create_dir_all(blocked.join("projects/ovzdusie/spaces/vzduch/space.yaml"))
+        .expect("a folder where the manifest goes");
+    let output = run(&[
+        "import",
+        good.to_str().unwrap(),
+        "--repo-dir",
+        blocked.to_str().unwrap(),
+        "--namespace",
+        "ovzdusie",
+    ]);
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("space.yaml"),
+        "{output:?}"
+    );
 }
 
 #[test]

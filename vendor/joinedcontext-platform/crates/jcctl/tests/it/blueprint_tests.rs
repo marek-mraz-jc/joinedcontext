@@ -198,6 +198,36 @@ fn a_template_that_reads_an_undefined_variable_fails_instead_of_rendering_a_hole
 }
 
 #[test]
+fn a_parameter_schema_no_validator_can_compile_is_a_schema_error() {
+    let yaml = BLUEPRINT.replace(
+        "    type: object\n    required: [entityType",
+        "    type: 12\n    required: [entityType",
+    );
+    let blueprint = Blueprint::from_yaml(&yaml).expect("the loader does not compile the schema");
+    let err = expand(&blueprint, &parameters()).expect_err("an uncompilable schema is refused");
+    assert!(matches!(err, ExpandError::Schema(_)), "{err}");
+    assert!(err
+        .to_string()
+        .starts_with("spec.parameterSchema is not a valid JSON Schema"));
+}
+
+#[test]
+fn a_template_annotations_that_is_not_a_map_is_replaced_by_the_provenance_map() {
+    let yaml = BLUEPRINT.replace(
+        "          annotations:\n            joinedcontext.com/managed-attributes: \"type\"\n",
+        "          annotations: \"oops\"\n",
+    );
+    let blueprint = Blueprint::from_yaml(&yaml).expect("parses");
+    let out = expand(&blueprint, &parameters()).expect("expands");
+    let seed: serde_json::Value = serde_norway::from_str(&out[1].manifest).expect("parses");
+    assert_eq!(
+        seed["metadata"]["annotations"]["joinedcontext.com/blueprint"],
+        "threshold-alert"
+    );
+    assert!(seed["metadata"]["annotations"]["joinedcontext.com/managed-attributes"].is_null());
+}
+
+#[test]
 fn a_template_may_not_read_the_filesystem() {
     // No loader is installed, so include/extends have nowhere to reach: a blueprint cannot
     // pull a file off the reconciler's host (ADR-N-005).

@@ -208,6 +208,7 @@ async fn the_broker_keeps_the_rider_hashed_and_no_location() {
 
 #[tokio::test]
 async fn without_the_spaces_key_nothing_reaches_the_broker() {
+    common::every_log_line();
     let short = keys("short", "too-short");
     for dir in [None, Some(short.clone())] {
         let (status, problem, hops) = write(dir).await;
@@ -247,6 +248,7 @@ async fn a_dropped_slot_written_as_the_whole_body_is_a_400_naming_only_the_attri
 /// that names nothing, and nothing is stored.
 #[tokio::test]
 async fn a_model_naming_an_unknown_ingest_is_a_500_that_stores_nothing() {
+    common::every_log_line();
     let odd = Arc::new(ModelSchema::compile(
         "bike-trips",
         "1.0.0",

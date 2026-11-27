@@ -488,7 +488,8 @@ pub fn assemble_reusing(
                     remove(&target)?;
                     false
                 };
-                if let Some(status) = entries.iter_mut().find(|status| status.slug == slug) {
+                // One entry per registry slug was pushed above, so exactly one is this project's.
+                for status in entries.iter_mut().filter(|status| status.slug == slug) {
                     status.rendered = rendered;
                     status.reused = false;
                     status.refused = Some(Refusal::of(&slug, &err));

@@ -199,7 +199,8 @@ mod tests {
         let classes = query_attributes(MODEL).unwrap();
         for (kind, attributes) in &classes {
             for example in attributes.iter().filter_map(|a| a.example.as_deref()) {
-                antares_ql::parse_q(example).unwrap_or_else(|e| panic!("{kind}: {example}: {e}"));
+                let parsed = antares_ql::parse_q(example);
+                assert!(parsed.is_ok(), "{kind}: {example}: {parsed:?}");
                 let named = example.split(['>', '=']).next().unwrap();
                 assert!(
                     attributes.iter().any(|a| a.slot == named),

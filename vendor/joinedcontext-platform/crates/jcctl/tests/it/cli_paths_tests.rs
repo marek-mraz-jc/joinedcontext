@@ -232,6 +232,46 @@ fn artifacts_rebuild_counts_what_it_wrote() {
     let _ = std::fs::remove_dir_all(&out_dir);
 }
 
+/// `artifacts rebuild` names, on stderr, each declared file the repository does not hold and
+/// points at the command that makes it.
+#[test]
+fn artifacts_rebuild_names_a_declared_file_that_is_missing() {
+    let dir = demo_repo("cli-artifacts-missing");
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/datamodels/air.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: ./air.linkml.yaml\n  version: 1.0.0\n  lifecycle: published\n  classes: [Air]\n",
+    );
+    let out_dir = temp_dir("cli-artifacts-missing-out");
+    let out = jcctl(&[
+        "artifacts",
+        "rebuild",
+        "--repo-dir",
+        path(&dir),
+        "--out-dir",
+        path(&out_dir),
+        "--project-key",
+        "ovzdusie=bbbbbbbbbbbbbbbbbbbbbbbbbb/cccccccccccccccccccccccccc",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(
+        stderr(&out).contains("air/linkml is declared and not in the repository"),
+        "{out:?}"
+    );
+    assert!(stdout(&out).contains("0 objects written to"), "{out:?}");
+
+    let unkeyed = jcctl(&[
+        "artifacts",
+        "rebuild",
+        "--repo-dir",
+        path(&dir),
+        "--out-dir",
+        path(&out_dir),
+    ]);
+    assert_eq!(unkeyed.status.code(), Some(1), "{unkeyed:?}");
+    assert!(stderr(&unkeyed).contains("--project-key"), "{unkeyed:?}");
+}
+
 /// `plan`, `apply` and `drift` read --project-dir as `<slug>=<path>`; a bare value is usage and
 /// an organization path that does not read is an error before anything is planned.
 #[test]
@@ -283,6 +323,41 @@ fn plan_and_drift_with_a_gateway_that_is_not_there() {
     ]);
     assert_eq!(bad_url.status.code(), Some(1), "{bad_url:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A repository that declares a seed entity and a gateway that does not answer: `plan` and
+/// `drift` stop with the read that failed, and `apply` (on the reviewed main) stops before it
+/// writes anything.
+#[test]
+fn a_seed_the_gateway_cannot_be_asked_about_stops_plan_drift_and_apply() {
+    let dir = demo_repo("cli-seed-gateway");
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/entities/seed/station.json",
+        r#"{"id":"urn:ngsi-ld:Station:bb.sk:ovzdusie:1","type":"Station"}"#,
+    );
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["add", "-A"]);
+    git(&dir, &["commit", "-qm", "reviewed"]);
+    git(&dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    let token = temp_dir("cli-seed-gateway-token").join("token");
+    std::fs::write(&token, "a-token").expect("token");
+    for verb in ["plan", "drift", "apply"] {
+        let out = jcctl(&[
+            verb,
+            "--repo-dir",
+            path(&dir),
+            "--gateway-url",
+            "http://127.0.0.1:9",
+            "--token-file",
+            path(&token),
+        ]);
+        assert_eq!(out.status.code(), Some(1), "{verb}: {out:?}");
+        assert!(
+            stderr(&out).contains("http://127.0.0.1:9"),
+            "{verb} names the gateway: {out:?}"
+        );
+    }
 }
 
 /// `validate --project` takes --slug and --org-domain alongside --param.
@@ -383,6 +458,24 @@ fn policy_failures_name_the_file() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A Policy ODRL has no form for (a per-attribute capability) is refused on export, naming the file.
+#[test]
+fn policy_export_refuses_what_odrl_cannot_say() {
+    use jcctl::commands::policy::export;
+    let dir = temp_dir("cli-policy-no-odrl");
+    write(
+        &dir,
+        "attributes.yaml",
+        &POLICY.replace(
+            "assignee: { kind: role, id: public }",
+            "assignee: { kind: organization }",
+        ),
+    );
+    let refused = export(&dir.join("attributes.yaml")).expect_err("no ODRL form");
+    assert!(refused.contains("attributes.yaml"), "{refused}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `migrate mqtt-roles` on a repository without a role list rewrites nothing and exits 0.
 #[test]
 fn migrate_mqtt_roles_over_nothing_to_move() {
@@ -390,6 +483,32 @@ fn migrate_mqtt_roles_over_nothing_to_move() {
     let out = jcctl(&["migrate", "mqtt-roles", "--repo-dir", path(&dir)]);
     assert_eq!(out.status.code(), Some(0), "{out:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `migrate mqtt-roles` names each file it rewrote, and a role list it had to leave (an account
+/// no manifest declares) on stderr with exit 1, the rest still moved.
+#[test]
+fn migrate_mqtt_roles_reports_what_it_moved_and_what_it_left() {
+    let dir = temp_dir("cli-mqtt-roles-moved");
+    write(
+        &dir,
+        "projects/air/access/serviceaccounts/fleet.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: fleet\n  namespace: air\nspec:\n  owner:\n    user: demo.steward\n  purpose: sensors\n  roles:\n    - role: space-writer\n      scope:\n        project: air\n  credentials:\n    - kind: oauth-client\n      name: default\n",
+    );
+    let broker = |accounts: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [{accounts}]\n      publish: [\"air/${{clientid}}/pm10\"]\n")
+    };
+    write(&dir, "projects/air/mqttbrokers/air.yaml", &broker("fleet"));
+    let moved = jcctl(&["migrate", "mqtt-roles", "--repo-dir", path(&dir)]);
+    assert_eq!(moved.status.code(), Some(0), "{moved:?}");
+    assert!(stdout(&moved).contains("rewrote projects/air/access/serviceaccounts/fleet.yaml"));
+    assert!(stdout(&moved).contains("rewrote projects/air/mqttbrokers/air.yaml"));
+
+    write(&dir, "projects/air/mqttbrokers/air.yaml", &broker("ghost"));
+    let left = jcctl(&["migrate", "mqtt-roles", "--repo-dir", path(&dir)]);
+    assert_eq!(left.status.code(), Some(1), "{left:?}");
+    assert!(stderr(&left).contains("left: "), "{left:?}");
+    assert!(stderr(&left).contains("ghost"), "{left:?}");
 }
 
 /// The Model Tools verbs need a URL: without --url or JC_MODEL_TOOLS_URL each says so; `infer`
@@ -488,6 +607,107 @@ fn publish_ckan_options_and_a_project_with_nothing_to_publish() {
     ]);
     assert_eq!(broken.status.code(), Some(1), "{broken:?}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `publish ckan` over an Endpoint naming a CkanInstance the project does not declare prints why
+/// it is not a dataset and fails; one naming another project's instance stops the walk.
+#[test]
+fn publish_ckan_says_why_an_endpoint_is_not_a_dataset() {
+    let committed = |test: &str, publish: &str| {
+        let dir = demo_repo(test);
+        write(
+            &dir,
+            common::ENDPOINT_PATH,
+            &format!("{}  publish:\n    ckan:\n{publish}", common::ENDPOINT),
+        );
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["add", "-A"]);
+        git(&dir, &["commit", "-qm", "reviewed"]);
+        git(&dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        dir
+    };
+    let publish = |dir: &Path| {
+        jcctl(&[
+            "publish",
+            "ckan",
+            "--repo-dir",
+            path(dir),
+            "--project",
+            "ovzdusie",
+            "--host",
+            "127.0.0.1:9",
+        ])
+    };
+    let missing = committed(
+        "cli-publish-no-instance",
+        "      instanceRef: { kind: CkanInstance, name: open-data }\n",
+    );
+    let out = publish(&missing);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(
+        stderr(&out).contains(
+            "ovzdusie/public-air: publish.ckan.instanceRef names CkanInstance/ovzdusie/open-data"
+        ),
+        "{out:?}"
+    );
+
+    let foreign = committed(
+        "cli-publish-foreign-instance",
+        "      instanceRef: { kind: CkanInstance, name: open-data, namespace: doprava }\n",
+    );
+    let out = publish(&foreign);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+}
+
+/// `pipeline test` of a pipeline whose compute step Bento does not run fails naming the kind.
+#[test]
+fn pipeline_test_refuses_a_compute_step_bento_does_not_run() {
+    let dir = temp_dir("cli-pipeline-wasm");
+    write(
+        &dir,
+        "pipeline.yaml",
+        &format!(
+            "{}  compute: {{ kind: wasm, module: ./compute, function: run }}\n",
+            PIPELINE
+        ),
+    );
+    write(&dir, "sample.json", "[{\"id\": \"s1\"}]");
+    let out = jcctl(&[
+        "pipeline",
+        "test",
+        "--pipeline",
+        path(&dir.join("pipeline.yaml")),
+        "--sample",
+        path(&dir.join("sample.json")),
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(stderr(&out).to_lowercase().contains("wasm"), "{out:?}");
+}
+
+/// `export` of a project whose tree links out of the checkout is refused, not copied.
+#[cfg(unix)]
+#[test]
+fn export_refuses_a_project_tree_that_links_out_of_the_checkout() {
+    let repo = demo_repo("cli-export-link");
+    let outside = temp_dir("cli-export-link-outside");
+    std::fs::write(outside.join("secret.txt"), "outside").expect("a host file");
+    std::os::unix::fs::symlink(
+        outside.join("secret.txt"),
+        repo.join("projects/ovzdusie/notes.txt"),
+    )
+    .expect("a link out");
+    let out_dir = temp_dir("cli-export-link-out");
+    let out = jcctl(&[
+        "export",
+        "--repo-dir",
+        path(&repo),
+        "--project",
+        "ovzdusie",
+        "--out-dir",
+        path(&out_dir),
+    ]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(!out_dir.join("projects/ovzdusie/notes.txt").exists());
 }
 
 /// `export` writes the project's files and names each redacted credential on stderr; a project

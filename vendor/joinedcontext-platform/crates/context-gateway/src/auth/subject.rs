@@ -521,23 +521,21 @@ pub(crate) fn subject_of(
 
     // A human. The token says they are a member of the organization; a group names the
     // project when the endpoint's audience is a list of them (EP-14, EP-15).
-    let Some(user) = claims.preferred_username.clone() else {
-        return Err(Box::new(ProblemDetails::unauthorized()));
-    };
     // A client's own service-account user (a Policy assignee such as the Portal's derived
     // `service-account-portal-reconciler`) is that client's token or nobody's: the guard sits
-    // here, not in the realm's username rules (T-5358).
-    if !owns_its_name(&user, claims.azp.as_deref()) {
-        tracing::warn!(user = %claims.sub, azp = claims.azp.as_deref().unwrap_or_default(), slug = %endpoint.slug, "a service-account username from a client it does not name");
-        return Err(Box::new(ProblemDetails::forbidden()));
-    }
+    // in `person`, not in the realm's username rules (T-5358).
     let Some(mut subject) = person(
         claims,
         endpoint.audience,
         gateway.organization_of(&endpoint.project).as_deref(),
     ) else {
+        if claims.preferred_username.is_none() {
+            return Err(Box::new(ProblemDetails::unauthorized()));
+        }
+        tracing::warn!(user = %claims.sub, azp = claims.azp.as_deref().unwrap_or_default(), slug = %endpoint.slug, "a service-account username from a client it does not name");
         return Err(Box::new(ProblemDetails::forbidden()));
     };
+    let user = subject.user.clone().unwrap_or_default();
     let project = admission(
         &endpoint.project,
         endpoint.audience,
@@ -1280,6 +1278,98 @@ mod tests {
             roles_on(Audience::ProjectList, Vec::new()),
             BTreeSet::new(),
             "no audience but public hands out a role the token did not assert"
+        );
+    }
+
+    fn claims_of(value: serde_json::Value) -> Claims {
+        let mut claims = serde_json::json!({ "sub": "7a1d", "iss": "realm", "exp": 1 });
+        claims
+            .as_object_mut()
+            .expect("an object")
+            .extend(value.as_object().expect("an object").clone());
+        serde_json::from_value(claims).expect("claims")
+    }
+
+    fn gateway_with(accounts: crate::auth::accounts::ServiceAccounts) -> Gateway {
+        Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "city.test",
+        )
+        .authenticate(Arc::new(token::Verifier::new("realm")), accounts, None)
+    }
+
+    fn workload(name: &str) -> crate::auth::accounts::Account {
+        crate::auth::accounts::Account {
+            name: name.to_owned(),
+            project: "city".to_owned(),
+            roles: Vec::new(),
+            delegates: false,
+            credentials_end: None,
+        }
+    }
+
+    /// A token of the gateway's own client, or of the Portal's or the command line's, whose client
+    /// a table names as a workload would read as that workload, which holds no person: it is
+    /// refused 401 rather than let through as nobody (T-3999, T-5614, T-6063). No repository
+    /// builds such a table, the platform client ids being struck from it, so this is the guard
+    /// alone.
+    #[test]
+    fn a_platform_clients_token_that_names_no_person_is_refused() {
+        let accounts = crate::auth::accounts::ServiceAccounts::new()
+            .with_account(tenancy::GATEWAY_CLIENT, workload("gateway"))
+            .with_account(CLI_CLIENT, workload("cli"))
+            .with_account(PORTAL_CLIENT, workload("portal"));
+        let gateway = gateway_with(accounts);
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let exchanged = claims_of(serde_json::json!({ "azp": tenancy::GATEWAY_CLIENT }));
+        let refused = exchanged_subject(&gateway, &endpoint, &exchanged).expect_err("refused");
+        assert_eq!(refused.status, 401);
+        for client in [CLI_CLIENT, PORTAL_CLIENT] {
+            let scope = format!("endpoint:{}", endpoint.slug);
+            let claims = claims_of(serde_json::json!({ "azp": client, "scope": scope }));
+            let refused =
+                scoped_subject(&gateway, &endpoint, &claims, client).expect_err("refused");
+            assert_eq!(refused.status, 401, "{client}");
+        }
+    }
+
+    /// A reader of a preview with no `preferred_username` is named by their verified `sub`; a
+    /// token with neither a username nor a client is 401, and a `service-account-` username on
+    /// another client's token is 403.
+    #[test]
+    fn a_preview_reader_without_a_username_is_their_sub_and_an_anonymous_token_is_refused() {
+        let gateway = gateway_with(crate::auth::accounts::ServiceAccounts::new());
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let claims = claims_of(serde_json::json!({}));
+        let refused = subject_of(&claims, &endpoint, &gateway).expect_err("no username");
+        assert_eq!(refused.status, 401);
+        let claims = claims_of(
+            serde_json::json!({ "azp": "portal-ui", "preferred_username": "service-account-other" }),
+        );
+        let refused = subject_of(&claims, &endpoint, &gateway).expect_err("not its own");
+        assert_eq!(refused.status, 403);
+
+        gateway.replace_provenance(crate::store::Provenance {
+            previews: [(
+                endpoint.slug.clone(),
+                crate::store::PreviewReaders {
+                    readers: ["7a1d".to_owned()].into(),
+                    audience: Audience::Public,
+                },
+            )]
+            .into(),
+            ..Default::default()
+        });
+        let reader = subject_from(&gateway, &endpoint, &claims_of(serde_json::json!({})))
+            .expect("the reader reads");
+        assert_eq!(reader.user.as_deref(), Some("7a1d"));
+        let stranger = claims_of(serde_json::json!({ "sub": "9999" }));
+        assert_eq!(
+            subject_from(&gateway, &endpoint, &stranger)
+                .expect_err("not a reader")
+                .status,
+            404
         );
     }
 

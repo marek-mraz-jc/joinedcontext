@@ -135,7 +135,7 @@ pub fn merge_sources(name: &str, sources: &[Source]) -> Result<Value, MergeError
                             .iter()
                             .find(|(kind, owned, _)| kind == what && *owned == member)
                             .map(|(_, _, model)| model.clone())
-                            .unwrap_or_else(|| base.model.clone());
+                            .expect("every merged member has an owner");
                         return Err(MergeError::Clash {
                             what,
                             name: member,
@@ -512,13 +512,11 @@ pub fn merge(
         }
     }
 
-    write(repo_dir, &source_path, &yaml(&merged)?)?;
+    write(repo_dir, &source_path, &yaml(&merged))?;
     write(
         repo_dir,
         &manifest_path,
-        &yaml(&serde_norway::to_value(&manifest).map_err(|err| {
-            MergeError::Repository(format!("the merged manifest does not serialize: {err}"))
-        })?)?,
+        &yaml(&serde_norway::to_value(&manifest).expect("a manifest serializes")),
     )?;
     for file in &removed {
         match std::fs::remove_file(repo_dir.join(file)) {
@@ -556,10 +554,8 @@ fn tidy(path: &Path) -> PathBuf {
         .collect()
 }
 
-fn yaml(value: &Value) -> Result<String, MergeError> {
-    serde_norway::to_string(value).map_err(|err| {
-        MergeError::Repository(format!("the merged model does not serialize: {err}"))
-    })
+fn yaml(value: &Value) -> String {
+    serde_norway::to_string(value).expect("a YAML value serializes")
 }
 
 fn write(repo_dir: &Path, path: &Path, text: &str) -> Result<(), MergeError> {

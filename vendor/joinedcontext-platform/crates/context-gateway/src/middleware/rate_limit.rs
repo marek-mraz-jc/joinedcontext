@@ -336,9 +336,9 @@ pub(crate) fn too_many(decision: &Decision, detail: &str) -> Response<Body> {
         .with_detail(detail)
         .into_response();
     set_headers(refusal.headers_mut(), decision);
-    if let Ok(value) = HeaderValue::from_str(&decision.reset.to_string()) {
-        refusal.headers_mut().insert("retry-after", value);
-    }
+    refusal
+        .headers_mut()
+        .insert("retry-after", HeaderValue::from(decision.reset));
     refusal
 }
 
@@ -499,20 +499,14 @@ pub(crate) fn spend_subject_mcp(
 
 /// The three standard fields of the answer (EP-20, MIM0-R7).
 pub(crate) fn set_headers(headers: &mut axum::http::HeaderMap, decision: &Decision) {
-    for (name, value) in [
-        ("ratelimit-limit", decision.limit.to_string()),
-        ("ratelimit-remaining", decision.remaining.to_string()),
-        ("ratelimit-reset", decision.reset.to_string()),
-    ] {
-        if let Ok(value) = HeaderValue::from_str(&value) {
-            headers.insert(name, value);
-        }
-    }
+    headers.insert("ratelimit-limit", HeaderValue::from(decision.limit));
+    headers.insert("ratelimit-remaining", HeaderValue::from(decision.remaining));
+    headers.insert("ratelimit-reset", HeaderValue::from(decision.reset));
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{address_key, Decision, RateLimiter, SHARDS, SHARD_CAP};
+    use super::{address_key, caller_of, charge, Decision, RateLimiter, SHARDS, SHARD_CAP};
     use axum::body::Body;
     use axum::extract::Request;
     use jc_core::kinds::RateLimits;
@@ -575,6 +569,71 @@ mod tests {
         // And after that minute the next one passes.
         let later = start + Duration::from_secs(60);
         assert!(limiter.check("slug", "caller", &slowest, later).allowed);
+    }
+
+    /// The sweep of idle buckets is one request's at a time: another skips it while it runs, and
+    /// a holder that panicked leaves the sweep running for the rest.
+    #[test]
+    fn the_sweep_is_skipped_while_one_runs_and_survives_a_poisoned_lock() {
+        let limiter = std::sync::Arc::new(RateLimiter::new());
+        {
+            let _running = limiter.swept.lock().expect("the sweep lock");
+            limiter.sweep(Instant::now());
+            assert!(
+                limiter.swept.try_lock().is_err(),
+                "a request that finds a sweep running leaves it be"
+            );
+        }
+        assert!(limiter.swept.lock().expect("untouched").is_none());
+
+        let holder = std::sync::Arc::clone(&limiter);
+        let died = std::thread::spawn(move || {
+            let _guard = holder.swept.lock();
+            std::panic::resume_unwind(Box::new("the sweeping request died"));
+        })
+        .join();
+        assert!(died.is_err());
+        assert!(limiter.swept.is_poisoned());
+        limiter.sweep(Instant::now());
+        assert!(
+            limiter
+                .swept
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some(),
+            "the sweep ran under the poisoned lock"
+        );
+    }
+
+    /// A batch of no decisions spends nothing; one without a layer before it is keyed by its own
+    /// headers; the answers carry the fields as plain numbers.
+    #[test]
+    fn a_batch_of_nothing_spends_nothing_and_a_bare_request_is_keyed_by_its_headers() {
+        let gateway = crate::app::Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:1"),
+            Box::new(crate::pdp::PolicyPdp),
+            "city.test",
+        );
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.rate_limit = Some(limits(60, Some(2)));
+        assert!(matches!(charge(&gateway, &endpoint, "a", 0), Ok(None)));
+        let spent = charge(&gateway, &endpoint, "a", 2)
+            .ok()
+            .flatten()
+            .expect("two of two");
+        assert_eq!(spent.remaining, 0);
+        let refused = charge(&gateway, &endpoint, "a", 1).expect_err("the bucket is empty");
+        assert_eq!(refused.status(), 429);
+        assert_eq!(refused.headers()["ratelimit-limit"], "60");
+        assert_eq!(refused.headers()["ratelimit-remaining"], "0");
+        assert_eq!(refused.headers()["retry-after"], "1");
+
+        let request = Request::builder()
+            .uri("/api/endpoint/s/ngsi-ld/v1/entities")
+            .header("x-forwarded-for", "10.42.0.9")
+            .body(Body::empty())
+            .expect("a request");
+        assert_eq!(caller_of(&gateway, &request), "address:10.42.0.9");
     }
 
     fn asking(headers: &[(&str, &str)]) -> axum::http::HeaderMap {

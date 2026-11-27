@@ -334,6 +334,90 @@ async fn a_user_at_a_school_on_two_courses_is_written() {
     assert_eq!(answer.writes().len(), 1, "{:?}", answer.calls);
 }
 
+/// Two Users of one batch at the same School and the same Course name each target once: the
+/// batch is read for its targets once per distinct claim and written whole.
+#[tokio::test]
+async fn a_batch_naming_one_target_twice_reads_it_once() {
+    let answer = send(
+        READS_ALL,
+        Method::POST,
+        "/entityOperations/upsert",
+        Some(json!([
+            user("u1", at(SCHOOL), &[COURSE]),
+            user("u2", at(SCHOOL), &[COURSE])
+        ])),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::NO_CONTENT, "{}", answer.body);
+    let reads = answer
+        .calls
+        .iter()
+        .filter(|call| call.contains("id=") && call.contains("pick=id"))
+        .count();
+    assert!(reads >= 1, "{:?}", answer.calls);
+    assert_eq!(answer.writes().len(), 1, "{:?}", answer.calls);
+}
+
+/// A decision point whose verdicts carry no per-grant view (a set not built from policies)
+/// narrows nothing: the targets of a write are read once, not once per grant.
+struct Unviewed;
+
+impl context_gateway::pdp::Pdp for Unviewed {
+    fn decide(
+        &self,
+        subject: &context_gateway::auth::subject::Subject,
+        operation: jc_core::kinds::Operation,
+        request: &context_gateway::pdp::evaluator::Request,
+        endpoint: &Endpoint,
+    ) -> context_gateway::pdp::evaluator::Verdict {
+        use context_gateway::pdp::evaluator::Verdict;
+        match PolicyPdp.decide(subject, operation, request, endpoint) {
+            Verdict::Rewrite(mut constraints) => {
+                constraints.grants.clear();
+                Verdict::Rewrite(constraints)
+            }
+            Verdict::Deny => Verdict::Deny,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_decision_without_a_grant_view_reads_the_targets_once() {
+    let (upstream, calls) = broker().await;
+    let gateway = Arc::new(
+        Gateway::new(Broker::new(upstream), Box::new(Unviewed), DOMAIN)
+            .serve([endpoint(READS_ALL)]),
+    );
+    let response = router(gateway)
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/entities"))
+                .header("content-type", "application/ld+json")
+                .body(Body::from(user("u1", at(SCHOOL), &[COURSE]).to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    let calls = calls.lock().expect("the call log").clone();
+    let probes: Vec<&String> = calls
+        .iter()
+        .filter(|call| call.contains("pick=id"))
+        .collect();
+    assert!(!probes.is_empty(), "the targets were read: {calls:?}");
+}
+
+/// A read of an Endpoint whose model holds relationships is not a write: no target is probed
+/// and the broker is asked once.
+#[tokio::test]
+async fn a_read_is_not_held_against_the_relationships() {
+    let answer = send(READS_ALL, Method::GET, "/entities?type=User", None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.body);
+    assert_eq!(answer.calls.len(), 1, "{:?}", answer.calls);
+    assert!(answer.writes().is_empty(), "{:?}", answer.calls);
+}
+
 #[tokio::test]
 async fn a_target_of_another_type_is_refused_naming_it() {
     let answer = create(READS_ALL, user("u1", at(COURSE), &[])).await;

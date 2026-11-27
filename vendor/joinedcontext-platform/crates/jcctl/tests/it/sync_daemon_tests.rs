@@ -195,6 +195,25 @@ fn a_manifest_that_is_no_valid_sync_source_asks_the_remote_nothing() {
 /// The selector leaves a file that is no manifest, an empty document and a document the
 /// import gates refuse for those gates; the fail and rename conflict policies run like the
 /// others.
+/// A document that is only a comment, between two manifests, is dropped by the selector rather
+/// than judged; the manifest the selector names stays.
+#[test]
+fn a_selector_drops_a_comment_only_document() {
+    let dirs = dirs("selector-comment-doc");
+    let remote = Fake::at(
+        "9f1c0de",
+        &[(
+            "space.yaml",
+            &*format!("{OTHER}---\n# nothing here\n---\n{SANDBOX}"),
+        )],
+    );
+    let manifest = source(json!({ "selector": { "joinedcontext.com/tier": "standard" } }));
+    let outcome = run(&dirs, &manifest, &State::default(), &remote);
+    let proposal = outcome.proposal.expect("a proposal");
+    assert_eq!(proposal.files.len(), 1, "{:?}", proposal.files.keys());
+    assert!(proposal.rejected.is_empty(), "{:?}", proposal.rejected);
+}
+
 #[test]
 fn a_selector_passes_what_it_cannot_judge_to_the_import_gates() {
     for policy in ["fail", "rename"] {

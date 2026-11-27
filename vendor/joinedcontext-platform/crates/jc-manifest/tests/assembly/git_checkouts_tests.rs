@@ -82,6 +82,45 @@ fn a_cache_that_cannot_be_created_is_refused_before_git_runs() {
     assert!(!err.is_empty() && !err.contains("git"), "{err}");
 }
 
+/// A checkout that cannot be put in place is refused with the reason, whether the cache cannot
+/// take its working directory or a file stands where the tree goes; and pruning a cache nobody
+/// created does nothing.
+#[test]
+fn a_tree_that_cannot_be_put_in_place_is_refused_with_the_reason() {
+    use std::os::unix::fs::PermissionsExt;
+    let (forge, _work) = forge("git-tree-blocked");
+    let cache = temp_dir("git-tree-blocked-cache");
+    let resolver = checkouts(&forge, cache.clone(), &no_secrets);
+    let tree = resolver
+        .checkout("ovzdusie", &entry("v1.0.0").spec)
+        .expect("the tag");
+
+    // A file where the tree goes: the finished checkout cannot be renamed onto it.
+    std::fs::remove_dir_all(&tree).expect("remove the tree");
+    std::fs::write(&tree, b"a file where the tree goes").expect("block the tree");
+    let err = resolver
+        .checkout("ovzdusie", &entry("v1.0.0").spec)
+        .expect_err("the tree cannot be put in place");
+    assert!(!err.is_empty() && !err.starts_with("git"), "{err}");
+    std::fs::remove_file(&tree).expect("unblock the tree");
+
+    // A cache that cannot take a new folder: the working directory is not made.
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).expect("read-only");
+    let err = resolver
+        .checkout("ovzdusie", &entry("v1.0.0").spec)
+        .expect_err("no working directory");
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).expect("writable");
+    assert!(err.contains("denied"), "{err}");
+    assert!(!tree.exists());
+
+    let none = checkouts(
+        &forge,
+        temp_dir("git-prune-none").join("missing"),
+        &no_secrets,
+    );
+    none.prune("ovzdusie", &tree);
+}
+
 /// CC-86: a tag and a branch are checked out at their commits; a moved branch is fetched again
 /// and the checkout of the old commit goes; a ref that names nothing is refused by name.
 #[test]

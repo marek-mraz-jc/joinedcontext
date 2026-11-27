@@ -345,7 +345,7 @@ fn contents(uri: &str, payload: &Value) -> Value {
         "contents": [{
             "uri": uri,
             "mimeType": "application/json",
-            "text": serde_json::to_string(payload).unwrap_or_else(|_| "null".to_owned()),
+            "text": payload.to_string(),
         }],
     })
 }
@@ -656,6 +656,188 @@ mod tests {
         let garbled = broker_answering(StatusCode::OK, "not json").await;
         let summary = describe_schema(&garbled, &endpoint, &anonymous, &format("summary")).await;
         assert!(summary.is_err_and(|why| why.contains("try again later")));
+    }
+
+    /// A gateway whose broker answers each path with what `by_path` says for it.
+    async fn broker_by(by_path: fn(&str) -> (StatusCode, &'static str)) -> Gateway {
+        let app = axum::Router::new().fallback(move |request: axum::extract::Request| async move {
+            by_path(request.uri().path())
+        });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    /// A broker publishing one LinkML model (version 1) next to an index entry that is no model.
+    fn one_model(path: &str) -> (StatusCode, &'static str) {
+        if path.ends_with("/schema/index.json") {
+            (
+                StatusCode::OK,
+                r#"{"endpoint":"x","models":["junk",{"name":"fleet","version":1,"artifacts":{"model.linkml.yaml":{"bytes":9,"sha256":"d"},"model.schema.json":{"bytes":9,"sha256":"e"}}}]}"#,
+            )
+        } else if path.ends_with("/schema/v1/model.linkml.yaml") {
+            (StatusCode::OK, "classes: [unclosed")
+        } else if path.ends_with("/schema/v1/model.schema.json") {
+            (StatusCode::OK, "not json")
+        } else {
+            (StatusCode::NOT_FOUND, "")
+        }
+    }
+
+    /// An Endpoint whose public grant reads, so its card and describe tools are offered.
+    fn reading_endpoint() -> Endpoint {
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.policies = vec![serde_norway::from_str(
+            "contextSpaceRef: mesto-ovzdusie\nassigner: did:web:mesto.sk\n\
+             assignee: { kind: role, id: public }\n\
+             operations: [queryEntity, retrieveEntity, retrieveEntityTypes]\n",
+        )
+        .expect("the policy parses")];
+        endpoint
+    }
+
+    /// SP-20: a describe tool that is unknown and one the caller may not call answer the same
+    /// bytes; arguments that are no object are invalid params; omitted arguments are empty and
+    /// an access document the broker cannot give is a tool error.
+    #[tokio::test]
+    async fn a_describe_call_names_no_tool_it_may_not_make() {
+        let gateway = broker_answering(StatusCode::INTERNAL_SERVER_ERROR, "").await;
+        let ungranted = crate::mcp::catalog::tests::fixture();
+        let anonymous = Subject::anonymous();
+        let unknown = call(
+            &gateway,
+            &ungranted,
+            &anonymous,
+            json!(1),
+            &json!({"name": "nope"}),
+        )
+        .await;
+        let hidden = call(
+            &gateway,
+            &ungranted,
+            &anonymous,
+            json!(1),
+            &json!({"name": "describe_schema"}),
+        )
+        .await;
+        assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
+        assert_eq!(unknown, hidden, "the two refusals are byte-identical");
+        let scalar = call(
+            &gateway,
+            &ungranted,
+            &anonymous,
+            json!(1),
+            &json!({"name": "describe_access", "arguments": 5}),
+        )
+        .await;
+        assert_eq!(
+            scalar["error"]["message"], "`arguments` is an object",
+            "{scalar}"
+        );
+        let access = call(
+            &gateway,
+            &ungranted,
+            &anonymous,
+            json!(1),
+            &json!({"name": "describe_access"}),
+        )
+        .await;
+        assert_eq!(access["result"]["isError"], json!(true), "{access}");
+    }
+
+    /// A caller who reads nothing is listed the access document and no card; one who reads is
+    /// listed the card too; an index entry that names no major lists nothing and is no model.
+    #[tokio::test]
+    async fn resources_list_the_card_only_to_a_reader_and_skip_an_unversioned_model() {
+        let gateway = broker_by(one_model).await;
+        let anonymous = Subject::anonymous();
+        let silent = resources(&gateway, &crate::mcp::catalog::tests::fixture(), &anonymous).await;
+        let names: Vec<&str> = silent.iter().filter_map(|r| r["name"].as_str()).collect();
+        assert_eq!(names, ["access", "fleet v1 linkml", "fleet v1 json-schema"]);
+        let reading = resources(&gateway, &reading_endpoint(), &anonymous).await;
+        let names: Vec<&str> = reading.iter().filter_map(|r| r["name"].as_str()).collect();
+        assert_eq!(names[..2], ["access", "card"]);
+        assert_eq!(names.len(), 4, "{names:?}");
+    }
+
+    /// The summary lists each artifact of each versioned model once, drops the models' own
+    /// copies of the digests and passes over an entry that is no model.
+    #[tokio::test]
+    async fn the_summary_skips_what_is_no_model_and_moves_the_digests() {
+        let gateway = broker_by(one_model).await;
+        let summary = describe_schema(
+            &gateway,
+            &crate::mcp::catalog::tests::fixture(),
+            &Subject::anonymous(),
+            &format("summary"),
+        )
+        .await
+        .expect("a summary");
+        assert_eq!(
+            summary["artifacts"].as_array().map(Vec::len),
+            Some(2),
+            "{summary}"
+        );
+        assert_eq!(summary["models"][0], json!("junk"));
+        assert!(summary["models"][1].get("artifacts").is_none(), "{summary}");
+        assert_eq!(summary["recommended"], "linkml");
+    }
+
+    /// A JSON artifact the broker serves that is not JSON is a retry-later error, never its bytes.
+    #[tokio::test]
+    async fn a_json_artifact_that_is_not_json_is_a_retry_later_error() {
+        let gateway = broker_by(one_model).await;
+        let refused = describe_schema(
+            &gateway,
+            &crate::mcp::catalog::tests::fixture(),
+            &Subject::anonymous(),
+            &format("json-schema"),
+        )
+        .await
+        .expect_err("not json");
+        assert!(refused.contains("try again later"), "{refused}");
+    }
+
+    /// The card names the Endpoint by its manifest, a model the broker will not give is a tool
+    /// error on `card://`, and the type lines of no model or of a model that does not parse are
+    /// errors that say so.
+    #[tokio::test]
+    async fn the_card_and_its_type_lines_say_why_they_cannot_be_made() {
+        let anonymous = Subject::anonymous();
+        let mut endpoint = reading_endpoint();
+        endpoint.manifest_name = "air".to_owned();
+        let none = broker_answering(StatusCode::NOT_FOUND, "").await;
+        let card = card(&none, &endpoint, &anonymous)
+            .await
+            .expect("a card without a model");
+        assert!(card.contains("mesto/air"), "{card}");
+        assert_eq!(
+            type_lines(&none, &endpoint, &anonymous, None).await,
+            Err(NO_MODEL.to_owned())
+        );
+        let failing = broker_answering(StatusCode::INTERNAL_SERVER_ERROR, "").await;
+        let read_card = read(
+            &failing,
+            &endpoint,
+            &anonymous,
+            json!(1),
+            &json!({"uri": format!("card://{}", endpoint.slug)}),
+        )
+        .await;
+        assert_eq!(read_card["result"]["isError"], json!(true), "{read_card}");
+        let garbled = broker_by(one_model).await;
+        let lines = type_lines(&garbled, &endpoint, &anonymous, None).await;
+        assert_eq!(
+            lines,
+            Err("the data model cannot be read right now; try again later".to_owned())
+        );
     }
 
     /// T-7767: `entityType` narrows the LinkML of the classes it names; a value of another

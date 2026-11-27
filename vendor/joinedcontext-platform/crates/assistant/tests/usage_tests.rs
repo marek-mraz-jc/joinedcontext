@@ -310,10 +310,22 @@ async fn the_export_is_one_quoted_row_per_turn_and_keeps_secrets_masked() {
     )
     .await;
 
+    // An error the turn kept without a title is written as it was stored.
+    let mut tx = assistant::project_scope(&pool, PROJECT)
+        .await
+        .expect("scope");
+    sqlx::query("UPDATE turns SET error = '{\"code\": 7}'::jsonb WHERE question = $1")
+        .bind("=HYPERLINK(\"x\")")
+        .execute(&mut *tx)
+        .await
+        .expect("an error without a title");
+    tx.commit().await.expect("commit");
+
     let csv = usage::export(&pool, PROJECT, &Range::default())
         .await
         .expect("the export reads")
         .expect("under the export's ceiling");
+    assert!(csv.contains("\"{\"\"code\"\":7}\""), "{csv}");
     let header = csv.split("\r\n").next().unwrap_or_default();
     assert_eq!(header, COLUMNS.join(","));
     assert!(

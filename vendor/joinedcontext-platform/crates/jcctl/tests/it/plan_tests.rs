@@ -2,7 +2,8 @@ use crate::common;
 
 use common::*;
 use jcctl::commands::plan::{compute, Action};
-use jcctl::platform::InMemory;
+use jcctl::loader::RawManifest;
+use jcctl::platform::{InMemory, Platform, PlatformError};
 use serde_json::json;
 
 #[test]
@@ -184,4 +185,75 @@ fn the_rendered_diff_names_the_wave_the_resource_converges_in() {
     );
 
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+const BLUEPRINT: &str = r#"apiVersion: joinedcontext.com/v1alpha1
+kind: Blueprint
+metadata:
+  name: threshold-alert
+  namespace: org
+spec:
+  version: 1.0.0
+  riskClass: green
+  allowedRoles: [domain-editor]
+  parameterSchema: { type: object }
+  templates: []
+"#;
+
+/// A platform that answers every query with the same list, whatever the plural asked for.
+struct Fixed(Vec<RawManifest>);
+
+impl Platform for Fixed {
+    fn list(&self, _project: &str, _plural: &str) -> Result<Vec<RawManifest>, PlatformError> {
+        Ok(self.0.clone())
+    }
+
+    fn put(&mut self, _manifest: &RawManifest) -> Result<(), PlatformError> {
+        Ok(())
+    }
+
+    fn delete(&mut self, _id: &jcctl::loader::ResourceId) -> Result<(), PlatformError> {
+        Ok(())
+    }
+}
+
+/// A kind with no wave carries no live state: declared in Git it is not planned, and a platform
+/// that answers with one is not asked to delete it.
+#[test]
+fn a_kind_with_no_wave_is_neither_planned_nor_deleted() {
+    let dir = demo_repo("plan-no-wave");
+    let path = jc_core::registry::by_kind("Blueprint")
+        .expect("a kind")
+        .repo_path("org", "", "threshold-alert");
+    write(&dir, &path, BLUEPRINT);
+    let platform = Fixed(vec![manifest(BLUEPRINT)]);
+    let changes = compute(&load(&dir), &platform).expect("plan computes");
+    assert!(
+        changes.iter().all(|c| c.id.kind != "Blueprint"),
+        "{}",
+        changes.render()
+    );
+    assert_eq!(changes.count(Action::Delete), 0);
+    assert_eq!(changes.count(Action::Create), 4);
+}
+
+/// DM-48: a registration naming an Endpoint this repository lacks is flagged, and the flag is
+/// in the rendered plan as a note.
+#[test]
+fn a_registration_naming_a_missing_endpoint_is_flagged_in_the_plan() {
+    let dir = demo_repo("plan-flag");
+    let path = jc_core::registry::by_kind("ContextSourceRegistration")
+        .expect("a kind")
+        .repo_path("ovzdusie", "ovzdusie", "mesto");
+    write(
+        &dir,
+        &path,
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\nmetadata:\n  name: mesto\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  endpointRef: { kind: Endpoint, name: nowhere }\n  information:\n    - entities: [{ type: AirQualityObserved }]\n  federation: { identity: caller }\n",
+    );
+    let changes = compute(&load(&dir), &InMemory::new()).expect("plan computes");
+    let rendered = changes.render();
+    assert!(
+        rendered.contains("note: ContextSourceRegistration/") && rendered.contains("nowhere"),
+        "{rendered}"
+    );
 }

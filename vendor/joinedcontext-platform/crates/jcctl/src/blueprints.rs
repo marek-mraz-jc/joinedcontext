@@ -8,7 +8,7 @@
 
 use crate::loader::RawManifest;
 use jc_core::kinds::Blueprint;
-use minijinja::{Environment, ErrorKind, UndefinedBehavior};
+use minijinja::{Environment, UndefinedBehavior};
 use serde_json::Value;
 
 /// Annotation naming the blueprint a manifest was rendered from (CC-27), jc-core's name.
@@ -80,7 +80,7 @@ pub fn expand(blueprint: &Blueprint, parameters: &Value) -> Result<Vec<Expanded>
 
     // Canonical JSON: serde_json keeps object members sorted, so the provenance annotation of
     // a re-render is byte-identical to the first one (CC-25, CC-27).
-    let provenance = serde_json::to_string(parameters).unwrap_or_else(|_| "{}".to_string());
+    let provenance = parameters.to_string();
 
     let mut env = Environment::new();
     // No loader is installed, so `{% include %}` and `{% extends %}` have nowhere to reach;
@@ -92,14 +92,12 @@ pub fn expand(blueprint: &Blueprint, parameters: &Value) -> Result<Vec<Expanded>
     // parameter can never add a key to the rendered manifest (F-BNT2-004).
     env.set_formatter(|out, state, value| match value.as_str() {
         Some(text) => {
-            let quoted = serde_json::to_string(text)
-                .map_err(|e| minijinja::Error::new(ErrorKind::BadSerialization, e.to_string()))?;
+            let quoted = Value::String(text.to_owned()).to_string();
             let inner = quoted
                 .strip_prefix('"')
                 .and_then(|q| q.strip_suffix('"'))
                 .unwrap_or(&quoted);
-            out.write_str(inner)
-                .map_err(|_| minijinja::Error::from(ErrorKind::WriteFailure))
+            Ok(out.write_str(inner)?)
         }
         None => minijinja::escape_formatter(out, state, value),
     });
@@ -123,11 +121,9 @@ pub fn expand(blueprint: &Blueprint, parameters: &Value) -> Result<Vec<Expanded>
             blueprint.spec.version.as_str(),
             &provenance,
         );
-        let manifest =
-            serde_norway::to_string(&manifest).map_err(|e| ExpandError::NotAManifest {
-                template: template.name.clone(),
-                reason: e.to_string(),
-            })?;
+        // A manifest parsed from YAML is a tree of strings, numbers and maps: it always
+        // serializes back.
+        let manifest = serde_norway::to_string(&manifest).expect("a parsed manifest serializes");
         out.push(Expanded {
             template: template.name.clone(),
             manifest,

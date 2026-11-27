@@ -146,6 +146,29 @@ pub async fn serve(
     Ok(served?)
 }
 
+/// What the binary does: refuses to start when compiled with the suites' stub token (T-1480, a
+/// proxy built so would answer an empty client secret with a made-up token), reads its
+/// configuration from the environment, binds the address it names and serves until `shutdown`.
+pub async fn run(
+    stub_build: bool,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if stub_build {
+        return Err(
+            "jc-agent-proxy was built with the test-stub feature and does not start".into(),
+        );
+    }
+    let config = config::Config::from_env()?;
+    let listener = tokio::net::TcpListener::bind(config.bind).await?;
+    serve(config, listener, shutdown).await
+}
+
+/// Resolves on Ctrl-C (SIGINT): the binary's shutdown signal. A signal that cannot be listened
+/// for ends the wait too, so the proxy stops rather than runs unstoppable.
+pub async fn interrupted() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 pub fn router(state: Arc<ProxyState>) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok" }))

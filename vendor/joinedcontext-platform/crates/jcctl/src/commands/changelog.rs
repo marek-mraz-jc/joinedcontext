@@ -137,16 +137,16 @@ pub fn entries(repo: &Path, since: TimestampTz) -> Result<Vec<Entry>, ChangelogE
         ],
     )?;
     let mut out = Vec::new();
-    for line in log.lines() {
-        let Some((shas, date)) = line.split_once('\t') else {
-            continue;
-        };
+    // Git writes `<sha> <parents>\t<strict ISO 8601>` for every commit, so a line that does not
+    // split or date is one nobody wrote and is left out.
+    let commits = log.lines().filter_map(|line| {
+        let (shas, date) = line.split_once('\t')?;
+        Some((shas, day_of(date.trim())?))
+    });
+    for (shas, day) in commits {
         let mut shas = shas.split(' ');
         let commit = shas.next().unwrap_or_default();
         let parent = shas.next().filter(|p| !p.is_empty());
-        let Some(day) = day_of(date.trim()) else {
-            continue;
-        };
         let changed = match parent {
             Some(parent) => git(
                 repo,
@@ -196,7 +196,8 @@ fn endpoints_in(text: Option<&str>) -> BTreeMap<String, Seen> {
         return BTreeMap::new();
     };
     serde_norway::Deserializer::from_str(text)
-        .filter_map(|doc| Value::deserialize(doc).ok())
+        // A syntax error is the end of the readable file: the iterator would answer it forever.
+        .map_while(|doc| Value::deserialize(doc).ok())
         .filter(|doc| doc["kind"] == "Endpoint")
         .filter_map(|doc| {
             let name = doc["metadata"]["name"].as_str()?.to_owned();

@@ -343,6 +343,29 @@ mod tests {
                 .map(Vec::len),
             Some(2)
         );
+        // two districts apart are each drawn with fewer points and stay a MultiPolygon
+        let moved: Vec<Value> = ring(4000)
+            .as_array()
+            .expect("rings")
+            .iter()
+            .map(|r| {
+                r.as_array()
+                    .expect("a ring")
+                    .iter()
+                    .map(|p| json!([p[0].as_f64().expect("a longitude") + 1.0, p[1]]))
+                    .collect()
+            })
+            .collect();
+        let apart = json!({"type": "MultiPolygon", "coordinates": [ring(4000), moved]});
+        let drawn = for_display(&apart);
+        assert_eq!(drawn.get("type"), Some(&json!("MultiPolygon")));
+        let points = |g: &Value, part: usize| {
+            g.pointer(&format!("/coordinates/{part}/0"))
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        };
+        assert!(points(&drawn, 0) > 3 && points(&drawn, 0) < points(&apart, 0) / 4);
+        assert!(points(&drawn, 1) > 3 && points(&drawn, 1) < points(&apart, 1) / 4);
         // a ring that is not a list of positions is no polygon
         let broken = json!({"type": "Polygon", "coordinates": [[[19.0, "x"]]]});
         assert_eq!(for_display(&broken), broken);

@@ -38,6 +38,16 @@ pub struct Tenant {
     member_claim: Option<String>,
 }
 
+/// `value` as a header value, or the name error of `field`: both tenant forms are checked names
+/// of visible ASCII, so a refusal here is a name the grammar let through by mistake.
+fn legal_header(field: &'static str, value: &str) -> jc_core::Result<HeaderValue> {
+    HeaderValue::from_str(value).map_err(|_| jc_core::Error::Name {
+        field,
+        value: value.to_owned(),
+        reason: "must be a legal header value",
+    })
+}
+
 impl Tenant {
     /// A tenant `{organization id}__{segment}` (the 2026-11-15 form), which names its
     /// Organization to the broker and whose members' tokens name that same id.
@@ -53,13 +63,7 @@ impl Tenant {
         name: &TenantName,
         claim: &jc_core::names::OrganizationId,
     ) -> jc_core::Result<Self> {
-        let header = |value: &str| {
-            HeaderValue::from_str(value).map_err(|_| jc_core::Error::Name {
-                field: "tenant",
-                value: value.to_owned(),
-                reason: "must be a legal header value",
-            })
-        };
+        let header = |value: &str| legal_header("tenant", value);
         Ok(Self {
             value: header(name.as_str())?,
             organization: Some(header(name.organization())?),
@@ -73,11 +77,7 @@ impl Tenant {
         jc_core::names::validate_space_name(segment)?;
         Ok(Self {
             // A space name is `[a-z0-9-]`, always a legal header value.
-            value: HeaderValue::from_str(segment).map_err(|_| jc_core::Error::Name {
-                field: "space",
-                value: segment.to_owned(),
-                reason: "must be a legal header value",
-            })?,
+            value: legal_header("space", segment)?,
             organization: None,
             member_claim: None,
         })
@@ -395,12 +395,15 @@ fn request_id(headers: &mut HeaderMap) {
         return;
     }
     while headers.remove(REQUEST_ID).is_some() {}
-    if let Some(id) = crate::creates::uuid_v4()
+    // A UUID's text is always a legal value; the one pass is the only outcome but a failed
+    // generator, which leaves the hop without an id.
+    crate::creates::uuid_v4()
         .ok()
         .and_then(|id| HeaderValue::from_str(&id).ok())
-    {
-        headers.insert(REQUEST_ID, id);
-    }
+        .into_iter()
+        .for_each(|id| {
+            headers.insert(REQUEST_ID, id);
+        });
 }
 
 /// The kind of principal `subject` is (ADR-N-054 2.3): a Pipeline's derived account is
@@ -469,11 +472,12 @@ fn list<'a>(
         .collect::<Vec<_>>()
         .join(",");
     // Encoded, every member is visible ASCII, which a header always carries.
-    if let Ok(value) = HeaderValue::from_str(&joined) {
-        if always || !joined.is_empty() {
-            headers.insert(name, value);
-        }
-    }
+    HeaderValue::from_str(&joined)
+        .into_iter()
+        .filter(|_| always || !joined.is_empty())
+        .for_each(|value| {
+            headers.insert(name.clone(), value);
+        });
 }
 
 /// Marks a hop the gateway makes on its own account (T-3767): the condition probe of a write,
@@ -594,14 +598,40 @@ mod tests {
         );
     }
 
+    /// A name no header can carry is the name error of its field, never a header built from it; and
+    /// an account of no project names the broker by its bare name.
+    #[test]
+    fn a_name_no_header_can_carry_is_refused_and_a_projectless_account_is_named_bare() {
+        for (field, bad) in [("tenant", "a\nb"), ("space", "caf\u{7f}")] {
+            let refused = legal_header(field, bad).expect_err("not a header value");
+            assert!(
+                refused.to_string().contains("legal header value"),
+                "{refused}"
+            );
+        }
+        assert_eq!(legal_header("tenant", "air").expect("legal"), "air");
+
+        let account = |project: Option<&str>| Subject {
+            service_account: Some("sync".to_owned()),
+            service_account_project: project.map(str::to_owned),
+            ..Subject::default()
+        };
+        assert_eq!(caller_headers(&account(None))[CLIENT], "sync");
+        assert_eq!(
+            caller_headers(&account(Some("city")))[CLIENT],
+            "city%2Fsync"
+        );
+    }
+
     #[test]
     fn every_hop_names_one_well_formed_request_id() {
         let id = |sent: &[&str]| {
             let mut headers = HeaderMap::new();
             for value in sent {
-                if let Ok(value) = HeaderValue::from_str(value) {
-                    headers.append(REQUEST_ID, value);
-                }
+                headers.append(
+                    REQUEST_ID,
+                    HeaderValue::from_str(value).expect("a legal header value"),
+                );
             }
             request_id(&mut headers);
             headers
@@ -1034,16 +1064,24 @@ mod tests {
                 .display()
                 .to_string();
             let lowered = code.to_ascii_lowercase();
-            if name != "middleware/tenancy.rs"
-                && (lowered.contains("ngsild-tenant") || code.contains("tenancy::TENANT"))
-            {
-                found.push(format!("{name}: names the tenant header"));
-            }
-            if !["middleware/tenancy.rs", "store.rs"].contains(&name.as_str())
-                && code.contains("Tenant::segment(")
-            {
-                found.push(format!("{name}: builds a segment tenant"));
-            }
+            let breaches = [
+                (
+                    name != "middleware/tenancy.rs"
+                        && (lowered.contains("ngsild-tenant") || code.contains("tenancy::TENANT")),
+                    format!("{name}: names the tenant header"),
+                ),
+                (
+                    !["middleware/tenancy.rs", "store.rs"].contains(&name.as_str())
+                        && code.contains("Tenant::segment("),
+                    format!("{name}: builds a segment tenant"),
+                ),
+            ];
+            found.extend(
+                breaches
+                    .into_iter()
+                    .filter(|(breached, _)| *breached)
+                    .map(|(_, why)| why),
+            );
         }
         assert!(found.is_empty(), "{found:#?}");
     }

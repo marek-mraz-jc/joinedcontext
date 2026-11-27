@@ -828,14 +828,12 @@ mod tests {
             .await
             .expect("a port");
         let addr = listener.local_addr().expect("an address");
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let (mut socket, _) = listener.accept().await.expect("a connection");
             let _ = socket.read(&mut [0u8; 4096]).await;
             let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
-            if socket.write_all(head.as_bytes()).await.is_err() {
-                return;
-            }
+            let _ = socket.write_all(head.as_bytes()).await;
             let chunk = format!("10000\r\n{}\r\n", "x".repeat(0x10000));
             while socket.write_all(chunk.as_bytes()).await.is_ok() {}
         });
@@ -846,6 +844,43 @@ mod tests {
         assert!(
             matches!(refused, Err(CallError::Unavailable(_))),
             "{refused:?}"
+        );
+        // The reader let go of the connection, so the endless writer's next write fails.
+        server
+            .await
+            .expect("the writer ends once its reader is gone");
+    }
+
+    /// A provider whose stream breaks off in the middle of its body is unavailable, not a
+    /// shorter answer.
+    #[tokio::test]
+    async fn a_stream_that_breaks_off_mid_body_is_unavailable() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use wiremock::{matchers::method, Mock, MockServer};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(token_answer())
+            .mount(&realm)
+            .await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let addr = listener.local_addr().expect("an address");
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a connection");
+            let _ = socket.read(&mut [0u8; 8192]).await;
+            // Announces a thousand bytes, sends a dozen, and goes away.
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\ndata: {\"cho";
+            let _ = socket.write_all(head.as_bytes()).await;
+        });
+        let model = a_model(&realm.uri(), &format!("http://{addr}"));
+        let messages = [json!({ "role": "user", "content": "hi" })];
+        let (deltas, _shown) = tokio::sync::mpsc::channel(8);
+        let call = answer_call(0, jc_core::kinds::ReasoningEffort::Low);
+        let broken = model.stream("p/d", 0, &call, &messages, &deltas).await;
+        assert!(
+            matches!(broken, Err(CallError::Unavailable(_))),
+            "{broken:?}"
         );
     }
 

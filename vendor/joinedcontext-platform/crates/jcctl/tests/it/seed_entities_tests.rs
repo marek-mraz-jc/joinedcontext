@@ -89,6 +89,8 @@ fn a_file_that_is_not_an_entity_is_refused_by_name() {
     for (file, contents, expected) in [
         ("broken.json", "{ not json", "is not JSON"),
         ("scalar.json", "7", "holds neither an entity nor an array"),
+        ("items.json", r#"[7, "x"]"#, "is not an entity"),
+        ("null-item.json", r#"[null]"#, "is not an entity"),
         (
             "manifest.json",
             r#"{"apiVersion":"joinedcontext.com/v1alpha1","kind":"Entity"}"#,

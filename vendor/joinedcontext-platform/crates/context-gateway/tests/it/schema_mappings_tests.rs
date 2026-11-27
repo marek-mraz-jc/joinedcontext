@@ -282,6 +282,10 @@ async fn the_approved_readable_mapping_is_listed_and_served_and_no_other() {
         let (status, _, _) = get(&app, &format!("{BASE}/schema/{path}")).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
     }
+    for version in ["vx", "2", "v"] {
+        let (status, _, _) = get(&app, &format!("{BASE}/schema/{version}/mappings/")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "an index of {version}");
+    }
     let (status, _, body) = get(&app, &format!("{BASE}/schema/v2/mappings/")).await;
     assert_eq!(status, StatusCode::OK);
     let empty: Value = serde_json::from_slice(&body).expect("a JSON index");

@@ -555,30 +555,33 @@ fn stamp(manifest: &mut RawManifest, owner: &str) {
 /// Scoped by the annotation rather than by the namespace: a project holds hand-authored
 /// resources beside synced ones, and `prune` must never reach them.
 fn dropped(repo_dir: &Path, owner: &str, report: &Report) -> Vec<(ResourceId, PathBuf)> {
-    let Ok(repo) = Repository::load(repo_dir) else {
-        return Vec::new();
-    };
     let carried: Vec<ResourceId> = report
         .imported
         .iter()
         .map(|imported| ResourceId::from_manifest(&imported.manifest))
         .collect();
 
-    repo.iter()
-        .filter(|(_, resource)| {
-            resource
-                .manifest
-                .metadata
-                .rest
-                .get("annotations")
-                .and_then(Value::as_object)
-                .and_then(|annotations| annotations.get(SYNC_SOURCE))
-                .and_then(Value::as_str)
-                == Some(owner)
+    // The import loaded this repository a moment ago; one that no longer loads has nothing to
+    // drop.
+    Repository::load(repo_dir)
+        .map(|repo| {
+            repo.iter()
+                .filter(|(_, resource)| {
+                    resource
+                        .manifest
+                        .metadata
+                        .rest
+                        .get("annotations")
+                        .and_then(Value::as_object)
+                        .and_then(|annotations| annotations.get(SYNC_SOURCE))
+                        .and_then(Value::as_str)
+                        == Some(owner)
+                })
+                .filter(|(id, _)| !carried.contains(id))
+                .map(|(id, resource)| (id.clone(), resource.path.clone()))
+                .collect()
         })
-        .filter(|(id, _)| !carried.contains(id))
-        .map(|(id, resource)| (id.clone(), resource.path.clone()))
-        .collect()
+        .unwrap_or_default()
 }
 
 /// The changes grouped into the waves `apply` would run them in, which is the shape the lane

@@ -223,3 +223,38 @@ async fn one_sender_takes_a_tenth_of_the_day_and_the_form_stays_open_to_others()
     );
     assert_eq!(form.sent().len(), 3);
 }
+
+/// EP-97: when the senders together have taken the whole day, a new sender is told the form is
+/// full, not that its own share is spent, and the broker is never asked.
+#[tokio::test]
+async fn a_form_the_senders_filled_is_closed_to_a_new_sender() {
+    let form = form(Some(10)).await;
+    for sender in 1..=10 {
+        let created = form
+            .post_from(
+                &format!("{}.{}.{}.{sender}", 198, 51, 100),
+                "/entities",
+                report("urn:ngsi-ld:Report:x"),
+            )
+            .await;
+        assert_eq!(created.status(), StatusCode::CREATED, "sender {sender}");
+    }
+    let late = form
+        .post_from(
+            &format!("{}.{}.{}.{}", 198, 51, 100, 99),
+            "/entities",
+            report("urn:ngsi-ld:Report:x"),
+        )
+        .await;
+    assert_eq!(late.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(late.headers().contains_key("retry-after"));
+    let body = axum::body::to_bytes(late.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    assert!(
+        String::from_utf8_lossy(&body).contains("this form has taken all the entries"),
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+    assert_eq!(form.sent().len(), 10);
+}

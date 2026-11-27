@@ -267,10 +267,9 @@ pub fn write(repo_dir: &Path, mirror: &Mirror) -> Result<usize, MirrorError> {
         if model.outcome == Outcome::Unchanged {
             continue;
         }
-        let yaml = serde_norway::to_string(&model.manifest).map_err(|err| MirrorError::Io {
-            path: model.path.clone(),
-            source: std::io::Error::other(err.to_string()),
-        })?;
+        let yaml = serde_norway::to_string(&model.manifest)
+            .map_err(std::io::Error::other)
+            .map_err(io_error(&model.path))?;
         put(repo_dir, &model.path, yaml.as_bytes())?;
         written += 1;
         for (path, body) in &model.files {
@@ -281,17 +280,19 @@ pub fn write(repo_dir: &Path, mirror: &Mirror) -> Result<usize, MirrorError> {
     Ok(written)
 }
 
+/// An I/O failure at `path`, as the mirror's own error.
+fn io_error(path: &Path) -> impl Fn(std::io::Error) -> MirrorError + '_ {
+    |source| MirrorError::Io {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
 fn put(repo_dir: &Path, relative: &Path, body: &[u8]) -> Result<(), MirrorError> {
     let path = repo_dir.join(relative);
     let parent = path.parent().unwrap_or(repo_dir);
-    std::fs::create_dir_all(parent).map_err(|source| MirrorError::Io {
-        path: parent.to_path_buf(),
-        source,
-    })?;
-    std::fs::write(&path, body).map_err(|source| MirrorError::Io {
-        path: relative.to_path_buf(),
-        source,
-    })
+    std::fs::create_dir_all(parent).map_err(io_error(parent))?;
+    std::fs::write(&path, body).map_err(io_error(relative))
 }
 
 /// The project and space a reference mirrors into.

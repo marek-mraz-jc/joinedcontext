@@ -9,7 +9,7 @@
 
 use crate::app::{Gateway, HostOrganization};
 use axum::body::Body;
-use axum::extract::rejection::{FormRejection, JsonRejection, QueryRejection};
+use axum::extract::rejection::{FormRejection, JsonRejection};
 use axum::extract::{Form, Json, Query, Request, State};
 use axum::http::header::{AUTHORIZATION, CACHE_CONTROL, CONTENT_TYPE, LOCATION};
 use axum::http::{HeaderValue, Response, StatusCode};
@@ -567,39 +567,49 @@ fn refusal_page(reason: &str) -> Response<Body> {
 /// The authorize step: no login and no consent, a code at once.
 async fn authorize(
     State(gateway): State<Arc<Gateway>>,
-    query: Result<Query<HashMap<String, String>>, QueryRejection>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> Response<Body> {
     let Some(issuer) = issuer_of(&gateway) else {
         return ProblemDetails::not_found().into_response();
-    };
-    let Ok(Query(query)) = query else {
-        return refusal_page("the query is malformed");
     };
     let code = match issuer.authorize(&query) {
         Ok(code) => code,
         Err(reason) => return refusal_page(&reason),
     };
-    // `authorize` checked the URI against the registration, which the allowlist admitted.
-    let Some(mut target) = query
+    // `authorize` checked the URI against the registration, which the allowlist admitted: the
+    // one named, or the only one registered.
+    let uri = query
         .get("redirect_uri")
         .filter(|uri| !uri.is_empty())
-        .and_then(|uri| Url::parse(uri).ok())
+        .cloned()
         .or_else(|| {
             let client = issuer.open(query.get("client_id")?, CLIENT)?;
-            Url::parse(client.redirect_uris.first()?).ok()
+            client.redirect_uris.first().cloned()
         })
-    else {
-        return refusal_page("the redirect_uri is malformed");
-    };
-    {
-        let mut pairs = target.query_pairs_mut();
-        pairs.append_pair("code", &code);
-        if let Some(state) = query.get("state") {
-            pairs.append_pair("state", state);
+        .unwrap_or_default();
+    redirect_with_code(
+        &uri,
+        &code,
+        query.get("state").map(String::as_str),
+        issuer.issuer(),
+    )
+}
+
+/// The 302 to `uri` carrying the `code`, the client's `state` and the issuer (RFC 9207), or the
+/// refusal page when `uri` is no address a redirect can name.
+fn redirect_with_code(uri: &str, code: &str, state: Option<&str>, issuer: &str) -> Response<Body> {
+    let location = Url::parse(uri).ok().and_then(|mut target| {
+        {
+            let mut pairs = target.query_pairs_mut();
+            pairs.append_pair("code", code);
+            if let Some(state) = state {
+                pairs.append_pair("state", state);
+            }
+            pairs.append_pair("iss", issuer);
         }
-        pairs.append_pair("iss", issuer.issuer());
-    }
-    let Ok(location) = HeaderValue::from_str(target.as_str()) else {
+        HeaderValue::from_str(target.as_str()).ok()
+    });
+    let Some(location) = location else {
         return refusal_page("the redirect_uri is malformed");
     };
     let mut response = Response::new(Body::empty());
@@ -653,6 +663,35 @@ mod tests {
             .map(|host| (*host).to_owned())
             .collect();
         Issuer::new(BASE, &Secret::new("k".repeat(32)), hosts).expect("a long enough key")
+    }
+
+    /// The redirect carries the code, the client's state and the issuer on the address it names;
+    /// an address no redirect can name is the refusal page and no redirect at all.
+    #[test]
+    fn a_code_is_redirected_to_a_parsable_address_only() {
+        let sent = redirect_with_code(GEMINI, "c0de", Some("s t"), BASE);
+        assert_eq!(sent.status(), StatusCode::FOUND);
+        let location = sent.headers()[LOCATION].to_str().expect("a location");
+        assert!(location.starts_with(GEMINI), "{location}");
+        for want in [
+            "code=c0de",
+            "state=s+t",
+            "iss=https%3A%2F%2Fapi.dev.example",
+        ] {
+            assert!(location.contains(want), "{location} lacks {want}");
+        }
+        assert_eq!(sent.headers()[CACHE_CONTROL], "no-store");
+        let bare = redirect_with_code(GEMINI, "c0de", None, BASE);
+        assert!(!bare.headers()[LOCATION]
+            .to_str()
+            .expect("a location")
+            .contains("state="));
+
+        for refused in ["", "not a url", "/relative/path"] {
+            let page = redirect_with_code(refused, "c0de", None, BASE);
+            assert_eq!(page.status(), StatusCode::BAD_REQUEST, "{refused}");
+            assert!(page.headers().get(LOCATION).is_none(), "{refused}");
+        }
     }
 
     fn form(pairs: &[(&str, &str)]) -> HashMap<String, String> {

@@ -122,6 +122,94 @@ fn a_preview_leaves_a_slug_or_segment_that_is_no_string_alone() {
     assert_eq!(space.1.manifest.spec["urnSegment"], 7);
 }
 
+/// A preview render leaves an Endpoint without a slug, and a manifest that lives in no namespace,
+/// as they are; one that places a space in the organization's own namespace is refused, because
+/// its segment cannot carry the prefix.
+#[test]
+fn a_preview_leaves_what_has_no_slug_or_namespace_and_refuses_a_space_it_cannot_prefix() {
+    let dir = temp_dir("preview-no-slug");
+    write(&dir, "org.yaml", ORG);
+    write(
+        &dir,
+        "projects/p/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: { name: p, namespace: org }\nspec: { organizationRef: city }\n",
+    );
+    write(
+        &dir,
+        "projects/p/spaces/air/endpoints/e.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata: { name: e, namespace: p }\nspec: { contextSpaceRef: air }\n",
+    );
+    write(
+        &dir,
+        "users/groups/staff.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata: { name: staff }\nspec: { members: [] }\n",
+    );
+    let repo = Repository::load_preview(&dir, None, "pv-").expect("the preview loads");
+    let endpoint = repo
+        .iter()
+        .find(|(id, _)| id.kind == "Endpoint")
+        .expect("the endpoint");
+    assert_eq!(endpoint.0.namespace.as_deref(), Some("pv-p"));
+    assert!(endpoint.1.manifest.spec.get("slug").is_none());
+    let group = repo
+        .iter()
+        .find(|(id, _)| id.kind == "Group")
+        .expect("the group");
+    assert_eq!(group.0.namespace, None);
+
+    write(
+        &dir,
+        "spaces/stray.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata: { name: stray, namespace: org }\nspec: {}\n",
+    );
+    let refused = Repository::load_preview(&dir, None, "pv-").expect_err("no prefix on a segment");
+    assert!(
+        matches!(&refused, LoadError::UnprefixedName { what, .. } if *what == "a space segment"),
+        "{refused:?}"
+    );
+    assert!(refused.to_string().contains("org-stray"), "{refused}");
+}
+
+/// A folder that is not there is an I/O error naming it, and a link that cannot be resolved once
+/// the walk is past it is refused the same way.
+#[test]
+fn a_repository_that_is_not_there_is_an_io_error_naming_it() {
+    let missing = temp_dir("missing-root").join("nothing-here");
+    match Repository::load_for(&missing, None) {
+        Err(LoadError::Io { path, .. }) => assert_eq!(path, missing),
+        other => panic!("expected an io error, got {other:?}"),
+    }
+}
+
+/// A SharedSpaceReference whose spec is no mapping, or that names no Endpoint, has nothing to
+/// resolve and is no finding of the loader; a DataAgreement claim without a namespace is named
+/// by its bare name, and a Pipeline without a namespace has no bento to read.
+#[test]
+fn manifests_without_the_parts_a_check_reads_are_skipped_not_refused() {
+    let raw = |yaml: &str| manifest(yaml);
+    let repo = Repository::from_manifests(
+        vec![
+            raw("apiVersion: joinedcontext.com/v1alpha1\nkind: SharedSpaceReference\nmetadata: { name: scalar, namespace: p }\nspec: 5\n"),
+            raw("apiVersion: joinedcontext.com/v1alpha1\nkind: SharedSpaceReference\nmetadata: { name: bare, namespace: p }\nspec: { alias: x }\n"),
+            raw("apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata: { name: lone }\nspec: { class: resident }\n"),
+            raw("apiVersion: joinedcontext.com/v1alpha1\nkind: DataAgreement\nmetadata: { name: loose }\nspec: { agreementId: \"urn:uuid:1\" }\n"),
+            raw("apiVersion: joinedcontext.com/v1alpha1\nkind: DataAgreement\nmetadata: { name: placed, namespace: p }\nspec: { agreementId: \"urn:uuid:1\" }\n"),
+        ],
+        None,
+    )
+    .expect("the manifests build a repository");
+    assert!(repo.unresolved_references().is_empty());
+    assert!(repo.literal_spaces().is_empty());
+    let contested = repo.contested_agreement_ids();
+    assert_eq!(contested.len(), 2, "{contested:?}");
+    assert!(
+        contested
+            .iter()
+            .all(|(_, _, why)| why.contains("(loose, p/placed)")),
+        "{contested:?}"
+    );
+}
+
 #[test]
 fn an_api_version_without_a_group_is_its_own_group_and_an_id_without_namespace_prints_bare() {
     let raw = manifest("apiVersion: v1\nkind: Organization\nmetadata: { name: city }\nspec: {}\n");

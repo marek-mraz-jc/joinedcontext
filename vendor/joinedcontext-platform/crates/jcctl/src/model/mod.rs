@@ -572,16 +572,19 @@ pub fn organization_imports(
             if !import.organization || carried.contains_key(&import.name) {
                 continue;
             }
-            if organization.is_none() {
-                let dir = org_dir.ok_or_else(|| {
-                    format!(
-                        "the project imports the organization model `{import}`; pass --org-dir \
-                         <organization checkout> so the export carries it (MF-49)"
-                    )
-                })?;
-                organization = Some(Repository::load(dir).map_err(|err| err.to_string())?);
-            }
-            let org = organization.as_ref().ok_or("no organization checkout")?;
+            let loaded = match organization.take() {
+                Some(loaded) => loaded,
+                None => {
+                    let dir = org_dir.ok_or_else(|| {
+                        format!(
+                            "the project imports the organization model `{import}`; pass --org-dir \
+                             <organization checkout> so the export carries it (MF-49)"
+                        )
+                    })?;
+                    Repository::load(dir).map_err(|err| err.to_string())?
+                }
+            };
+            let org = organization.insert(loaded);
             let (resource, spec, linkml) = pinned_model(org, ORG_NAMESPACE, &import)
                 .map_err(|why| format!("import '{import}': {why}"))?;
             todo.push(read(org.root(), &linkml).map_err(|err| err.to_string())?);

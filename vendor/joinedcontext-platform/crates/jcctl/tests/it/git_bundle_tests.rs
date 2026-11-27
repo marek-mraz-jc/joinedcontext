@@ -112,6 +112,104 @@ fn an_export_or_import_that_cannot_be_a_git_bundle_is_refused() {
     assert!(refused.to_string().contains("MF-45"), "{refused}");
 }
 
+/// MF-45: a slug that is not a project's name, a `project.yaml` that does not parse and an
+/// exporter without a name are each refused before a bundle is written.
+#[test]
+fn an_export_with_a_bad_slug_project_file_or_exporter_is_refused() {
+    let project = project_repository("bundle-bad-inputs-project");
+    let none = BTreeMap::new();
+    let bad_slug = export(
+        &project,
+        "Not_A_Slug",
+        &none,
+        None,
+        &temp_dir("bundle-bad-slug"),
+        "t",
+    )
+    .expect_err("a slug that is no project name");
+    assert!(!bad_slug.to_string().is_empty());
+
+    let no_exporter = temp_dir("bundle-no-exporter");
+    let refused = export(&project, "ovzdusie", &none, None, &no_exporter, " ")
+        .expect_err("an index the validator refuses");
+    assert!(refused.to_string().contains("exportedBy"), "{refused}");
+    assert!(!no_exporter.join(INDEX).exists(), "no index is written");
+
+    let broken = project_repository("bundle-bad-project-file");
+    write(&broken, "project.yaml", "kind: [not a project\n");
+    let refused = export(
+        &broken,
+        "ovzdusie",
+        &none,
+        None,
+        &temp_dir("bundle-bad-pf-out"),
+        "t",
+    )
+    .expect_err("project.yaml does not parse");
+    assert!(
+        refused.to_string().starts_with("project.yaml:"),
+        "{refused}"
+    );
+
+    let missing = temp_dir("bundle-missing-project-file");
+    write(&missing, ".jc/layout", "2\n");
+    let refused = export(
+        &missing,
+        "ovzdusie",
+        &none,
+        None,
+        &temp_dir("bundle-mp-out"),
+        "t",
+    )
+    .expect_err("no project.yaml");
+    assert!(refused.to_string().contains("project.yaml"), "{refused}");
+}
+
+/// MF-46: an index that is not YAML, a YAML bundle's index (items, no repository) and a
+/// repository whose file the index lists no SHA-256 for are each refused on import.
+#[test]
+fn an_import_of_an_unreadable_a_yaml_or_an_unverifiable_index_is_refused() {
+    let project = project_repository("bundle-index-project");
+    let out = temp_dir("bundle-index-out");
+    export(&project, "ovzdusie", &BTreeMap::new(), None, &out, "tester").expect("exports");
+    let good = std::fs::read_to_string(out.join(INDEX)).expect("index");
+
+    std::fs::write(out.join(INDEX), "kind: [broken\n").expect("write");
+    let refused = import(&out, &temp_dir("bundle-index-in-1")).expect_err("not yaml");
+    assert!(refused.to_string().starts_with("bundle.yaml:"), "{refused}");
+
+    let no_index = temp_dir("bundle-no-index");
+    let refused = import(&no_index, &temp_dir("bundle-index-in-0")).expect_err("no index file");
+    assert!(refused.to_string().contains("bundle.yaml"), "{refused}");
+
+    let mut listed: serde_json::Value = serde_norway::from_str(&good).expect("yaml");
+    listed["spec"]["repositories"] = serde_json::json!([]);
+    listed["spec"]["items"] = serde_json::json!([{ "kind": "Endpoint", "namespace": "ovzdusie", "name": "public-air", "path": "projects/ovzdusie/endpoints/public-air.yaml" }]);
+    std::fs::write(
+        out.join(INDEX),
+        serde_norway::to_string(&listed).expect("yaml"),
+    )
+    .expect("write");
+    let refused = import(&out, &temp_dir("bundle-index-in-2")).expect_err("a YAML bundle");
+    assert!(
+        refused.to_string().contains("lists no repository"),
+        "{refused}"
+    );
+
+    let mut listed: serde_json::Value = serde_norway::from_str(&good).expect("yaml");
+    listed["spec"]["files"] = serde_json::json!([]);
+    std::fs::write(
+        out.join(INDEX),
+        serde_norway::to_string(&listed).expect("yaml"),
+    )
+    .expect("write");
+    let refused = import(&out, &temp_dir("bundle-index-in-3")).expect_err("no checksum");
+    assert!(
+        refused.to_string().contains("carries no SHA-256"),
+        "{refused}"
+    );
+}
+
 /// MF-45, MF-46: a project and its application travel as bundles with their whole history and
 /// tags, the entry without this deployment's values, and each head checked on the way in.
 #[test]
@@ -379,6 +477,64 @@ fn an_older_organization_is_migrated_on_import() {
         "2\n"
     );
     assert!(migrated.join("projects/ovzdusie.yaml").is_file());
+}
+
+/// An organization repository at `layout`, bundled with an index listing it as `organization`.
+fn organization_bundle(test: &str, layout: &str) -> PathBuf {
+    let org = temp_dir(&format!("{test}-org"));
+    git(&org, &["init", "-q", "-b", "main"]);
+    write(&org, ".jc/layout", layout);
+    write(&org, "org.yaml", ORG);
+    commit(&org, "the organization");
+    let out = temp_dir(&format!("{test}-out"));
+    let bundle = out.join("banskabystrica.bundle");
+    git(
+        &org,
+        &[
+            "bundle",
+            "create",
+            "-q",
+            &bundle.to_string_lossy(),
+            "HEAD",
+            "--branches",
+        ],
+    );
+    use sha2::Digest as _;
+    let digest = format!(
+        "{:x}",
+        sha2::Sha256::digest(std::fs::read(&bundle).expect("read"))
+    );
+    let head = git(&org, &["rev-parse", "HEAD"]);
+    let index = format!(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Bundle\nmetadata: {{ name: banskabystrica, namespace: org }}\n\
+         spec:\n  exportedAt: 2026-09-22T12:00:00Z\n  exportedBy: tester\n  sourceRevision: {head}\n  items: []\n  \
+         files: [ {{ path: banskabystrica.bundle, sha256: {digest} }} ]\n  \
+         repositories: [ {{ name: banskabystrica, role: organization, file: banskabystrica.bundle, head: {head} }} ]\n"
+    );
+    std::fs::write(out.join(INDEX), index).expect("index");
+    out
+}
+
+/// MF-47: an organization repository already at layout 2 lands as it is, not migrated; one at a
+/// layout this release does not read is refused naming the repository.
+#[test]
+fn a_current_organization_lands_as_it_is_and_a_newer_one_is_refused() {
+    let out = organization_bundle("bundle-org-current", "2\n");
+    let landed = temp_dir("bundle-org-current-in");
+    let imported = import(&out, &landed).expect("imports");
+    assert_eq!(imported.repositories.len(), 1);
+    let (name, path, head) = &imported.repositories[0];
+    assert_eq!(name, "banskabystrica");
+    assert_eq!(path, &landed.join("banskabystrica"));
+    assert_eq!(&git(path, &["rev-parse", "HEAD"]), head);
+    assert!(!landed.join("banskabystrica-layout-2").exists());
+
+    let newer = organization_bundle("bundle-org-newer", "3\n");
+    let refused = import(&newer, &temp_dir("bundle-org-newer-in")).expect_err("layout 3");
+    assert!(
+        refused.to_string().starts_with("banskabystrica:"),
+        "{refused}"
+    );
 }
 
 /// An organization model, as the organization checkout keeps it (DM-75).

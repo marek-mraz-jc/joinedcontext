@@ -154,9 +154,7 @@ fn staged(
             tracing::warn!(%prefix, path = %relative, "a file outside the preview is left out");
             continue;
         };
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
+        std::fs::create_dir_all(path.parent().unwrap_or(staging))?;
         std::fs::write(path, text)?;
     }
     std::fs::create_dir_all(staging)?;
@@ -428,14 +426,12 @@ mod tests {
             .await
             .expect("a port");
         let addr = listener.local_addr().expect("an address");
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             use tokio::io::{AsyncReadExt, AsyncWriteExt};
             let (mut socket, _) = listener.accept().await.expect("a connection");
             let _ = socket.read(&mut [0u8; 4096]).await;
             let head = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
-            if socket.write_all(head.as_bytes()).await.is_err() {
-                return;
-            }
+            let _ = socket.write_all(head.as_bytes()).await;
             let chunk = format!("10000\r\n{}\r\n", "x".repeat(0x10000));
             while socket.write_all(chunk.as_bytes()).await.is_ok() {}
         });
@@ -446,5 +442,6 @@ mod tests {
             .await
             .expect_err("a list past the cap is refused");
         assert!(refused.contains("1048576"), "{refused}");
+        server.await.expect("the endless Portal stops when cut off");
     }
 }

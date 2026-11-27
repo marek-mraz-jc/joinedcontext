@@ -65,23 +65,30 @@ const SECONDS: &[f64] = &[
 
 fn handle() -> &'static PrometheusHandle {
     static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
-    HANDLE.get_or_init(|| {
-        let builder = PrometheusBuilder::new()
-            .set_buckets(SECONDS)
-            .expect("the bucket list is not empty");
-        // A host that installed the process's recorder before (`jc`, which serves every
-        // module's series on its admin listener) keeps it: the series go there, and this
-        // handle, of a recorder never installed, renders nothing.
-        let recorder = builder.build_recorder();
-        let handle = recorder.handle();
-        if metrics::set_global_recorder(recorder).is_err() {
-            tracing::info!(
-                "the process has a metrics recorder already: the gateway's series go to it"
-            );
-        }
-        describe();
-        handle
-    })
+    HANDLE.get_or_init(|| recorder_into(metrics::set_global_recorder))
+}
+
+/// The gateway's recorder, offered to `set` as the process's: a host that installed its own
+/// before (`jc`, which serves every module's series on its admin listener) keeps it, the series
+/// go there, and the handle of a recorder never installed renders nothing.
+fn recorder_into(
+    set: impl FnOnce(
+        metrics_exporter_prometheus::PrometheusRecorder,
+    ) -> Result<
+        (),
+        metrics::SetRecorderError<metrics_exporter_prometheus::PrometheusRecorder>,
+    >,
+) -> PrometheusHandle {
+    let builder = PrometheusBuilder::new()
+        .set_buckets(SECONDS)
+        .expect("the bucket list is not empty");
+    let recorder = builder.build_recorder();
+    let handle = recorder.handle();
+    if set(recorder).is_err() {
+        tracing::info!("the process has a metrics recorder already: the gateway's series go to it");
+    }
+    describe();
+    handle
 }
 
 /// Installs the recorder and describes the series.
@@ -244,9 +251,12 @@ pub async fn record(
         broker * 1000.0,
         seconds * 1000.0
     );
-    if let Ok(value) = HeaderValue::from_str(&timing) {
-        response.headers_mut().append(SERVER_TIMING, value);
-    }
+    // Digits and punctuation: always a legal value.
+    HeaderValue::from_str(&timing)
+        .into_iter()
+        .for_each(|value| {
+            response.headers_mut().append(SERVER_TIMING, value);
+        });
 
     crate::usage::count(
         &endpoint,
@@ -301,6 +311,14 @@ fn served<'p>(gateway: &Gateway, path: &'p str) -> Option<&'p str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A process that has a recorder already keeps it: the gateway's handle is made, nothing is
+    /// installed, and the handle renders no series.
+    #[test]
+    fn a_host_recorder_installed_before_keeps_the_process_and_the_handle_renders_nothing() {
+        let handle = recorder_into(|recorder| Err(metrics::SetRecorderError(recorder)));
+        assert_eq!(handle.render(), "");
+    }
 
     #[tokio::test]
     async fn a_request_sums_its_decisions_and_broker_trips() {

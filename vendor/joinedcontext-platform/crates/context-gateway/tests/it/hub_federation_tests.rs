@@ -514,6 +514,58 @@ async fn a_tool_result_carries_the_sources_it_is_a_union_over() {
     );
 }
 
+/// The MCP hub's call of a federating Endpoint's member answers as the Endpoint's own address
+/// does: the union's sources are named in the result.
+#[tokio::test]
+async fn a_hub_call_of_a_federating_endpoint_names_the_sources_too() {
+    let (broker, _) = partial_broker().await;
+    let realm = common::Realm::new();
+    let gateway = Gateway::new(Broker::new(&broker), Box::new(PolicyPdp), "helsinki.fi")
+        .serve([hub_endpoint()])
+        .authenticate(Arc::new(realm.verifier()), ServiceAccounts::new(), None);
+    gateway.replace_federation(table(vec![
+        member("transport", FederationIdentity::ServiceAccount),
+        member("air-quality", FederationIdentity::ServiceAccount),
+    ]));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "f:1:member",
+        "aud": ["mcp-hub"],
+        "azp": "mcp-hub",
+        "scope": "openid endpoint:*",
+        "preferred_username": "aino",
+        "realm_access": { "roles": ["default-roles-dev"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    let body = json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": { "name": "query_entities",
+                    "arguments": { "endpoint": HUB_SLUG, "type": "Vehicle" } },
+    });
+    let response = router(Arc::new(gateway))
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/mcp")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("a body");
+    let answer: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert_eq!(
+        answer["result"]["structuredContent"]["jc:source"],
+        json!(["air-quality", "transport"]),
+        "{answer}"
+    );
+}
+
 /// T-3819, SP-17: a read the view refused stays the tool error it is; it names no source, so a
 /// model cannot read a refusal as a union that happened to be empty.
 #[tokio::test]

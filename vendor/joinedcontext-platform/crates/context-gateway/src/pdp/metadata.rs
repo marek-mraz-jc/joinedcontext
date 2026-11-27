@@ -768,4 +768,36 @@ mod tests {
             json!("Sensor stuck, checked by Jana")
         );
     }
+
+    /// An instance is narrowed by its members alone: with `provenance` listed its block stays
+    /// whole, without it a block is cut to the version keys, and one with no block stays so.
+    #[test]
+    fn an_instance_keeps_a_listed_provenance_whole_and_cuts_an_unlisted_one() {
+        let whole = Members::from([Provenance, ObservedAt]);
+        let mut listed = instance();
+        let before = listed["provenance"].clone();
+        assert!(strip_instance(
+            &whole,
+            listed.as_object_mut().expect("an object")
+        ));
+        assert_eq!(listed["provenance"], before);
+
+        let mut cut = instance();
+        assert!(strip_instance(
+            &Members::from([ObservedAt]),
+            cut.as_object_mut().expect("an object")
+        ));
+        let kept = cut["provenance"].as_object().expect("a block");
+        assert!(
+            !kept.contains_key("actor") && !kept.contains_key("reason"),
+            "{kept:?}"
+        );
+
+        let mut bare = json!({ "type": "Property", "value": 1 });
+        assert!(strip_instance(
+            &Members::new(),
+            bare.as_object_mut().expect("an object")
+        ));
+        assert_eq!(bare, json!({ "type": "Property", "value": 1 }));
+    }
 }

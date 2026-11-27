@@ -395,6 +395,18 @@ mod tests {
             set(&["id", "level", "type"])
         );
 
+        // A filter that names no `q` leaves the grants' own as they are.
+        let geo_only = projection(
+            "classes: [{ name: Sensor, slots: [level] }]\nfilter:\n  temporalQ: timerel=after;timeAt=P1D\n",
+        );
+        let verdict = project_constraints(asked.clone(), &geo_only);
+        let projected = verdict.constraints().expect("a rewrite");
+        assert_eq!(projected.q.as_deref(), Some("name==\"a\""));
+        assert_eq!(
+            projected.temporal_q.as_deref(),
+            Some("timerel=after;timeAt=P1D")
+        );
+
         let clamped = evaluator::Constraints {
             geo_q: Some("granted".to_owned()),
             temporal_q: Some("granted".to_owned()),

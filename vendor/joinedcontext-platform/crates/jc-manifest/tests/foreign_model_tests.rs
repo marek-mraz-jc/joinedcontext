@@ -342,6 +342,30 @@ fn a_catalogue_without_a_models_array_is_an_index_error() {
     );
 }
 
+/// A catalogue that is no JSON at all is refused as an index error, whatever the peer's
+/// content type.
+#[test]
+fn a_catalogue_that_is_no_json_is_an_index_error() {
+    let dir = repo_dir("index-not-json");
+    let mut peer = Peer::air();
+    peer.documents.insert(
+        format!("{BASE}/schema/index.json"),
+        b"<html>maintenance</html>".to_vec(),
+    );
+    let error = foreign_models::mirror(
+        &reference(),
+        BASE,
+        "2026-09-07T08:00:00Z",
+        &load(&dir),
+        &peer,
+    )
+    .expect_err("no catalogue");
+    assert!(
+        matches!(error, MirrorError::Index(ref m) if m.contains("expected value")),
+        "{error}"
+    );
+}
+
 /// An example the catalogue vouches for but the peer answers 404 on is left out; the model is
 /// still mirrored with its two required documents.
 #[test]

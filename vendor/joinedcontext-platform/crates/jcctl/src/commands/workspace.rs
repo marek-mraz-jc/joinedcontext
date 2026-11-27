@@ -49,8 +49,7 @@ pub fn render(dir: &Path, prefix: &str) -> Result<Vec<(String, String)>, LoadErr
     Ok(repo
         .iter()
         .map(|(id, loaded)| {
-            let yaml = serde_norway::to_string(&loaded.manifest)
-                .unwrap_or_else(|err| format!("# {id}: {err}\n"));
+            let yaml = serde_norway::to_string(&loaded.manifest).expect("a manifest serializes");
             (file_name(id), yaml)
         })
         .collect())

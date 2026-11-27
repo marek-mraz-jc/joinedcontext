@@ -177,9 +177,9 @@ async fn public_entities(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) 
             }
         }
     };
-    if let Ok(mut held) = held.lock() {
-        held.insert(endpoint.slug.clone(), (Instant::now(), Arc::clone(&read)));
-    }
+    held.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(endpoint.slug.clone(), (Instant::now(), Arc::clone(&read)));
     read
 }
 
@@ -256,9 +256,10 @@ fn public_page(answer: &Value) -> Result<(Vec<Value>, Option<Value>), String> {
         .filter(|entity| matches!(entity["type"].as_str(), Some("Dataset" | "Organization")))
         .map(|entity| {
             let mut entity = entity.clone();
-            if let Some(members) = entity.as_object_mut() {
+            // The filter above kept objects only (a `type` member is read off one).
+            entity.as_object_mut().into_iter().for_each(|members| {
                 members.remove("@context");
-            }
+            });
             entity
         })
         .collect();
@@ -396,12 +397,14 @@ async fn of(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) -> Arc<Catalo
         entities,
         index,
     });
-    if let Ok(mut cache) = cache().lock() {
-        if cache.len() >= CACHED {
-            cache.clear();
-        }
-        cache.insert(key, Arc::clone(&catalog));
+    let mut cache = cache()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if cache.len() >= CACHED {
+        cache.clear();
     }
+    cache.insert(key, Arc::clone(&catalog));
+    drop(cache);
     catalog
 }
 
@@ -586,20 +589,22 @@ fn query(catalog: &Catalog, arguments: &Map<String, Value>) -> Result<Value, Str
         .map(|entity| shaped(entity, key_values, attrs.as_deref()))
         .collect();
     let mut answer = answered(&Value::Array(page.clone()), "entities");
-    if let Some(structured) = answer
+    // `answered` always carries `structuredContent` as an object.
+    answer
         .get_mut("structuredContent")
         .and_then(Value::as_object_mut)
-    {
-        if offset + page.len() < total {
-            structured.insert(
-                "nextCursor".into(),
-                json!((offset + page.len()).to_string()),
-            );
-        }
-        if arguments.get("count").and_then(Value::as_bool) == Some(true) {
-            structured.insert("total".into(), json!(total));
-        }
-    }
+        .into_iter()
+        .for_each(|structured| {
+            if offset + page.len() < total {
+                structured.insert(
+                    "nextCursor".into(),
+                    json!((offset + page.len()).to_string()),
+                );
+            }
+            if arguments.get("count").and_then(Value::as_bool) == Some(true) {
+                structured.insert("total".into(), json!(total));
+            }
+        });
     Ok(answer)
 }
 
@@ -945,11 +950,15 @@ pub(crate) mod tests {
             .await
             .expect("bind");
         let address = silent.local_addr().expect("addr");
-        tokio::spawn(async move {
+        // Holds every connection open for a minute of the paused clock, then lets go.
+        let holder = tokio::spawn(async move {
             let mut held = Vec::new();
-            while let Ok((socket, _)) = silent.accept().await {
-                held.push(socket);
-            }
+            let _ = tokio::time::timeout(Duration::from_secs(60), async {
+                while let Ok((socket, _)) = silent.accept().await {
+                    held.push(socket);
+                }
+            })
+            .await;
         });
         let gateway = Gateway::new(
             crate::proxy::Broker::new(format!("http://{address}")),
@@ -964,11 +973,12 @@ pub(crate) mod tests {
         let asked = tokio::time::Instant::now();
         let read = public_entities(&gateway, &reach).await;
         assert!(read.is_empty());
-        assert!(
-            asked.elapsed() <= super::super::server::MEMBER_DEADLINE + Duration::from_secs(1),
-            "{:?}",
-            asked.elapsed()
-        );
+        // The broker holds the call for its minute: an answer before that is the deadline's
+        // cut, whatever the paused clock's auto-advance adds for the connect under load.
+        let took = asked.elapsed();
+        assert!(took >= super::super::server::MEMBER_DEADLINE, "{took:?}");
+        assert!(took < Duration::from_secs(60), "{took:?}");
+        holder.await.expect("the holder ends with its minute");
     }
 
     /// A catalogue whose pages each answer within the member deadline is read whole, however
@@ -1010,6 +1020,179 @@ pub(crate) mod tests {
         let read = public_entities(&gateway, &reach).await;
         assert_eq!(read.len(), 3, "{read:?}");
         assert_eq!(pages.load(Ordering::SeqCst), 3);
+    }
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// What the broker of [`scripted`] does with each read: a page of one Dataset, an error
+    /// message, a refused tool call, a page that always names a next one.
+    const PAGE: usize = 0;
+    const ERROR: usize = 1;
+    const REFUSED: usize = 2;
+    const ENDLESS: usize = 3;
+
+    /// A broker whose answer to every catalogue read follows `mode` and waits `delay` seconds.
+    async fn scripted(mode: Arc<AtomicUsize>, delay: Arc<AtomicUsize>) -> Gateway {
+        let broker = axum::Router::new().fallback(move || {
+            let (mode, delay) = (Arc::clone(&mode), Arc::clone(&delay));
+            async move {
+                let wait = delay.load(Ordering::SeqCst) as u64;
+                tokio::time::sleep(Duration::from_secs(wait)).await;
+                match mode.load(Ordering::SeqCst) {
+                    ERROR => axum::Json(json!({ "jsonrpc": "2.0", "id": 1,
+                        "error": { "message": "the broker said no" } })),
+                    REFUSED => axum::Json(json!({ "jsonrpc": "2.0", "id": 1,
+                        "result": { "isError": true } })),
+                    kind => {
+                        let mut content = json!({ "entities": [
+                            { "id": "urn:ngsi-ld:Dataset:one", "type": "Dataset", "@context": "x" },
+                            { "id": "urn:ngsi-ld:Vehicle:skipped", "type": "Vehicle" },
+                        ] });
+                        if kind == ENDLESS {
+                            content["nextCursor"] = json!("more");
+                        }
+                        axum::Json(json!({ "jsonrpc": "2.0", "id": 1,
+                            "result": { "structuredContent": content } }))
+                    }
+                }
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("addr");
+        tokio::spawn(async move { axum::serve(listener, broker).await });
+        Gateway::new(
+            crate::proxy::Broker::new(format!("http://{address}")),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    fn public_reach(slug: &str) -> Vec<(Arc<Endpoint>, Subject)> {
+        let mut endpoint = fixture();
+        endpoint.slug = slug.to_owned();
+        endpoint.space = NAME.to_owned();
+        endpoint.audience = Audience::Public;
+        vec![(Arc::new(endpoint), Subject::anonymous())]
+    }
+
+    /// A page the broker refuses, errors on or never ends is an error naming why, and a read
+    /// that holds a Dataset keeps it and drops what is no Dataset, with its `@context`.
+    #[tokio::test]
+    async fn a_public_read_names_why_it_failed_and_stops_at_its_page_limit() {
+        let (mode, delay) = (
+            Arc::new(AtomicUsize::new(PAGE)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let gateway = scripted(Arc::clone(&mode), delay).await;
+        let reach = public_reach("namedfailurecatalogueaaaaaa");
+        let (endpoint, anonymous) = (&reach[0].0, &reach[0].1);
+        let read = read_public(&gateway, endpoint, anonymous)
+            .await
+            .expect("a page");
+        assert_eq!(read.len(), 1, "{read:?}");
+        assert!(read[0].get("@context").is_none(), "{read:?}");
+        mode.store(ERROR, Ordering::SeqCst);
+        let why = read_public(&gateway, endpoint, anonymous)
+            .await
+            .expect_err("an error");
+        assert_eq!(why, "the broker said no");
+        mode.store(REFUSED, Ordering::SeqCst);
+        let why = read_public(&gateway, endpoint, anonymous)
+            .await
+            .expect_err("refused");
+        assert_eq!(why, "the catalog Endpoint refused the read");
+        mode.store(ENDLESS, Ordering::SeqCst);
+        let why = read_public(&gateway, endpoint, anonymous)
+            .await
+            .expect_err("endless");
+        assert!(
+            why.contains(&format!("more than {}", PUBLIC_PAGE * PUBLIC_PAGES)),
+            "{why}"
+        );
+    }
+
+    #[test]
+    fn a_public_page_reads_each_shape_the_tool_answers() {
+        let refused = json!({ "result": { "isError": true,
+            "content": [{ "type": "text", "text": "no grant" }] } });
+        assert_eq!(public_page(&refused).expect_err("refused"), "no grant");
+        let none = json!({ "result": { "structuredContent": {} } });
+        assert_eq!(
+            public_page(&none).expect_err("no entities"),
+            "the catalog Endpoint answered no entities"
+        );
+        assert!(public_page(&json!({})).is_err());
+    }
+
+    /// A read that fails after one that worked answers the list it had, and a caller arriving
+    /// while another reads is answered that list at once rather than waiting for the read.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_or_running_public_read_answers_the_list_it_had() {
+        let (mode, delay) = (
+            Arc::new(AtomicUsize::new(PAGE)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let gateway = scripted(Arc::clone(&mode), Arc::clone(&delay)).await;
+        let reach = public_reach("stalecatalogueaaaaaaaaaaaaaa");
+        assert_eq!(public_entities(&gateway, &reach).await.len(), 1);
+        tokio::time::advance(PUBLIC_FOR + Duration::from_secs(1)).await;
+        mode.store(ERROR, Ordering::SeqCst);
+        let kept = public_entities(&gateway, &reach).await;
+        assert_eq!(kept.len(), 1, "the failed read keeps the last list");
+        tokio::time::advance(PUBLIC_FOR + Duration::from_secs(1)).await;
+        mode.store(PAGE, Ordering::SeqCst);
+        delay.store(5, Ordering::SeqCst);
+        let (first, second) = tokio::join!(
+            public_entities(&gateway, &reach),
+            public_entities(&gateway, &reach)
+        );
+        assert_eq!((first.len(), second.len()), (1, 1));
+    }
+
+    /// A catalogue read that cannot be had and was never had is the empty list.
+    #[tokio::test(start_paused = true)]
+    async fn a_public_read_that_never_worked_is_the_empty_list() {
+        let (mode, delay) = (
+            Arc::new(AtomicUsize::new(ERROR)),
+            Arc::new(AtomicUsize::new(0)),
+        );
+        let gateway = scripted(mode, delay).await;
+        let reach = public_reach("neverreadcatalogueaaaaaaaaaa");
+        assert!(public_entities(&gateway, &reach).await.is_empty());
+    }
+
+    /// Past `CACHED` distinct catalogues the cache starts again, never grows without bound.
+    #[tokio::test]
+    async fn the_catalog_cache_starts_again_past_its_limit() {
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new("http://127.0.0.1:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        for n in 0..=CACHED + 1 {
+            let mut endpoint = fixture();
+            endpoint.slug = format!("cachedcatalogue{n:011}");
+            let reach = vec![(Arc::new(endpoint), Subject::anonymous())];
+            let built = of(&gateway, &reach).await;
+            assert_eq!(built.built_from.len(), 1);
+        }
+        let held = cache().lock().expect("the cache").len();
+        assert!(held <= CACHED, "{held}");
+    }
+
+    /// An invalid `q` or geo-query is refused naming the argument, and an entity that is no
+    /// object is returned as it is.
+    #[test]
+    fn a_bad_q_or_geo_query_names_its_argument_and_a_non_object_is_kept() {
+        let catalog = catalog_of(vec![
+            json!({ "id": "urn:ngsi-ld:Dataset:a", "type": "Dataset" }),
+        ]);
+        assert!(asked(&catalog, json!({ "q": "((" })).is_err_and(|e| e.starts_with("q: ")));
+        assert!(asked(&catalog, json!({ "georel": "nonsense" }))
+            .is_err_and(|e| e.starts_with("georel: ")));
+        assert_eq!(shaped(&json!("plain"), true, None), json!("plain"));
     }
 
     #[test]

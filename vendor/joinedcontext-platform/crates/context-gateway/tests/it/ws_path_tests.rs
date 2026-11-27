@@ -1266,3 +1266,150 @@ async fn a_narrowed_scope_keeps_the_socket_and_names_what_left() {
         .expect("still live");
     assert_eq!(live["body"]["data"][0]["id"], kept);
 }
+
+/// The gateway over the repository's Endpoints after `edit`, on a socket of its own, with the
+/// Endpoints it serves so a test can take places in its hubs directly.
+async fn edited(
+    test: &str,
+    upstream: &str,
+    realm: &common::Realm,
+    edit: impl Fn(&mut context_gateway::resolver::Endpoint),
+) -> (
+    String,
+    Arc<Gateway>,
+    Vec<Arc<context_gateway::resolver::Endpoint>>,
+) {
+    let (mut endpoints, ..) = store::load(&repo(test)).expect("the repository loads");
+    endpoints.iter_mut().for_each(&edit);
+    let held: Vec<_> = endpoints.iter().cloned().map(Arc::new).collect();
+    let gateway = Arc::new(
+        Gateway::new(
+            Broker::new(format!("http://{upstream}")),
+            Box::new(PolicyPdp),
+            "hel.fi",
+        )
+        .serve(endpoints)
+        .authenticate(
+            Arc::new(realm.verifier()),
+            ServiceAccounts::new(),
+            Some(HOST.to_owned()),
+        ),
+    );
+    (serve(router(Arc::clone(&gateway))).await, gateway, held)
+}
+
+/// A place in the hub of `endpoint` for the signed-in `user`, taken without a socket.
+fn place(
+    gateway: &Arc<Gateway>,
+    endpoint: &Arc<context_gateway::resolver::Endpoint>,
+    user: &str,
+) -> Result<context_gateway::fanout::hub::Joined, context_gateway::fanout::socket::Refused> {
+    let subject = context_gateway::auth::subject::Subject {
+        user: Some(user.to_owned()),
+        id: Some(user.to_owned()),
+        ..Default::default()
+    };
+    gateway.hubs.join(
+        gateway,
+        Arc::clone(endpoint),
+        (subject, None),
+        user.to_owned(),
+    )
+}
+
+/// EP-107: a space holding its cap of connections answers `503` before an upgrade, and a space
+/// with every fan-out hub in use answers `503` to a caller that would need a new one.
+#[tokio::test]
+async fn a_full_space_or_a_full_set_of_hubs_answers_503_before_an_upgrade() {
+    let realm = common::Realm::new();
+    let (upstream, _) = broker().await;
+    let (at, gateway, endpoints) = edited("full", &upstream, &realm, |_| {}).await;
+    let public = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == PUBLIC)
+        .expect("the public endpoint");
+    let mut hubs = Vec::new();
+    for n in 0..context_gateway::fanout::socket::HUBS_PER_SPACE {
+        hubs.push(place(&gateway, public, &format!("user-{n}")).expect("a place in a new hub"));
+    }
+    let refused = reqwest::Client::new()
+        .get(format!("http://{at}/api/endpoint/{PUBLIC}/ws"))
+        .header("connection", "upgrade")
+        .header("upgrade", "websocket")
+        .header("sec-websocket-version", "13")
+        .header(
+            "sec-websocket-key",
+            tokio_tungstenite::tungstenite::handshake::client::generate_key(),
+        )
+        .send()
+        .await
+        .expect("the gateway answers");
+    assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let problem: serde_json::Value = refused.json().await.expect("a problem");
+    assert_eq!(
+        problem["type"]
+            .as_str()
+            .map(|t| t.ends_with("fan-out-full")),
+        Some(true),
+        "{problem}"
+    );
+    drop(hubs);
+
+    let mut crowd = Vec::new();
+    for n in 0..context_gateway::fanout::socket::per_space() {
+        crowd.push(place(&gateway, public, "the-crowd").expect("a place under the cap"));
+        let _ = n;
+    }
+    assert_eq!(
+        open(&at, PUBLIC, "", &[]).await.err(),
+        Some(StatusCode::SERVICE_UNAVAILABLE)
+    );
+}
+
+/// EP-107: a caller already watching its cap of Endpoints is `429` on the next one, however many
+/// hubs the space has left.
+#[tokio::test]
+async fn a_caller_watching_its_cap_of_endpoints_is_429_on_one_more() {
+    let realm = common::Realm::new();
+    let (upstream, _) = broker().await;
+    let (at, gateway, endpoints) = edited("caller", &upstream, &realm, |_| {}).await;
+    let public = endpoints
+        .iter()
+        .find(|endpoint| endpoint.slug == PUBLIC)
+        .expect("the public endpoint");
+    let mut held = Vec::new();
+    for n in 0..context_gateway::fanout::socket::HUBS_PER_CALLER {
+        let mut other = (**public).clone();
+        other.slug = format!("{PUBLIC}{n}");
+        held.push(place(&gateway, &Arc::new(other), "someone-of-hel-mobility").expect("a hub"));
+    }
+    let token = person(&realm, "hel-mobility", PUBLIC);
+    assert_eq!(
+        open(
+            &at,
+            PUBLIC,
+            "",
+            &[("authorization", format!("Bearer {token}"))]
+        )
+        .await
+        .err(),
+        Some(StatusCode::TOO_MANY_REQUESTS)
+    );
+}
+
+/// An Endpoint that has no tenant cannot speak to the broker as anyone: its WebSocket is `500`,
+/// not an upgrade left without an upstream.
+#[tokio::test]
+async fn an_endpoint_without_a_tenant_refuses_the_upgrade() {
+    let realm = common::Realm::new();
+    let (upstream, stub) = broker().await;
+    let (at, ..) = edited("untenanted", &upstream, &realm, |endpoint| {
+        endpoint.tenant = None;
+    })
+    .await;
+    assert_eq!(
+        open(&at, PUBLIC, "", &[]).await.err(),
+        Some(StatusCode::INTERNAL_SERVER_ERROR)
+    );
+    assert!(stub.upgrades().is_empty(), "the broker was never asked");
+}

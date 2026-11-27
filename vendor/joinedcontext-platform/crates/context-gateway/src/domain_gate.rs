@@ -210,6 +210,7 @@ impl DomainGate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::future::IntoFuture;
 
     fn item(state: &str) -> Item {
         Item {
@@ -264,9 +265,7 @@ mod tests {
             .await
             .expect("a free port");
         let address = listener.local_addr().expect("the bound address");
-        tokio::spawn(async move {
-            let _ = axum::serve(listener, app).await;
-        });
+        tokio::spawn(axum::serve(listener, app).into_future());
         (
             format!("http://{address}/internal/domain-verifications"),
             asked,
@@ -302,13 +301,15 @@ mod tests {
             }
             if calls().len() == 2 {
                 // The 304 made the stale list current again.
+                let mut confirmed = false;
                 for _ in 0..50 {
-                    if gate.refusal("hel.fi").is_none() {
+                    tokio::task::yield_now().await;
+                    confirmed = gate.refusal("hel.fi").is_none();
+                    if confirmed {
                         break;
                     }
-                    tokio::task::yield_now().await;
                 }
-                assert!(gate.refusal("hel.fi").is_none(), "a 304 confirms the list");
+                assert!(confirmed, "a 304 confirms the list");
             }
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
@@ -323,6 +324,105 @@ mod tests {
             gate.refusal("hel.fi").is_some(),
             "the last full list says failed and is taken"
         );
+    }
+
+    /// A realm's token endpoint granting `access_token` to every call, or refusing with 401
+    /// when none is given, counting what it was asked.
+    async fn realm(
+        access_token: Option<&'static str>,
+    ) -> (String, Arc<std::sync::atomic::AtomicUsize>) {
+        let asked = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = asked.clone();
+        let app = axum::Router::new().route(
+            "/token",
+            axum::routing::post(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                async move {
+                    match access_token {
+                        Some(token) => (
+                            axum::http::StatusCode::OK,
+                            axum::Json(
+                                serde_json::json!({ "access_token": token, "expires_in": 300 }),
+                            ),
+                        ),
+                        None => (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            axum::Json(serde_json::json!({ "error": "invalid_client" })),
+                        ),
+                    }
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let address = listener.local_addr().expect("the bound address");
+        tokio::spawn(axum::serve(listener, app).into_future());
+        (format!("http://{address}/token"), asked)
+    }
+
+    fn token_of(url: String) -> Arc<WorkloadToken> {
+        Arc::new(WorkloadToken::new(
+            url,
+            "context-gateway".to_owned(),
+            "not-a-real-secret".to_owned(),
+        ))
+    }
+
+    /// PF-46: the follower asks the Portal as the gateway's own client, and a round without a
+    /// token asks nobody rather than asking anonymously.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_follower_asks_with_its_token_and_skips_a_round_it_has_none_for() {
+        let verified = r#"{"items":[{"organization":"hel","domain":"hel.fi","state":"verified"}]}"#;
+        let gate = Arc::new(DomainGate::new(Mode::Enforce));
+        let (url, asked) = portal(vec![(200, None, verified)], gate.clone()).await;
+        let (token_url, grants) = realm(Some("a-token")).await;
+        tokio::spawn(gate.clone().follow(url, Some(token_of(token_url))));
+        for _ in 0..600 {
+            if gate.refusal("hel.fi").is_none() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        assert!(gate.refusal("hel.fi").is_none(), "the list was taken");
+        assert_eq!(grants.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(!asked.lock().map(|log| log.is_empty()).unwrap_or(true));
+
+        let gate = Arc::new(DomainGate::new(Mode::Enforce));
+        let (url, asked) = portal(vec![(200, None, verified)], gate.clone()).await;
+        let (token_url, refusals) = realm(None).await;
+        tokio::spawn(gate.clone().follow(url, Some(token_of(token_url))));
+        for _ in 0..600 {
+            if refusals.load(std::sync::atomic::Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        assert!(refusals.load(std::sync::atomic::Ordering::SeqCst) >= 2);
+        assert!(asked.lock().map(|log| log.is_empty()).unwrap_or(false));
+        assert!(
+            gate.refusal("hel.fi").is_some(),
+            "no token, no list, refused"
+        );
+    }
+
+    /// A Portal nothing listens on is not an answer: the follower keeps asking and the gate keeps
+    /// refusing.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_portal_nobody_answers_for_leaves_the_gate_refusing_and_the_follower_running() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let closed = listener.local_addr().expect("the bound address");
+        drop(listener);
+        let gate = Arc::new(DomainGate::new(Mode::Enforce));
+        let follower = tokio::spawn(gate.clone().follow(
+            format!("http://{closed}/internal/domain-verifications"),
+            None,
+        ));
+        tokio::time::sleep(Duration::from_secs(45)).await;
+        assert!(!follower.is_finished());
+        assert!(gate.refusal("hel.fi").is_some());
     }
 
     /// T-7767: a `304` before any list leaves the gate without one, so it still refuses.

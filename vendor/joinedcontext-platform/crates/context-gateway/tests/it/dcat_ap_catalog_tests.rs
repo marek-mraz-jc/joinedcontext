@@ -436,8 +436,7 @@ fn the_access_policy_carries_the_licence_duties_on_every_permission() {
             ],
             "prohibition": []
         });
-        let document =
-            odrl::published(engine, &endpoint, BASE, |_| "digest".to_owned()).expect("a Set");
+        let document = odrl::published(engine, &endpoint, BASE, |_| "digest".to_owned());
         let permissions = document["permission"].as_array().expect("permissions");
         assert!(!permissions.is_empty());
         for permission in permissions {
@@ -479,11 +478,10 @@ fn an_open_data_access_policy_prohibits_every_write() {
         ]
     });
     let mut endpoint = endpoint(Audience::Public, None);
-    let internal =
-        odrl::published(engine.clone(), &endpoint, BASE, |_| "d".to_owned()).expect("a Set");
+    let internal = odrl::published(engine.clone(), &endpoint, BASE, |_| "d".to_owned());
     assert_eq!(internal.get("prohibition"), None, "{internal:#}");
     endpoint.open_data = true;
-    let open = odrl::published(engine, &endpoint, BASE, |_| "d".to_owned()).expect("a Set");
+    let open = odrl::published(engine, &endpoint, BASE, |_| "d".to_owned());
     assert_eq!(open["conflict"], "prohibit");
     let prohibited: Vec<&str> = open["prohibition"][0]["action"]
         .as_array()

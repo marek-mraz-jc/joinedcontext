@@ -673,6 +673,138 @@ async fn every_refusal_is_the_odata_error_object() {
     }
 }
 
+/// A URL nothing listens on: a port bound and given back.
+async fn closed() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    format!("http://{}", listener.local_addr().expect("an address"))
+}
+
+/// A broker whose `$metadata` answers `status` with `metadata`, and which takes every other
+/// request with 201.
+async fn broker_with_metadata(status: u16, metadata: &'static str) -> String {
+    use axum::response::IntoResponse;
+    let app = Router::new().fallback(move |request: Request<Body>| async move {
+        if request.uri().path().ends_with("/$metadata") {
+            let status = StatusCode::from_u16(status).expect("a status");
+            return (
+                status,
+                [(header::CONTENT_TYPE, "application/json")],
+                metadata,
+            )
+                .into_response();
+        }
+        StatusCode::CREATED.into_response()
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    url
+}
+
+/// A write to a slug no Endpoint holds is the 404 of a read, in the OData error object, and a
+/// broker that is down is a 502 whether the write was asked for its key first or not.
+#[tokio::test]
+async fn an_unknown_slug_and_a_broker_that_is_down_refuse_an_odata_write() {
+    let realm = common::Realm::new();
+    let (upstream, hops) = broker().await;
+    let up = app(&repo("unknown-slug"), &upstream, &realm);
+    let (status, _, body) = send(
+        &up,
+        Method::POST,
+        "zzzzzzzzzzzzzzzzzzzzzzzzzz",
+        "/Feedback",
+        Some(json!({"text": "hi"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(body["error"]["code"].is_string(), "{body}");
+    assert!(writes(&hops).is_empty());
+
+    let down = app(&repo("down"), &closed().await, &realm);
+    for slug in [OPEN, FORM] {
+        let (status, _, body) = send(
+            &down,
+            Method::POST,
+            slug,
+            "/Feedback",
+            Some(json!({"text": "hi"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{slug}: {body}");
+        assert!(body["error"]["message"].is_string(), "{slug}: {body}");
+    }
+}
+
+/// A form's key is read from the view's `$metadata`; one that is refused, is no JSON or names a
+/// key that is neither a name nor an alias leaves the create unwritten as a 502, never a create
+/// under a key the caller chose.
+#[tokio::test]
+async fn a_view_whose_metadata_names_no_key_refuses_a_minting_create() {
+    let realm = common::Realm::new();
+    for (status, metadata, why) in [
+        (500, "{}", "metadata refused"),
+        (200, "not json", "metadata unreadable"),
+    ] {
+        let upstream = broker_with_metadata(status, metadata).await;
+        let minting = app(&repo("no-key"), &upstream, &realm);
+        let (status, _, body) = send(
+            &minting,
+            Method::POST,
+            FORM,
+            "/Feedback",
+            Some(json!({"text": "hi"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{why}: {body}");
+        assert!(!body.to_string().contains("$Key"), "{why}: {body}");
+    }
+}
+
+/// A body past the Organization's limit is refused with the limit named, before the broker is
+/// asked.
+#[tokio::test]
+async fn an_odata_body_past_the_organizations_limit_is_refused() {
+    let realm = common::Realm::new();
+    let (upstream, hops) = broker().await;
+    let (endpoints, ..) = store::load(&repo("limit")).expect("the repository loads");
+    let gateway = Gateway::new(Broker::new(&upstream), Box::new(PolicyPdp), "hel.fi")
+        .serve(endpoints)
+        .authenticate(
+            Arc::new(realm.verifier()),
+            ServiceAccounts::new(),
+            Some(HOST.to_owned()),
+        );
+    gateway.replace_limits(store::Limits {
+        max_request_body: 1024,
+        ..store::Limits::default()
+    });
+    let app = router(Arc::new(gateway));
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/endpoint/{OPEN}/odata/v4/Feedback"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::AUTHORIZATION, format!("Bearer {}", editor(&realm)))
+        .body(Body::from(json!({"text": "x".repeat(4096)}).to_string()))
+        .expect("a request");
+    let response = app.oneshot(request).await.expect("answers");
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+        .await
+        .expect("a body");
+    assert!(
+        String::from_utf8_lossy(&bytes).contains("larger than"),
+        "{}",
+        String::from_utf8_lossy(&bytes)
+    );
+    assert!(writes(&hops).is_empty());
+}
+
 /// S-49 (T-5955): a read-only connector's token forges OData writes on an Endpoint that takes
 /// anonymous ones; each is 403 and none reaches the broker.
 #[tokio::test]

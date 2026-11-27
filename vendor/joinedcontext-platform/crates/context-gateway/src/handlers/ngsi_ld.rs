@@ -191,10 +191,7 @@ pub(crate) async fn as_ngsi_ld_error(response: Response<Body>) -> Response<Body>
         axum::http::header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    match serde_json::to_vec(&problem) {
-        Ok(rendered) => proxy::with_body(parts, rendered),
-        Err(_) => Response::from_parts(parts, Body::from(bytes)),
-    }
+    proxy::with_body(parts, problem.to_string().into_bytes())
 }
 
 /// GW31 and GW33: a query the specification refuses is refused as the caller sent it (a type or
@@ -864,11 +861,14 @@ pub(crate) async fn with_platform_slug(answer: Response<Body>) -> Response<Body>
         members
             .entry("code")
             .or_insert_with(|| Value::from("forbidden"));
-        if let Some(forbidden) = jc_core::error::problem_type("forbidden") {
-            members
-                .entry("hint")
-                .or_insert_with(|| Value::from(forbidden.hint));
-        }
+        // `forbidden` is one of the platform's own problem types, so the hint is always known.
+        jc_core::error::problem_type("forbidden")
+            .into_iter()
+            .for_each(|forbidden| {
+                members
+                    .entry("hint")
+                    .or_insert_with(|| Value::from(forbidden.hint));
+            });
     }
     proxy::with_body(parts, problem.to_string().into_bytes())
 }
@@ -1533,10 +1533,11 @@ async fn relationships_held(
         rules,
     };
     let refused = if operation == Operation::DeleteEntity {
-        match operations::addressed_entity(path).map(query::decode_path) {
-            Some(id) => held.entity(&id).await,
-            None => Ok(Vec::new()),
-        }
+        // A `DeleteEntity` is `entities/{id}` by its classification, so an id is always named.
+        let id = operations::addressed_entity(path)
+            .map(query::decode_path)
+            .unwrap_or_default();
+        held.entity(&id).await
     } else {
         held.batch(sent, divided).await
     };
@@ -1728,6 +1729,39 @@ mod tests {
             .lines()
             .find_map(|line| line.strip_prefix(series)?.trim().parse().ok())
             .unwrap_or_default()
+    }
+
+    /// An Endpoint whose project names no Organization has no tenant to pin: the hop is refused
+    /// with 503 and the operator's remedy, never sent to the broker without a tenant.
+    #[tokio::test]
+    async fn a_hop_of_an_endpoint_without_a_tenant_is_503() {
+        let gateway = Gateway::new(
+            proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.tenant = None;
+        let mut request = Request::new(Body::empty());
+        let refused = view_request(
+            &gateway,
+            &endpoint,
+            &Subject::default(),
+            "/entities",
+            Operation::QueryEntity,
+            &mut request,
+        )
+        .await
+        .expect_err("no tenant, no hop");
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = axum::body::to_bytes(refused.into_body(), 1 << 16)
+            .await
+            .expect("a body");
+        assert!(
+            String::from_utf8_lossy(&body).contains("organizationRef"),
+            "{}",
+            String::from_utf8_lossy(&body)
+        );
     }
 
     /// DM-128: a streamed file's personal_read line names the query's parameters, never a

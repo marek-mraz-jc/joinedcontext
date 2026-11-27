@@ -137,10 +137,9 @@ pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
                 project: project.to_owned(),
             });
         };
-        let source_dir = repo_dir.join(&loaded.path).parent().map(Path::to_path_buf);
-        let Some(source_dir) = source_dir else {
-            continue;
-        };
+        // A manifest's own path always has a parent, the repository at the least.
+        let manifest_path = repo_dir.join(&loaded.path);
+        let source_dir = manifest_path.parent().unwrap_or(repo_dir);
 
         // The repository is loaded, not validated: each segment of the key is checked here, or
         // a space named `../..` writes outside `--out-dir` (T-5702).

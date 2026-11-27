@@ -183,6 +183,21 @@ pub fn pages_of(
     languages: &[String],
     ckan: &BTreeMap<String, String>,
 ) -> Vec<EndpointPage> {
+    pages_with_specs(repository, project, spaces, public_only, languages, ckan)
+        .into_iter()
+        .map(|(page, _)| page)
+        .collect()
+}
+
+/// [`pages_of`], each page with the spec of the Endpoint it was written from.
+pub fn pages_with_specs(
+    repository: &Repository,
+    project: &str,
+    spaces: &[String],
+    public_only: bool,
+    languages: &[String],
+    ckan: &BTreeMap<String, String>,
+) -> Vec<(EndpointPage, EndpointSpec)> {
     // Every published or draft model owned by a space of the project, its types read from the
     // generated JSON Schema beside it. A mirrored copy of a peer's model is not this project's.
     let mut types: BTreeMap<String, Vec<EntityType>> = BTreeMap::new();
@@ -267,7 +282,7 @@ pub fn pages_of(
             .unwrap_or_default();
         let ckan_dataset = ckan_dataset(&spec, &id.name, |instance| ckan.get(instance).cloned());
         let rest = &resource.manifest.metadata.rest;
-        pages.push(EndpointPage {
+        let page = EndpointPage {
             name: id.name.clone(),
             title: language_text(rest.get("title"), languages),
             description: language_text(rest.get("description"), languages),
@@ -299,7 +314,8 @@ pub fn pages_of(
                 })
                 .unwrap_or_default(),
             datasets: Vec::new(),
-        });
+        };
+        pages.push((page, spec));
     }
     pages
 }
@@ -787,6 +803,11 @@ mod tests {
         assert_eq!(pm10.unit.as_deref(), Some("ug/m3"));
         assert_eq!(air.attributes[1].kind, "Relationship");
         assert!(types_of(&json!({})).is_empty());
+        let bare = types_of(&json!({"$defs": {"Bare": {"properties": {"note": {}}}}}));
+        assert_eq!(
+            bare[0].attributes[0].kind, "Property",
+            "an attribute that names no kind is a Property"
+        );
     }
 
     fn page(audience: &str) -> EndpointPage {
@@ -943,6 +964,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_gateway_that_cannot_be_reached_counts_nothing_for_the_type() {
+        // A port nothing listens on: the read fails, the type is left out, the rest go on.
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("a port");
+        let gateway =
+            Url::parse(&format!("http://{}/", closed.local_addr().expect("addr"))).expect("url");
+        drop(closed);
+        let counted = counts(&reqwest::Client::new(), &gateway, &page("public")).await;
+        assert_eq!(counted, Some(BTreeMap::new()));
+    }
+
+    #[tokio::test]
     async fn a_poisoned_hold_still_answers_the_counts() {
         let held = Held::default();
         let poisoned = Arc::clone(&held.by_slug);
@@ -1006,6 +1038,11 @@ mod tests {
             None
         );
         assert_eq!(beside(root, Path::new("a/model.yaml"), "/etc/passwd"), None);
+        assert_eq!(
+            beside(root, Path::new("a/model.yaml"), "../x.json"),
+            Some(PathBuf::from("/repo/x.json")),
+            "a step up that stays inside is fine"
+        );
     }
 
     /// F-R2PLT1-008: a schema path that is a symlink out of the repository reads as nothing.

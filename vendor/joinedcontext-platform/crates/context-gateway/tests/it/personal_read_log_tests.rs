@@ -267,3 +267,63 @@ async fn a_personal_read_through_odata_and_ogc_names_its_entities() {
     assert!(!log.contains(RIDER), "a value reached the log: {log}");
     assert!(!log.contains("jana"), "a username reached the log: {log}");
 }
+
+/// An answer that holds personal data and is too large to name its Entities in a log line is
+/// refused with 413 and the reason, never passed on unlogged (ADR-N-054 2.6).
+#[tokio::test]
+async fn a_personal_answer_too_large_to_log_is_refused_not_passed_on() {
+    let captured = common::Log::capture();
+    let large = json!([{
+        "id": "urn:ngsi-ld:BikeTrip:big", "type": "BikeTrip",
+        "rider": {"type": "Property", "value": "r".repeat(9 * 1024 * 1024)}
+    }]);
+    let broker = common::BrokerStub::start(vec![large]).await;
+    let realm = common::Realm::new();
+    let app = router(Arc::new(
+        Gateway::new(
+            Broker::new(&broker.url),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .with_provenance(context_gateway::store::Provenance::without_organizations())
+        .serve(vec![endpoint(PERSONAL, &[])])
+        .authenticate(
+            Arc::new(realm.verifier()),
+            ServiceAccounts::new(),
+            Some("https://city.example".to_owned()),
+        ),
+    ));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "0f5a",
+        "aud": "context-gateway",
+        "preferred_username": "jana",
+        "groups": ["/trips"],
+        "realm_access": { "roles": ["steward"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/endpoint/{PERSONAL}/ngsi-ld/v1/entities?type=BikeTrip"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("a body");
+    let text = String::from_utf8_lossy(&body);
+    assert!(text.contains("too large to log who read it"), "{text}");
+    assert!(!text.contains("rrrrrrrrrr"), "no value in the refusal");
+    assert!(
+        !captured.text().contains("rrrrrrrrrr"),
+        "no value in the log"
+    );
+}

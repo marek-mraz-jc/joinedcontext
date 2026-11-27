@@ -354,6 +354,12 @@ fn a_manifest_the_catalogue_cannot_read_is_left_out_of_its_pages() {
         &manifest("DataModel", "bare", "  contextSpaceRef: ovzdusie\n  linkml: ./bare.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n  classes: [Bare]\n"));
     write(root, "projects/bb/spaces/ovzdusie/datamodels/peer.yaml",
         &manifest("DataModel", "peer", "  contextSpaceRef: ovzdusie\n  linkml: ./peer.linkml.yaml\n  version: 1.0.0\n  lifecycle: mirrored\n  classes: [AirQualityObserved]\n  artifacts:\n    jsonSchema: ./air.v1.schema.json\n"));
+    // A schema path that climbs out of the repository, and one that names no file: each model
+    // adds no type and the pages still build.
+    write(root, "projects/bb/spaces/ovzdusie/datamodels/escaping.yaml",
+        &manifest("DataModel", "escaping", "  contextSpaceRef: ovzdusie\n  linkml: ./escaping.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n  classes: [AirQualityObserved]\n  artifacts:\n    jsonSchema: ../../../../../../../../outside.json\n"));
+    write(root, "projects/bb/spaces/ovzdusie/datamodels/missing.yaml",
+        &manifest("DataModel", "missing", "  contextSpaceRef: ovzdusie\n  linkml: ./missing.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n  classes: [AirQualityObserved]\n  artifacts:\n    jsonSchema: ./not-there.json\n"));
     write(
         root,
         "projects/bb/spaces/ovzdusie/projections/broken.yaml",

@@ -145,14 +145,20 @@ fn inflated_within(bytes: &[u8]) -> Result<(), String> {
             &mut std::io::sink(),
         )
         .map_err(|_| BROKEN.to_owned())?;
-        left = left.checked_sub(read).ok_or_else(|| {
-            format!(
-                "the archive unpacks past {} MiB",
-                MAX_UNPACKED / 1024 / 1024
-            )
-        })?;
+        left = spend(left, read)?;
     }
     Ok(())
+}
+
+/// What is left of the unpacked-size allowance after an entry that really unpacked to `read`
+/// bytes, or the refusal when it unpacked past it.
+fn spend(left: u64, read: u64) -> Result<u64, String> {
+    left.checked_sub(read).ok_or_else(|| {
+        format!(
+            "the archive unpacks past {} MiB",
+            MAX_UNPACKED / 1024 / 1024
+        )
+    })
 }
 
 /// One uploaded file as the administration lists it.
@@ -472,6 +478,48 @@ mod tests {
         let many: Vec<(String, u32)> = (0..=MAX_ENTRIES).map(|n| (format!("f{n}"), 1)).collect();
         let many: Vec<(&str, u32)> = many.iter().map(|(n, s)| (n.as_str(), *s)).collect();
         assert!(sniff("x.xlsx", &zip(&many, false)).is_err_and(|e| e.contains("entries")));
+    }
+
+    /// The allowance is spent by what an entry really unpacks to: the declared sizes are the
+    /// file's word, and the zip reader stops at them, so the count is tried on its own.
+    #[test]
+    fn the_unpacked_allowance_is_spent_by_what_an_entry_really_unpacks_to() {
+        assert_eq!(spend(10, 4), Ok(6));
+        assert_eq!(spend(10, 10), Ok(0));
+        assert_eq!(
+            spend(10, 11),
+            Err("the archive unpacks past 200 MiB".to_owned())
+        );
+    }
+
+    /// An archive whose directory reads fine but that cannot be opened as a ZIP, whose entry
+    /// has no local header, or whose compressed bytes are not a deflate stream is refused as no
+    /// readable Office file, before the extractor sees it.
+    #[test]
+    fn an_archive_that_breaks_when_it_is_opened_or_read_is_not_a_readable_office_file() {
+        let broken = Err("the archive is not a readable DOCX or XLSX".to_owned());
+        // The directory is whole, the second entry's local header is not there (the first one
+        // is the magic `sniff` takes the file for an archive by).
+        let mut headless = zip(&[("word/document.xml", 4), ("docProps/app.xml", 4)], false);
+        let entry = headless
+            .windows(4)
+            .rposition(|window| window == b"PK\x03\x04")
+            .expect("a local header");
+        assert_ne!(entry, 0, "the second entry's header");
+        headless[entry..entry + 4].copy_from_slice(b"XXXX");
+        assert_eq!(sniff("x.docx", &headless), broken);
+        // A multi-disk archive's directory reads, and a ZIP reader does not open it.
+        let mut split = zip(&[("word/document.xml", 4)], false);
+        let end = split.len() - 22;
+        split[end + 4..end + 6].copy_from_slice(&1_u16.to_le_bytes());
+        assert_eq!(sniff("x.docx", &split), broken);
+        // The compressed bytes are not a deflate stream.
+        let mut garbled = office_zip(&["word/document.xml"]);
+        let data = 30 + "word/document.xml".len();
+        for byte in &mut garbled[data..data + 4] {
+            *byte = 0xFF;
+        }
+        assert_eq!(sniff("x.docx", &garbled), broken);
     }
 
     #[test]

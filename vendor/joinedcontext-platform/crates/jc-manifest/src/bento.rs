@@ -453,10 +453,13 @@ fn archive_processors(
         1,
     );
     let mut member = http(spec, context);
-    let mut headers = match member.remove(key("headers")) {
-        Some(Value::Mapping(headers)) => headers,
-        _ => Mapping::new(),
-    };
+    // `http` writes the `Range` of an archive's tail, so an archive's request has headers.
+    let mut headers = member
+        .remove(key("headers"))
+        .as_ref()
+        .and_then(Value::as_mapping)
+        .cloned()
+        .unwrap_or_default();
     headers.insert(key("Range"), text("${! @range }"));
     member.insert(key("headers"), Value::Mapping(headers));
     let one = |name: &str, body: Value| {
@@ -592,8 +595,8 @@ pub fn render(
 /// PascalCase name, `from` and each `{field}` a dotted path of identifiers, a template's text RFC
 /// 8141 characters without `$` or a quote, so nothing written into a manifest becomes code.
 pub fn id_processor(mint: &IdMint, entity_type: &str) -> Result<Value, RenderError> {
-    mint.validate(entity_type)
-        .map_err(|e| RenderError::Mint(e.to_string()))?;
+    let refused = |e: jc_core::Error| RenderError::Mint(e.to_string());
+    mint.validate(entity_type).map_err(refused)?;
     let field = |path: &str| format!("this.{path}.string()");
     let id = match mint.mint {
         Mint::Prefixed => format!(
@@ -608,7 +611,7 @@ pub fn id_processor(mint: &IdMint, entity_type: &str) -> Result<Value, RenderErr
         }
         Mint::Template => mint
             .template_parts()
-            .map_err(|e| RenderError::Mint(e.to_string()))?
+            .map_err(refused)?
             .iter()
             .map(|part| match part {
                 TemplatePart::Text(text) => format!("\"{text}\""),

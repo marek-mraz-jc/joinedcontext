@@ -700,7 +700,7 @@ impl Hub {
         }
         let (endpoint, subject) = match self.route_call(&id, name, &params, &mut arguments).await {
             Ok(routed) => routed,
-            Err(answer) => return *answer,
+            Err(answer) => return Answer::Json(*answer),
         };
         if let Err(decision) = self.spend(endpoint, subject) {
             return Answer::Refused(rate_limit::too_many(
@@ -814,16 +814,16 @@ impl Hub {
         name: &str,
         params: &Value,
         arguments: &mut Map<String, Value>,
-    ) -> Result<(&Arc<Endpoint>, &Subject), Box<Answer>> {
+    ) -> Result<(&Arc<Endpoint>, &Subject), Box<Value>> {
         let id = id.clone();
         // The one routing argument, one string, never a list (ADR-N-025 2.5, 2.6).
         let slug = match arguments.remove("endpoint") {
             Some(Value::String(slug)) => slug,
-            Some(_) => return Err(Box::new(Answer::Json(error(
+            Some(_) => return Err(Box::new(error(
                 id,
                 -32602,
                 "`endpoint` names one Endpoint by its slug: a single string, never a list (EP-87)",
-            )))),
+            ))),
             // A named server's read visits every member it may (ADR-N-043 §2.4).
             None if self.server.is_some() && server::FAN_OUT.contains(&name) => {
                 let answer = self.fan_out(id, name, params, std::mem::take(arguments));
@@ -833,13 +833,13 @@ impl Hub {
             None => catalog::NAME.to_owned(),
         };
         if let Some(refusal) = misrouted(&id, arguments) {
-            return Err(Box::new(Answer::Json(refusal)));
+            return Err(Box::new(refusal));
         }
         // The caller's own catalogue, built from `reach` alone (T-4503).
         if catalog::names_catalog(&slug) {
-            return Err(Box::new(Answer::Json(
+            return Err(Box::new(
                 catalog::call(&self.gateway, &self.reach, id, name, arguments).await,
-            )));
+            ));
         }
         let (endpoint, subject) = self.resolved(&id, &slug)?;
         match tools::hub_tool(&self.gateway, endpoint, subject, &self.reach, name) {
@@ -848,13 +848,10 @@ impl Hub {
             HubTool::Unknown | HubTool::Ungranted(_) if name == "list_types" => {
                 let visible = schema::visible(subject, endpoint, crate::pdp::now());
                 let types = schema::visible_types(endpoint, &visible);
-                Err(Box::new(Answer::Json(result(
-                    id,
-                    answered(&json!(types), "entityTypes"),
-                ))))
+                Err(Box::new(result(id, answered(&json!(types), "entityTypes"))))
             }
-            HubTool::Unknown => Err(Box::new(Answer::Json(error(id, -32602, "unknown tool")))),
-            HubTool::Ungranted(refusal) => Err(Box::new(Answer::Json(result(id, refusal)))),
+            HubTool::Unknown => Err(Box::new(error(id, -32602, "unknown tool"))),
+            HubTool::Ungranted(refusal) => Err(Box::new(result(id, refusal))),
             HubTool::Granted => Ok((endpoint, subject)),
         }
     }
@@ -862,28 +859,28 @@ impl Hub {
     /// The Endpoint a slug names in the caller's list. An Endpoint outside the caller's list and
     /// one that does not exist are the same answer, byte for byte (SP-20): both are searched for
     /// in the caller's list only.
-    fn resolved(&self, id: &Value, slug: &str) -> Result<(&Arc<Endpoint>, &Subject), Box<Answer>> {
+    fn resolved(&self, id: &Value, slug: &str) -> Result<(&Arc<Endpoint>, &Subject), Box<Value>> {
         match resolve(&self.reach, slug) {
             Ok(found) => Ok(found),
             // A slug outside the list is answered the same whatever it is, with no suggestion
             // that would vary with it (SP-20): an internal one and one that does not exist
             // alike, with a token or without. A tool error, never `401`: a client reads a
             // `401` on a call as its session signed out (T-6031).
-            Err(_) if EndpointSlug::new(slug).is_ok() => Err(Box::new(Answer::Json(result(
+            Err(_) if EndpointSlug::new(slug).is_ok() => Err(Box::new(result(
                 id.clone(),
                 refused(OUTSIDE_REACH, &Value::Null),
-            )))),
+            ))),
             Err(candidates) => {
                 let closest = if candidates.is_empty() {
                     "none".to_owned()
                 } else {
                     candidates.join(", ")
                 };
-                Err(Box::new(Answer::Json(error(
+                Err(Box::new(error(
                     id.clone(),
                     -32602,
                     &format!("no Endpoint of yours is named `{slug}`; closest: {closest}"),
-                ))))
+                )))
             }
         }
     }
@@ -1061,9 +1058,10 @@ impl Hub {
         }
         let mut entry = described(&self.gateway, endpoint, subject, false);
         entry["broker"] = json!(self.gateway.broker.broker_of_view(&endpoint.slug));
-        if let Some(members) = entry.as_object_mut() {
+        // `described` answers an object.
+        entry.as_object_mut().into_iter().for_each(|members| {
             members.remove("attributes");
-        }
+        });
         let card = describe::card(&self.gateway, endpoint, subject).await;
         let mut answer = answered(&entry, "endpoint");
         // The card first, the record after it (T-4759 item 3); a card the broker could not
@@ -1157,15 +1155,17 @@ const CARDS_TOKENS: usize = 2_000;
 fn endpoint_rows(rows: &[Value], page: &Value) -> Value {
     let mut answer = answered(&json!(rows), "endpoints");
     answer["content"][0]["text"] = json!(lines(rows, page));
-    if let Some(structured) = answer
+    // `answered` carries an object as its structured content.
+    answer
         .get_mut("structuredContent")
         .and_then(Value::as_object_mut)
-    {
-        structured.insert("total".to_owned(), page["total"].clone());
-        if let Some(next) = page.get("nextCursor") {
-            structured.insert("nextCursor".to_owned(), next.clone());
-        }
-    }
+        .into_iter()
+        .for_each(|structured| {
+            structured.insert("total".to_owned(), page["total"].clone());
+            if let Some(next) = page.get("nextCursor") {
+                structured.insert("nextCursor".to_owned(), next.clone());
+            }
+        });
     answer
 }
 
@@ -1559,13 +1559,14 @@ fn challenged(gateway: &Gateway, mut response: Response<Body>) -> Response<Body>
         "{}{HUB_PATH}/.well-known/oauth-protected-resource",
         gateway.base_url()
     );
-    if let Ok(challenge) =
-        HeaderValue::from_str(&format!("Bearer resource_metadata=\"{metadata}\""))
-    {
-        response
-            .headers_mut()
-            .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
-    }
+    // The base URL is a configured URL, so the value always forms.
+    HeaderValue::from_str(&format!("Bearer resource_metadata=\"{metadata}\""))
+        .into_iter()
+        .for_each(|challenge| {
+            response
+                .headers_mut()
+                .insert(axum::http::header::WWW_AUTHENTICATE, challenge);
+        });
     response
 }
 
@@ -1856,11 +1857,9 @@ mod tests {
             .await
             .expect("bind");
         let url = format!("http://{}", listener.local_addr().expect("address"));
-        // Connections wait in the backlog, never accepted, never answered.
-        tokio::spawn(async move {
-            let _listening = listener;
-            std::future::pending::<()>().await
-        });
+        // Connections wait in the backlog, never accepted, never answered: the listener lives
+        // until the test ends.
+        let _listening = listener;
         let gateway = Gateway::new(
             crate::proxy::Broker::new(url),
             Box::new(crate::pdp::PolicyPdp),
@@ -2008,11 +2007,11 @@ mod tests {
         let id = json!(2);
         let slug = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
         for anonymous in [true, false] {
-            let outside = hub(anonymous)
+            let answer = hub(anonymous)
                 .resolved(&id, slug)
                 .err()
-                .map(|answer| *answer);
-            let answer = json_of(outside).expect("a JSON-RPC answer");
+                .map(|answer| *answer)
+                .expect("a JSON-RPC answer");
             assert_eq!(answer["result"]["isError"], json!(true), "{answer}");
             assert_eq!(answer["result"]["content"][0]["text"], json!(OUTSIDE_REACH));
         }
@@ -2024,7 +2023,8 @@ mod tests {
         let listed = signed_in
             .route_call(&id, "query_entities", &params, &mut arguments)
             .await;
-        assert_eq!(code(listed.err().map(|answer| *answer)), Some(-32602));
+        let listed = listed.err().map(|answer| *answer).expect("a refusal");
+        assert_eq!(listed["error"]["code"].as_i64(), Some(-32602));
         let own = hub(false)
             .own_tool(&id, "query_entities", &Map::new())
             .await;

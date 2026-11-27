@@ -1204,18 +1204,23 @@ pub(crate) fn hub_tools(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) -
         })
         .map(|tool| {
             let mut schema = tool.input_schema();
-            if let Value::Object(object) = &mut schema {
-                if let Some(Value::Object(properties)) = object.get_mut("properties") {
-                    properties.insert(
-                        "endpoint".to_owned(),
-                        json!({
-                            "type": "string",
-                            "minLength": 1,
-                            "maxLength": 200,
-                            "description": "An Endpoint's slug, title or space",
-                        }),
-                    );
-                }
+            // Every tool's input schema is an object with `properties`.
+            schema.as_object_mut().into_iter().for_each(|object| {
+                object
+                    .get_mut("properties")
+                    .and_then(Value::as_object_mut)
+                    .into_iter()
+                    .for_each(|properties| {
+                        properties.insert(
+                            "endpoint".to_owned(),
+                            json!({
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 200,
+                                "description": "An Endpoint's slug, title or space",
+                            }),
+                        );
+                    });
                 // The catalogue answers these when no Endpoint is named (T-4501).
                 if !crate::mcp::catalog::TOOLS.contains(&tool.name) {
                     match object.get_mut("required") {
@@ -1225,7 +1230,7 @@ pub(crate) fn hub_tools(gateway: &Gateway, reach: &[(Arc<Endpoint>, Subject)]) -
                         }
                     }
                 }
-            }
+            });
             json!({
                 "name": tool.name,
                 // How `endpoint` is named is said once, in the hub's instructions (T-4506); the

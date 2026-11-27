@@ -217,6 +217,70 @@ async fn a_write_past_the_budget_waits_then_is_answered_503_and_never_reaches_th
         .is_success());
 }
 
+/// The OData surface takes its writes from the same budget: past it, a create waits and is
+/// answered 503 with `Retry-After` before its body is read, and never reaches the broker.
+#[tokio::test]
+async fn an_odata_write_past_the_budget_is_answered_503() {
+    let mut broker = stalled_broker().await;
+    let mut odata = endpoint();
+    odata.representations.push(Representation::Odata);
+    odata.policies.push(
+        serde_norway::from_str(&format!(
+            "contextSpaceRef: {SPACE}\n\
+             assigner: did:web:{DOMAIN}\n\
+             assignee: {{ kind: role, id: public }}\n\
+             operations: [createEntity]\n\
+             information:\n\
+             \x20 - entities:\n\
+             \x20     - type: AirQualityObserved\n"
+        ))
+        .expect("the policy spec parses"),
+    );
+    let gateway = Arc::new(
+        Gateway::new(Broker::new(broker.url.clone()), Box::new(PolicyPdp), DOMAIN)
+            .budget_writes(1)
+            .wait_for_writes(Duration::from_millis(100))
+            .serve([odata]),
+    );
+    let app = router(gateway);
+    let held = tokio::spawn(app.clone().oneshot(upsert(700, 1)));
+    broker
+        .arrived
+        .recv()
+        .await
+        .expect("the first write arrives");
+
+    let body = json!({"name": "x".repeat(700 * 1024)}).to_string();
+    let over = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri(format!("/api/endpoint/{SLUG}/odata/v4/AirQualityObserved"))
+                .header("content-type", "application/json")
+                .header(CONTENT_LENGTH, body.len())
+                .body(Body::from(body))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(over.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(over.headers()["retry-after"], "1");
+    assert_eq!(
+        broker.writes.load(Ordering::SeqCst),
+        1,
+        "never reached the broker"
+    );
+
+    broker.release.add_permits(1);
+    assert!(held
+        .await
+        .expect("joined")
+        .expect("answered")
+        .status()
+        .is_success());
+}
+
 /// PRF-03: a write the Endpoint's Policy refuses is answered at once, never queued for the
 /// write budget behind the writes it would delay.
 #[tokio::test]

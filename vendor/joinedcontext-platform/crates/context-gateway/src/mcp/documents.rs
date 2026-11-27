@@ -670,7 +670,7 @@ fn cite(hit: &Value) -> String {
 /// inside a fence no passage can close, labelled `jc/untrusted` (T-5559); the next page's
 /// cursor, the gateway's own, after the fence and as `structuredContent.nextCursor`.
 fn fenced(list: &Value, key: &str, next: Option<String>) -> Value {
-    let json = serde_json::to_string(list).unwrap_or_else(|_| "[]".to_owned());
+    let json = list.to_string();
     let mut answer = answered(list, key);
     let mut text = super::untrusted::fence(UNTRUSTED_PREFACE, &json);
     if let Some(next) = next {
@@ -860,6 +860,45 @@ mod tests {
                 .await;
         }
         assert!(last.to_string().contains("is busy for you"), "{last}");
+    }
+
+    /// What the sources hold is asked once and kept for [`KEEP`]; an entry older than that is
+    /// asked again, and a different set of sources is its own entry.
+    #[tokio::test]
+    async fn what_the_sources_hold_is_kept_for_a_while_and_then_asked_again() {
+        let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&asked);
+        let app = axum::Router::new().fallback(move || {
+            let counted = std::sync::Arc::clone(&counted);
+            async move {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR
+            }
+        });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let documents = Documents::new(&url, Vec::new());
+        let web = vec![("helsinki".to_owned(), "web".to_owned())];
+        let other = vec![("espoo".to_owned(), "web".to_owned())];
+        let reads = || asked.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(documents.tools(&web).await.len(), 2);
+        assert_eq!(documents.tools(&web).await.len(), 2);
+        assert_eq!(reads(), 1, "the second list is answered from what is held");
+        assert_eq!(documents.tools(&other).await.len(), 2);
+        assert_eq!(reads(), 2, "another set of sources is asked on its own");
+        let aged = Instant::now()
+            .checked_sub(KEEP + Duration::from_secs(1))
+            .expect("a clock older than the keep");
+        documents
+            .held
+            .lock()
+            .await
+            .insert(web.clone(), (aged, None));
+        assert_eq!(documents.tools(&web).await.len(), 2);
+        assert_eq!(reads(), 3, "an entry past its keep is asked again");
     }
 
     /// A `source` that is no short text is refused; a hit that is no object is ranked as it

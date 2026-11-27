@@ -264,6 +264,15 @@ mod tests {
         assert_eq!(redact("RČ 520101/123"), "RČ [rodné číslo]");
     }
 
+    /// The pattern hands over digits only; a value that is not digits is no birth number all the same.
+    #[test]
+    fn a_birth_number_is_judged_on_its_digits_alone() {
+        assert!(super::birth_number("736028", "5163"));
+        assert!(!super::birth_number("73x028", "5163"));
+        assert!(!super::birth_number("736028", "51x3"));
+        assert!(!super::birth_number("739928", "5163"), "no such month");
+    }
+
     #[test]
     fn dates_postcodes_amounts_and_wrong_checksums_stay() {
         for text in [

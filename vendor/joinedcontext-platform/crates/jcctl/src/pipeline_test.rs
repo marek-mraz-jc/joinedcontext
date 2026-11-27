@@ -1431,4 +1431,42 @@ mod tests {
             Err(HarnessError::NotABentoProcessor(ComputeKind::Wasm))
         ));
     }
+
+    /// A step that is a mapping but carries nothing to run adds no processor beyond its markers,
+    /// and a datacube step that does not validate is a step error, not a harness.
+    #[test]
+    fn a_blank_mapping_adds_nothing_and_an_invalid_datacube_step_is_refused() {
+        let steps = |step: serde_json::Value| -> PipelineSpec {
+            serde_json::from_value(json!({
+                "class": "resident",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "shmu-csv" } }],
+                "steps": [step],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:helsinki-all" }]
+            }))
+            .expect("a v1alpha2 spec")
+        };
+        let sample = Sample {
+            text: Some("a\n1\n".into()),
+            url: None,
+            format: SampleFormat::Csv,
+            records: None,
+            sheet: None,
+        };
+        let url = "http://portal:9090/internal/pipeline-tests/abc";
+
+        let blank = steps(json!({ "kind": "bloblang" }));
+        let config = harness(&blank, &sample, url).expect("a harness");
+        let processors = config["pipeline"]["processors"]
+            .as_array()
+            .expect("processors");
+        assert_eq!(processors[3]["mapping"], step_marker(0));
+        assert_eq!(processors[4]["mapping"], stage_snapshot(0));
+
+        let datacube = steps(json!({
+            "kind": "datacube",
+            "datacube": { "wholeArea": "", "datasetPage": "", "cubes": {} }
+        }));
+        let error = harness(&datacube, &sample, url).expect_err("an invalid datacube step");
+        assert!(matches!(error, HarnessError::Step(_)), "{error:?}");
+    }
 }

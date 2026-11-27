@@ -232,11 +232,11 @@ fn json_files(root: &Path, dir: &Path) -> Result<Vec<PathBuf>, SeedError> {
 /// Refuses a folder or file whose resolved target is not under the canonical checkout `root`:
 /// a link, of a folder or of a file, never carries the walk out of the repository (CC-08).
 fn inside(root: &Path, path: &Path) -> Result<(), SeedError> {
-    let resolved = path.canonicalize().map_err(|e| SeedError::Unreadable {
-        path: path.display().to_string(),
-        message: e.to_string(),
-    })?;
-    if resolved.starts_with(root) {
+    // What cannot be resolved cannot be shown to be under the checkout, so it is refused too.
+    if path
+        .canonicalize()
+        .is_ok_and(|resolved| resolved.starts_with(root))
+    {
         Ok(())
     } else {
         Err(SeedError::Outside {

@@ -153,6 +153,18 @@ pub mod fuzzing {
     }
 }
 
+/// Whether `target`, once the forge's URL parser has resolved it, lies under the one repository
+/// (`base` and `repository` as the door builds them), on the forge's own origin. A target that
+/// does not parse is outside.
+fn inside_repository(base: &str, repository: &str, target: &str) -> bool {
+    reqwest::Url::parse(&format!("{base}/api/v1/repos/{repository}/"))
+        .ok()
+        .zip(reqwest::Url::parse(target).ok())
+        .is_some_and(|(root, target)| {
+            target.origin() == root.origin() && target.path().starts_with(root.path())
+        })
+}
+
 fn no_directory() -> Response {
     jc_core::ProblemDetails::forbidden()
         .with_detail("this run has no application directory, so it reaches no file in the forge")
@@ -291,11 +303,7 @@ pub async fn handler(
     // Whatever the operation, the URL the forge will see, after its parser had its say, is in
     // the run's one repository or the request stops here (AG-86, T-3021). Both sides are parsed,
     // so a base with a path of its own compares the same way.
-    let inside_repository = reqwest::Url::parse(&format!("{base}/api/v1/repos/{repository}/"))
-        .ok()
-        .zip(reqwest::Url::parse(&target_url).ok())
-        .is_some_and(|(root, target)| target.path().starts_with(root.path()));
-    if !inside_repository {
+    if !inside_repository(base, &repository, &target_url) {
         return jc_core::ProblemDetails::forbidden()
             .with_detail("the forge operation leaves the run's repository")
             .into_response();
@@ -375,4 +383,37 @@ pub async fn handler(
         Body::from(resp_bytes),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inside_repository;
+
+    const BASE: &str = "https://forge.example";
+
+    #[test]
+    fn only_a_target_under_the_runs_repository_is_inside_it() {
+        let repository = "joinedcontext/configuration";
+        let root = format!("{BASE}/api/v1/repos/{repository}");
+        assert!(inside_repository(
+            BASE,
+            repository,
+            &format!("{root}/contents/a.yaml")
+        ));
+        assert!(inside_repository(BASE, repository, &format!("{root}/")));
+        // Dot segments the parser resolves, another repository, another API, another host.
+        for target in [
+            format!("{root}/../other/contents/a.yaml"),
+            format!("{root}/pulls/1/../../../../admin/users"),
+            format!("{BASE}/api/v1/repos/joinedcontext/other/contents/a.yaml"),
+            format!("{BASE}/api/v1/admin/users"),
+            format!("{root}x/contents/a"),
+            "https://elsewhere.example/api/v1/repos/joinedcontext/configuration/a".to_owned(),
+        ] {
+            assert!(!inside_repository(BASE, repository, &target), "{target}");
+        }
+        // A target the parser cannot read is outside.
+        assert!(!inside_repository(BASE, repository, "not a url"));
+        assert!(!inside_repository(BASE, repository, ""));
+    }
 }

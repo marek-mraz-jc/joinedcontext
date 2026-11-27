@@ -635,6 +635,101 @@ async fn an_endpoint_without_a_view_is_answered_by_nobody() {
     assert!(hops.lock().expect("the hop log").is_empty());
 }
 
+/// The other access surfaces of an Endpoint no view serves are a `503` too (T-3650): the
+/// evaluation, which reads its body first, and the attribute table of a modelled class; the
+/// broker is not asked, and a body that is no JSON object is refused before the view is looked for.
+#[tokio::test]
+async fn the_evaluation_and_the_attribute_table_of_an_endpoint_without_a_view_are_503() {
+    let long = "k".repeat(64);
+    let mut unviewable = modelled(1);
+    unviewable.slug = long.clone();
+    unviewable.base_path = format!("/api/endpoint/{long}");
+    let (upstream, hops) = json_broker(StatusCode::OK, json!({ "decision": true })).await;
+    let evaluation = Request::builder()
+        .method(Method::POST)
+        .uri(format!("/api/endpoint/{long}/access/v1/evaluation"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"action": {"name": "queryEntity"}, "resource": {"type": "AirQualityObserved"}})
+                .to_string(),
+        ))
+        .expect("a request");
+    let table = Request::builder()
+        .uri(format!(
+            "/api/endpoint/{long}/access/attributes?type=AirQualityObserved"
+        ))
+        .body(Body::empty())
+        .expect("a request");
+    for request in [evaluation, table] {
+        let (status, _, body) = call(app(upstream.clone(), unviewable.clone()), request).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+        assert!(!body.contains("decision"), "{body}");
+    }
+    assert!(hops.lock().expect("the hop log").is_empty());
+
+    for body in ["[1, 2]", "not json", "7"] {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/api/endpoint/{SLUG}/access/v1/evaluation"))
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .expect("a request");
+        let (status, _, answer) = call(app(upstream.clone(), endpoint()), request).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {answer}");
+        assert!(answer.contains("not a JSON object"), "{body}: {answer}");
+    }
+    assert!(hops.lock().expect("the hop log").is_empty());
+}
+
+/// A failing broker is the gateway's own `5xx` on the attribute table, never a table; an
+/// Endpoint without a tenant has nobody to pin for the hop (`503` naming the remedy), a broker that
+/// is down is a `502`, and an answer larger than the gateway holds is no document.
+#[tokio::test]
+async fn the_access_hop_fails_closed_without_a_tenant_a_broker_or_a_readable_answer() {
+    let (upstream, _) = json_broker(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        json!({"detail": "hunter2"}),
+    )
+    .await;
+    let (status, _, body) = call(
+        app(upstream, modelled(1)),
+        attributes("?type=AirQualityObserved"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    assert!(
+        !body.contains("hunter2") && !body.contains("attributes\":["),
+        "{body}"
+    );
+
+    let (upstream, hops) = json_broker(StatusCode::OK, json!({})).await;
+    let mut untenanted = endpoint();
+    untenanted.tenant = None;
+    let (status, _, body) = call(app(upstream, untenanted), get("application/json")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("organizationRef"), "{body}");
+    assert!(hops.lock().expect("the hop log").is_empty());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let closed = format!("http://{}", listener.local_addr().expect("an address"));
+    drop(listener);
+    let (status, _, body) = call(app(closed, endpoint()), get("application/json")).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+
+    let large = format!(r#"{{"pad":"{}"}}"#, "x".repeat(9 * 1024 * 1024));
+    let (upstream, _) = broker(StatusCode::OK, "application/json", large).await;
+    let (status, _, body) = call(app(upstream, endpoint()), get("application/json")).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_GATEWAY,
+        "{}",
+        &body[..body.len().min(200)]
+    );
+    assert!(!body.contains("xxxxxxxx"), "the answer reached the caller");
+}
+
 /// T-5045: an agent reading `describe_access` on an Endpoint that serves the WebSocket learns
 /// its public address, subprotocol and subscribe message; on one that does not, nothing.
 #[tokio::test]
