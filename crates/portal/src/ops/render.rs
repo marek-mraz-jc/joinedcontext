@@ -2067,17 +2067,11 @@ mod tests {
         assert_eq!(error(0), error(1), "refused and missing read the same");
         // A gateway that fails the read is its own tile, said as not readable now (T-7921).
         Mock::given(method("GET"))
-            .and(path_regex("^/api/endpoint/brokenhelsinki"))
+            .and(path_regex(format!("^/api/endpoint/{AIR}")))
             .respond_with(ResponseTemplate::new(500))
             .mount(&server)
             .await;
-        state.mirror.upsert(manifest(
-            "Endpoint",
-            "broken",
-            "helsinki",
-            json!({ "slug": "brokenhelsinkizzzzzzzzzzzzz", "audience": "project" }),
-        ));
-        board(&state, "failing", vec![pm10_widget("broken")]);
+        board(&state, "failing", vec![pm10_widget("air")]);
         let answer = run(&caller, &state, "helsinki", whole("failing"))
             .await
             .expect("drawn");

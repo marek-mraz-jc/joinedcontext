@@ -786,6 +786,98 @@ async fn update_from_main_takes_mains_files_asks_for_whole_files_and_masks_a_cre
     assert!(!text.contains(OLD), "ours kept: {text}");
 }
 
+/// CC-80 (T-7921): a YAML file both sides changed that merges into no manifest, or into a kind
+/// this Portal does not serve, is refused at its path; a file main removed that the workspace
+/// changed asks for a whole-file choice, naming main's side removed.
+#[tokio::test]
+async fn update_from_main_refuses_yaml_that_is_no_manifest_and_asks_for_a_removed_file() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    const README: &str = "projects/ovzdusie/README.md";
+    const NOTES: &str = "projects/ovzdusie/notes.yaml";
+    let uri = format!("{WS}/air-v2/update");
+    tree(&server, "workspace/air-v2", &[(NOTES, "n-ours")]).await;
+    tree(&server, "base1", &[(NOTES, "n-base")]).await;
+    tree(&server, "main", &[(NOTES, "n-main")]).await;
+    for (head, words) in [
+        ("workspace/air-v2", "a: 2\nb: 1\n"),
+        ("base1", "a: 1\nb: 1\n"),
+        ("main", "a: 1\nb: 2\n"),
+    ] {
+        file_at(&server, NOTES, head, words).await;
+    }
+    let refused = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(
+        refused.text.contains(&format!("{NOTES}: not a manifest")),
+        "{}",
+        refused.text
+    );
+    // The same file as a manifest of a kind the Portal does not serve.
+    let bogus = |a: u8, b: u8| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Bogus\nmetadata:\n  name: notes\n  namespace: ovzdusie\nspec:\n  a: {a}\n  b: {b}\n")
+    };
+    for (head, words) in [
+        ("workspace/air-v2", bogus(2, 1)),
+        ("base1", bogus(1, 1)),
+        ("main", bogus(1, 2)),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{NOTES}'")))
+            .and(query_param("@r", format!("'{head}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "x",
+                "Content": encode(&words)
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let refused = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(
+        refused.text.contains("kind 'Bogus' is not served"),
+        "{}",
+        refused.text
+    );
+    // The workspace changed its README; main removed it.
+    for (head, sha) in [
+        ("workspace/air-v2", "r-ours"),
+        ("base1", "r-base"),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", format!("'{head}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Tree": [{ "Path": README, "Type": "blob", "Sha": sha }],
+                "Truncated": false
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": [], "Truncated": false })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let asked = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(asked.status, StatusCode::CONFLICT, "{}", asked.text);
+    let conflicts = body(&asked.text)["conflicts"].clone();
+    assert_eq!(conflicts[0]["path"], README, "{conflicts}");
+    assert_eq!(conflicts[0]["fields"][0]["ours"], "changed", "{conflicts}");
+    assert_eq!(conflicts[0]["fields"][0]["theirs"], "removed", "{conflicts}");
+}
+
 #[tokio::test]
 async fn only_the_owner_updates_brings_back_or_discards() {
     let (server, state) = world().await;

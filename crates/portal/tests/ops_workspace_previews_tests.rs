@@ -609,7 +609,7 @@ async fn the_served_list_leaves_out_a_preview_whose_files_no_longer_load() {
         .mount(&server)
         .await;
     let mut broken = files();
-    broken[2].1 = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  isSandbox: [not, a, flag]\n".to_owned();
+    broken[2].1 = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata: [unclosed\n".to_owned();
     mount_tree(&server, REPO, "head2", &broken).await;
     let listed = joinedcontext_portal::ops::previews::served(&state)
         .await
