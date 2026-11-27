@@ -982,12 +982,26 @@ async fn deliver(
 /// The close frame that ends a session. After the client's own close, the answering close frame
 /// tungstenite queued (RFC 6455 5.5.1) reaches the client only when the sink is flushed.
 async fn finish(to_client: &mut SplitSink<WebSocket, ws::Message>, ended: &Ended) {
-    let close = match ended {
-        Ended::Closing(reason) => {
-            let closing = json!({"metadata": {"x-op": "x-closing", "x-reason": reason}});
-            let _ = to_client.send(ws::Message::text(closing.to_string())).await;
-            Some((if *reason == "rate" { POLICY } else { NORMAL }, *reason))
-        }
+    if let Ended::Closing(reason) = ended {
+        let closing = json!({"metadata": {"x-op": "x-closing", "x-reason": reason}});
+        let _ = to_client.send(ws::Message::text(closing.to_string())).await;
+    }
+    let close = close_frame(ended);
+    if let Some((code, reason)) = close {
+        let frame = ws::CloseFrame {
+            code,
+            reason: reason.into(),
+        };
+        let _ = to_client.send(ws::Message::Close(Some(frame))).await;
+    } else {
+        let _ = to_client.flush().await;
+    }
+}
+
+/// The code and reason of the close frame `ended` sends; `None` when the client is gone.
+fn close_frame(ended: &Ended) -> Option<(u16, &'static str)> {
+    match ended {
+        Ended::Closing(reason) => Some((if *reason == "rate" { POLICY } else { NORMAL }, *reason)),
         Ended::TooBig => Some((TOO_BIG, "a message over 64 KiB")),
         Ended::Binary => Some((UNSUPPORTED, "text frames only")),
         Ended::NoPong => Some((NORMAL, "no pong")),
@@ -997,15 +1011,6 @@ async fn finish(to_client: &mut SplitSink<WebSocket, ws::Message>, ended: &Ended
         )),
         Ended::Broken(code, reason) => Some((*code, *reason)),
         Ended::Closed => None,
-    };
-    if let Some((code, reason)) = close {
-        let frame = ws::CloseFrame {
-            code,
-            reason: reason.into(),
-        };
-        let _ = to_client.send(ws::Message::Close(Some(frame))).await;
-    } else {
-        let _ = to_client.flush().await;
     }
 }
 
@@ -1496,9 +1501,14 @@ mod tests {
     fn a_tick_asks_the_hub_only_about_a_silent_client() {
         let now = Instant::now();
         let long_ago = now.checked_sub(PING * 3).expect("an instant");
-        let unasked = || -> usize { panic!("the hub's lock was taken for a live client") };
+        let asked = std::cell::Cell::new(0);
+        let unasked = || -> usize {
+            asked.set(asked.get() + 1);
+            0
+        };
         assert_eq!(tick(None, now, unasked), None);
         assert_eq!(tick(Some(now), now, unasked), None);
+        assert_eq!(asked.get(), 0, "the hub's lock was taken for a live client");
         assert_eq!(tick(Some(long_ago), now, unasked), Some(Ended::NoPong));
         assert_eq!(tick(None, long_ago, || 0), Some(Ended::Closing("idle")));
         assert_eq!(tick(None, long_ago, || 1), None);
@@ -1506,13 +1516,19 @@ mod tests {
 
     /// A session behind a real upgrade, for the RFC 6455 tests.
     async fn served() -> String {
+        served_with(|_| {}).await
+    }
+
+    /// [`served`], its connection's queue handed to `prepare` before the session starts.
+    async fn served_with(prepare: fn(&Queue)) -> String {
         let app = axum::Router::new().route(
             "/ws",
-            axum::routing::get(|up: ws::WebSocketUpgrade| async move {
-                up.on_upgrade(|client| async move {
+            axum::routing::get(move |up: ws::WebSocketUpgrade| async move {
+                up.on_upgrade(move |client| async move {
                     let hub = Arc::new(Hub::new("s", 10));
                     let endpoint = crate::fanout::hub::tests_support::endpoint();
                     let (conn, queue) = hub.open(endpoint, "anonymous".into(), Subject::default());
+                    prepare(&queue);
                     let lifetime = Duration::from_secs(60);
                     session(client, hub, conn, queue, "anonymous".into(), lifetime).await;
                 })
@@ -1532,11 +1548,22 @@ mod tests {
             .await
             .expect("connect");
         ws.send(message).await.expect("send");
+        close_code(&mut ws).await.0
+    }
+
+    /// The code of the next close frame on `ws` and the texts the gateway sent before it.
+    async fn close_code(ws: &mut Upstream) -> (Option<u16>, Vec<String>) {
+        let mut texts = Vec::new();
         loop {
-            match tokio::time::timeout(Duration::from_secs(5), ws.next()).await {
-                Ok(Some(Ok(Message::Close(frame)))) => return frame.map(|f| f.code.into()),
-                Ok(Some(Ok(_))) => {}
-                _ => return None,
+            let message = tokio::time::timeout(Duration::from_secs(5), ws.next())
+                .await
+                .expect("an answer in time")
+                .expect("a frame")
+                .expect("a readable frame");
+            match message {
+                Message::Close(frame) => return (frame.map(|f| f.code.into()), texts),
+                Message::Text(text) => texts.push(text.to_string()),
+                _ => {}
             }
         }
     }
@@ -1586,10 +1613,8 @@ mod tests {
                     (0..1000)
                         .map(|n| json!({ "id": format!("urn:ngsi-ld:A:{n}"), "big": big }))
                         .collect()
-                } else if query.contains("offset=0") {
-                    vec![json!({ "id": "urn:ngsi-ld:A:1" })]
                 } else {
-                    Vec::new()
+                    vec![json!({ "id": "urn:ngsi-ld:A:1" })]
                 };
                 axum::Json(Value::Array(page))
             }
@@ -1611,6 +1636,467 @@ mod tests {
             ["type=*&limit=1000&offset=0", "type=*&limit=250&offset=0"],
             "{asked:?}"
         );
+    }
+
+    /// Every end of a session names its metrics reason and the close frame it sends.
+    #[test]
+    fn every_end_names_its_reason_and_close_frame() {
+        for (ended, reason, frame) in [
+            (Ended::Closed, "closed", None),
+            (Ended::TooBig, "too-big", Some(TOO_BIG)),
+            (Ended::Binary, "binary", Some(UNSUPPORTED)),
+            (Ended::Closing("rate"), "rate", Some(POLICY)),
+            (Ended::Closing("idle"), "idle", Some(NORMAL)),
+            (Ended::NoPong, "no-pong", Some(NORMAL)),
+            (Ended::Refused, "refused", Some(INTERNAL)),
+            (Ended::Broken(1007, "utf8"), "not-utf8", Some(1007)),
+            (Ended::Broken(1002, "frame"), "protocol-error", Some(1002)),
+        ] {
+            assert_eq!(ended.reason(), reason);
+            assert_eq!(
+                close_frame(&ended).map(|(code, _)| code),
+                frame,
+                "{ended:?}"
+            );
+        }
+    }
+
+    /// A subscription a client named is updated and removed by its id; an unknown id is 404.
+    #[test]
+    fn a_named_subscription_is_updated_and_removed() {
+        let (hub, conn) = hub_with_closed(&[]);
+        let ask = |text: &str| {
+            answer(
+                &hub,
+                conn,
+                "anonymous",
+                text,
+                false,
+                &mut 0,
+                &mut Kept::default(),
+            )
+            .remove(0)
+        };
+        let created = ask(
+            r#"{"metadata": {"x-op": "x-subscribe", "x-id": "a"}, "body": {"type": "Subscription", "entities": [{"type": "Vehicle"}]}}"#,
+        );
+        let created: Value = serde_json::from_str(&created).expect("a result");
+        let id = created["body"]["id"].as_str().expect("an id").to_owned();
+        let update = json!({"metadata": {"x-op": "x-update", "x-id": "b", "x-subscription": id},
+            "body": {"type": "Subscription", "entities": [{"type": "Bus"}]}});
+        assert!(ask(&update.to_string()).contains("\"x-status\":204"));
+        let remove =
+            json!({"metadata": {"x-op": "x-unsubscribe", "x-id": "c", "x-subscription": id}});
+        assert!(ask(&remove.to_string()).contains("\"x-status\":204"));
+        assert!(ask(&remove.to_string()).contains("\"x-status\":404"));
+        assert_eq!(hub.subscriptions(conn), 0);
+    }
+
+    /// A resume moves the closed connection's subscriptions to the new one.
+    #[test]
+    fn a_resume_takes_the_closed_connections_subscriptions_along() {
+        let hub = Hub::new("s", 10);
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let (old, _) = hub.open(
+            Arc::clone(&endpoint),
+            "anonymous".into(),
+            Subject::default(),
+        );
+        let body = json!({"type": "Subscription", "entities": [{"type": "Vehicle"}]});
+        assert_eq!(hub.subscribe(old, None, &body, false).status, 201);
+        hub.close(old, "name", "token", Kept::default());
+        let (new, _) = hub.open(endpoint, "anonymous".into(), Subject::default());
+        let (out, _) = resumed(&hub, new, 0);
+        assert!(out[0].contains("\"x-status\":200"), "{out:?}");
+        assert_eq!(hub.subscriptions(new), 1);
+    }
+
+    fn busy_hub() -> (Arc<Hub>, Arc<Queue>) {
+        let hub = Arc::new(Hub::new("s", 10));
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        let (_, queue) = hub.open(endpoint, "anonymous".into(), Subject::default());
+        (hub, queue)
+    }
+
+    fn hold_hub(hubs: &Hubs, key: &str, hub: &Arc<Hub>) {
+        hubs.0
+            .lock()
+            .expect("hubs")
+            .insert(key.into(), ("city".into(), None, Arc::clone(hub)));
+    }
+
+    fn closing(queue: &Queue) -> Vec<&'static str> {
+        let (items, _) = queue.take();
+        items
+            .into_iter()
+            .filter_map(|item| match item {
+                Out::Closing(reason) => Some(reason),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn gateway_at(url: String) -> Gateway {
+        let mut gateway = Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "hel.fi",
+        );
+        gateway.ws_linger = Duration::from_secs(3600);
+        gateway
+    }
+
+    fn nowhere() -> String {
+        format!("http://{}:1", std::net::Ipv4Addr::LOCALHOST)
+    }
+
+    /// A stale table closes every connection of every hub, an idle hub's none.
+    #[test]
+    fn close_all_ends_every_open_connection() {
+        let hubs = Hubs::default();
+        let (hub, queue) = busy_hub();
+        hold_hub(&hubs, "busy", &hub);
+        hold_hub(&hubs, "idle", &Arc::new(Hub::new("t", 10)));
+        hubs.close_all();
+        assert_eq!(closing(&queue).len(), 1);
+    }
+
+    /// API/07 §3: a space holding its cap of connections takes no more.
+    #[test]
+    fn a_full_space_refuses_the_next_connection() {
+        let gateway = Arc::new(gateway_at(nowhere()));
+        let (hub, _) = busy_hub();
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        for _ in 1..per_space() {
+            hub.open(
+                Arc::clone(&endpoint),
+                "anonymous".into(),
+                Subject::default(),
+            );
+        }
+        hold_hub(&gateway.hubs, "full", &hub);
+        let joined = gateway.hubs.join(
+            &gateway,
+            endpoint,
+            (Subject::default(), None),
+            "anonymous".into(),
+        );
+        assert!(matches!(joined, Err(Refused::SpaceFull)));
+    }
+
+    /// S-3-12 and T-4874: a recheck ends a connection whose account left and asks the account
+    /// table about a client's `azp`.
+    #[test]
+    fn a_recheck_ends_a_gone_account_and_asks_about_a_client() {
+        let gateway = gateway_at(nowhere());
+        let endpoint = crate::fanout::hub::tests_support::endpoint();
+        gateway.resolver.replace([(*endpoint).clone()]);
+        let hub = Hub::new("s", 10);
+        let account = Subject {
+            service_account: Some("kpi".into()),
+            service_account_project: Some("espoo".into()),
+            ..Subject::default()
+        };
+        let (_, gone) = hub.open(Arc::clone(&endpoint), "kpi".into(), account);
+        let client = Subject {
+            client: Some("app".into()),
+            ..Subject::default()
+        };
+        let (_, kept) = hub.open(endpoint, "app".into(), client);
+        recheck(&gateway, &hub);
+        assert_eq!(closing(&gone).len(), 1);
+        assert!(
+            closing(&kept).is_empty(),
+            "an azp no account names stays admitted"
+        );
+    }
+
+    /// The upstream refuses a broker it has no address or no valid URL for.
+    #[tokio::test]
+    async fn the_upstream_does_not_open_without_a_broker_address() {
+        let gateway = gateway_at("http://bad host".into());
+        let error = connect(&gateway, "s", &HeaderMap::new()).await.err();
+        assert!(error.is_some_and(|e| !e.is_empty()));
+        let gateway = gateway_at(nowhere());
+        gateway.broker.route(&crate::store::SpaceBrokers {
+            by_view: [("s".to_owned(), String::new())].into(),
+            ..Default::default()
+        });
+        let error = connect(&gateway, "s", &HeaderMap::new()).await.err();
+        assert!(error.is_some_and(|e| e.contains("no address")));
+    }
+
+    /// The upstream retries a broker it cannot reach, with backoff, until its hub leaves.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn the_upstream_retries_until_its_hub_leaves() {
+        let gateway = Arc::new(gateway_at("http://bad host".into()));
+        let (hub, _queue) = busy_hub();
+        hold_hub(&gateway.hubs, "k", &hub);
+        let running = tokio::spawn(upstream(
+            Arc::clone(&gateway),
+            Arc::clone(&hub),
+            HeaderMap::new(),
+        ));
+        tokio::time::sleep(Duration::from_secs(10)).await;
+        assert!(!running.is_finished());
+        gateway.hubs.0.lock().expect("hubs").clear();
+        tokio::time::timeout(Duration::from_secs(120), running)
+            .await
+            .expect("stopped")
+            .expect("joined");
+    }
+
+    /// A broker view WebSocket for one upstream: greets with `x-welcome`, reads the gateway's
+    /// first message, sends `then`, and hands back the texts it read until the gateway left.
+    async fn scripted_broker(then: Vec<Message>) -> (String, tokio::task::JoinHandle<Vec<String>>) {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let address = listener.local_addr().expect("address");
+        let read = tokio::spawn(async move {
+            let (tcp, _) = listener.accept().await.expect("accept");
+            let mut ws = tokio_tungstenite::accept_async(tcp).await.expect("upgrade");
+            let welcome = json!({"metadata": {"x-op": "x-welcome", "x-connection": "c1", "x-resume-token": "t1"}});
+            ws.send(Message::text(welcome.to_string()))
+                .await
+                .expect("welcome");
+            let first = ws.next().await.and_then(Result::ok);
+            let mut read: Vec<String> = first
+                .and_then(|message| message.into_text().ok())
+                .map(|text| text.to_string())
+                .into_iter()
+                .collect();
+            for message in then {
+                ws.send(message).await.expect("send");
+            }
+            while let Ok(Some(Ok(message))) =
+                tokio::time::timeout(Duration::from_secs(2), ws.next()).await
+            {
+                read.extend(message.into_text().ok().map(|text| text.to_string()));
+            }
+            read
+        });
+        (format!("http://{address}"), read)
+    }
+
+    fn text(message: Value) -> Message {
+        Message::text(message.to_string())
+    }
+
+    /// One upstream run against `then`: what it returned, whether it started, what the broker read.
+    async fn run_against(
+        then: Vec<Message>,
+        resume: Option<(String, String, u64)>,
+        held: bool,
+    ) -> (Option<(String, String, u64)>, bool, Vec<String>, Arc<Hub>) {
+        let (url, read) = scripted_broker(then).await;
+        let gateway = Arc::new(gateway_at(url));
+        let (hub, _queue) = busy_hub();
+        if held {
+            hold_hub(&gateway.hubs, "k", &hub);
+        }
+        let socket = connect(&gateway, "s", &HeaderMap::new())
+            .await
+            .expect("connect");
+        let mut started = false;
+        let ended = run(
+            &gateway,
+            &hub,
+            &HeaderMap::new(),
+            socket,
+            resume,
+            &mut started,
+        )
+        .await;
+        (ended, started, read.await.expect("broker"), hub)
+    }
+
+    /// ADR-N-049 §2: the upstream skips a binary frame, a message that is no envelope and an
+    /// unknown op, takes a notification's x-seq and a gap, and ends resumable at `x-closing`.
+    #[tokio::test]
+    async fn the_upstream_reads_its_broker_until_a_closing() {
+        let (ended, started, read, hub) = run_against(
+            vec![
+                Message::Binary(vec![1].into()),
+                Message::text("not json"),
+                text(json!({"metadata": {"x-op": "x-result", "x-id": "up", "x-status": 201}})),
+                text(json!({"metadata": {"x-op": "x-notification", "x-seq": 7}, "body": {"data": []}})),
+                text(json!({"metadata": {"x-op": "x-gap"}})),
+                text(json!({"metadata": {"x-op": "x-dance"}})),
+                text(json!({"metadata": {"x-op": "x-closing"}})),
+            ],
+            None,
+            true,
+        )
+        .await;
+        assert_eq!(ended, Some(("c1".into(), "t1".into(), 7)));
+        assert!(started);
+        assert!(read[0].contains("x-subscribe"), "{read:?}");
+        assert_eq!(hub.refused(), None);
+    }
+
+    /// A resume the broker no longer holds subscribes again; a refused subscription is kept
+    /// for the clients and ends the run.
+    #[tokio::test]
+    async fn a_refused_resume_subscribes_again_and_a_refusal_ends_the_run() {
+        let (ended, started, read, hub) = run_against(
+            vec![
+                text(json!({"metadata": {"x-op": "x-result", "x-id": "resume", "x-status": 410}})),
+                text(
+                    json!({"metadata": {"x-op": "x-result", "x-id": "up", "x-status": 503},
+                    "body": {"detail": "busy"}}),
+                ),
+            ],
+            Some(("c0".into(), "t0".into(), 3)),
+            true,
+        )
+        .await;
+        assert_eq!(ended, None);
+        assert!(!started);
+        assert!(
+            read[0].contains("x-resume") && read[0].contains("c0"),
+            "{read:?}"
+        );
+        assert!(read.iter().any(|r| r.contains("x-subscribe")), "{read:?}");
+        assert_eq!(hub.refused(), Some(503));
+    }
+
+    /// A broker that closes ends the run resumable; a hub no longer held ends it on the tick.
+    #[tokio::test]
+    async fn the_upstream_ends_with_its_broker_or_its_hub() {
+        let (ended, ..) = run_against(vec![Message::Close(None)], None, true).await;
+        assert_eq!(ended, Some(("c1".into(), "t1".into(), 0)));
+        let (ended, ..) = run_against(Vec::new(), None, false).await;
+        assert_eq!(ended, None);
+    }
+
+    /// A refusal that may pass is retried after the longest backoff, until the hub leaves.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_passing_refusal_is_retried_after_the_backoff() {
+        let (url, _read) = scripted_broker(vec![text(
+            json!({"metadata": {"x-op": "x-result", "x-id": "up", "x-status": 500}}),
+        )])
+        .await;
+        let gateway = Arc::new(gateway_at(url));
+        let (hub, _queue) = busy_hub();
+        hold_hub(&gateway.hubs, "k", &hub);
+        let running = tokio::spawn(upstream(
+            Arc::clone(&gateway),
+            Arc::clone(&hub),
+            HeaderMap::new(),
+        ));
+        while hub.refused().is_none() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        gateway.hubs.0.lock().expect("hubs").clear();
+        tokio::time::timeout(Duration::from_secs(120), running)
+            .await
+            .expect("stopped")
+            .expect("joined");
+    }
+
+    /// A view read is false when the broker refuses, fails, answers no array or a page past
+    /// the body cap at the smallest page; full pages are read up to the table's bound.
+    #[tokio::test]
+    async fn a_view_read_fails_on_any_bad_page_and_stops_at_the_bound() {
+        let broker = axum::Router::new().fallback(|uri: axum::http::Uri| async move {
+            use axum::response::IntoResponse;
+            let path = uri.path();
+            let query = uri.query().unwrap_or_default();
+            let limit: usize = query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("limit="))
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0);
+            if path.contains("/refused/") {
+                axum::http::StatusCode::FORBIDDEN.into_response()
+            } else if path.contains("/huge/") {
+                "x".repeat(crate::app::MAX_BODY + 1).into_response()
+            } else if path.contains("/object/") {
+                axum::Json(json!({})).into_response()
+            } else {
+                axum::Json(vec![json!({"id": "urn:ngsi-ld:A:1"}); limit]).into_response()
+            }
+        });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, broker).await });
+        let gateway = Arc::new(gateway_at(url));
+        for slug in ["refused", "huge", "object"] {
+            assert!(
+                !read_view(&gateway, slug, HeaderMap::new(), |_| {}).await,
+                "{slug}"
+            );
+        }
+        let mut read = 0;
+        assert!(read_view(&gateway, "full", HeaderMap::new(), |_| read += 1).await);
+        assert_eq!(read, bound());
+        let unreachable = gateway_at(nowhere());
+        assert!(!read_view(&unreachable, "s", HeaderMap::new(), |_| {}).await);
+        let refused = Arc::new(Hub::new("refused", 10));
+        let (_, refused_queue) = refused.open(
+            crate::fanout::hub::tests_support::endpoint(),
+            "anonymous".into(),
+            Subject::default(),
+        );
+        rescope(gateway, refused, HeaderMap::new()).await;
+        assert_eq!(closing(&refused_queue), ["endpoint-changed"]);
+    }
+
+    /// A binary frame closes with 1003; a client's ping is no message and leaves it open.
+    #[tokio::test]
+    async fn a_binary_frame_closes_and_a_ping_does_not() {
+        let url = served().await;
+        assert_eq!(
+            closes_with(&url, Message::Binary(vec![1].into())).await,
+            Some(UNSUPPORTED)
+        );
+        let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("connect");
+        ws.send(Message::Ping(Vec::new().into()))
+            .await
+            .expect("ping");
+        let bye = tokio_tungstenite::tungstenite::protocol::CloseFrame {
+            code: NORMAL.into(),
+            reason: "bye".into(),
+        };
+        ws.send(Message::Close(Some(bye))).await.expect("close");
+        let (code, texts) = close_code(&mut ws).await;
+        assert_eq!(code, Some(NORMAL));
+        assert!(texts[0].contains("x-welcome"), "{texts:?}");
+    }
+
+    /// T-4902: a queue that overflowed sends a gap and closes with `overflow`.
+    #[tokio::test]
+    async fn an_overflowed_queue_sends_a_gap_and_closes() {
+        let url = served_with(|queue| {
+            for _ in 0..=hub::MAX_QUEUED {
+                queue.push(Out::Gap);
+            }
+        })
+        .await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("connect");
+        let (code, texts) = close_code(&mut ws).await;
+        assert_eq!(code, Some(NORMAL));
+        assert!(texts.iter().any(|t| t.contains("overflow")), "{texts:?}");
+    }
+
+    /// API/07 §3: a silent client is pinged.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn a_silent_client_is_pinged() {
+        let url = served().await;
+        let (mut ws, _) = tokio_tungstenite::connect_async(&url)
+            .await
+            .expect("connect");
+        while !matches!(
+            ws.next().await.expect("a frame").expect("a readable frame"),
+            Message::Ping(_)
+        ) {}
     }
 
     /// S-3-12: an open session ends when its person is revoked at or after the second its
