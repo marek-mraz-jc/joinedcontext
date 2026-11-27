@@ -6834,6 +6834,92 @@ async fn internal_post(
     )
 }
 
+/// The MCP search reads the publisher a question names first, and every source when that one
+/// holds nothing; a body that is no JSON, no sources or a context without its chunk is refused;
+/// a source with no passages counts none; and with the store down every path says so.
+#[tokio::test]
+async fn the_mcp_search_reads_a_named_publisher_first_and_says_when_the_store_is_down() {
+    let w = world("chatdocumentsdown", deployment(Channel::Public, 50_000, 10)).await;
+    corpus::pages(
+        &w.pool,
+        "trutnov",
+        "web",
+        &[(
+            "https://trutnov.example/kniznica",
+            "sk",
+            "Knižnica v Trutnove je otvorená v utorok a vo štvrtok.",
+        )],
+    )
+    .await;
+    embed_missing(&w.pool, &w.state.embedder, "trutnov", 100)
+        .await
+        .expect("embedded");
+    let two =
+        json!([{"project": "hronov", "source": "web"}, {"project": "trutnov", "source": "web"}]);
+    let named = json!({"query": "Trutnov knižnica", "sources": two});
+    let (status, found) = internal_post(&w.app, "/internal/v1/search", named.clone(), false).await;
+    assert_eq!(status, StatusCode::OK, "{found}");
+    let hits = found["hits"].as_array().expect("hits");
+    assert!(
+        !hits.is_empty() && hits.iter().all(|h| h["publisher"] == "trutnov"),
+        "{found}"
+    );
+    let (status, none) = internal_post(
+        &w.app,
+        "/internal/v1/search",
+        json!({"query": "Trutnov knižnica", "sources": two, "lang": "en"}),
+        false,
+    )
+    .await;
+    assert_eq!((status, none), (StatusCode::OK, json!({"hits": []})));
+    let (status, held) = internal_post(
+        &w.app,
+        "/internal/v1/sources",
+        json!({"sources": [{"project": "hronov", "source": "web"}, {"project": "hronov", "source": "nic"}, {"project": "prazdny", "source": "web"}]}),
+        false,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{held}");
+    assert_eq!(held["publishers"], json!(["hronov"]), "{held}");
+    let web = json!([{"project": "hronov", "source": "web"}]);
+    for (uri, body) in [
+        ("/internal/v1/sources", json!({"sources": []})),
+        (
+            "/internal/v1/context",
+            json!({"sources": [], "chunkId": 1, "before": 0, "after": 0}),
+        ),
+        ("/internal/v1/context", json!({"sources": web})),
+        ("/internal/v1/sources", json!({"sources": web, "x": 1})),
+    ] {
+        let (status, _) = internal_post(&w.app, uri, body.clone(), false).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{uri} {body}");
+    }
+    let untyped = Request::builder()
+        .method("POST")
+        .uri("/internal/v1/search")
+        .body(Body::from(named.to_string()))
+        .expect("a request");
+    let response = w.app.clone().oneshot(untyped).await.expect("an answer");
+    assert_eq!(response.status(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    w.pool.close().await;
+    for (uri, body) in [
+        ("/internal/v1/search", named),
+        (
+            "/internal/v1/search",
+            json!({"query": "knižnica", "sources": web}),
+        ),
+        ("/internal/v1/sources", json!({"sources": web})),
+        (
+            "/internal/v1/context",
+            json!({"sources": web, "chunkId": 1, "before": 0, "after": 0}),
+        ),
+    ] {
+        let (status, _) = internal_post(&w.app, uri, body.clone(), false).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{uri} {body}");
+    }
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// T-4659 (AG-119, EP-133): the MCP servers' search answers the public passages of the sources it
 /// is given, best first and at most `limit`, with what their page states of itself; a request
 /// that came through the edge is an unknown path, an internal source is never read, and a
