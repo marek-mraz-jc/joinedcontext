@@ -153,7 +153,7 @@ mod tests {
         .join();
         assert!(buffer.is_poisoned());
         let previous = CAPTURE.with(|c| c.replace(Some((Arc::clone(&buffer), LevelFilter::INFO))));
-        Routed.write(b"kept").expect("a write");
+        assert_eq!(Routed.write(b"kept").expect("a write"), 4);
         CAPTURE.with(|c| *c.borrow_mut() = previous);
         assert_eq!(&*buffer.lock().unwrap_or_else(|e| e.into_inner()), b"kept");
         let ((), text) = logged(LevelFilter::INFO, async {
