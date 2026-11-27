@@ -3785,6 +3785,13 @@ mod tests {
         let car = serde_json::json!({"id": "urn:ngsi-ld:Car:c", "type": [format!("{dc}Car")]});
         assert!(vehicles.holds(&doc("B")) && !vehicles.holds(&car));
         assert!(Condition::of(&Filter::default()).is_none());
+        let area = Condition::of(&Filter {
+            geo_also: vec![*zone_a()],
+            ..Filter::default()
+        })
+        .expect("an area alone selects: it is a condition");
+        assert!(area.holds(&super::tests::car(0.5)), "inside the area");
+        assert!(!area.holds(&super::tests::car(5.0)), "outside the area");
         assert!(Condition::unforwarded(Some(&c), false).is_ok());
         assert!(Condition::unforwarded(None, true).is_ok());
         assert_eq!(

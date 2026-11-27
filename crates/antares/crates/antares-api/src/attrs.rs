@@ -713,10 +713,8 @@ fn combine_attr_parts(
         return crate::federation::loop_508(tenant);
     }
     // nothing was found anywhere → 404 ProblemDetails (6.6/6.7 tables)
-    if matches!(&local, LocalOutcome::NotFound(_)) && !any_fed_ok && updated.is_empty() {
-        if let LocalOutcome::NotFound(d) = local {
-            return ApiError::from(NgsiError::ResourceNotFound(d)).into_response();
-        }
+    if let (LocalOutcome::NotFound(d), false, true) = (&local, any_fed_ok, updated.is_empty()) {
+        return ApiError::from(NgsiError::ResourceNotFound(d.clone())).into_response();
     }
     // 5.6.2.4: unsupported operation on a proxy registration is "an error of
     // type Conflict if the complete update failed" — nothing updated
@@ -2617,6 +2615,28 @@ mod scope_and_type_edges {
             assert!(out.get(member).is_some_and(|v| !v.is_null()), "{ty}: {out}");
             assert!(out.get("observedAt").is_none(), "{ty}: {out}");
         }
+    }
+
+    /// A value is written into an instance the stored document holds as no
+    /// object unchanged in shape, and a value that does not expand under
+    /// the Attribute's IRI is refused as no value of its type.
+    #[test]
+    fn a_value_that_lands_under_no_attribute_is_refused() {
+        let ctx = antares_jsonld::Context::default();
+        let iri = ctx.expand_key("x");
+        let scalar = with_value(&json!(5), "x", &iri, &json!(7), &ctx, None).expect("a value");
+        assert_eq!(
+            scalar,
+            json!(5),
+            "an instance that is no object keeps its shape"
+        );
+        let si = json!({"type": "Property", "value": 1});
+        let err = with_value(&si, "x", "urn:not-x", &json!(7), &ctx, None)
+            .expect_err("the value expands under another IRI");
+        assert!(
+            matches!(&err, NgsiError::BadRequestData(m) if m == "not a Property value"),
+            "{err:?}"
+        );
     }
 
     /// Instance sets that are no arrays merge nothing; a deletion of an

@@ -4134,6 +4134,23 @@ mod clause_4_16 {
     use super::*;
     use serde_json::json;
 
+    /// A type the request names twice, or in two alternatives, is one read
+    /// member for the policy gate.
+    #[test]
+    fn a_type_named_twice_is_one_read_member() {
+        let st = AppState::new("read-members".into())
+            .with_policy(std::sync::Arc::new(crate::policy::AllowAll));
+        let ctx = antares_jsonld::Context::default();
+        let params = HashMap::from([("type".to_owned(), "Room,(Room;Hall)".to_owned())]);
+        let named = ReadMembers::with_ctx(&st, &params, &ctx);
+        assert_eq!(
+            named.types,
+            vec![ctx.expand_key("Room"), ctx.expand_key("Hall")]
+        );
+        let unruled = ReadMembers::with_ctx(&AppState::new("open".into()), &params, &ctx);
+        assert!(unruled.types.is_empty(), "no policy reads no members");
+    }
+
     /// 4.16: "Entity Types can be implicitly added by all operations that
     /// update or append attributes. There is no operation to remove Entity
     /// Types from an Entity."
@@ -5570,6 +5587,206 @@ mod handler_edges {
         assert_eq!(now["speed"]["value"], 1, "{now}");
     }
 
+    /// 6.3.17: a read whose Via already names this broker and that no
+    /// registration matches is answered locally, with no loop warning: no
+    /// forward was suppressed. A looped read of an absent Entity is 404.
+    #[tokio::test]
+    async fn a_looped_read_no_registration_matches_warns_nothing() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:loopread";
+        create(&st, json!({"id": id, "type": "V"})).await;
+        let via = [("Via", "1.1 ent-edges")];
+        let (s, h, b) = send(
+            &st,
+            "GET",
+            &format!("/ngsi-ld/v1/entities/{id}"),
+            &via,
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert!(h.get("NGSILD-Warning").is_none(), "{h:?}");
+        let (s, h, _) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities/urn:ngsi-ld:V:none",
+            &via,
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        assert!(h.get("NGSILD-Warning").is_none(), "{h:?}");
+    }
+
+    /// A stored Entity, as the store holds it, that carries no createdAt.
+    async fn seed_bare(st: &AppState, id: &str) {
+        st.store
+            .create(
+                &TenantId::default(),
+                Kind::Entity,
+                id,
+                json!({"id": id, "type": [format!("{T}V")],
+                       format!("{T}speed"): [{"type": "Property", "value": 1}]}),
+            )
+            .await
+            .expect("seeded");
+    }
+
+    /// 5.6.18 with a matching inclusive registration: a local Entity the
+    /// ?type selector does not select answers its part as not found locally
+    /// and is not replaced; one the selector does select is replaced, and a
+    /// stored Entity with no createdAt takes the replace's own.
+    #[tokio::test]
+    async fn a_federated_replace_honours_the_type_selector_locally() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:fedput";
+        seed_bare(&st, id).await;
+        let reg = json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:fedput",
+            "type": "ContextSourceRegistration",
+            "mode": "inclusive",
+            "operations": ["replaceEntity"],
+            "information": [{"entities": [{"type": "V", "id": id}]}],
+            "endpoint": "http://127.0.0.1:1",
+        });
+        let (s, _, b) = send(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/csourceRegistrations",
+            &[],
+            Some(reg),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let uri = format!("/ngsi-ld/v1/entities/{id}");
+        let body = json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 2}});
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &format!("{uri}?type=W"),
+            &[],
+            Some(body.clone()),
+        )
+        .await;
+        assert!(!s.is_success() || s == StatusCode::MULTI_STATUS, "{s} {b}");
+        let (_, _, now) = send(&st, "GET", &format!("{uri}?local=true"), &[], None).await;
+        assert_eq!(now["speed"]["value"], 1, "not replaced: {now}");
+        let (s, _, b) = send(&st, "PUT", &uri, &[], Some(body)).await;
+        assert!(s != StatusCode::NOT_FOUND, "{s} {b}");
+        let (_, _, now) = send(
+            &st,
+            "GET",
+            &format!("{uri}?local=true&options=sysAttrs"),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(now["speed"]["value"], 2, "replaced locally: {now}");
+        assert!(
+            now["createdAt"].is_string(),
+            "the replace stamps one: {now}"
+        );
+    }
+
+    /// 5.6.19: replacing an instance the store holds with no createdAt
+    /// stamps the replace time as its createdAt.
+    #[tokio::test]
+    async fn a_replaced_instance_without_created_at_takes_the_write_time() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:bareattr";
+        seed_bare(&st, id).await;
+        let (s, _, b) = send(
+            &st,
+            "PUT",
+            &format!("/ngsi-ld/v1/entities/{id}/attrs/speed"),
+            &[],
+            Some(json!({"type": "Property", "value": 3})),
+        )
+        .await;
+        assert_eq!(s, StatusCode::NO_CONTENT, "{b}");
+        let (_, _, now) = send(
+            &st,
+            "GET",
+            &format!("/ngsi-ld/v1/entities/{id}?options=sysAttrs"),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(now["speed"]["value"], 3, "{now}");
+        assert!(now["speed"]["createdAt"].is_string(), "{now}");
+    }
+
+    /// 5.6.5: deleting an instance by a datasetId the Attribute does not
+    /// hold is not found and leaves the Attribute.
+    #[tokio::test]
+    async fn deleting_an_unknown_dataset_is_not_found() {
+        let st = AppState::new(ALIAS.into());
+        let id = "urn:ngsi-ld:V:delds";
+        create(
+            &st,
+            json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        let uri = format!("/ngsi-ld/v1/entities/{id}/attrs/speed");
+        let (s, _, _) = send(
+            &st,
+            "DELETE",
+            &format!("{uri}?datasetId=urn:ngsi-ld:ds:none"),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        let (_, _, now) = send(&st, "GET", &format!("/ngsi-ld/v1/entities/{id}"), &[], None).await;
+        assert_eq!(now["speed"]["value"], 1, "{now}");
+    }
+
+    /// clause 5.7.2, step 4: a scopeQ leaves the store undecided, so the id selector and
+    /// the attrs filter are applied here: only the named id, and only an
+    /// Entity holding one of the attrs, are answered.
+    #[tokio::test]
+    async fn an_undecided_query_applies_the_id_and_attrs_filters() {
+        let st = AppState::new(ALIAS.into());
+        for (n, attr) in [("u1", "speed"), ("u2", "speed"), ("u3", "colour")] {
+            create(
+                &st,
+                json!({"id": format!("urn:ngsi-ld:V:{n}"), "type": "V", "scope": "/a",
+                       attr: {"type": "Property", "value": 1}}),
+            )
+            .await;
+        }
+        let ids = |b: &Value| {
+            let mut v: Vec<String> = b
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e["id"].as_str().map(str::to_owned))
+                .collect();
+            v.sort();
+            v
+        };
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?id=urn:ngsi-ld:V:u1&attrs=speed&scopeQ=/a",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(ids(&b), ["urn:ngsi-ld:V:u1"], "{b}");
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?attrs=colour&scopeQ=/a",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        assert_eq!(ids(&b), ["urn:ngsi-ld:V:u3"], "{b}");
+    }
+
     /// 5.6.17/5.6.18/5.6.21: a fragment naming another id, a replace body
     /// naming another id, a replace whose ?type the target does not have,
     /// and a purge with both keep and drop are refused with their reason.
@@ -5859,6 +6076,40 @@ mod handler_edges {
         .await
         .expect("map");
         assert_eq!(map["entityMap"].as_object().map(|m| m.len()), Some(2));
+    }
+
+    /// 5.14.4 step 4 under an idPattern: a later store page that would take
+    /// the map past the page limit is cut where the limit is reached.
+    #[tokio::test]
+    async fn a_patterned_query_map_stops_inside_a_later_page() {
+        let mut st = AppState::new(ALIAS.into());
+        st.max_limit = 2;
+        for i in 0..5 {
+            create(
+                &st,
+                json!({"id": format!("urn:ngsi-ld:V:pat{i}"), "type": "V"}),
+            )
+            .await;
+        }
+        let ctx = st.loader.core();
+        let params: HashMap<String, String> = [
+            ("type".to_owned(), "V".to_owned()),
+            ("idPattern".to_owned(), "urn:ngsi-ld:V:pat[0234]".to_owned()),
+        ]
+        .into();
+        let map = build_query_map(
+            &st,
+            &TenantId::default(),
+            &HeaderMap::new(),
+            &ctx,
+            &params,
+            &crate::policy::Filter::default(),
+        )
+        .await
+        .expect("map");
+        let held = map["entityMap"].as_object().expect("a map");
+        assert_eq!(held.len(), 2, "{map}");
+        assert!(!held.contains_key("urn:ngsi-ld:V:pat1"), "{map}");
     }
 
     /// An ordered, joined listing whose window lies past the last match is
