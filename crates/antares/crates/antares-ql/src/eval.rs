@@ -313,21 +313,17 @@ fn terminal(
             // value shall be expanded according to the @context."
             out.push((kind, expand_vocab(v, ctx)));
         }
+        // 4.9: "If the target element is a LanguageProperty, and no target
+        // language is specified, the target value is defined as a value from
+        // any of the key-value pairs held within the languageMap": `name~=`
+        // reads as `name[*]~=`, never as a compare against the map object
+        (None, TargetKind::LanguageMap) if v.is_object() => any_language(v, out),
         (None, _) => push_target(kind, v, out),
         (Some(b), TargetKind::LanguageMap) => {
             let Some(map) = v.as_object() else { return };
             let [lang] = b else { return };
             if lang == "*" {
-                // any language: ONE array target so that != requires no
-                // matching value in ANY language (4.9 Unequal, color[*])
-                let mut all = Vec::new();
-                for val in map.values() {
-                    match val {
-                        Value::Array(a) => all.extend(a.iter().cloned()),
-                        other => all.push(other.clone()),
-                    }
-                }
-                out.push((kind, Value::Array(all)));
+                any_language(v, out);
             } else if let Some(val) = map.get(lang) {
                 out.push((kind, val.clone()));
             }
@@ -354,6 +350,20 @@ fn terminal(
             }
         }
     }
+}
+
+/// Every value of a languageMap as ONE array target, so that != requires no
+/// matching value in ANY language (4.9 Unequal, color[*]).
+fn any_language(v: &Value, out: &mut Vec<(TargetKind, Value)>) {
+    let Some(map) = v.as_object() else { return };
+    let mut all = Vec::new();
+    for val in map.values() {
+        match val {
+            Value::Array(a) => all.extend(a.iter().cloned()),
+            other => all.push(other.clone()),
+        }
+    }
+    out.push((TargetKind::LanguageMap, Value::Array(all)));
 }
 
 /// Expand a vocab value (string or array of strings) against the @context.
@@ -747,6 +757,15 @@ mod clause_4_9_extensions {
         assert!(!q(&e, r#"color[en]!="red""#));
         assert!(!q(&e, r#"color[*]!="red""#), "some language holds red");
         assert!(q(&e, r#"color[*]!="blau""#));
+        // no language named reads as [*] (4.9 target value of a
+        // LanguageProperty); the map object itself is never the target
+        assert!(q(&e, r#"color=="rouge""#), "a value of any language");
+        assert!(q(&e, r#"color~="^ro""#), "a pattern over any language");
+        assert!(q(&e, r#"names=="cat""#), "an array element of any language");
+        assert!(!q(&e, r#"color=="blau""#));
+        assert!(!q(&e, r#"color!="red""#), "some language holds red");
+        assert!(q(&e, r#"color!="blau""#));
+        assert!(q(&e, "color"), "existence is unchanged");
     }
 
     /// 4.9: "If the target element is a VocabProperty, the target value shall

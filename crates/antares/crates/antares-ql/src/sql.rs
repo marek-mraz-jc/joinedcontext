@@ -196,7 +196,13 @@ pub fn value_or_filter(
     let steps = VALUE_KEYS
         .iter()
         .filter(|k| objects || !matches!(**k, "object" | "objectList"))
-        .map(|k| format!(".\"{k}\""))
+        .map(|k| match (*k, filter) {
+            // 4.9: with no language named, a LanguageProperty's target value
+            // is any value of its languageMap (`eval::any_language`); the
+            // existence form keeps the member itself
+            ("languageMap", Some(_)) => ".\"languageMap\".*".to_owned(),
+            _ => format!(".\"{k}\""),
+        })
         // C.6: a value written as a JSON-LD typed value carries it under
         // `@value`, and `eval::untyped` compares that member — one more
         // step for the members that can hold one.
@@ -726,6 +732,37 @@ mod tests {
         assert!(lang_filter(CmpOp::Ne, &list).is_none());
         assert!(lang_filter(CmpOp::Ne, &QValue::Range(n(1.0), n(2.0))).is_none());
         assert_eq!(lang_filter(CmpOp::Eq, &list), eq_filter(&list));
+    }
+
+    /// 4.9: `name~="x"` with no language named reads any value of a
+    /// LanguageProperty's languageMap, as `eval::any_language` does; before
+    /// this the arm compared the map object and never matched (T-7788).
+    #[test]
+    fn a_language_property_without_a_bracket_reads_every_language() {
+        let node = QNode::Cmp {
+            path: QPath::dotted(vec!["name".to_owned()]),
+            op: CmpOp::Pattern,
+            value: QValue::Str("Herttoniemi".to_owned()),
+        };
+        let got = compile_q(&node, "entity", 1, &|t| t.to_owned()).expect("compiles");
+        assert!(
+            got.binds.contains(
+                &"$.\"name\"[*].\"languageMap\".* ? (@ like_regex \"Herttoniemi\")".to_owned()
+            ),
+            "{:?}",
+            got.binds
+        );
+        let exists = QNode::Exists {
+            path: QPath::dotted(vec!["name".to_owned()]),
+            negated: false,
+        };
+        let got = compile_q(&exists, "entity", 1, &|t| t.to_owned()).expect("compiles");
+        assert!(
+            got.binds
+                .contains(&"$.\"name\"[*].\"languageMap\"".to_owned()),
+            "{:?}",
+            got.binds
+        );
     }
 
     /// Linked-entity hops and trailing brackets stay in memory, for an
