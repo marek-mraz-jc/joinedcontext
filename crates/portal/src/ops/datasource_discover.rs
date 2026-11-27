@@ -557,7 +557,10 @@ mod tests {
 
     #[test]
     fn a_wfs_listing_cut_by_the_byte_cap_keeps_the_whole_feature_types_and_says_it_is_cut() {
-        let text = recorded("wfs/discover.xml").as_str().expect("xml").to_owned();
+        let text = recorded("wfs/discover.xml")
+            .as_str()
+            .expect("xml")
+            .to_owned();
         // Cut inside the seventh feature type, as the runner's byte cap cuts a long listing.
         let seventh = text
             .match_indices("</FeatureType>")

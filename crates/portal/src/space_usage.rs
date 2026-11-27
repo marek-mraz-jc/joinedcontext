@@ -466,6 +466,19 @@ fn bytes_of(body: &Value) -> Option<SpaceBytes> {
 
 #[cfg(test)]
 mod tests {
+    /// An error that is neither a timeout nor a refused connection still says what to do.
+    #[tokio::test]
+    async fn an_unanswered_count_that_is_no_timeout_and_no_connect_says_try_again() {
+        let err = reqwest::Client::new()
+            .get("http://exa mple.invalid/")
+            .send()
+            .await
+            .expect_err("no request is built for that address");
+        assert_eq!(
+            unanswered(&err),
+            "the broker did not answer; try again in a minute"
+        );
+    }
     use super::*;
 
     use serde_json::json;

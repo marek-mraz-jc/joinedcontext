@@ -500,10 +500,10 @@ mod tests {
         )
         .expect_err("the second reference is checked as well as the first");
         assert!(
-            matches!(&refused, ApiError::Invalid { detail, .. } if detail.contains("spec.projectionRef")),
+            matches!(&refused, ApiError::Invalid { detail, .. }
+                if detail.contains("spec.projectionRef") && detail.contains("ModelProjection")),
             "{refused:?}"
         );
-        assert!(detail.contains("ModelProjection"), "{detail}");
     }
 
     /// A kind that names nothing resolvable here is left alone, whatever its spec holds.
@@ -741,7 +741,10 @@ mod tests {
             json!({ "class": "auto", "source": { "dataSourceRef": null } }),
         ] {
             let checked = check(&mirror, "helsinki", "Pipeline", &spec);
-            assert!(checked.is_ok(), "{spec} is incomplete, not wrong: {checked:?}");
+            assert!(
+                checked.is_ok(),
+                "{spec} is incomplete, not wrong: {checked:?}"
+            );
         }
     }
 

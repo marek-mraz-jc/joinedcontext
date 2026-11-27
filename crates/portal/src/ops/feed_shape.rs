@@ -399,6 +399,15 @@ pub fn has_slot(linkml: &str, class: &str, name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn an_empty_feature_collection_has_no_records_and_a_field_of_no_letters_is_field() {
+        assert!(records(&json!({ "type": "FeatureCollection", "features": [] })).is_none());
+        assert!(records(&json!({ "type": "FeatureCollection", "features": [1, "x"] })).is_none());
+        assert_eq!(slot_name("()"), "field");
+        assert_eq!(slot_name("--"), "field");
+        assert_eq!(slot_name("a -- b"), "a_b");
+        assert_eq!(slot_name("2nd count [m]"), "_2nd_count");
+    }
     use serde_json::json;
 
     use super::*;

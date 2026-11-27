@@ -126,9 +126,9 @@ pub fn diff(current: Option<&ResourceEnvelope>, desired: Option<&ResourceEnvelop
 /// Collects all leaf values from `metadata` and `spec` of a resource envelope.
 fn envelope_leaves(env: &ResourceEnvelope) -> Vec<(String, serde_json::Value)> {
     let mut leaves = Vec::new();
-    if let Ok(meta_val) = serde_json::to_value(&env.metadata) {
-        collect_leaves("metadata", &meta_val, &mut leaves);
-    }
+    // Metadata is a struct of strings and maps with string keys: it always serialises.
+    let meta_val = serde_json::to_value(&env.metadata).unwrap_or_default();
+    collect_leaves("metadata", &meta_val, &mut leaves);
     collect_leaves("spec", &env.spec, &mut leaves);
     leaves
 }
@@ -199,7 +199,9 @@ fn diff_values(
                             });
                         }
                     }
-                    (None, Some(d)) => {
+                    // The key is in one of the maps, so here it is in `des`.
+                    (None, d) => {
+                        let d = d.unwrap_or(&serde_json::Value::Null);
                         let mut added = Vec::new();
                         collect_leaves(&child_path, d, &mut added);
                         for (p, val) in added {
@@ -210,7 +212,6 @@ fn diff_values(
                             });
                         }
                     }
-                    (None, None) => {}
                 }
             }
         }
@@ -263,21 +264,21 @@ fn diff_values(
 /// the target outright.
 pub fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
     if let serde_json::Value::Object(patch_obj) = patch {
-        if !target.is_object() {
-            *target = serde_json::Value::Object(serde_json::Map::new());
-        }
-        if let serde_json::Value::Object(target_obj) = target {
-            for (key, value) in patch_obj {
-                if value.is_null() {
-                    target_obj.remove(key);
-                } else {
-                    let entry = target_obj
-                        .entry(key.clone())
-                        .or_insert(serde_json::Value::Null);
-                    merge_patch(entry, value);
-                }
+        let mut target_obj = match std::mem::take(target) {
+            serde_json::Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        for (key, value) in patch_obj {
+            if value.is_null() {
+                target_obj.remove(key);
+            } else {
+                let entry = target_obj
+                    .entry(key.clone())
+                    .or_insert(serde_json::Value::Null);
+                merge_patch(entry, value);
             }
         }
+        *target = serde_json::Value::Object(target_obj);
     } else {
         *target = patch.clone();
     }
@@ -529,6 +530,13 @@ mod tests {
 
         merge_patch(&mut target, &patch);
         assert_eq!(target, json!({ "c": "d" }));
+    }
+
+    #[test]
+    fn merge_patch_object_onto_a_scalar_starts_an_object() {
+        let mut target = json!("plain");
+        merge_patch(&mut target, &json!({ "a": 1, "b": null }));
+        assert_eq!(target, json!({ "a": 1 }));
     }
 
     #[test]

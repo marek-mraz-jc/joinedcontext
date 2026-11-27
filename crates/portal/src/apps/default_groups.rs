@@ -186,6 +186,31 @@ mod tests {
         }
     }
 
+    /// An access entry that names no subjects goes with the release; one that still names a
+    /// group stays; an App with no access list is left as it is.
+    #[test]
+    fn a_release_drops_an_entry_without_subjects_and_leaves_an_app_without_access() {
+        let removed = [group("alerts-viewer", None, &[])];
+        let mut app = envelope(
+            "App",
+            "alerts",
+            "helsinki",
+            json!({ "access": [
+                { "role": "viewer", "subjects": [{ "group": "alerts-viewer" }] },
+                { "role": "editor" },
+                { "role": "steward", "subjects": [{ "group": "alerts-steward" }] },
+            ] }),
+        );
+        release(&mut app, &removed);
+        assert_eq!(
+            app.spec["access"],
+            json!([{ "role": "steward", "subjects": [{ "group": "alerts-steward" }] }])
+        );
+        let mut bare = envelope("App", "bare", "helsinki", json!({ "type": "static" }));
+        release(&mut bare, &removed);
+        assert_eq!(bare.spec, json!({ "type": "static" }));
+    }
+
     fn group(name: &str, owner: Option<&str>, members: &[&str]) -> ResourceEnvelope {
         let mut group = envelope(
             "Group",

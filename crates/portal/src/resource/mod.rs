@@ -440,8 +440,8 @@ mod tests {
     #[test]
     fn a_rendered_path_never_keeps_a_placeholder() {
         for info in kinds() {
-            let path = repository_path(info, "ovzdusie", Some("ovzdusie"), "demo")
-                .expect(&info.kind);
+            let path =
+                repository_path(info, "ovzdusie", Some("ovzdusie"), "demo").expect(&info.kind);
             assert!(
                 !path.contains('{') && !path.contains('}'),
                 "{} rendered to {path}",
