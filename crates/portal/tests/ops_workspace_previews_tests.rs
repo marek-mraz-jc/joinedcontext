@@ -77,7 +77,12 @@ async fn world() -> (MockServer, AppState) {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
         .mount(&server)
         .await;
-    let files = files();
+    let mut files = files();
+    // Another project of the organization: the preview renders the workspace's project alone.
+    files.push((
+        "projects/elsewhere/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: elsewhere\n  namespace: org\nspec:\n  organizationRef: bb\n".to_owned(),
+    ));
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))).and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -543,4 +548,71 @@ async fn the_served_list_leaves_out_a_preview_that_no_longer_renders() {
         listed.items.is_empty(),
         "a branch that is gone serves nothing"
     );
+}
+
+/// A branch of the organization's repository that the forge cannot list is a 503 saying the
+/// branch did not stage (T-7921).
+#[tokio::test]
+async fn a_branch_that_does_not_stage_is_unavailable() {
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let state = doors::state_with(state_on(&server));
+    open(&state, "air-v2", "jana").await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.text().contains("did not stage"),
+        "{}",
+        started.text()
+    );
+}
+
+/// CC-81: a running preview whose branch moved to files that no longer load is left out of the
+/// gateway's list, and the list still answers (T-7921).
+#[tokio::test]
+async fn the_served_list_leaves_out_a_preview_whose_files_no_longer_load() {
+    let (server, state) = world().await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, started.status, "{}", started.text());
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head2" })))
+        .mount(&server)
+        .await;
+    let mut broken = files();
+    broken[2].1 = "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  isSandbox: [not, a, flag]\n".to_owned();
+    mount_tree(&server, REPO, "head2", &broken).await;
+    let listed = joinedcontext_portal::ops::previews::served(&state)
+        .await
+        .expect("listed");
+    assert!(listed.items.is_empty(), "files that do not load serve nothing");
 }

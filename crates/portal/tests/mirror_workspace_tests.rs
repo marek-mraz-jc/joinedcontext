@@ -237,3 +237,58 @@ async fn what_main_changed_after_the_workspace_opened_reads_as_main() {
         "the branch's old copy of b is not the workspace's change"
     );
 }
+
+/// `entries` as `git_ref`'s tree, over the one [`world`] mounted.
+async fn tree_over(server: &MockServer, git_ref: &str, entries: &[(&str, &str)]) {
+    let tree: Vec<_> = entries
+        .iter()
+        .map(|(p, sha)| json!({ "Path": p, "Type": "blob", "Sha": sha }))
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", format!("'{git_ref}'")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": tree, "Truncated": false })),
+        )
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+/// A YAML file that holds no manifest changes nothing in the view, added or removed (T-7921).
+#[tokio::test]
+async fn a_yaml_file_that_holds_no_manifest_changes_nothing() {
+    let (server, state) = world(true, true).await;
+    let a = "projects/helsinki/pipelines/a/pipeline.yaml";
+    let notes = "projects/helsinki/notes.yaml";
+    let old = "projects/helsinki/old.yaml";
+    tree_over(&server, "workspace/bikes-v2", &[(a, "a2"), (notes, "n1")]).await;
+    tree_over(&server, "abc", &[(a, "a1"), (old, "o1")]).await;
+    file(&server, "workspace/bikes-v2", notes, "just: notes\n").await;
+    file(&server, "abc", old, "just: old notes\n").await;
+    let view = mirror_of(&state, &jana(&state), "bikes-v2", "helsinki")
+        .await
+        .expect("the view");
+    assert_eq!(period(&view, "a").as_deref(), Some("30s"));
+    assert_eq!(period(&view, "b").as_deref(), Some("60s"));
+    assert_eq!(period(&view, "gone").as_deref(), Some("1h"));
+}
+
+/// A forge that fails listing the branch is that failure, not a view of main (T-7921).
+#[tokio::test]
+async fn a_branch_the_forge_fails_to_list_is_an_error() {
+    let (server, state) = world(true, false).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'workspace/bikes-v2'"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let failed = mirror_of(&state, &jana(&state), "bikes-v2", "helsinki").await;
+    assert!(failed.is_err(), "a forge error reads as no view");
+}

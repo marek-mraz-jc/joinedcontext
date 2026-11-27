@@ -847,9 +847,7 @@ mod tests {
     #[test]
     fn a_capture_broker_without_roles_subscribes_to_nothing() {
         let mut empty = broker("none", "capture");
-        if let Ok(spec) = empty.spec.as_mut() {
-            spec.roles.clear();
-        }
+        empty.spec.as_mut().expect("a capture broker").roles.clear();
         let found = targets(&[empty]);
         assert_eq!(found.len(), 1);
         assert!(found[0].publish.is_empty());
@@ -996,16 +994,10 @@ mod tests {
     async fn read_packet(socket: &mut tokio::net::TcpStream) -> std::io::Result<(u8, Vec<u8>)> {
         use tokio::io::AsyncReadExt;
         let first = socket.read_u8().await?;
-        let (mut length, mut shift) = (0usize, 0u32);
-        loop {
-            let byte = socket.read_u8().await?;
-            length |= usize::from(byte & 0x7f) << shift;
-            if byte & 0x80 == 0 {
-                break;
-            }
-            shift += 7;
-        }
-        let mut body = vec![0u8; length];
+        // The subscriber's CONNECT and SUBSCRIBE are under 128 bytes: one length byte.
+        let length = socket.read_u8().await?;
+        assert!(length < 0x80, "a packet of the subscriber's is under 128 bytes");
+        let mut body = vec![0u8; usize::from(length)];
         socket.read_exact(&mut body).await?;
         Ok((first, body))
     }
@@ -1041,14 +1033,10 @@ mod tests {
         read_packet(&mut socket).await?;
         tokio::time::sleep(connack).await;
         socket.write_all(&[0x20, 0x02, 0x00, 0x00]).await?;
-        loop {
-            let (first, body) = read_packet(&mut socket).await?;
-            if first >> 4 == 8 {
-                let ack = [0x90, 3, body[0], body[1], 0x00];
-                socket.write_all(&ack).await?;
-                break;
-            }
-        }
+        // The subscriber's next packet is its SUBSCRIBE.
+        let (first, body) = read_packet(&mut socket).await?;
+        assert_eq!(first >> 4, 8, "a SUBSCRIBE");
+        socket.write_all(&[0x90, 3, body[0], body[1], 0x00]).await?;
         for (topic, payload) in &messages {
             socket.write_all(&publish_packet(topic, payload)).await?;
         }
@@ -1073,34 +1061,33 @@ mod tests {
     /// the connection or a store that refuses the write stops nothing.
     #[tokio::test]
     async fn a_subscriber_stores_what_its_broker_publishes_and_survives_a_refused_store() {
-        let Ok(listener) = tokio::net::TcpListener::bind(("127.0.0.1", PORT)).await else {
-            eprintln!("skipped: the MQTT port is taken on this host");
-            return;
-        };
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", PORT))
+            .await
+            .expect("the MQTT port is free on this host");
         let burst: Vec<(String, Vec<u8>)> = (0..BROKER_MESSAGES + 5)
             .map(|n| ("cams/cam-1/frame".to_owned(), n.to_string().into_bytes()))
             .collect();
         // The first CONNACK comes later than a flush tick: the dial must survive the tick.
         let scripts = Arc::new(Mutex::new(VecDeque::from([
             (FLUSH + Duration::from_millis(500), burst),
+            // Over 127 bytes: its PUBLISH carries a length of two bytes.
             (
                 Duration::ZERO,
-                vec![("cams/cam-2/frame".to_owned(), b"lost".to_vec())],
+                vec![("cams/cam-2/frame".to_owned(), vec![b'l'; 200])],
             ),
         ])));
         let served = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let accepting = {
             let served = Arc::clone(&served);
             tokio::spawn(async move {
-                loop {
-                    let Ok((socket, _)) = listener.accept().await else {
-                        return;
-                    };
+                // One connection per script: the first subscriber's, then the second's.
+                for _ in 0..2 {
+                    let (socket, _) = listener.accept().await.expect("accept");
                     let script = scripts
                         .lock()
-                        .unwrap_or_else(|e| e.into_inner())
+                        .expect("the scripts' lock")
                         .pop_front()
-                        .unwrap_or_default();
+                        .expect("a script per connection");
                     let served = Arc::clone(&served);
                     tokio::spawn(async move {
                         let _ = one_connection(socket, script, Duration::from_millis(2500)).await;
@@ -1190,7 +1177,8 @@ mod tests {
             .await
         })
         .await;
-        broker.abort();
+        // The subscriber hung up at its timeout, which ends the broker's connection too.
+        broker.await.expect("the broker's connection ended");
         assert!(log.contains("the MQTT capture did not subscribe"), "{log}");
         assert!(log.contains("mqtt-p-cams"), "{log}");
     }

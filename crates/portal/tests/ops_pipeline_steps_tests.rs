@@ -347,6 +347,37 @@ async fn a_model_is_inferred_from_the_records_a_public_address_answers() {
     assert_eq!(sent.len(), 1, "one inference of the fetched records");
 }
 
+/// An address whose fetch answers nothing within the test's window is the address's fault, said
+/// at its field (T-7921).
+#[tokio::test]
+async fn an_address_that_answers_nothing_infers_nothing_and_says_so_at_its_field() {
+    let runner = runner().await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror("silent"));
+    let uri = op("silent", "jc_model_infer");
+    let (inferred, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &uri,
+            Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+        ),
+        play_runner(&runner, &state, 0, &[]),
+    );
+    assert_eq!(
+        inferred.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        inferred.text
+    );
+    assert!(inferred.text.contains(r#""path":"url""#), "{}", inferred.text);
+    assert!(
+        inferred.text.contains("the feed answered nothing"),
+        "{}",
+        inferred.text
+    );
+}
+
 #[tokio::test]
 async fn a_source_with_a_credential_a_stream_or_no_name_says_what_to_give_instead() {
     let state = state("refusals", None);

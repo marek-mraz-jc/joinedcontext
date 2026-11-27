@@ -1315,6 +1315,31 @@ async fn a_pipeline_loads_through_the_endpoint_the_space_has_or_the_person_broug
     }
 }
 
+/// An upload into an Endpoint the person brought drafts the person's write grant beside it, on
+/// its own (T-7921).
+#[tokio::test]
+async fn an_upload_into_a_brought_endpoint_drafts_the_write_grant_on_its_own() {
+    let brought = format!(
+        "apiVersion: {API_VERSION}\nkind: Endpoint\nmetadata:\n  name: stops-door\nspec:\n  contextSpaceRef: stops\n  audience: project\n"
+    );
+    let (status, body) = complete_holding(
+        Vec::new(),
+        json!({ "upload": true, "files": [
+            { "name": "stops.csv", "content": "id,name\n1,Rautatientori\n" },
+            { "name": "endpoint.yaml", "content": brought },
+        ] }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let upload = body["drafts"]
+        .as_array()
+        .expect("drafts")
+        .iter()
+        .find(|d| d["name"] == "stops-upload")
+        .unwrap_or_else(|| panic!("no upload grant in {body}"));
+    assert_eq!(upload["kind"], "Policy", "{upload}");
+}
+
 /// [`complete_as_steward`] against a mirror that also holds `held`.
 async fn complete_holding(
     held: Vec<joinedcontext_portal::resource::ResourceEnvelope>,
