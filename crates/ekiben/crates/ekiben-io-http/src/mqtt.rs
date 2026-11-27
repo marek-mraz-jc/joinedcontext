@@ -966,6 +966,14 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// The `mqtt` subprotocol header is one tokio-websockets lets a client set: the add_header
+    /// refusal in the ws connect is unreachable while this holds.
+    #[test]
+    fn the_websocket_protocol_header_is_allowed() {
+        assert!(!tokio_websockets::client::DISALLOWED_HEADERS
+            .contains(&axum::http::header::SEC_WEBSOCKET_PROTOCOL));
+    }
+
     #[test]
     fn packets_round_trip() {
         let conf = MqttConf::from_json(&json!({
