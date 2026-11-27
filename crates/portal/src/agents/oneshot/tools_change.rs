@@ -257,9 +257,7 @@ impl Driver {
         }
 
         let mut current = serde_json::to_value(&current).map_err(|err| err.to_string())?;
-        if let Value::Object(fields) = &mut current {
-            fields.remove("status");
-        }
+        share::remove_key(&mut current, "status");
         let Some(patch) = params.patch.as_ref() else {
             // A call without a patch reads the manifest first, so the next one names real fields.
             return self
@@ -474,13 +472,12 @@ impl Driver {
         const TOOL: &str = "change_resource";
         let millis = || u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let name = params.name.trim();
-        if kind == "Dashboard" {
-            if let Err(reason) = self.may_change("Layer", Verb::Propose) {
-                return self
-                    .refused(TOOL, started, input, reason)
-                    .await
-                    .map(Worked::Done);
-            }
+        // Only a Dashboard is created here (`change_resource`), and it is proposed with its layers.
+        if let Err(reason) = self.may_change("Layer", Verb::Propose) {
+            return self
+                .refused(TOOL, started, input, reason)
+                .await
+                .map(Worked::Done);
         }
         let mut drafted = match self.new_dashboard(kind, name, params).await {
             Ok(drafted) => drafted,
@@ -739,22 +736,22 @@ impl Driver {
                 )
                 .await;
         }
-        let checked = match model_change::apply(&model, operations) {
-            Ok(changed) => match serde_norway::to_string(&changed) {
-                Ok(source) => crate::api::datamodels::check_source(
-                    &self.state,
-                    &self.identity,
-                    home,
-                    name,
-                    &spec,
-                    &source,
-                    None,
-                )
-                .await
-                .map(|(checked, _, _)| checked)
-                .map_err(|err| format!("the platform's check refuses the change: {err}")),
-                Err(err) => Err(err.to_string()),
-            },
+        // A model that applies is a JSON value, which YAML always writes.
+        let source = model_change::apply(&model, operations)
+            .and_then(|changed| serde_norway::to_string(&changed).map_err(|err| err.to_string()));
+        let checked = match source {
+            Ok(source) => crate::api::datamodels::check_source(
+                &self.state,
+                &self.identity,
+                home,
+                name,
+                &spec,
+                &source,
+                None,
+            )
+            .await
+            .map(|(checked, _, _)| checked)
+            .map_err(|err| format!("the platform's check refuses the change: {err}")),
             Err(reason) => Err(reason),
         };
         let checked = match checked {
@@ -2051,6 +2048,42 @@ mod new_dashboard_tests {
         );
     }
 
+    /// A dashboard drawing a project layer the public may not read goes back with the
+    /// manifest the dry run refused; one that passes is drafted, its prose said for the model
+    /// that wrote none (UI-19, T-7912).
+    #[tokio::test]
+    async fn a_dashboard_the_dry_run_refuses_goes_back_and_one_that_passes_is_drafted() {
+        let (mut driver, _forge) = world().await;
+        proposes_dashboards(&mut driver);
+        let existing = create("public", &["staff-stations"], Vec::new());
+        let reason = dashboard(&driver, &existing, false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("the manifest was"), "{reason}");
+        let private = create(
+            "project",
+            &["staff"],
+            vec![layer("staff", "bikes-staff", json!({}))],
+        );
+        let prose = dashboard(&driver, &private, false)
+            .await
+            .done()
+            .expect("drafted");
+        assert!(
+            prose.starts_with("Drafted the dashboard 'stations'"),
+            "{prose}"
+        );
+        let kept = driver
+            .state
+            .drafts
+            .get("helsinki", "Layer", "staff")
+            .await
+            .expect("read")
+            .expect("the layer is kept with the dashboard");
+        assert!(kept.verdict.is_some(), "a checked draft carries its verdict");
+    }
+
     async fn model_change(
         driver: &Driver,
         name: &str,
@@ -2127,6 +2160,38 @@ mod new_dashboard_tests {
         assert!(
             prose.starts_with("The data model 'bikes' could not be changed: "),
             "{prose}"
+        );
+    }
+
+    /// A change the model takes opens the editor on it, its prose said for a model that wrote
+    /// none; one the platform's check refuses (a range no class or type has) goes back with the
+    /// check's reason (DM-56, T-7912).
+    #[tokio::test]
+    async fn a_model_change_opens_the_editor_or_goes_back_with_the_checks_reason() {
+        let (driver, _forge) = world().await;
+        let described: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
+            { "op": "setSlot", "name": "name", "field": "description", "value": "The station's name" }
+        ]))
+        .expect("operations");
+        let prose = model_change(&driver, "bikes", &described, false)
+            .await
+            .done()
+            .expect("opened");
+        assert_eq!(
+            prose,
+            "Opened the data model 'bikes' with the change; review it and save it."
+        );
+        let ranged: Vec<crate::agents::model_change::Operation> = serde_json::from_value(json!([
+            { "op": "setSlot", "name": "name", "field": "range", "value": "NoSuchClass" }
+        ]))
+        .expect("operations");
+        let reason = model_change(&driver, "bikes", &ranged, false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(
+            reason.contains("the platform's check refuses the change"),
+            "{reason}"
         );
     }
 
@@ -2249,9 +2314,7 @@ mod new_dashboard_tests {
 
     fn layer(name: &str, endpoint: &str, extra: Value) -> NewLayer {
         let mut spec = json!({ "sourceEndpointRef": endpoint, "entityType": "BikeHireDockingStation", "style": "circle" });
-        if let (Some(spec), Some(extra)) = (spec.as_object_mut(), extra.as_object()) {
-            spec.extend(extra.clone());
-        }
+        crate::plan::merge_patch(&mut spec, &extra);
         NewLayer {
             name: name.to_owned(),
             spec,
@@ -2963,6 +3026,37 @@ mod unparsed_tests {
         );
     }
 
+    /// On the last round a new data source whose fetch is not green still opens its form, the
+    /// finding first and no verdict kept; the rest of the request follows as next steps
+    /// (AG-45, PF-57, T-6531, T-7912).
+    #[tokio::test]
+    async fn a_new_source_whose_fetch_fails_opens_its_form_unfinished_on_the_last_round() {
+        let (driver, state) = steward();
+        let mut params = source(with_http(json!({ "url": "https://127.0.0.1:1/data.csv" })));
+        params.next = vec![crate::agents::change::NextStep {
+            kind: "Endpoint".into(),
+            name: "counters".into(),
+        }];
+        let prose = call(&driver, params, true)
+            .await
+            .done()
+            .expect("the form opens on the last round");
+        assert!(prose.contains("Its test is not green yet"), "{prose}");
+        assert!(prose.contains("Endpoint 'counters'"), "{prose}");
+        let tools = logged(&state, "tool").await;
+        let ok = tools.iter().find(|t| t["status"] == "ok").expect("the opened step");
+        assert_eq!(ok["output"]["checked"], false, "{ok}");
+        assert!(ok["output"]["unfinished"].is_string(), "{ok}");
+        assert_eq!(logged(&state, "navigate").await.len(), 1, "the form opened");
+        let draft = state
+            .drafts
+            .get("helsinki", "DataSource", "counters-api")
+            .await
+            .expect("read")
+            .expect("the draft is kept");
+        assert!(draft.verdict.is_none(), "an unfinished draft carries no verdict");
+    }
+
     #[tokio::test]
     async fn a_hidden_attribute_reaches_the_change_after_a_guess() {
         let (driver, state) = steward();
@@ -3229,6 +3323,46 @@ mod change_resource_tests {
         assert!(prose.contains("the project's are bikes"), "{prose}");
     }
 
+    /// A removal in the person's live copy opens the copy's page; a workspace store that cannot
+    /// answer means no copy, and the removal opens the project's page (CC-76, T-7912).
+    #[tokio::test]
+    async fn a_removal_opens_in_the_persons_copy_and_without_one_when_the_store_fails() {
+        let (mut driver, state) = steward();
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air" }),
+        );
+        state
+            .workspaces
+            .create(crate::ops::workspaces::Opening {
+                name: "ws-counters",
+                title: None,
+                project: "helsinki",
+                owner: "test-user",
+                base_revision: "abc",
+                scope: crate::ops::workspaces::Scope::Project {},
+                ttl_hours: 4,
+            })
+            .await
+            .expect("a copy");
+        worked(&driver, endpoint(json!({ "delete": true })), false).await;
+        let opened = events(&state, "navigate").await;
+        assert!(
+            opened[0]["route"]
+                .as_str()
+                .is_some_and(|route| route.contains("workspace=ws-counters")),
+            "{opened:?}"
+        );
+
+        driver.state.workspaces = crate::ops::workspaces::WorkspaceStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        assert!(driver.active_workspace().await.is_none());
+    }
+
     #[tokio::test]
     async fn a_removal_opens_the_page_with_the_way_to_propose_it() {
         let (driver, state) = steward();
@@ -3343,10 +3477,10 @@ mod change_resource_tests {
         assert!(!said.is_empty());
         let tools = events(&state, "tool").await;
         assert!(tools.iter().any(|t| t["status"] == "failed"), "{tools:?}");
-        assert!(events(&state, "navigate")
-            .await
-            .iter()
-            .all(|e| e.get("prefill").is_none()));
+        assert!(
+            events(&state, "navigate").await.is_empty(),
+            "a refused change opens no page"
+        );
 
         placed(&state);
         let dead = sqlx::postgres::PgPoolOptions::new()
@@ -3454,6 +3588,90 @@ mod change_resource_tests {
         assert!(page(json!({ "endpointRef": { "name": "counters" } }))
             .await
             .contains("does not read its endpoint 'counters'"));
+        put(
+            &state,
+            "DataSource",
+            "keyed",
+            json!({ "type": "http", "http": { "url": "https://a.invalid/x.json",
+                    "authorization": { "header": "X-Key", "headerRef": { "name": "k" } } } }),
+        );
+        assert!(page(json!({ "dataSourceRef": { "name": "keyed" } }))
+            .await
+            .contains("declares a credential"));
+        put(&state, "DataSource", "nowhere", json!({ "type": "http", "http": {} }));
+        assert!(page(json!({ "dataSourceRef": { "name": "nowhere" } }))
+            .await
+            .contains("names no http(s) URL"));
+    }
+
+    /// A SyncSource has no switch field: a pause written as one goes back naming the pause
+    /// operation, which changes no manifest (T-7912).
+    #[tokio::test]
+    async fn a_pause_written_as_a_field_goes_back_naming_the_pause_operation() {
+        let (mut driver, state) = steward();
+        let operations: Vec<&str> = crate::ops::registry().iter().map(|op| op.name).collect();
+        driver.access = crate::agents::access::Access::from_spec(&json!({ "access": {
+            "operations": operations,
+            "kinds": [{ "kind": "SyncSource", "verbs": ["read", "propose"] }],
+        } }));
+        put(&state, "SyncSource", "feed", json!({}));
+        let call = ChangeResource {
+            kind: "SyncSource".into(),
+            name: "feed".into(),
+            patch: Some(json!({ "spec": { "paused": true } })),
+            ..Default::default()
+        };
+        let reason = worked(&driver, call, false)
+            .await
+            .again()
+            .expect("goes back");
+        assert!(reason.contains("jc_syncsource_pause"), "{reason}");
+    }
+
+    /// A draft the store refused ends the tool with what the person does next, per refusal; no
+    /// database text reaches them (JC1-30, T-7912).
+    #[tokio::test]
+    async fn a_draft_not_kept_says_what_to_do_per_refusal() {
+        use crate::ops::drafts::DraftError;
+        let (driver, _state) = steward();
+        let said = |err: DraftError| {
+            let driver = &driver;
+            async move {
+                driver
+                    .draft_not_kept("change_resource", std::time::Instant::now(), &json!({}), "Endpoint", "counters", &err)
+                    .await
+                    .expect("the run goes on")
+                    .done()
+                    .expect("ends")
+            }
+        };
+        assert!(said(DraftError::Conflict { current: 3 }).await.contains("changed meanwhile; open it again"));
+        assert!(said(DraftError::Unplaced("helsinki".into())).await.contains("Organizations page"));
+        let lost = said(DraftError::Db("connection refused 10.0.0.1".into())).await;
+        assert!(lost.contains("could not be saved") && !lost.contains("10.0.0.1"), "{lost}");
+    }
+
+    /// The endpoints a stored run reads stand over the driver's own list (T-7912).
+    #[tokio::test]
+    async fn a_page_reads_the_endpoints_the_stored_run_names() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path_regex("/ngsi-ld/v1/entities$"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("[]"))
+            .mount(&server)
+            .await;
+        let (mut driver, state) = steward();
+        driver.proxy_base = server.uri();
+        let mut run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.endpoints = json!([{ "name": "counters", "slug": "cslug", "space": "air" }]);
+        state.agents.create_run(&run).await.expect("a run");
+        let (_, source) = driver
+            .page_of(&sourced(json!({
+                "endpointRef": { "name": "counters" },
+                "query": { "type": "BikeCounter" },
+            })))
+            .await
+            .expect("a page");
+        assert_eq!(source, json!({ "endpoint": "counters" }));
     }
 
     #[tokio::test]

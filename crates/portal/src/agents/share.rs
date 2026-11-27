@@ -693,6 +693,13 @@ pub struct Edit {
     pub changes: Vec<FieldChange>,
 }
 
+/// Drops `key` from `value` when it is an object; anything else holds no key to drop.
+pub(crate) fn remove_key(value: &mut Value, key: &str) {
+    if let Some(object) = value.as_object_mut() {
+        object.remove(key);
+    }
+}
+
 /// `params` applied to the endpoint of that name among `endpoints` (the project's manifests), or
 /// the first reason it cannot be. Only the fields the call names change: the slug, the space,
 /// the name and the labels stay what they were, so the Change is an edit of that endpoint.
@@ -724,9 +731,7 @@ pub fn edit(
     readable_for_edit(found, name)?;
     let served = served(found);
     let mut endpoint = found.clone();
-    if let Some(object) = endpoint.as_object_mut() {
-        object.remove("status");
-    }
+    remove_key(&mut endpoint, "status");
     let mut changes = Vec::new();
     let mut record = |field: &str, before: Value, after: Value| {
         if before != after {
@@ -795,8 +800,8 @@ pub fn edit(
             );
         }
         spec["allowedProjects"] = json!(projects);
-    } else if let Some(object) = spec.as_object_mut() {
-        object.remove("allowedProjects");
+    } else {
+        remove_key(spec, "allowedProjects");
     }
     spec["audience"] = json!(audience);
     record("audience", json!(current_audience), json!(audience));
@@ -857,9 +862,7 @@ pub fn edit(
     } else if let Some(block) = spec["representations"].as_object_mut() {
         block.remove("ical");
         if block.is_empty() {
-            if let Some(object) = spec.as_object_mut() {
-                object.remove("representations");
-            }
+            remove_key(spec, "representations");
         }
     }
     record(
@@ -882,9 +885,7 @@ pub fn edit(
             if let Some(projection) = spec["projection"].as_object_mut() {
                 projection.remove("hiddenAttributes");
                 if projection.is_empty() {
-                    if let Some(object) = spec.as_object_mut() {
-                        object.remove("projection");
-                    }
+                    remove_key(spec, "projection");
                 }
             }
         } else {
@@ -1145,6 +1146,41 @@ mod tests {
             .is_err_and(|reason| reason.contains("'not a name' is not an attribute name")),
             "a bad hidden attribute is refused"
         );
+    }
+
+    /// A block that still holds another key after the edit stays, and an Endpoint committed
+    /// without a spec takes an audience edit as a spec of its own (PF-57, T-7912).
+    #[test]
+    fn a_block_with_another_key_stays_and_a_bare_endpoint_takes_its_first_spec() {
+        let calendar = json!({
+            "metadata": { "name": "events", "namespace": "helsinki" },
+            "spec": {
+                "contextSpaceRef": "helsinki",
+                "slug": "eventseventseventseventsev",
+                "audience": "public",
+                "enabledRepresentations": ["ngsi-ld", "ical"],
+                "representations": { "ical": { "entityType": "Event" }, "csv": { "delimiter": ";" } },
+                "projection": { "hiddenAttributes": ["organizer"], "renamed": { "a": "b" } }
+            }
+        });
+        let edited = edit(
+            &[calendar],
+            &edit_of(json!({ "name": "events", "removeRepresentations": ["ical"], "hiddenAttributes": [] })),
+        )
+        .expect("edits");
+        let spec = &edited.endpoint["spec"];
+        assert_eq!(spec["representations"], json!({ "csv": { "delimiter": ";" } }));
+        assert_eq!(spec["projection"], json!({ "renamed": { "a": "b" } }));
+
+        let bare = json!({ "metadata": { "name": "bare", "namespace": "helsinki" } });
+        let public = edit(&[bare], &edit_of(json!({ "name": "bare", "audience": "public", "addRepresentations": ["ngsi-ld"] })))
+            .expect("edits");
+        assert_eq!(public.endpoint["spec"]["audience"], "public");
+        assert!(public.endpoint["spec"].get("allowedProjects").is_none());
+
+        let mut text = json!("not an object");
+        super::remove_key(&mut text, "status");
+        assert_eq!(text, json!("not an object"), "a value with no keys is left as it is");
     }
 
     #[test]

@@ -329,3 +329,63 @@ async fn a_version_without_tests_never_reaches_the_cluster() {
         .expect("recorded")
         .is_empty());
 }
+
+/// The duration the runner measured stands over the Portal's own clock (T-7912).
+#[tokio::test]
+async fn the_runners_own_duration_is_kept() {
+    let server = MockServer::start().await;
+    deletes(&server).await;
+    creates(&server).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{JOBS}/{NAME}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": { "conditions": [{ "type": "Complete", "status": "True" }] }
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/api/v1/namespaces/jc-app-tests/pods"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "items": [{ "metadata": { "name": "app-test-run1-2-xyz" } }]
+        })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/api/v1/namespaces/jc-app-tests/pods/app-test-run1-2-xyz/log",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            "JC-TESTS {\"outcome\":\"passed\",\"passed\":2,\"durationMs\":4200}\n",
+        ))
+        .mount(&server)
+        .await;
+    let report = run(&sandbox(&server), &tested(), 2_000).await;
+    assert_eq!(report.outcome, Outcome::Passed, "{report:?}");
+    assert_eq!(report.duration_ms, Some(4200));
+}
+
+/// A version over the sandbox's size compresses to more than it takes: an error that says the
+/// size, and nothing is created on the cluster (T-7912).
+#[tokio::test]
+async fn a_version_too_large_for_the_sandbox_never_reaches_the_cluster() {
+    let server = MockServer::start().await;
+    let mut files = tested();
+    // Text that does not compress: a byte stream from a linear congruential generator.
+    let mut seed: u64 = 7912;
+    let noise: String = (0..1_500_000)
+        .map(|_| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+            char::from(b'!' + u8::try_from((seed >> 33) % 90).expect("under 90"))
+        })
+        .collect();
+    files.insert("src/data.ts".to_owned(), noise);
+    let report = run(&sandbox(&server), &files, 2_000).await;
+    assert_eq!(report.outcome, Outcome::Error, "{report:?}");
+    let reason = report.reason.expect("a reason");
+    assert!(reason.contains("the sandbox takes at most 900 KiB"), "{reason}");
+    assert!(server
+        .received_requests()
+        .await
+        .expect("recorded")
+        .is_empty());
+}

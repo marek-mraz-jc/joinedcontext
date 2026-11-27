@@ -470,14 +470,17 @@ impl Driver {
     /// The input schema of one operation, or why there is none to show.
     pub(super) fn describe(&self, name: &str, offered: &[OperationSummary]) -> String {
         match offered.iter().find(|op| op.name == name) {
-            Some(op) => serde_json::to_string_pretty(&json!({
-                "name": op.name,
-                "title": op.title,
-                "description": op.description,
-                "input": op.input_schema,
-                "output": op.output_schema,
-            }))
-            .unwrap_or_else(|_| "{}".to_owned()),
+            // `{:#}` is a value's pretty JSON, which never fails.
+            Some(op) => format!(
+                "{:#}",
+                json!({
+                    "name": op.name,
+                    "title": op.title,
+                    "description": op.description,
+                    "input": op.input_schema,
+                    "output": op.output_schema,
+                })
+            ),
             None => format!(
                 "error: '{name}' is not an operation you may call; the ones you may call are \
                  listed above"
