@@ -2039,6 +2039,43 @@ mod tests {
     use serde_json::json;
 
     /// T-4470: the parts `run` was cut into that read nothing but their input.
+    /// A map of a class with no measure and no name draws plain circles with no popup; a map of
+    /// a class with both colours by the measure and shows both; a taken name drafts no map.
+    #[test]
+    fn a_map_colours_and_names_only_what_its_class_has() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let plain = super::map_of(
+            &state,
+            "p",
+            "benches",
+            "Bench",
+            "benches-read",
+            "slots:\n  material:\n    range: string\nclasses:\n  Bench:\n    slots: [material]\n",
+        );
+        let layer = &plain[0]["spec"];
+        assert!(
+            layer.get("colorBy").is_none() && layer.get("popupProperties").is_none(),
+            "{layer}"
+        );
+        let rich = super::map_of(
+            &state,
+            "p",
+            "benches",
+            "Bench",
+            "benches-read",
+            "slots:\n  name:\n    range: string\n  seats:\n    range: integer\nclasses:\n  Bench:\n    slots: [name, seats]\n",
+        );
+        assert_eq!(rich[0]["spec"]["colorBy"], json!({ "property": "seats" }));
+        assert_eq!(rich[0]["spec"]["popupProperties"], json!(["name", "seats"]));
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Dashboard",
+            "benches",
+            "p",
+            json!({}),
+        ));
+        assert!(super::map_of(&state, "p", "benches", "Bench", "benches-read", "").is_empty());
+    }
+
     #[test]
     fn the_space_is_named_as_asked_else_after_the_feed_else_after_the_first_file() {
         let name = |input: serde_json::Value| {

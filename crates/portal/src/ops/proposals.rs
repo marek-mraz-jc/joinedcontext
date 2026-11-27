@@ -1050,6 +1050,35 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A draft store that fails is an error of the check, never a pass: reading a manifest's or an
+    /// import's verdict, and recording an import's check whose verdict write fails.
+    #[tokio::test]
+    async fn a_failing_draft_store_is_no_verdict() {
+        let scratch = crate::test_db::scratch().await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("hel").await,
+        );
+        let jana = super::super::testkit::person("jana", &[]);
+        let subject = json!({ "files": ["a.yaml"] });
+        scratch.refuse("drafts", "UPDATE").await;
+        let recorded = record_import_check(&state, &jana, "hel", &subject).await;
+        assert!(recorded.is_err(), "{recorded:?}");
+        scratch.drop_table("drafts").await;
+        let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+        for got in [
+            verdict_for_manifest(&state, "hel", &manifest).await,
+            verdict_for_import(&state, &jana, "hel", &subject).await,
+        ] {
+            assert!(
+                matches!(&got, Err(OpError::Api(ApiError::Internal(_)))),
+                "{got:?}"
+            );
+        }
+        scratch.remove().await;
+    }
+
     /// JC2-38: a draft the caller may not read answers no verdict refusal, so its verdict state
     /// tells a stranger nothing; the approver who reads it still gets `verdict_required`.
     #[tokio::test]
