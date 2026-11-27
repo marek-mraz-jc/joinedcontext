@@ -57,13 +57,9 @@ async fn run() -> Result<(), String> {
     let listener = tokio::net::TcpListener::bind(cfg.listen_addr)
         .await
         .map_err(|e| format!("{} could not be bound: {e}", cfg.listen_addr))?;
-    tracing::info!(
-        listen = %cfg.listen_addr,
-        model = jc_embedder::MODEL,
-        sha256 = jc_embedder::MODEL_SHA256,
-        deployments = cfg.deployments.len(),
-        "serving"
-    );
+    let (listen, deployments) = (cfg.listen_addr, cfg.deployments.len());
+    let (model, sha256) = (jc_embedder::MODEL, jc_embedder::MODEL_SHA256);
+    tracing::info!(%listen, model, sha256, deployments, "serving");
     axum::serve(listener, router(service))
         .with_graceful_shutdown(shutdown())
         .await

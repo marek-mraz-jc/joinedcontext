@@ -132,6 +132,31 @@ async fn a_hook_secret_survives_a_restart_sealed_and_per_organization() {
         "a sealed value opens only under the reference it was written for"
     );
 
+    // A row that opens with the right key but holds no UTF-8 text is refused, not lossily read.
+    let not_text_ref = "repo:0190f5c4-5c1e-7000-8000-000000000001:webhook-2";
+    let aad = format!("shako-secret\0{instance}\0{org}\0{not_text_ref}");
+    let sealed = Kek::from_bytes(kek.derive_subkey("shako-secrets"))
+        .encrypt(aad.as_bytes(), &[0xff, 0xfe, 0x00])
+        .expect("seal bytes");
+    sqlx::query(
+        "INSERT INTO shako.secret (instance_id, org_id, secret_ref, sealed) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(instance.as_uuid())
+    .bind(org.as_uuid())
+    .bind(not_text_ref)
+    .bind(sealed)
+    .execute(&admin)
+    .await
+    .expect("write a sealed non-text row");
+    let err = secrets
+        .get_secret(org, not_text_ref)
+        .await
+        .expect_err("not text");
+    assert!(
+        matches!(&err, shako_core::ShakoError::Storage(m) if m == "a stored secret is not text"),
+        "{err:?}"
+    );
+
     second.pool().close().await;
     admin.close().await;
     sqlx::raw_sql(AssertSqlSafe(format!("DROP DATABASE {db} WITH (FORCE)")))

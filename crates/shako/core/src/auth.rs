@@ -913,7 +913,9 @@ impl TokenVerifier {
             .map_err(|_| ShakoError::Unauthorized("cannot construct decoding key".into()))?;
 
         let mut validation = Validation::new(header.alg);
-        validation.set_audience(&[expected_audience]);
+        // The audience is checked once, after the signature, below: a token without `aud` and
+        // one for another audience are each refused by name there.
+        validation.validate_aud = false;
         validation.validate_exp = true;
         validation.validate_nbf = true;
         validation.leeway = 60;
@@ -1579,6 +1581,22 @@ mod tests {
         );
     }
 
+    /// A key whose private part does not parse signs no registry token: an internal error
+    /// naming the signing, never a token.
+    #[test]
+    fn a_registry_token_is_not_minted_with_a_broken_key() {
+        let mut key = ShakoSigningKey::generate().expect("key");
+        key.pkcs8_der = b"not a pkcs8 key".to_vec();
+        let subject = Subject::authenticated("u1", "alice", vec![OrgId::from_u128(10)]);
+        let err = key
+            .mint_registry_token(&subject, OrgId::from_u128(10), "repository:o/a:pull", 60)
+            .expect_err("no token");
+        assert!(
+            matches!(&err, ShakoError::Internal(m) if m.starts_with("registry JWT sign failed")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn a_jwt_is_refused_for_each_broken_part_and_read_for_each_optional_claim() {
         let key = ShakoSigningKey::generate().expect("key");
@@ -1605,14 +1623,23 @@ mod tests {
             &sign(json!({"sub": "u", "aud": "shako", "iss": iss, "exp": now - 3600})),
             "JWT verification failed",
         );
-        // No audience at all: refused, by the library or by the check after it.
-        let err = verifier
-            .verify(
-                &sign(json!({"sub": "u", "iss": iss, "exp": now + 60})),
-                "shako",
-            )
-            .expect_err("no aud");
-        assert_eq!(err.status_code(), 401);
+        refused(
+            &sign(json!({"sub": "u", "iss": iss, "exp": now + 60})),
+            "JWT missing aud claim",
+        );
+        // Another audience, alone or among others, an empty list, and the registry's audience
+        // for a shako token: each refused by the audience check.
+        for aud in [
+            json!("account"),
+            json!(["account", "portal"]),
+            json!([]),
+            json!("container_registry"),
+        ] {
+            refused(
+                &sign(json!({"sub": "u", "aud": aud, "iss": iss, "exp": now + 60})),
+                "JWT audience mismatch",
+            );
+        }
         refused(
             &sign(json!({"sub": "", "aud": "shako", "iss": iss, "exp": now + 60})),
             "JWT names no subject",

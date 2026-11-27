@@ -462,8 +462,18 @@ mod tests {
             let (reader, _writer) = std::io::pipe().expect("pipe");
             std::fs::File::from(std::os::fd::OwnedFd::from(reader))
         }
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = calls.clone();
         let handler: MockOutboundHandler =
-            Arc::new(|_: &str, _: &str, _: &[(String, String)], _: &[u8]| Some((200, Vec::new())));
+            Arc::new(move |_: &str, _: &str, _: &[(String, String)], _: &[u8]| {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Some((200, Vec::new()))
+            });
+        // The handler answers when asked; the guard below never asks it.
+        assert_eq!(
+            handler("PUT", "https://github.com/echo", &[], b""),
+            Some((200, Vec::new()))
+        );
         let mocked = OutboundGuard::new(OutboundPolicy {
             mock_handler: Some(handler),
             ..OutboundPolicy::default()
@@ -488,6 +498,11 @@ mod tests {
                 "{err}"
             );
         }
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "handed to no mock"
+        );
     }
 
     #[tokio::test]
