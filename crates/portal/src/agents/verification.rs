@@ -272,6 +272,24 @@ mod tests {
 
     use super::*;
 
+    /// A local id shorter than [`MIN_LOCAL_ID`] marks nothing (it would match any page), a
+    /// blank name neither; a LanguageProperty marks each of its languages (T-7912).
+    #[test]
+    fn a_short_local_id_and_a_blank_name_mark_nothing() {
+        assert!(marks_of(&json!({ "id": "urn:ngsi-ld:Bike:7", "name": "  " })).is_empty());
+        assert_eq!(
+            marks_of(&json!({ "id": "urn:ngsi-ld:Bike:007" })),
+            vec!["007".to_owned()]
+        );
+        assert_eq!(
+            marks_of(
+                &json!({ "name": { "languageMap": { "fi": " Kaivopuisto ", "sv": "Brunnsparken" } } })
+            ),
+            vec!["Kaivopuisto".to_owned(), "Brunnsparken".to_owned()]
+        );
+        assert!(marks_of(&json!({})).is_empty());
+    }
+
     fn event(kind: &str, payload: Value) -> AgentRunEvent {
         AgentRunEvent {
             run_id: "r".into(),

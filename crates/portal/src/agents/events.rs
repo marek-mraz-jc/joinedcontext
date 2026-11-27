@@ -179,6 +179,28 @@ mod tests {
         );
     }
 
+    /// A lagging inbox whose store cannot answer goes on with what the channel still holds: the
+    /// run sees fewer events, never none (T-7912).
+    #[tokio::test]
+    async fn a_lagging_inbox_with_a_store_that_cannot_answer_goes_on_live() {
+        let hub = AgentEventHub::new();
+        let store = AgentStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let mut inbox = RunInbox::new(hub.subscribe("r1").await, "r1", 0);
+        for seq in 1..=200 {
+            let mut one = event("r1", "answer", "x");
+            one.seq = seq;
+            hub.broadcast(&one).await;
+        }
+        let next = tokio::time::timeout(std::time::Duration::from_secs(5), inbox.recv(&store))
+            .await
+            .expect("an answer in time")
+            .expect("an event");
+        assert!(next.seq > 1, "the lost head is skipped: {}", next.seq);
+    }
+
     #[tokio::test]
     async fn a_lagging_inbox_reads_what_it_missed_from_the_store_in_order() {
         let hub = AgentEventHub::new();

@@ -233,9 +233,7 @@ impl Driver {
         } else {
             json!({})
         };
-        if let Some(object) = input.as_object_mut() {
-            object.remove("project");
-        }
+        crate::agents::share::remove_key(&mut input, "project");
         let operation = offered
             .iter()
             .any(|op| op.name == call.name)
@@ -824,9 +822,7 @@ mod tests {
                 .expect("seeded"),
         )
         .expect("manifest");
-        if let Some(map) = manifest.as_object_mut() {
-            map.remove("status");
-        }
+        crate::agents::share::remove_key(&mut manifest, "status");
         crate::plan::merge_patch(&mut manifest, &patch);
         let mut verdict = crate::ops::verdict::Verdict::green(&manifest, None);
         verdict.records = Some(Box::new(crate::ops::verdict::RecordsVerdict {

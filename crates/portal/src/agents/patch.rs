@@ -333,6 +333,19 @@ mod tests {
         }
     }
 
+    /// A SEARCH text too large for a pattern finds nothing in either mode instead of failing
+    /// the pass: the block is refused as not found (T-7912).
+    #[test]
+    fn a_search_text_past_the_pattern_limit_finds_nothing() {
+        let huge = "x = 1;\n".repeat(400_000);
+        assert_eq!(find_all("x = 1;\n", &huge).1, Vec::<(usize, usize)>::new());
+        let mut all = files("x = 1;\n");
+        let (applied, refused) = apply(&mut all, &[block("spec.json", &huge, "y")], &["spec.json"]);
+        assert!(applied.is_empty());
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert_eq!(all["spec.json"], "x = 1;\n", "the file is left as it was");
+    }
+
     #[test]
     fn parses_blocks_out_of_prose_and_a_surrounding_fence() {
         let answer = "I made the tiles bigger.\n\n```text\n`spec.json`\n<<<<<<< SEARCH\na\nb\nc\n=======\na\nB\nc\n>>>>>>> REPLACE\n\nerrors.md\n<<<<<<< SEARCH\n=======\n- nothing missing\n>>>>>>> REPLACE\n```\n";

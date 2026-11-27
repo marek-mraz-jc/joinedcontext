@@ -114,8 +114,10 @@ impl CallError {
 fn affordable_tokens(body: &str) -> Option<u32> {
     let said = provider_said(body);
     let (_, rest) = said.split_once("can only afford ")?;
+    // A split yields at least one piece, the digits before the first other character.
     rest.split(|c: char| !c.is_ascii_digit())
-        .next()?
+        .next()
+        .unwrap_or_default()
         .parse()
         .ok()
 }
@@ -1302,6 +1304,9 @@ mod tests {
         assert!(said.contains("58556") && said.contains("64000"), "{said}");
         assert!(!said.contains("http"), "{said}");
         assert_eq!(affordable_tokens("Payment Required"), None);
+        assert_eq!(affordable_tokens("but can only afford some"), None);
+        assert_eq!(Worked::Done("ended".into()).again(), None);
+        assert_eq!(Worked::Again("once more".into()).done(), None);
         assert_eq!(
             provider_said("plain <b>body</b> at http://x.test/a"),
             "plain <b>body</b> at (link removed)"

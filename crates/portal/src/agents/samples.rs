@@ -278,6 +278,37 @@ pub fn section(request: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Every embedded sample file reads the same through the derive's inherent calls and its trait.
+    #[test]
+    fn the_embedded_files_read_the_same_by_name_and_by_the_trait() {
+        let by_name: Vec<String> = Gallery::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Gallery as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                Gallery::get(path).map(|f| f.data),
+                <Gallery as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<Gallery as RustEmbed>::get("no/such/file").is_none());
+        assert!(Gallery::get("no/such/file").is_none());
+        let by_name: Vec<String> = Overlay::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Overlay as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                Overlay::get(path).map(|f| f.data),
+                <Overlay as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<Overlay as RustEmbed>::get("no/such/file").is_none());
+        assert!(Overlay::get("no/such/file").is_none());
+    }
+
     fn name(request: &str) -> Option<String> {
         closest(request).map(|sample| sample.name)
     }

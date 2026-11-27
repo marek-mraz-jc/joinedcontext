@@ -1045,8 +1045,9 @@ impl Driver {
             }
         };
         if let Some(reason) = skipped {
-            let mut payload = serde_json::to_value(sandbox::Report::skipped(reason))
-                .map_err(|err| err.to_string())?;
+            // A report is plain fields, which JSON always holds.
+            let mut payload =
+                serde_json::to_value(sandbox::Report::skipped(reason)).unwrap_or_default();
             payload["version"] = json!(version);
             self.event("tests", payload).await?;
         }
@@ -2069,6 +2070,88 @@ mod repository_tests {
         );
     }
 
+    /// A run with no branch has nowhere to commit: the forge is not asked (T-7912).
+    #[tokio::test]
+    async fn a_run_without_a_branch_commits_nothing() {
+        let forge = MockServer::start().await;
+        let (_state, mut driver) = driver(&forge);
+        driver.branch = String::new();
+        driver
+            .commit_files(&files(), &mut BTreeMap::new(), "First version")
+            .await
+            .expect("nothing to commit");
+        assert!(forge
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    /// AP-79: a copy that follows the forge is left as it is and nothing is said; one whose last
+    /// sync failed is set up again and the run says what it had failed with (T-7912).
+    #[tokio::test]
+    async fn a_current_copy_says_nothing_and_a_failing_one_is_set_up_again() {
+        for last_error in ["", "authentication failed"] {
+            let forge = a_forge_for_a_later_pass().await;
+            Mock::given(method("GET"))
+                .and(path(format!("{REPO}/PushMirrors")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+                    "Name": "m1",
+                    "RemoteAddress": "https://github.com/hel-apps/helsinki_city-bikes.git",
+                    "LastError": last_error,
+                }] })))
+                .mount(&forge)
+                .await;
+            for action in [
+                "Shako.RemovePushMirror",
+                "Shako.AddPushMirror",
+                "Shako.SyncPushMirrors",
+            ] {
+                Mock::given(method("POST"))
+                    .and(path(format!("{REPO}/{action}")))
+                    .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                    .expect(u64::from(!last_error.is_empty()))
+                    .mount(&forge)
+                    .await;
+            }
+            let github = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/repos/hel-apps/helsinki_city-bikes"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .mount(&github)
+                .await;
+            let (state, mut driver) = driver(&forge);
+            let state =
+                state.with_github_mirror(Arc::new(crate::forge::github_mirror::GithubMirror::at(
+                    &github.uri(),
+                    "hel-apps",
+                    "ghp_secret",
+                )));
+            driver.state = state.clone();
+            let mut committed = files();
+            let mut next = files();
+            next.insert("src/App.tsx".into(), "export default 2".into());
+            driver
+                .commit_files(&next, &mut committed, "Second version")
+                .await
+                .expect("committed");
+            let said = thoughts(&state).await;
+            let about_github: Vec<&String> =
+                said.iter().filter(|text| text.contains("GitHub")).collect();
+            if last_error.is_empty() {
+                assert!(about_github.is_empty(), "{said:?}");
+            } else {
+                assert!(
+                    about_github
+                        .iter()
+                        .any(|text| text
+                            .contains("stopped following the forge (authentication failed)")),
+                    "{said:?}"
+                );
+            }
+        }
+    }
+
     /// AP-79: GitHub refusing costs the pass nothing. The commit stands, the run says why in words
     /// a person can act on, and the token appears nowhere in what it says.
     #[tokio::test]
@@ -2326,6 +2409,17 @@ mod tests_repair {
             .filter(|event| event.kind == "thought")
             .filter_map(|event| event.payload["text"].as_str().map(str::to_owned))
             .collect()
+    }
+
+    /// A failed version whose report lists no failure has nothing to fix: no model call
+    /// (T-7912).
+    #[tokio::test]
+    async fn a_failed_version_without_failures_asks_the_model_nothing() {
+        let (server, driver) = driver().await;
+        let mut payload = failed(3);
+        payload["failures"] = json!([]);
+        run_tests_failed(&driver, false, &payload, &mut None).await;
+        assert!(asked(&server).await.is_empty());
     }
 
     /// T-2704, SDK-38: a failing test goes back to the model with its file, name and message, as a
@@ -2638,15 +2732,31 @@ mod store_edge_tests {
     use super::*;
     use crate::state::AppState;
 
+    /// A store whose project is placed, so every read reaches the database that is down (an
+    /// empty mirror answers from no database at all).
     fn dead_store(driver: &mut Driver) {
-        let dead = sqlx::postgres::PgPoolOptions::new()
-            .acquire_timeout(std::time::Duration::from_millis(200))
-            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
-            .expect("a lazy pool");
         driver.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
-            Some(dead),
-            driver.state.mirror.clone(),
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror(&driver.project),
         ));
+    }
+
+    /// A run without measured timings records none (T-7912).
+    #[tokio::test]
+    async fn a_run_without_timings_records_none() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.run_id = "untimed".into();
+        let run = crate::agents::store::tests::run("untimed", "helsinki", "2026-09-12T10:00:00Z");
+        state.agents.create_run(&run).await.expect("a run");
+        driver.first_version().await;
+        let after = state
+            .agents
+            .get_run("untimed")
+            .await
+            .expect("read")
+            .expect("the run");
+        assert_eq!(after.first_frame_ms, None);
     }
 
     #[tokio::test]
