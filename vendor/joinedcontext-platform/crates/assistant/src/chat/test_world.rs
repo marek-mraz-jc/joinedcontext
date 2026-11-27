@@ -284,3 +284,19 @@ impl Log {
         String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::io::Write;
+
+    use super::Log;
+
+    /// The log is a buffer in memory: what is written is there at once, and a flush keeps it.
+    #[test]
+    fn a_written_log_line_is_there_before_and_after_a_flush() {
+        let mut log = Log::default();
+        assert_eq!(log.write(b"one line").expect("written"), 8);
+        log.flush().expect("a flush of memory");
+        assert_eq!(log.text(), "one line");
+    }
+}

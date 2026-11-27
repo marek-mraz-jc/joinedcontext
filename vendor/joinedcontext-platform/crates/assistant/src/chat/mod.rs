@@ -310,9 +310,9 @@ fn today() -> u64 {
 /// `429` with `Retry-After`, in the words the chat shows (T-4149).
 fn too_many(retry: u64, detail: &str) -> Response {
     let mut response = problem(429, detail);
-    if let Ok(value) = HeaderValue::from_str(&retry.to_string()) {
-        response.headers_mut().insert(header::RETRY_AFTER, value);
-    }
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(retry));
     response
 }
 
@@ -332,9 +332,9 @@ fn share_spent(retry: u64) -> Response {
         .with_detail("Dnes ste položili veľa otázok. Skúste to znova neskôr.");
     problem.title = "Visitor Limit Reached".into();
     let mut response = problem.into_response();
-    if let Ok(value) = HeaderValue::from_str(&retry.to_string()) {
-        response.headers_mut().insert(header::RETRY_AFTER, value);
-    }
+    response
+        .headers_mut()
+        .insert(header::RETRY_AFTER, HeaderValue::from(retry));
     response
 }
 
@@ -1132,10 +1132,8 @@ async fn lent(
             timeout: Duration::from_secs(SERVER_SECONDS),
             token,
         };
-        let listed = match mcp::reads_any(&tools) {
-            true => routed::listing(&state.answers, &state.http, &surface).await,
-            false => Ok(Vec::new()),
-        };
+        // Every read-only tool is asked for, so there is always something to list.
+        let listed = routed::listing(&state.answers, &state.http, &surface).await;
         let near = state
             .snapshot
             .read()
@@ -1222,9 +1220,9 @@ fn first_this_hour(
     key: &str,
     now: std::time::Instant,
 ) -> bool {
-    let Ok(mut seen) = seen.lock() else {
-        return true;
-    };
+    let mut seen = seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let hour = Duration::from_secs(3600);
     match seen.iter_mut().find(|(k, _)| k == key) {
         Some((_, at)) if now.saturating_duration_since(*at) < hour => false,
@@ -1287,9 +1285,7 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
                 data["topic"] = json!(topic);
             }
             if anonymous && detail.filter.as_deref().is_some_and(names_an_id) {
-                if let Some(d) = data.as_object_mut() {
-                    d.remove("filter");
-                }
+                let _ = data.as_object_mut().map(|d| d.remove("filter"));
             }
             ("stage", data)
         }
@@ -1297,9 +1293,7 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
         Event::Data(table) => {
             let mut data = json!(table);
             if anonymous {
-                if let Some(table) = data.as_object_mut() {
-                    table.remove("endpoint");
-                }
+                let _ = data.as_object_mut().map(|table| table.remove("endpoint"));
             }
             ("data", data)
         }
@@ -1310,9 +1304,7 @@ fn sse(event: &Event, anonymous: bool) -> SseEvent {
         Event::Step(step) => {
             let mut data = json!(step);
             if anonymous && step.q.as_deref().is_some_and(names_an_id) {
-                if let Some(d) = data.as_object_mut() {
-                    d.remove("q");
-                }
+                let _ = data.as_object_mut().map(|d| d.remove("q"));
             }
             ("step", data)
         }
@@ -2858,11 +2850,10 @@ mod tests {
         assert!(
             matches!(&failed[0], Event::Tool { name, status: "failed", .. } if name == "tools/list")
         );
+        let logged = log.text();
         assert!(
-            log.text()
-                .contains("a connector's tools could not be listed"),
-            "{}",
-            log.text()
+            logged.contains("a connector's tools could not be listed"),
+            "{logged}"
         );
     }
 
@@ -2908,11 +2899,10 @@ mod tests {
             ["slugaaaaaaaaaaaaaaaaaaaaaaaaa", "lentpublic"],
             "the connector, then what the server lends once and to this asker"
         );
+        let logged = log.text();
         assert!(
-            log.text()
-                .contains("a lent Endpoint's tools could not be listed"),
-            "{}",
-            log.text()
+            logged.contains("a lent Endpoint's tools could not be listed"),
+            "{logged}"
         );
         // Only a chosen server is read: a question that chose another connector reads none.
         let chosen = ["a".to_owned()];
@@ -2931,11 +2921,10 @@ mod tests {
         let foreign = deployment_of("lender", &[], Some("elsewhere/team"));
         let none = connected(&state, &foreign, None, None, &mut Vec::new(), None).await;
         assert!(none.is_empty());
+        let logged = log.text();
         assert!(
-            log.text()
-                .contains("the mcpServer is another project's; not offered"),
-            "{}",
-            log.text()
+            logged.contains("the mcpServer is another project's; not offered"),
+            "{logged}"
         );
 
         // A server that refuses its listing: said once an hour to a visitor, and to a person.
@@ -2949,11 +2938,10 @@ mod tests {
         let person = PersonToken("person".into());
         connected(&state, &inside, None, Some(&person), &mut failed, None).await;
         assert_eq!(failed.len(), 1);
+        let logged = log.text();
         assert!(
-            log.text()
-                .contains("the mcpServer's Endpoints could not be listed"),
-            "{}",
-            log.text()
+            logged.contains("the mcpServer's Endpoints could not be listed"),
+            "{logged}"
         );
     }
 
@@ -3074,6 +3062,29 @@ mod tests {
         );
     }
 
+    /// A chart goes out as it was built; a script's failure is sent as its error, beside its
+    /// code.
+    #[test]
+    fn a_chart_and_a_failed_script_are_sent_as_they_are() {
+        let chart = json!({"kind": "bar", "rows": [{"label": "A", "value": 2}]});
+        let shown = format!("{:?}", sse(&Event::Visualization(chart), true));
+        assert!(
+            shown.contains("visualization") && shown.contains("bar"),
+            "{shown}"
+        );
+        let failed = Event::Script {
+            code: "data.length".into(),
+            output: Err("the sandbox is down".into()),
+        };
+        let sent = format!("{:?}", sse(&failed, false));
+        assert!(
+            sent.contains("script")
+                && sent.contains("the sandbox is down")
+                && !sent.contains("output"),
+            "{sent}"
+        );
+    }
+
     /// T-7753: each step kind's stage carries what it does in words, and a visitor's stream keeps
     /// no Endpoint slug or URN in it (T-4654), one assertion per step kind.
     #[test]
@@ -3113,19 +3124,13 @@ mod tests {
         };
         for stage in ["reading", "history"] {
             let event = staged(stage, Some("Bridge"), by_id.clone());
-            assert!(
-                !shown(&event, true).contains("urn:"),
-                "{}",
-                shown(&event, true)
-            );
+            let said = shown(&event, true);
+            assert!(!said.contains("urn:"), "{said}");
             assert!(shown(&event, false).contains("urn:ngsi-ld:Bridge:42"));
         }
         let schema = staged("schema", Some("mosty-bbsk"), read.clone());
-        assert!(
-            !shown(&schema, true).contains("mosty-bbsk"),
-            "{}",
-            shown(&schema, true)
-        );
+        let said = shown(&schema, true);
+        assert!(!said.contains("mosty-bbsk"), "{said}");
         assert!(shown(&schema, true).contains("BBSK bridge register"));
         assert!(shown(&schema, false).contains("mosty-bbsk"));
         let checking = staged(
@@ -3150,11 +3155,8 @@ mod tests {
         };
         let step = Event::Step(end.clone());
         assert!(shown(&step, true).contains(r#""ms":800"#));
-        assert!(
-            !shown(&step, true).contains("urn:"),
-            "{}",
-            shown(&step, true)
-        );
+        let said = shown(&step, true);
+        assert!(!said.contains("urn:"), "{said}");
         assert!(shown(&step, false).contains("urn:ngsi-ld:Bridge:42"));
         end.q = Some("yearBuilt<1950".into());
         assert!(shown(&Event::Step(end), true).contains("yearBuilt<1950"));
@@ -3414,11 +3416,10 @@ mod tests {
         let mut admitted = 60;
         while admitted < 200 {
             at += HOUR;
+            // Ten an hour, and 200 is twenty hours of them.
             for _ in 0..10 {
-                if admitted < 200 {
-                    assert!(limits.admit(&windows, at).is_ok(), "{admitted}");
-                    admitted += 1;
-                }
+                assert!(limits.admit(&windows, at).is_ok(), "{admitted}");
+                admitted += 1;
             }
         }
         at += HOUR;
@@ -3443,6 +3444,21 @@ mod tests {
             limits.admit(&[("me", 1, MINUTE)], start).is_ok(),
             "my own minute is untouched"
         );
+    }
+
+    /// A full table whose windows have all run out drops them and forgets nothing else: the new
+    /// visitor is admitted without an eviction.
+    #[test]
+    fn a_full_table_of_run_out_windows_makes_room_by_dropping_them() {
+        let mut limits = Limits::default();
+        let start = Instant::now();
+        for n in 0..MAX_KEYS {
+            assert!(limits.admit(&one(&format!("k{n}"), 1), start).is_ok());
+        }
+        assert_eq!(limits.windows.len(), MAX_KEYS);
+        let later = start + MINUTE + Duration::from_secs(1);
+        assert!(limits.admit(&one("a new visitor", 1), later).is_ok());
+        assert_eq!(limits.windows.len(), 1);
     }
 
     /// T-3314, T-4653: the table stays bounded, and a full one forgets the oldest of its longest

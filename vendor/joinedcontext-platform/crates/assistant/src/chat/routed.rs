@@ -1496,9 +1496,10 @@ impl AnswerCache {
     /// A listing kept `age` ago, for a test of what a stale one still answers.
     #[cfg(test)]
     pub(super) fn keep_listing_aged(&self, slug: &str, age: Duration, listed: Vec<Value>) {
-        if let Ok(mut tools) = self.tools.lock() {
-            tools.insert(slug.to_owned(), (Instant::now() - age, listed));
-        }
+        self.tools
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(slug.to_owned(), (Instant::now() - age, listed));
     }
 
     pub fn keep_listing(&self, slug: &str, listed: Vec<Value>) {
@@ -4744,15 +4745,13 @@ mod tests {
         // A fresh read is not read again: a read of this source would fail, the store being down.
         let sources = vec![("hronov".to_owned(), vec!["web".to_owned()])];
         warm_languages(&cache, ask.pool, "d/a", &sources, true).await;
-        assert!(!log.text().contains("could not be read"), "{}", log.text());
+        let logged = log.text();
+        assert!(!logged.contains("could not be read"), "{logged}");
         // A store that is down keeps nothing, says so, and frees the key for the next read.
         warm_languages(&cache, ask.pool, "d/b", &sources, true).await;
         assert_eq!(cache.languages_of("d/b#public"), (None, false));
-        assert!(
-            log.text().contains("languages could not be read"),
-            "{}",
-            log.text()
-        );
+        let logged = log.text();
+        assert!(logged.contains("languages could not be read"), "{logged}");
         assert!(Reading::start(&cache.reading_languages, "d/b#public").is_some());
         // A poisoned hold: the read ends, keeps nothing and does not panic.
         poison(&cache.languages);
@@ -4784,11 +4783,8 @@ mod tests {
         let mut over = parts.ask(&[]);
         over.sources = &sources;
         assert!(datasets(&over, &["knižnica".to_owned()]).await.is_empty());
-        assert!(
-            log.text().contains("a catalogue search failed"),
-            "{}",
-            log.text()
-        );
+        let logged = log.text();
+        assert!(logged.contains("a catalogue search failed"), "{logged}");
         // And a search the question makes that fails is a failed step, which the answer survives.
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         assert!(searched(&over, &tx, "knižnica").await.is_none());
@@ -4947,10 +4943,10 @@ mod tests {
             dataset_or(&ask, &endpoint, "Bridge", &rows, None).await,
             None
         );
+        let logged = log.text();
         assert!(
-            log.text().contains("was not found within its deadline"),
-            "{}",
-            log.text()
+            logged.contains("was not found within its deadline"),
+            "{logged}"
         );
         drop(silent);
     }
@@ -5033,10 +5029,10 @@ mod tests {
         let (cache, http) = (AnswerCache::default(), reqwest::Client::new());
         warm(&cache, &http, &[catalogue]).await;
         assert!(cache.publishers_of("cat").is_empty());
+        let logged = log.text();
         assert!(
-            log.text().contains("organizations could not be read"),
-            "{}",
-            log.text()
+            logged.contains("organizations could not be read"),
+            "{logged}"
         );
 
         let parts = Parts::new();
@@ -5586,6 +5582,405 @@ mod tests {
         assert!(began.elapsed() < short);
     }
 
+    /// A page lookup past its deadline that then fails keeps nothing: its backoff stands, and
+    /// once that passes the lookup is asked again.
+    #[tokio::test]
+    async fn a_page_lookup_that_fails_after_its_deadline_keeps_no_page() {
+        let cache = AnswerCache::default();
+        let key = "d#true|rows bbsk Bridge";
+        let failing = async {
+            tokio::time::sleep(Duration::from_millis(80)).await;
+            Err(crate::Error::from(sqlx::Error::PoolTimedOut))
+        };
+        assert_eq!(
+            kept_lookup(&cache, key, Duration::from_millis(20), failing)
+                .await
+                .expect("a deadline, not the failure"),
+            Looked::Deadline
+        );
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert_eq!(cache.page_of(key), Err(None), "backed off, nothing kept");
+    }
+
+    /// An Endpoint page that cannot be looked up keeps the holding's own address.
+    #[tokio::test]
+    async fn a_holding_whose_page_cannot_be_looked_up_keeps_its_address() {
+        let parts = Parts::new();
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&[]);
+        ask.sources = &sources;
+        let hit = Hit {
+            url: "https://gw.example/api/endpoint/most".into(),
+            ..Default::default()
+        };
+        let linked = holdings_linked(&ask, vec![("most".to_owned(), hit)]).await;
+        assert_eq!(linked.len(), 1);
+        assert_eq!(linked[0].1.url, "https://gw.example/api/endpoint/most");
+    }
+
+    /// A read whose answer is no list of entities fails by saying so, and a profile its
+    /// Endpoint cannot give is left out; a data model that comes too late is none, and kept so.
+    #[tokio::test]
+    async fn a_read_that_is_no_list_fails_and_a_late_model_is_none() {
+        use wiremock::matchers::{body_string_contains, method};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("query_entities"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0",
+                "id": 1, "result": {"content": [{"type": "text", "text": "{\"rows\": []}"}]}})),
+            )
+            .mount(&gateway)
+            .await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("describe_schema"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"jsonrpc": "2.0", "id": 1, "result": {"content": [
+                        {"type": "text", "text": "{\"document\": \"id: m\"}"}]}}))
+                    .set_delay(MODEL_DEADLINE + Duration::from_millis(500)),
+            )
+            .mount(&gateway)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&gateway)
+            .await;
+        let parts = Parts::new();
+        let object = json!({"type": "object"});
+        let mut most = connector(
+            &gateway.uri(),
+            "most",
+            &[
+                ("query_entities", object.clone()),
+                ("summarize", object.clone()),
+            ],
+            None,
+        );
+        most.surface.timeout = Duration::from_secs(5);
+        let connectors = [most];
+        let ask = parts.ask(&connectors);
+        let wanted = Read {
+            endpoint: "hronov/most".into(),
+            kind: "Bridge".into(),
+            q: None,
+            order: None,
+            view: View::List,
+        };
+        let failed = read(&ask, &connectors[0], &wanted)
+            .await
+            .expect_err("no list");
+        assert_eq!(failed, "the Endpoint's answer is no list of entities");
+
+        let mut modelled = connectors[0].clone();
+        modelled.tools = vec![super::super::mcp::Tool {
+            name: "describe_schema".into(),
+            description: String::new(),
+            input_schema: object,
+        }];
+        let began = Instant::now();
+        assert!(model_of(&ask, &modelled).await.is_none());
+        assert!(began.elapsed() < MODEL_DEADLINE + Duration::from_millis(400));
+        let began = Instant::now();
+        assert!(model_of(&ask, &modelled).await.is_none());
+        assert!(
+            began.elapsed() < Duration::from_millis(100),
+            "kept, not asked again"
+        );
+    }
+
+    /// The rows' label words (a LanguageProperty title) are the first column's enum words.
+    #[tokio::test]
+    async fn a_tables_label_words_name_its_first_column() {
+        let parts = Parts::new();
+        let kpis = [connector("http://127.0.0.1:9", "kpi", &[], None)];
+        let ask = parts.ask(&kpis);
+        let rows = json!([
+            {"id": "urn:ngsi-ld:KeyPerformanceIndicator:a", "type": "KeyPerformanceIndicator",
+             "name": {"type": "Property", "value": "index-starnutia"},
+             "title": {"type": "LanguageProperty", "languageMap": {"sk": "Index starnutia"}},
+             "currentValue": {"type": "Property", "value": 131.5}}]);
+        let table = table(
+            &ask,
+            &kpis[0],
+            "KeyPerformanceIndicator",
+            &rows.to_string(),
+            &[],
+        )
+        .await
+        .expect("a table");
+        let words = table
+            .enums
+            .first()
+            .cloned()
+            .flatten()
+            .expect("the label's words");
+        assert_eq!(
+            words
+                .get("index-starnutia")
+                .and_then(|w| w.get("sk"))
+                .map(String::as_str),
+            Some("Index starnutia")
+        );
+        assert_eq!(table.enums.len(), table.columns.len());
+    }
+
+    /// A judge that asks for more searches gets one more round, and one that names nothing new
+    /// stops; each verdict is a `checking` stage.
+    #[tokio::test]
+    async fn the_judge_asks_one_more_round_then_stops() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&proxy)
+            .await;
+        for (i, verdict) in [
+            json!({"answers": false, "queries": ["cestovný poriadok MHD"]}),
+            json!({"answers": false, "queries": []}),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            Mock::given(method("POST"))
+                .and(path("/v1/llm/chat/completions"))
+                .respond_with(routed_reply(&verdict.to_string()))
+                .up_to_n_times(1)
+                .with_priority(u8::try_from(i + 1).expect("few"))
+                .mount(&proxy)
+                .await;
+        }
+        let mut parts = Parts::new();
+        parts.model_at(&proxy.uri());
+        let ask = parts.ask(&[]);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let judging = std::sync::atomic::AtomicBool::new(true);
+        let q = Question {
+            ask: &ask,
+            history: &[],
+            question: "kedy ide autobus",
+            events: &tx,
+            languages: &[],
+            now: "now",
+            judging: &judging,
+        };
+        let mut spent = Spent::default();
+        let mut found = Found {
+            hits: Vec::new(),
+            asked: Vec::new(),
+            rounds: 0,
+        };
+        assert!(
+            search_rounds(
+                q,
+                &mut spent,
+                &router_call(),
+                &mut found,
+                vec!["autobus".into()],
+                false
+            )
+            .await
+        );
+        assert_eq!(found.rounds, 2);
+        let verdicts: Vec<&str> = std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|event| match event {
+                Event::Stage { detail, .. } => detail.verdict,
+                _ => None,
+            })
+            .collect();
+        assert_eq!(verdicts, ["more", "stop"]);
+    }
+
+    /// A routed answer whose reader leaves while the judge thinks: told to search once more, it
+    /// stops before the next round; told the passages answer, it stops before the answer call.
+    #[tokio::test]
+    async fn a_reader_who_leaves_during_the_judgement_gets_no_answer_call() {
+        use wiremock::matchers::{body_string_contains, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        for (verdict, said) in [
+            (
+                json!({"answers": false, "queries": ["cestovný poriadok"]}),
+                "more",
+            ),
+            (json!({"answers": true}), "answers"),
+        ] {
+            let proxy = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/token"))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+                )
+                .mount(&proxy)
+                .await;
+            Mock::given(method("POST"))
+                .and(body_string_contains("You check whether the passages"))
+                .respond_with(
+                    routed_reply(&verdict.to_string()).set_delay(Duration::from_millis(400)),
+                )
+                .with_priority(1)
+                .mount(&proxy)
+                .await;
+            Mock::given(method("POST"))
+                .and(path("/v1/llm/chat/completions"))
+                .respond_with(routed_reply(
+                    &json!({"route": "rag", "queries": ["autobus"]}).to_string(),
+                ))
+                .with_priority(2)
+                .mount(&proxy)
+                .await;
+            let mut parts = Parts::new();
+            parts.model_at(&proxy.uri());
+            let ask = parts.ask(&[]);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+            // The reader leaves once the judgement starts.
+            let reader = tokio::spawn(async move {
+                while let Some(event) = rx.recv().await {
+                    if matches!(
+                        &event,
+                        Event::Stage {
+                            stage: "checking",
+                            ..
+                        }
+                    ) {
+                        break;
+                    }
+                }
+            });
+            let spent = answer(&ask, &[], "kedy ide autobus", &tx).await;
+            reader.await.expect("the reader ends");
+            let asked = proxy.received_requests().await.expect("requests");
+            let completions: Vec<String> = asked
+                .iter()
+                .filter(|r| r.url.path() == "/v1/llm/chat/completions")
+                .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+                .collect();
+            assert_eq!(
+                completions.len(),
+                2,
+                "{said}: a router and a judge, no answer"
+            );
+            assert!(
+                completions.iter().all(|b| !b.contains("stream\":true")),
+                "{said}: no answer was streamed"
+            );
+            assert_eq!(spent.calls, 2, "{said}");
+        }
+    }
+
+    /// A read the router left without a `q` is narrowed by the question's own search when no
+    /// dataset page it found serves its type: with the store down it is left as it was; a
+    /// narrowing in its backoff is skipped; a store that does not answer is waited for no longer
+    /// than the deadline.
+    #[tokio::test]
+    async fn a_read_without_q_is_left_as_named_when_no_dataset_page_serves_it() {
+        let parts = Parts::new();
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let most = connector("http://127.0.0.1:9", "most", &[], None);
+        let mut ask = parts.ask(std::slice::from_ref(&most));
+        ask.sources = &sources;
+        let wanted = || {
+            vec![(
+                Read {
+                    endpoint: "hronov/most".into(),
+                    kind: "Bridge".into(),
+                    q: None,
+                    order: None,
+                    view: View::List,
+                },
+                &most,
+            )]
+        };
+        let page = Hit {
+            url: "https://data.example/dataset/mosty".into(),
+            score: 1.0,
+            ..Default::default()
+        };
+        let first = [page];
+        let left = narrowed(&ask, wanted(), &[], "Koľko je mostov?", Some(&first[..])).await;
+        assert_eq!(left[0].0.q, None);
+
+        drop(Miss::new(ask.cache, &page_key(&ask, "narrowing"), 0));
+        let began = Instant::now();
+        let skipped = narrowed(&ask, wanted(), &[], "Koľko je mostov?", None).await;
+        assert_eq!(skipped[0].0.q, None);
+        assert!(began.elapsed() < Duration::from_millis(100));
+        assert!(ask
+            .trace
+            .steps()
+            .iter()
+            .any(|s| s.name == "dataset_narrowing" && s.output.as_deref() == Some("skipped")));
+
+        let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let port = silent.local_addr().expect("an address").port();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(10))
+            .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
+            .expect("a lazy pool");
+        // The searches find their vectors, and the store they then ask does not answer.
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+        let embedder = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&embedder)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(|req: &Request| {
+                let body: Value = serde_json::from_slice(&req.body).expect("a JSON body");
+                let texts = body["input"].as_array().map_or(0, Vec::len);
+                let data: Vec<Value> = (0..texts)
+                    .map(|index| {
+                        json!({"index": index, "embedding": vec![0.1_f32; jc_embedder::DIMENSIONS]})
+                    })
+                    .collect();
+                ResponseTemplate::new(200).set_body_json(json!({
+                    "model": jc_embedder::MODEL,
+                    "model_sha256": jc_embedder::MODEL_SHA256,
+                    "data": data,
+                }))
+            })
+            .mount(&embedder)
+            .await;
+        let mut searching = Parts::new();
+        searching.embedder_at(&embedder.uri());
+        let cache = AnswerCache::default();
+        let mut waiting = searching.ask(std::slice::from_ref(&most));
+        waiting.sources = &sources;
+        waiting.pool = &pool;
+        waiting.cache = &cache;
+        let began = Instant::now();
+        let late = narrowed(
+            &waiting,
+            wanted(),
+            &["mosty".into()],
+            "Koľko je mostov?",
+            None,
+        )
+        .await;
+        assert_eq!(late[0].0.q, None);
+        assert!(began.elapsed() < NARROW_DEADLINE + Duration::from_millis(500));
+        assert!(waiting
+            .trace
+            .steps()
+            .iter()
+            .any(|s| s.name == "dataset_narrowing" && s.output.as_deref() == Some("deadline")));
+        drop(silent);
+    }
+
     /// T-7765: a database that does not answer never holds the question. The pool's server
     /// listens and stays silent, as a count over a cold chunks table did for up to 20 s; the
     /// languages come back at once, empty, and a second question starts no second read.
@@ -5602,11 +5997,8 @@ mod tests {
         let sources = vec![("bbsk".to_owned(), vec!["web".to_owned()])];
         let began = Instant::now();
         let first = source_languages(&cache, &pool, "bbsk/chat", &sources, true);
-        assert!(
-            began.elapsed() < Duration::from_millis(100),
-            "{:?}",
-            began.elapsed()
-        );
+        let took = began.elapsed();
+        assert!(took < Duration::from_millis(100), "{took:?}");
         assert!(first.is_empty());
         assert!(cache
             .reading_languages
@@ -6308,10 +6700,10 @@ mod tests {
         };
         let tools = super::super::data::tool_specs(&[connector], false);
         let used = tokens_of(&messages) + tokens_of(&tools);
+        let of_tools = tokens_of(&tools);
         assert!(
             used <= DATA_CALL_TOKENS,
-            "{used} tokens, {} of them tools: {messages:#?}",
-            tokens_of(&tools)
+            "{used} tokens, {of_tools} of them tools: {messages:#?}"
         );
         assert_eq!(passages.len(), DATA_PASSAGES);
         let profile = &data[0]["profile"];

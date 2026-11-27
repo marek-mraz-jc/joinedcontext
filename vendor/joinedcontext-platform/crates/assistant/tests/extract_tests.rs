@@ -459,6 +459,42 @@ async fn a_store_that_fails_is_a_failure_of_that_page_alone() {
     drop_database(admin, pool, &name).await;
 }
 
+/// A crawled document that is not what its type says is the failure of that document alone,
+/// kept with its address; nothing is stored for it.
+#[tokio::test]
+async fn a_crawled_document_that_cannot_be_read_is_its_own_failure() {
+    let (admin, pool, name) = database("indexer_unreadable").await;
+    let (site, _, document) = rows(&pool, "banskabystrica").await;
+    let mut indexer = Indexer::new(pool.clone(), "banskabystrica", site, "public", 500);
+    indexer
+        .document(
+            document,
+            "https://bb.example/plan.pdf",
+            Some("application/pdf"),
+            b"not a pdf at all",
+        )
+        .await;
+    assert_eq!(indexer.failures.len(), 1, "{:?}", indexer.failures);
+    assert!(
+        indexer.failures[0].starts_with("https://bb.example/plan.pdf: the text could not be read"),
+        "{:?}",
+        indexer.failures
+    );
+    assert_eq!((indexer.passages, indexer.truncated), (0, 0));
+    assert_eq!(rows_of_chunks(&pool).await, 0);
+    drop_database(admin, pool, &name).await;
+}
+
+async fn rows_of_chunks(pool: &PgPool) -> i64 {
+    let mut tx = project_scope(pool, "banskabystrica").await.expect("scope");
+    let count = sqlx::query_scalar("SELECT count(*) FROM chunks")
+        .fetch_one(&mut *tx)
+        .await
+        .expect("counted");
+    tx.rollback().await.expect("rollback");
+    count
+}
+
 /// An uploaded PDF that cannot be read is kept as failed with no passage; a store that cannot
 /// answer, or a project that is no name, refuses the file as a store error.
 #[tokio::test]

@@ -885,14 +885,14 @@ mod tests {
         assert_eq!(names, kept);
         for tool in &tools {
             let f = &tool["function"];
-            assert_eq!(f["parameters"]["required"][0], ENDPOINT, "{}", f["name"]);
+            let name = &f["name"];
+            assert_eq!(f["parameters"]["required"][0], ENDPOINT, "{name}");
             assert!(
                 !f["description"].as_str().unwrap().contains("Query guide"),
-                "{}",
-                f["name"]
+                "{name}"
             );
             let text = f["parameters"].to_string();
-            assert!(!text.contains("\"School\""), "{}: {text}", f["name"]);
+            assert!(!text.contains("\"School\""), "{name}: {text}");
         }
         // The chart tool rides beside them; no connector, no data tool and no chart.
         assert_eq!(tool_specs(&one, true).len(), tools.len() + 1);
@@ -1111,6 +1111,27 @@ mod tests {
         );
     }
 
+    /// A result too long even without its rows, or one that is no page, is cut as text; a
+    /// geometry with no value, and an attribute left with something else than its value, keep
+    /// what they hold.
+    #[test]
+    fn what_no_row_cut_brings_under_the_limit_is_cut_as_text() {
+        let long = "x".repeat(1_000);
+        let paged = json!({"entities": [{"id": "urn:a"}], "note": long}).to_string();
+        assert!(matches!(for_model(&paged, 10), Value::String(cut) if cut.starts_with("{")));
+        let unpaged = json!({"rows": long}).to_string();
+        assert!(matches!(for_model(&unpaged, 10), Value::String(_)));
+        let mut odd = json!({"id": "urn:a", "type": "Bridge",
+            "location": {"type": "GeoProperty", "observedAt": "2026-10-19T00:00:00Z"},
+            "kind": {"type": "Property", "unit": "m"}});
+        compact(&mut odd);
+        assert_eq!(
+            odd,
+            json!({"id": "urn:a", "type": "Bridge",
+                "location": {"observedAt": "2026-10-19T00:00:00Z"}, "kind": {"unit": "m"}})
+        );
+    }
+
     /// T-4763: past the step's characters a page keeps whole rows and says how many it left out,
     /// where the plain cut stopped inside a row; text that is no JSON is cut as before.
     #[test]
@@ -1150,6 +1171,7 @@ mod tests {
         ];
         let opening = super::super::agent::opening(
             None,
+            "",
             &history,
             "A koľko je starších ako 100 rokov?",
             "2026-10-19",
@@ -1368,6 +1390,367 @@ mod tests {
 
     /// T-4657: an accepted call sends one `visualization` event; a second call in the answer and
     /// a call naming a table the answer did not read are told to the model and send nothing.
+    /// A model proxy whose `/token` answers and whose completions are `replies`, each once, in
+    /// order: (the message, its finish reason).
+    async fn model_proxy(replies: Vec<(Value, &str)>) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        let proxy = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&proxy)
+            .await;
+        for (i, (message, finish)) in replies.into_iter().enumerate() {
+            wiremock::Mock::given(method("POST"))
+                .and(path("/v1/llm/chat/completions"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                    "choices": [{"message": message, "finish_reason": finish}],
+                    "usage": {"prompt_tokens": 40, "completion_tokens": 5, "total_tokens": 45},
+                })))
+                .up_to_n_times(1)
+                .with_priority(u8::try_from(i + 1).expect("few"))
+                .mount(&proxy)
+                .await;
+        }
+        proxy
+    }
+
+    /// A gateway whose `query_entities` answers `page`, and `wider` to a read of 30 rows after
+    /// `late`; every other call fails.
+    async fn bridges_gateway(page: Value, wider: Value, late: Duration) -> wiremock::MockServer {
+        use wiremock::matchers::{body_string_contains, method};
+        let gateway = wiremock::MockServer::start().await;
+        let answered = |text: Value| {
+            wiremock::ResponseTemplate::new(200).set_body_json(json!({"jsonrpc": "2.0", "id": 1,
+                "result": {"content": [{"type": "text", "text": text.to_string()}]}}))
+        };
+        wiremock::Mock::given(method("POST"))
+            .and(body_string_contains("\"limit\":30"))
+            .respond_with(answered(wider).set_delay(late))
+            .with_priority(1)
+            .mount(&gateway)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(body_string_contains("query_entities"))
+            .respond_with(answered(page))
+            .with_priority(2)
+            .mount(&gateway)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .with_priority(3)
+            .mount(&gateway)
+            .await;
+        gateway
+    }
+
+    fn bridge(n: usize) -> Value {
+        json!({"id": format!("urn:ngsi-ld:Bridge:{n}"), "type": "Bridge",
+            "name": {"type": "Property", "value": format!("Most {n}")},
+            "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [19.1, 48.7]}}})
+    }
+
+    fn bridges_schema() -> Value {
+        json!({"type": "object", "properties": {"type": {"type": "array"}, "q": {"type": "string"},
+            "count": {"type": "boolean"}, "limit": {"type": "integer"}}})
+    }
+
+    fn start() -> Start {
+        Start {
+            messages: vec![json!({"role": "user", "content": "Koľko je mostov?"})],
+            citations: Vec::new(),
+            tables: Vec::new(),
+            steps: 0,
+            started: Instant::now(),
+        }
+    }
+
+    /// The errors among `rx`'s events so far, as (status, title).
+    fn errors_sent(rx: &mut tokio::sync::mpsc::Receiver<Event>) -> Vec<(u16, &'static str)> {
+        std::iter::from_fn(|| rx.try_recv().ok())
+            .filter_map(|event| match event {
+                Event::Error { status, title, .. } => Some((status, title)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The data loop with nobody left to read stops before a call; at the conversation's budget
+    /// before its first call it says so; a provider's stop is "Declined", no text "No Answer".
+    #[tokio::test]
+    async fn the_data_loop_stops_for_no_reader_a_spent_budget_a_refusal_or_no_text() {
+        let parts = crate::chat::test_world::Parts::new();
+        let ask = parts.ask(&[]);
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        drop(rx);
+        let mut spent = Spent::default();
+        assert!(answer(&ask, start(), &mut spent, &tx).await.is_none());
+        assert_eq!(spent.calls, 0);
+
+        let mut spent_ask = parts.ask(&[]);
+        spent_ask.tokens_per_conversation = 0;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        assert!(answer(&spent_ask, start(), &mut spent, &tx).await.is_none());
+        assert_eq!(errors_sent(&mut rx), [(429, "Conversation Budget Spent")]);
+        assert_eq!(spent.calls, 0);
+
+        for (reply, finish, said) in [
+            ("I cannot", "content_filter", (422, "Declined")),
+            (" ", "stop", (502, "No Answer")),
+        ] {
+            let proxy = model_proxy(vec![(
+                json!({"role": "assistant", "content": reply}),
+                finish,
+            )])
+            .await;
+            let mut parts = crate::chat::test_world::Parts::new();
+            parts.model_at(&proxy.uri());
+            let ask = parts.ask(&[]);
+            let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+            let mut spent = Spent::default();
+            assert!(answer(&ask, start(), &mut spent, &tx).await.is_none());
+            assert_eq!(errors_sent(&mut rx), [said], "{reply:?}");
+            assert_eq!(spent.calls, 1);
+        }
+    }
+
+    /// One reply of four calls: one with arguments too long is not run, the same read twice is
+    /// sent once and answered twice, and a chart of a table that is none says so; the answer
+    /// that cites the read sends its table.
+    #[tokio::test]
+    async fn a_reply_of_a_long_a_repeated_and_a_chart_call_is_answered_call_by_call() {
+        let gateway = bridges_gateway(
+            json!({"entities": [bridge(1), bridge(2)]}),
+            json!({"entities": []}),
+            Duration::ZERO,
+        )
+        .await;
+        let read = json!({"endpoint": "hronov/most", "type": ["Bridge"], "q": "name~=\"Most\""})
+            .to_string();
+        let long =
+            json!({"endpoint": "hronov/most", "type": ["Bridge"], "q": "x".repeat(MAX_ARGUMENTS)})
+                .to_string();
+        let chart =
+            json!({"kind": "bar", "data": 7, "label": "name", "value": "name", "title": "Mosty"})
+                .to_string();
+        let call = |id: &str, name: &str, arguments: &str| json!({"id": id, "type": "function", "function": {"name": name, "arguments": arguments}});
+        let proxy = model_proxy(vec![
+            (
+                json!({"role": "assistant", "content": null, "tool_calls": [
+                    call("c1", "query_entities", &long),
+                    call("c2", "query_entities", &read),
+                    call("c3", "query_entities", &read),
+                    call("c4", super::super::viz::TOOL, &chart)]}),
+                "tool_calls",
+            ),
+            (
+                json!({"role": "assistant", "content": "Sú to Most 1 a Most 2 [1]."}),
+                "stop",
+            ),
+        ])
+        .await;
+        let mut parts = crate::chat::test_world::Parts::new();
+        parts.model_at(&proxy.uri());
+        let connectors = [crate::chat::test_world::connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", bridges_schema())],
+            None,
+        )];
+        let viz = url::Url::parse("https://viz.dev.joinedcontext.com/").expect("a renderer");
+        let mut ask = parts.ask(&connectors);
+        ask.viz = Some(&viz);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let mut spent = Spent::default();
+        let answered = answer(&ask, start(), &mut spent, &tx)
+            .await
+            .expect("an answer");
+        assert_eq!(answered.text, "Sú to Most 1 a Most 2 [1].");
+        assert_eq!(answered.tables, 1);
+        let events: Vec<Event> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Data(t) if t.rows.len() == 2)),
+            "{events:?}"
+        );
+        let reads = gateway
+            .received_requests()
+            .await
+            .expect("requests")
+            .iter()
+            .filter(|r| {
+                let body = String::from_utf8_lossy(&r.body);
+                // The counts beside it (of all, of the located) are reads of their own.
+                body.contains("query_entities") && !body.contains("\"count\":true")
+            })
+            .count();
+        assert_eq!(reads, 1, "the repeated read is sent once");
+        let asked = proxy.received_requests().await.expect("requests");
+        let second: Value = asked
+            .iter()
+            .filter(|r| r.url.path() == "/v1/llm/chat/completions")
+            .nth(1)
+            .map(|r| serde_json::from_slice(&r.body).expect("a JSON body"))
+            .expect("a second call");
+        let told: Vec<String> = second["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .filter(|m| m["role"] == "tool")
+            .map(|m| m["content"].as_str().unwrap_or_default().to_owned())
+            .collect();
+        assert_eq!(told.len(), 4, "{told:?}");
+        let first = &told[0];
+        assert!(
+            first.starts_with("Not run: the arguments are longer"),
+            "{first}"
+        );
+        assert_eq!(told[1], told[2]);
+        assert!(told[3].contains("no table 7"), "{}", told[3]);
+    }
+
+    /// A read of fewer rows than match is read again with a full page, kept when it shows more
+    /// and left when it comes too late; a count keeps no map; a temporal read has no rows table.
+    #[tokio::test]
+    async fn a_short_page_is_widened_when_the_wider_read_shows_more_in_time() {
+        let page = json!({"entities": [bridge(1)], "total": 30});
+        let wider = json!({"entities": [bridge(1), bridge(2), bridge(3)], "total": 30});
+        let viz = url::Url::parse("https://viz.dev.joinedcontext.com/").expect("a renderer");
+        let parts = crate::chat::test_world::Parts::new();
+        let arguments = json!({"endpoint": "hronov/most", "type": ["Bridge"]}).to_string();
+        for (late, rows) in [(Duration::ZERO, 3), (Duration::from_secs(3), 1)] {
+            let gateway = bridges_gateway(page.clone(), wider.clone(), late).await;
+            let connectors = [crate::chat::test_world::connector(
+                &gateway.uri(),
+                "most",
+                &[("query_entities", bridges_schema())],
+                None,
+            )];
+            let mut ask = parts.ask(&connectors);
+            ask.viz = Some(&viz);
+            let c = checked(&ask, ("query_entities", &arguments)).expect("checked");
+            let (answered, table, _) = call_of(&ask, &c, Duration::from_secs(1)).await;
+            assert!(answered.is_ok());
+            let table = table.expect("a table");
+            assert_eq!(table.rows.len(), rows, "{late:?}");
+            assert!(!table.counted);
+        }
+
+        let gateway = bridges_gateway(page.clone(), wider, Duration::ZERO).await;
+        let connectors = [crate::chat::test_world::connector(
+            &gateway.uri(),
+            "most",
+            &[("query_entities", bridges_schema())],
+            None,
+        )];
+        let mut ask = parts.ask(&connectors);
+        ask.viz = Some(&viz);
+        let counting =
+            json!({"endpoint": "hronov/most", "type": ["Bridge"], "count": true, "limit": 1})
+                .to_string();
+        let c = checked(&ask, ("query_entities", &counting)).expect("checked");
+        let (_, table, _) = call_of(&ask, &c, Duration::from_secs(1)).await;
+        let table = table.expect("a table");
+        assert!(table.counted && table.map.is_none());
+
+        // An answer that is no list of entities makes no table.
+        let listless = bridges_gateway(json!({"rows": []}), json!({}), Duration::ZERO).await;
+        let connectors = [crate::chat::test_world::connector(
+            &listless.uri(),
+            "most",
+            &[("query_entities", bridges_schema())],
+            None,
+        )];
+        let ask = parts.ask(&connectors);
+        let c = checked(&ask, ("query_entities", &arguments)).expect("checked");
+        let (answered, table, _) = call_of(&ask, &c, Duration::from_secs(1)).await;
+        assert!(answered.is_ok() && table.is_none());
+
+        let temporal = [crate::chat::test_world::connector(
+            &gateway.uri(),
+            "most",
+            &[("query_temporal", json!({"type": "object"}))],
+            None,
+        )];
+        let ask = parts.ask(&temporal);
+        let history = json!({"endpoint": "hronov/most", "type": "Bridge"}).to_string();
+        let c = checked(&ask, ("query_temporal", &history)).expect("checked");
+        let (answered, table, _) = call_of(&ask, &c, Duration::from_secs(1)).await;
+        assert!(answered.is_err(), "the gateway refuses it");
+        assert!(table.is_none());
+    }
+
+    /// Arguments that are no JSON object are read as none: the call is refused by name, not sent.
+    #[tokio::test]
+    async fn arguments_that_are_no_object_are_read_as_none() {
+        let parts = crate::chat::test_world::Parts::new();
+        let connectors = [connector("hronov/most", &["query_entities"])];
+        let ask = parts.ask(&connectors);
+        for broken in ["not json", "[1, 2]", "7"] {
+            let refused = checked(&ask, ("query_entities", broken))
+                .err()
+                .expect("refused");
+            assert!(refused.contains("`endpoint` is required"), "{refused}");
+        }
+    }
+
+    /// A read with no row cites its result and keeps no table; an aggregated table cited while
+    /// the answer has no chart is drawn beside it.
+    #[tokio::test]
+    async fn a_read_with_no_row_keeps_no_table_and_a_cited_history_is_drawn() {
+        let parts = crate::chat::test_world::Parts::new();
+        let connectors = [connector("hronov/most", &["query_entities"])];
+        let ask = parts.ask(&connectors);
+        let c = checked(
+            &ask,
+            (
+                "query_entities",
+                r#"{"endpoint": "hronov/most", "type": "Bridge"}"#,
+            ),
+        )
+        .expect("checked");
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (mut citations, mut tables) = (Vec::new(), Vec::new());
+        let sent = (
+            Ok(r#"{"entities": []}"#.to_owned()),
+            Some(Table::default()),
+            5,
+        );
+        super::recorded(&ask, &c, sent, &mut citations, &mut tables, &tx).await;
+        assert_eq!(citations.len(), 1);
+        assert!(tables.is_empty());
+        while rx.try_recv().is_ok() {}
+
+        let points: Vec<Value> = (1..=3)
+            .map(|day| {
+                json!({"type": "Property", "value": day as f64,
+                    "observedAt": format!("2026-10-0{day}T08:00:00Z")})
+            })
+            .collect();
+        let read = json!([{"id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved",
+            "pm10": points}]);
+        let history = super::super::view::history(&read.to_string(), &json!({"attrs": ["pm10"]}))
+            .expect("a history");
+        let table =
+            super::super::view::history_table("hronov/air", "AirQualityObserved", &history, "");
+        tables_read(
+            &[(1, table)],
+            &BTreeSet::from([1]),
+            Some("dev.example.org"),
+            &tx,
+        )
+        .await;
+        let events: Vec<Event> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert!(
+            matches!(events.as_slice(), [Event::Data(_), Event::Visualization(_)]),
+            "{events:?}"
+        );
+    }
+
     #[tokio::test]
     async fn one_chart_per_answer_and_only_from_its_own_tables() {
         let table = Table {

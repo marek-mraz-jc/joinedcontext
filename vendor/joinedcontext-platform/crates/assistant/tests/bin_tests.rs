@@ -422,9 +422,16 @@ async fn a_start_without_a_bind_address_or_hostname_takes_the_pods_defaults() {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    if child.try_wait().expect("child status").is_none() {
-        let _ = child.kill();
+    // A SIGTERM, not a kill: the service stops by its own loop, so what it ran is written out
+    // (the coverage of its defaults included); a kill only after a minute without a stop.
+    let _ = Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    let stop_by = Instant::now() + Duration::from_secs(60);
+    while child.try_wait().expect("child status").is_none() && Instant::now() < stop_by {
+        tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let _ = child.kill();
     let output = child.wait_with_output().expect("the binary stops");
     let log = String::from_utf8_lossy(&output.stdout).into_owned()
         + &String::from_utf8_lossy(&output.stderr);

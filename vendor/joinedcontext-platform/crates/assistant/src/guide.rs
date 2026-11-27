@@ -411,11 +411,8 @@ mod tests {
 
     #[test]
     fn the_shipped_guide_is_the_user_guide_alone_with_its_commit() {
-        assert!(
-            PAGES.len() >= 10,
-            "the User Guide ships ({} pages)",
-            PAGES.len()
-        );
+        let pages = PAGES.len();
+        assert!(pages >= 10, "the User Guide ships ({pages} pages)");
         for (file, text) in PAGES {
             let (number, rest) = file.split_at(2);
             assert!(
@@ -426,10 +423,10 @@ mod tests {
             );
             assert!(!text.trim().is_empty(), "{file} is empty");
         }
+        let commit = stamp();
         assert!(
-            stamp().len() == 40 && stamp().chars().all(|c| c.is_ascii_hexdigit()),
-            "guide/STAMP names the docs commit: {:?}",
-            stamp()
+            commit.len() == 40 && commit.chars().all(|c| c.is_ascii_hexdigit()),
+            "guide/STAMP names the docs commit: {commit:?}"
         );
     }
 
