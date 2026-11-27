@@ -2287,14 +2287,14 @@ mod tests {
             }],
             workspace: None,
         };
-        match plan(&caller(None), &state, "doprava", input).await {
-            Err(OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/changes/0/manifest/spec/slug");
-                assert!(message.contains("leave spec.slug out"), "{message}");
-                assert!(!message.contains(typed), "{message}");
-            }
-            other => panic!("expected a refusal at the slug, got {other:?}"),
-        }
+        let got = plan(&caller(None), &state, "doprava", input).await;
+        assert!(
+            matches!(&got, Err(OpError::InvalidInput { path, message })
+                if path == "/changes/0/manifest/spec/slug"
+                    && message.contains("leave spec.slug out")
+                    && !message.contains(typed)),
+            "expected a refusal at the slug, got {got:?}"
+        );
     }
 
     /// T-6391: a Policy whose assigner an AI client filled with an e-mail is refused naming

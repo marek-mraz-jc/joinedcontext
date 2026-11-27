@@ -1151,13 +1151,10 @@ mod rollback_tests {
     /// F-POR1-027): the sweep's own query plans on the partial index.
     #[tokio::test]
     async fn the_lease_sweep_and_the_activity_trim_read_an_index() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = super::connect(&url).await.expect("migrate");
         let names: Vec<String> = sqlx::query_scalar(
             "SELECT indexname::text FROM pg_indexes WHERE indexname IN \
@@ -1192,13 +1189,10 @@ mod rollback_tests {
     /// the rows it plants.
     #[tokio::test]
     async fn a_live_rollback_boots_on_a_compatible_migration_and_not_on_a_breaking_one() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let admin = sqlx::PgPool::connect(&url).await.expect("connect");
         let name = format!("jc_rollback_{}", std::process::id());
         sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -1271,20 +1265,18 @@ mod pool_tests {
         assert_eq!(options.get_max_connections(), 5);
     }
 
-    fn database_url() -> Option<String> {
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     /// The draft LISTEN, the host registry's LISTEN and the leader's lock leave all five working
     /// connections free (T-7494).
     #[tokio::test]
     async fn the_three_process_long_sessions_take_none_of_the_five() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         crate::ops::drafts::DraftHub::new().connect(pool.clone());
         // The hub listens from a task of its own: give it its session before the pool is drained.
@@ -1309,10 +1301,7 @@ mod pool_tests {
     /// (T-7494).
     #[tokio::test]
     async fn an_exhausted_pool_reads_unavailable_until_it_hands_out_again() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = pool_options()
             .max_connections(1)
             .acquire_timeout(Duration::from_secs(1))
@@ -1334,10 +1323,11 @@ mod coverage_tests {
     use super::*;
     use crate::host_registry::SeedOrganization;
 
-    fn database_url() -> Option<String> {
+    fn database_url() -> String {
         std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates")
     }
 
     /// A pool whose every acquire fails: the database is down.
@@ -1364,8 +1354,8 @@ mod coverage_tests {
         url: String,
     }
 
-    async fn scratch(label: &str) -> Option<Scratch> {
-        let url = database_url()?;
+    async fn scratch(label: &str) -> Scratch {
+        let url = database_url();
         let admin = PgPool::connect(&url).await.expect("connect");
         let name = format!("jc_cov_{label}_{}", std::process::id());
         sqlx::query(AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name}")))
@@ -1378,11 +1368,11 @@ mod coverage_tests {
             .expect("create");
         let mut own = url::Url::parse(&url).expect("url");
         own.set_path(&name);
-        Some(Scratch {
+        Scratch {
             admin,
             name,
             url: own.to_string(),
-        })
+        }
     }
 
     impl Scratch {
@@ -1428,10 +1418,7 @@ mod coverage_tests {
     /// Organization named, brings it to the newest schema and seeds that Organization (T-7264).
     #[tokio::test]
     async fn a_database_from_before_the_registry_migrates_under_the_installation() {
-        let Some(db) = scratch("pre_registry_named").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("pre_registry_named").await;
         assert_eq!(migrated_to(&db, 60).await, 60);
         let pool = connect_with(&db.url, Some(&installation()))
             .await
@@ -1452,10 +1439,7 @@ mod coverage_tests {
     /// the say over the unkeyed rows, and the boot only warns.
     #[tokio::test]
     async fn a_database_from_before_the_registry_migrates_without_an_installation() {
-        let Some(db) = scratch("pre_registry_unnamed").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("pre_registry_unnamed").await;
         assert_eq!(migrated_to(&db, 60).await, 60);
         let pool = connect_with(&db.url, None).await.expect("migrate");
         let seeded: i64 =
@@ -1474,10 +1458,7 @@ mod coverage_tests {
     /// installation Organization alone, keys under it and goes on.
     #[tokio::test]
     async fn a_start_that_stopped_before_the_key_is_forced_goes_on() {
-        let Some(db) = scratch("stopped_79").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("stopped_79").await;
         assert_eq!(migrated_to(&db, KEY_FORCED - 1).await, KEY_FORCED - 1);
         let pool = connect_with(&db.url, Some(&installation()))
             .await
@@ -1492,10 +1473,7 @@ mod coverage_tests {
     /// serves.
     #[tokio::test]
     async fn rows_set_aside_by_a_migration_do_not_stop_the_start() {
-        let Some(db) = scratch("set_aside").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("set_aside").await;
         let first = connect(&db.url).await.expect("migrate");
         sqlx::query(
             "INSERT INTO project_rows_set_aside (source_table, project, content) \
@@ -1518,10 +1496,7 @@ mod coverage_tests {
     /// With no migration URL one role migrates and serves: the start warns and answers a pool.
     #[tokio::test]
     async fn one_role_migrating_and_serving_gets_a_pool() {
-        let Some(db) = scratch("one_role").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("one_role").await;
         let pool = connect_as(&db.url, None).await.expect("one role");
         let one: i32 = sqlx::query_scalar("SELECT 1")
             .fetch_one(&pool)
@@ -1536,10 +1511,7 @@ mod coverage_tests {
     /// about the bypass.
     #[tokio::test]
     async fn one_owning_role_without_a_bypass_gets_a_pool() {
-        let Some(db) = scratch("one_owner").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("one_owner").await;
         let role = format!("jc_cov_owner_{}", std::process::id());
         sqlx::raw_sql(AssertSqlSafe(format!(
             "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'pw'; \
@@ -1558,9 +1530,7 @@ mod coverage_tests {
             pool.close().await;
         }
         db.remove().await;
-        let cleanup = PgPool::connect(&database_url().expect("url"))
-            .await
-            .expect("connect");
+        let cleanup = PgPool::connect(&database_url()).await.expect("connect");
         sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
             .execute(&cleanup)
             .await
@@ -1590,10 +1560,7 @@ mod coverage_tests {
     /// A serving role that belongs to the role that owns the tables is refused, naming them.
     #[tokio::test]
     async fn a_serving_role_in_the_owner_role_is_refused() {
-        let Some(db) = scratch("member_of_owner").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("member_of_owner").await;
         let role = format!("jc_cov_member_{}", std::process::id());
         let owner: String = sqlx::query_scalar("SELECT current_user::text")
             .fetch_one(&db.admin)
@@ -1609,9 +1576,7 @@ mod coverage_tests {
         let outcome = connect_upgrading(&db.as_role(&role), Some(&db.url), None).await;
         let message = outcome.err().map(|e| e.to_string());
         db.remove().await;
-        let cleanup = PgPool::connect(&database_url().expect("url"))
-            .await
-            .expect("connect");
+        let cleanup = PgPool::connect(&database_url()).await.expect("connect");
         sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
             .execute(&cleanup)
             .await
@@ -1623,10 +1588,7 @@ mod coverage_tests {
     /// A serving role that bypasses row-level security is refused.
     #[tokio::test]
     async fn a_serving_role_that_bypasses_row_level_security_is_refused() {
-        let Some(db) = scratch("bypass").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("bypass").await;
         let role = format!("jc_cov_bypass_{}", std::process::id());
         sqlx::raw_sql(AssertSqlSafe(format!(
             "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN BYPASSRLS PASSWORD 'pw'"
@@ -1637,9 +1599,7 @@ mod coverage_tests {
         let outcome = connect_upgrading(&db.as_role(&role), Some(&db.url), None).await;
         let message = outcome.err().map(|e| e.to_string());
         db.remove().await;
-        let cleanup = PgPool::connect(&database_url().expect("url"))
-            .await
-            .expect("connect");
+        let cleanup = PgPool::connect(&database_url()).await.expect("connect");
         sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
             .execute(&cleanup)
             .await
@@ -1651,10 +1611,7 @@ mod coverage_tests {
     /// A role that owns nothing serves: the start answers its pool.
     #[tokio::test]
     async fn a_serving_role_that_owns_nothing_gets_a_pool() {
-        let Some(db) = scratch("owns_nothing").await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let db = scratch("owns_nothing").await;
         let role = format!("jc_cov_plain_{}", std::process::id());
         sqlx::raw_sql(AssertSqlSafe(format!(
             "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'pw'"
@@ -1671,9 +1628,7 @@ mod coverage_tests {
             .expect("user");
         pool.close().await;
         db.remove().await;
-        let cleanup = PgPool::connect(&database_url().expect("url"))
-            .await
-            .expect("connect");
+        let cleanup = PgPool::connect(&database_url()).await.expect("connect");
         sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
             .execute(&cleanup)
             .await
@@ -1726,10 +1681,7 @@ mod coverage_tests {
     /// back to its savepoint. Temporary tables of one session stand in for the shared ones.
     #[tokio::test]
     async fn an_event_that_keeps_colliding_is_refused_after_three_attempts() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = connect(&url).await.expect("migrate");
         let mut conn = pool.acquire().await.expect("a connection");
         sqlx::raw_sql(
@@ -1760,10 +1712,7 @@ mod coverage_tests {
     /// An append whose savepoint cannot be set (no transaction) is an error of the store.
     #[tokio::test]
     async fn an_append_outside_a_transaction_is_an_error() {
-        let Some(url) = database_url() else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = database_url();
         let pool = connect(&url).await.expect("migrate");
         let mut conn = pool.acquire().await.expect("a connection");
         let err = append_agent_run_event(&mut conn, "no-run", "step", &serde_json::json!({}))

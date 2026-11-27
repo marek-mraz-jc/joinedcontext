@@ -1865,13 +1865,10 @@ mod tests {
     /// rows' addresses, whatever the table's statistics say (T-7497).
     #[tokio::test]
     async fn the_cleanup_never_sorts_or_rereads_the_project_under_its_key() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("JC_PORTAL_TEST_DATABASE_URL is not set: the cleanup's plans are not read");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("a database");
         // The role lives in this transaction alone, which is rolled back.
         let mut tx = pool.begin().await.expect("begin");
@@ -2178,13 +2175,10 @@ mod tests {
     /// A database with no row for the project's key has nothing to trim: no statement runs.
     #[tokio::test]
     async fn a_project_with_no_key_has_nothing_to_trim() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("migrate");
         let mirror = crate::store::Mirror::new();
         trim(&pool, &mirror, &format!("p{}", unique()), "x")
@@ -2196,13 +2190,10 @@ mod tests {
     /// through and its log is kept.
     #[tokio::test]
     async fn a_poisoned_trim_clock_still_lets_a_database_write_through() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("migrate");
         let (project, organization) = (format!("p{}", unique()), format!("o{}", unique()));
         sqlx::query(

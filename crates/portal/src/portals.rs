@@ -571,6 +571,12 @@ mod tests {
         .expect("settings")
     }
 
+    #[test]
+    #[should_panic(expected = "not a 422")]
+    fn a_refusal_of_another_kind_is_no_field() {
+        field(ApiError::NotFound("gone".into()));
+    }
+
     fn field(err: ApiError) -> String {
         match err {
             ApiError::Unprocessable { detail, .. } => detail,

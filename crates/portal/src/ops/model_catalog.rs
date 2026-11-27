@@ -339,6 +339,12 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
 
+    #[test]
+    #[should_panic(expected = "expected an input refusal")]
+    fn a_pass_is_no_input_refusal() {
+        refused_at(Ok(()));
+    }
+
     fn refused_at(result: Result<(), OpError>) -> String {
         match result {
             Err(OpError::InvalidInput { path, .. }) => path,

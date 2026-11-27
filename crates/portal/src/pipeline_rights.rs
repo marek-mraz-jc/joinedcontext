@@ -406,10 +406,14 @@ mod tests {
     }
 
     fn refusal(state: &AppState, manifest: &Value, verb: Verb) -> Option<String> {
-        match check(state, &person("dev@hel.fi"), "helsinki", manifest, verb) {
-            Ok(()) => None,
+        let answer = check(state, &person("dev@hel.fi"), "helsinki", manifest, verb);
+        assert!(
+            matches!(answer, Ok(()) | Err(ApiError::Denied(_))),
+            "expected a 403, got {answer:?}"
+        );
+        match answer {
             Err(ApiError::Denied(message)) => Some(message),
-            Err(other) => panic!("expected a 403, got {other:?}"),
+            _ => None,
         }
     }
 
@@ -606,12 +610,12 @@ mod tests {
         );
         let mut admin = person("root@hel.fi");
         admin.groups = vec![state.config.bootstrap_admins.clone()];
-        match check(&state, &admin, "helsinki", &copy_of_praha(), Verb::Propose) {
-            Err(ApiError::Unprocessable { errors, .. }) => {
-                assert!(errors[0].contains("helsinki/pipelines"), "{errors:?}")
-            }
-            other => panic!("expected a 422, got {other:?}"),
-        }
+        let refused = check(&state, &admin, "helsinki", &copy_of_praha(), Verb::Propose);
+        assert!(
+            matches!(&refused, Err(ApiError::Unprocessable { errors, .. })
+                if errors[0].contains("helsinki/pipelines")),
+            "expected a 422, got {refused:?}"
+        );
         let state = world();
         shared_by_praha(
             &state,
@@ -682,16 +686,17 @@ mod tests {
             None,
             "dev reads DataSources"
         );
-        let Err(ApiError::Denied(message)) = check(
+        let refused = check(
             &state,
             &person("stranger@hel.fi"),
             "helsinki",
             &unknown,
             Verb::Propose,
-        ) else {
-            panic!("a stranger reads no DataSource")
-        };
-        assert!(message.contains("DataSource never"), "{message}");
+        );
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(message)) if message.contains("DataSource never")),
+            "a stranger reads no DataSource: {refused:?}"
+        );
         assert_eq!(
             refusal(
                 &state,

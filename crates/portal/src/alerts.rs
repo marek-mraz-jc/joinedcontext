@@ -2260,15 +2260,12 @@ mod tests {
     }
 
     /// The database the run names; none when it names none (the measured run does).
-    async fn database() -> Option<sqlx::PgPool> {
+    async fn database() -> sqlx::PgPool {
         let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
-            .filter(|url| !url.trim().is_empty());
-        let Some(url) = url else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return None;
-        };
-        Some(crate::db::connect(&url).await.expect("migrate"))
+            .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
+        crate::db::connect(&url).await.expect("migrate")
     }
 
     /// A mirror holding `projects`, each in an Organization of its own that the registry holds.
@@ -2788,9 +2785,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscriptions_are_kept_per_project_with_every_scope_event_and_delivery() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, b, who, other) = (
             format!("p{}", unique()),
             format!("p{}", unique()),
@@ -2865,9 +2860,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_mute_is_set_kept_and_lifted_and_a_stop_reaches_the_other_organization() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, b, who, other) = (
             format!("p{}", unique()),
             format!("p{}", unique()),
@@ -2902,9 +2895,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_project_with_no_key_keeps_no_alert_and_no_incident_and_no_notice() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (ghost, unregistered) = (format!("p{}", unique()), format!("p{}", unique()));
         let mirror = Arc::new(Mirror::new());
         project_in(
@@ -2945,9 +2936,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_incident_in_the_database_opens_once_recovers_once_and_tells_only_its_own_project() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, b, jana, eeva) = (
             format!("p{}", unique()),
             format!("p{}", unique()),
@@ -2991,9 +2980,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_digest_in_the_database_names_a_recovered_incident_once_and_skips_a_muted_reader() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, who, quiet) = (
             format!("p{}", unique()),
             format!("s{}", unique()),
@@ -3032,9 +3019,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_notice_is_read_once_by_its_own_person_in_any_project() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, b, jana, eeva) = (
             format!("p{}", unique()),
             format!("p{}", unique()),
@@ -3068,9 +3053,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_person_keeps_the_newest_notices_of_a_project_and_the_newest_overall() {
-        let Some(pool) = database().await else {
-            return;
-        };
+        let pool = database().await;
         let (a, b, jana) = (
             format!("p{}", unique()),
             format!("p{}", unique()),

@@ -2251,13 +2251,12 @@ mod tests {
             "space": "bikes",
             "files": [{ "name": "endpoint.yaml", "content": endpoint }]
         });
-        match super::run(&caller, &state, "doprava", input).await {
-            Err(crate::ops::OpError::InvalidInput { path, message }) => {
-                assert_eq!(path, "/files/0/content/spec/slug");
-                assert!(!message.contains(typed), "{message}");
-            }
-            other => panic!("expected a refusal at the slug, got {other:?}"),
-        }
+        let got = super::run(&caller, &state, "doprava", input).await;
+        assert!(
+            matches!(&got, Err(crate::ops::OpError::InvalidInput { path, message })
+                if path == "/files/0/content/spec/slug" && !message.contains(typed)),
+            "expected a refusal at the slug, got {got:?}"
+        );
         let drafted = state
             .drafts
             .get("doprava", "Endpoint", "bikes")

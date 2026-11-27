@@ -606,10 +606,11 @@ mod tests {
 
     /// A project of its own placed in the registry, its key, and the pool (T-3661), or `None`
     /// without a test database.
-    async fn counters() -> Option<(sqlx::PgPool, jc_types::ProjectKey, String)> {
+    async fn counters() -> (sqlx::PgPool, jc_types::ProjectKey, String) {
         let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
-            .filter(|url| !url.trim().is_empty())?;
+            .filter(|url| !url.trim().is_empty())
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let db = crate::db::connect(&url).await.expect("connect and migrate");
         let mirror = Mirror::new();
         let run = jc_types::ProjectId::mint().path_segment();
@@ -619,7 +620,7 @@ mod tests {
             .await
             .expect("the registry answers")
             .expect("a placed project has a key");
-        Some((db, key, project))
+        (db, key, project)
     }
 
     /// A day's counter passes until the limit and never past it; a count above the limit
@@ -627,10 +628,7 @@ mod tests {
     /// below 0; an unknown counter reads 0.
     #[tokio::test]
     async fn a_counter_takes_up_to_its_limit_and_settles_never_below_zero() {
-        let Some((db, key, project)) = counters().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let (db, key, project) = counters().await;
         let app = (project.as_str(), "shop");
         assert_eq!(
             used_today(&db, key, app, "email", "").await.expect("read"),
@@ -696,10 +694,7 @@ mod tests {
     /// more than the limit between them.
     #[tokio::test]
     async fn counters_move_together_and_never_pass_the_limit_at_once() {
-        let Some((db, key, project)) = counters().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let (db, key, project) = counters().await;
         let app = (project.as_str(), "shop");
         let mut tx = crate::db::tenant_tx(&db, key).await.expect("a tx");
         assert!(take_in(&mut tx, app, "email", "", 2, 5)

@@ -359,6 +359,40 @@ pub(super) async fn writers(
 mod tests {
     use super::*;
 
+    /// Every representation an Endpoint serves gets its address: STA, an iCal output and a
+    /// feed each by name, and a representation the Portal does not know gets none.
+    #[test]
+    fn sta_ical_and_feed_outputs_each_get_their_address_and_an_unknown_one_none() {
+        let spec = json!({
+            "contextSpaceRef": "events",
+            "audience": "public",
+            "enabledRepresentations": ["sta", "ical", "feed", "teletext"],
+            "representations": {
+                "ical": [{ "name": "vsetky", "title": { "sk": "Všetky" }, "lang": "sk",
+                           "sources": [{ "type": "Event", "preset": "sdm-event" }] }],
+                "feed": [{ "name": "news", "title": { "sk": "Správy" }, "sources": [{ "type": "Event" }] }]
+            }
+        });
+        let found = surfaces(&spec, "https://api.example.sk/e/", &["Event".to_owned()]);
+        let names: Vec<&str> = found.iter().filter_map(|s| s["name"].as_str()).collect();
+        assert!(!names.contains(&"teletext"), "{found:?}");
+        let mut spec = spec;
+        spec["slug"] = json!("zt4qm7ge2xdv6ksb3ncf5arw2y");
+        spec["enabledRepresentations"] = json!(["sta", "ical"]);
+        let found = surfaces(&spec, "https://api.example.sk/e/", &["Event".to_owned()]);
+        let names: Vec<&str> = found.iter().filter_map(|s| s["name"].as_str()).collect();
+        assert!(names.contains(&"sta"), "{found:?}");
+        assert!(names.contains(&"ical"), "{found:?}");
+        assert!(names.contains(&"feed"), "{found:?}");
+        assert!(!names.contains(&"teletext"), "{found:?}");
+        assert!(
+            found
+                .iter()
+                .any(|s| s["url"] == "https://api.example.sk/e/sta/v1.1"),
+            "{found:?}"
+        );
+    }
+
     /// `project` in `organization`, as the repository names it.
     fn with_project(state: &AppState, project: &str, organization: &str) {
         state.mirror.upsert(ResourceEnvelope {

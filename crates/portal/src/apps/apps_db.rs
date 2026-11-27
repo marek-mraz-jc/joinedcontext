@@ -589,6 +589,14 @@ fn scram_verifier_with(password: &str, salt: &[u8], iterations: u32) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_failure_that_is_not_the_databases_own_is_said_as_sqlx_says_it() {
+        assert_eq!(
+            super::database_reason(&sqlx::Error::RowNotFound),
+            sqlx::Error::RowNotFound.to_string()
+        );
+    }
+
     /// T-3358, AP-144: what runs later inside the shard's session is refused, however written.
     #[test]
     fn a_migration_defining_code_or_switching_role_is_refused() {

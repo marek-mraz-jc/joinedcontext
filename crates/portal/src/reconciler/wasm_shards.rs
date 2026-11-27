@@ -701,13 +701,10 @@ mod tests {
     async fn a_keyed_app_moves_once_and_a_store_that_fails_keeps_its_old_prefix() {
         use wiremock::matchers::{method, query_param};
         use wiremock::{Mock, MockServer, ResponseTemplate};
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
             .ok()
             .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let db = crate::db::connect(&url).await.expect("connect and migrate");
         let mirror = crate::store::Mirror::new();
         let run = jc_types::ProjectId::mint().path_segment();

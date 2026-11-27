@@ -531,10 +531,14 @@ mod tests {
     }
 
     fn refusals(state: &AppState, name: &str, spec: Value) -> Vec<String> {
-        match check(state, "helsinki", "Pipeline", name, &spec) {
-            Ok(()) => Vec::new(),
+        let answer = check(state, "helsinki", "Pipeline", name, &spec);
+        assert!(
+            matches!(answer, Ok(()) | Err(ApiError::Invalid { .. })),
+            "not a list of reasons: {answer:?}"
+        );
+        match answer {
             Err(ApiError::Invalid { errors, .. }) => errors,
-            Err(other) => panic!("not a list of reasons: {other:?}"),
+            _ => Vec::new(),
         }
     }
 
