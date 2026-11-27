@@ -2249,7 +2249,7 @@ mod tests {
         let admin = session(bootstrap(&state));
         let ghost = axum::extract::Path("ghost".to_owned());
         let answer = get_project(admin, State(state), ghost).await;
-        let refused = answer.err().expect("not found");
+        let refused = answer.expect_err("not found");
         assert!(
             matches!(&refused, ApiError::NotFound(m) if m.contains("ghost")),
             "{refused:?}"
@@ -2498,8 +2498,7 @@ mod tests {
             Json(request()),
         )
         .await
-        .err()
-        .expect("no repository");
+        .expect_err("no repository");
         assert!(
             matches!(&refused, ApiError::NotFound(m) if m.contains("ghost")),
             "{refused:?}"
@@ -2514,8 +2513,7 @@ mod tests {
             Json(request()),
         )
         .await
-        .err()
-        .expect("no forge");
+        .expect_err("no forge");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
             "{refused:?}"

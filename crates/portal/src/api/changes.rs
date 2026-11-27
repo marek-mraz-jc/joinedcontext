@@ -5743,8 +5743,7 @@ mod tests {
         };
         let refused = approve_every_file(&state, &person("ana@hel.fi"), "ovzdusie", &shako, &pr)
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::Internal(m)
                 if m.contains("is in change proposal 9 but not on head-9")),
@@ -5771,8 +5770,7 @@ mod tests {
         };
         let refused = approve_every_file(&state, &token, "ovzdusie", &shako, &pr)
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::Denied(m) if m.contains("organization data model")),
             "{refused:?}"
@@ -5881,8 +5879,7 @@ mod tests {
             ApprovedBy::Person,
         )
         .await
-        .err()
-        .expect("refused");
+        .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::BadRequest(m) if m.contains("confirm to be 'viewers'")),
             "{refused:?}"
@@ -6051,8 +6048,7 @@ mod tests {
                 Bytes::from(body),
             )
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
             assert!(
                 matches!(&refused, ApiError::BadRequest(m) if m.contains("invalid json body")),
                 "{body}: {refused:?}"

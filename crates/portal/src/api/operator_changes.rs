@@ -2626,8 +2626,7 @@ mod tests {
             };
             let refused = test_email(user(who), State(state.clone()), None)
                 .await
-                .err()
-                .expect("refused");
+                .expect_err("refused");
             assert!(
                 first_error(&refused).starts_with("to: your account has no e-mail address"),
                 "{refused:?}"
@@ -2646,8 +2645,7 @@ mod tests {
         assert!(query.is_err());
         let refused = project_move_plan(user(ops(&state)), State(state.clone()), query)
             .await
-            .err()
-            .expect("refused");
+            .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::BadRequest(m) if m.contains("organization")),
             "{refused:?}"
@@ -2738,8 +2736,7 @@ mod tests {
             Ok(Json(request)),
         )
         .await
-        .err()
-        .expect("refused");
+        .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("no age key")),
             "{refused:?}"
@@ -2807,8 +2804,7 @@ mod tests {
         };
         let refused = move_holds(&state, &pool, &ghost, false)
             .await
-            .err()
-            .expect("no such project");
+            .expect_err("no such project");
         assert_eq!(
             first_error(&refused),
             "project: 'ghost' is no live project of the registry"
@@ -2895,8 +2891,7 @@ mod tests {
             Ok(Json(request)),
         )
         .await
-        .err()
-        .expect("refused");
+        .expect_err("refused");
         assert!(
             matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
             "{refused:?}"
@@ -2957,8 +2952,7 @@ mod tests {
             async move {
                 approve(user(ops(&state)), State(state.clone()), Path(id), None)
                     .await
-                    .err()
-                    .expect("refused")
+                    .expect_err("refused")
             }
         };
 
