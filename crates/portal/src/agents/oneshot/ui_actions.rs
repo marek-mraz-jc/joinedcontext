@@ -575,6 +575,73 @@ impl Asker<'_> {
 mod tests {
     use super::*;
 
+    /// T-7916: a plan that only deletes opens the object's page with nothing filled in; the
+    /// navigation tool opens a page or refuses one it cannot read; any other name is no
+    /// browser action.
+    #[tokio::test]
+    async fn a_delete_plan_opens_the_page_and_navigation_opens_or_refuses() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: ObjectMeta::new("stops", "helsinki"),
+            spec: json!({ "slug": "stopshelsinkizzzzzzzzzzzzzzz", "audience": "public" }),
+            status: None,
+        });
+        let caller = crate::ops::testkit::admin(&state);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.identity = caller.identity.clone();
+        let plan = crate::ops::find(crate::connectors::PLAN).expect("the plan op");
+        let planned = crate::ops::call(
+            plan,
+            &caller,
+            &state,
+            "helsinki",
+            json!({ "changes": [{ "op": "delete", "kind": "Endpoint", "name": "stops" }] }),
+        )
+        .await
+        .expect("planned");
+        let (frame, payload) = driver
+            .asker()
+            .show_diff(&json!({ "planId": planned["planId"] }))
+            .expect("opened");
+        assert_eq!(frame, "navigate");
+        assert!(payload.get("prefill").is_none(), "{payload}");
+        assert!(
+            payload["route"]
+                .as_str()
+                .is_some_and(|r| r.contains("stops")),
+            "{payload}"
+        );
+
+        let (frame, payload) = for_tab(
+            &driver.asker(),
+            "jc_ui_navigate",
+            &json!({ "page": "connectors" }),
+        )
+        .expect("a page");
+        assert_eq!(frame, "navigate");
+        assert!(payload["route"].is_string(), "{payload}");
+        assert!(for_tab(&driver.asker(), "jc_ui_nope", &json!({})).is_err());
+
+        let navigate = |input: Value| ToolCall {
+            id: "c1".into(),
+            name: "jc_ui_navigate".into(),
+            input,
+        };
+        let opened = driver
+            .ui_action(&navigate(json!({ "page": "connectors" })))
+            .await
+            .expect("an answer");
+        assert!(opened.contains("opened"), "{opened}");
+        let refused = driver
+            .ui_action(&navigate(json!("no object")))
+            .await
+            .expect("an answer");
+        assert!(refused.contains("\"status\":422"), "{refused}");
+    }
+
     /// A person bound to space `a` reads Endpoints there, and helsinki has one Endpoint in
     /// space `a` and one in space `b`.
     fn space_a_reader() -> AppState {
