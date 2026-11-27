@@ -1182,6 +1182,37 @@ mod tests {
         );
     }
 
+    /// T-7928: an App removed between the dashboard commit and its proposal is a 404 naming it,
+    /// and nothing is proposed.
+    #[tokio::test]
+    async fn an_app_gone_before_its_proposal_is_not_found() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let user = CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        let refused = propose_at(&state, &user, "helsinki", "board", "sha-1".into()).await;
+        assert!(
+            matches!(&refused, Err(ApiError::NotFound(why)) if why == "app 'board' not found"),
+            "{refused:?}"
+        );
+    }
+
     /// Each malformed part of a dashboard file is refused at its own path, beside the cases the
     /// SDK shares.
     #[test]
