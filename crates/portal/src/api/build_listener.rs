@@ -554,4 +554,331 @@ mod tests {
             "an empty upload holds no layout"
         );
     }
+
+    const PROJECT: &str = "ovzdusie";
+    const COMMIT: &str = "8c56954a1f0e3d2c1b0a99887766554433221100";
+
+    /// A folder of this test's own for the uploads.
+    fn work() -> PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("build-listener-{}", build_records::new_token()));
+        std::fs::create_dir_all(&dir).expect("a folder");
+        dir
+    }
+
+    fn settings(work_dir: &FsPath) -> Settings {
+        Settings {
+            namespace: "smartcity".into(),
+            api: "http://jc-build.smartcity.svc.cluster.local:9092".into(),
+            bind: std::net::SocketAddr::from(([127, 0, 0, 1], 0)),
+            node_image: "r.example.org/builder@sha256:aa".into(),
+            rust_image: "r.example.org/builder-rust@sha256:bb".into(),
+            cache_size: "1Gi".into(),
+            tmp_size: "4Gi".into(),
+            work_dir: work_dir.to_owned(),
+        }
+    }
+
+    /// A Portal with the lane on `db`, its uploads in `work_dir`, and no forge.
+    fn lane_state(db: &PgPool, work_dir: &FsPath) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.build_pods = Some(settings(work_dir));
+        AppState::new(config, None).with_db(db.clone())
+    }
+
+    /// A running build of `app` and its token.
+    async fn running(db: &PgPool, app: &str) -> (i64, String) {
+        let id = build_records::enqueue(
+            db,
+            PROJECT,
+            app,
+            COMMIT,
+            crate::apps::build_pods::Class::Node,
+            build_records::Trigger::Push,
+            None,
+        )
+        .await
+        .expect("queued");
+        let token = build_records::new_token();
+        assert!(build_records::start(
+            db,
+            PROJECT,
+            id,
+            &token,
+            jiff::SignedDuration::from_secs(600)
+        )
+        .await
+        .expect("started"));
+        (id, token)
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().expect("a header"),
+        );
+        headers
+    }
+
+    fn record(id: i64) -> Record {
+        Record {
+            id,
+            project: PROJECT.into(),
+            app: "bikes".into(),
+            commit: COMMIT.into(),
+            class: "node".into(),
+            trigger: "push".into(),
+            requested_by: None,
+            state: "verifying".into(),
+            expires_at: None,
+            created_at: jc_time::TimestampTz::now(),
+            started_at: None,
+            finished_at: None,
+            digest: None,
+            reason: None,
+        }
+    }
+
+    /// A Portal without the lane's settings or its database answers 503 naming why.
+    #[test]
+    fn a_portal_without_the_lane_or_its_store_builds_nothing() {
+        let bare = AppState::new(crate::config::Config::for_tests(), None);
+        let refused = lane(&bare).expect_err("no lane");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("builds no App")),
+            "{refused:?}"
+        );
+        let mut config = crate::config::Config::for_tests();
+        config.build_pods = Some(settings(&std::env::temp_dir()));
+        let no_db = AppState::new(config, None);
+        assert!(matches!(lane(&no_db), Err(ApiError::Unavailable(_))));
+    }
+
+    /// A file that cannot be made is a 500 of the upload; a body that breaks off is a 400.
+    #[tokio::test]
+    async fn an_upload_that_cannot_be_written_or_breaks_off_is_refused() {
+        let dir = work();
+        let nowhere = dir.join("missing").join("bundle.part");
+        let refused = write_capped(Body::from("x"), &nowhere, 10)
+            .await
+            .expect_err("no folder");
+        assert!(
+            matches!(&refused, ApiError::Internal(m) if m.contains("the build's upload")),
+            "{refused:?}"
+        );
+        let broken = futures_util::stream::iter(vec![
+            Ok(axum::body::Bytes::from_static(b"part")),
+            Err(std::io::Error::other("cut")),
+        ]);
+        let to = dir.join("sbom.part");
+        let refused = write_capped(Body::from_stream(broken), &to, 100)
+            .await
+            .expect_err("broken");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("broke off")),
+            "{refused:?}"
+        );
+        // Inside its cap the bytes are kept as sent.
+        write_capped(Body::from("abc"), &to, 3).await.expect("kept");
+        assert_eq!(std::fs::read(&to).expect("read"), b"abc");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The source of a build on a Portal without a forge, or from a forge that refuses, is 503.
+    #[tokio::test]
+    async fn the_source_without_a_forge_or_from_a_refusing_one_is_unavailable() {
+        let scratch = crate::test_db::scratch().await;
+        let dir = work();
+        let state = lane_state(&scratch.pool, &dir);
+        let (id, token) = running(&scratch.pool, "bikes").await;
+        let refused = source(State(state.clone()), Path(id), bearer(&token))
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("no forge")),
+            "{refused:?}"
+        );
+        // A forge that holds no archive link: 404 on everything.
+        let forge = wiremock::MockServer::start().await;
+        let shako = crate::forge::ShakoClient::new(
+            forge.uri().parse().expect("a url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("a forge client");
+        let state = state.with_shako(std::sync::Arc::new(shako));
+        let refused = source(State(state), Path(id), bearer(&token))
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m)
+                if m.contains("did not hand out") && m.contains(COMMIT)
+                    && m.contains(&format!("{PROJECT}_bikes"))),
+            "{refused:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        scratch.remove().await;
+    }
+
+    /// An upload whose folder cannot be made is a 500; one whose build froze while it streamed
+    /// does not land and leaves no partial file.
+    #[tokio::test]
+    async fn an_upload_without_its_folder_or_after_a_freeze_mid_stream_never_lands() {
+        let scratch = crate::test_db::scratch().await;
+        let dir = work();
+        let (id, token) = running(&scratch.pool, "bikes").await;
+
+        // The work folder is a file: no build folder can be made under it.
+        let file = dir.join("not-a-folder");
+        std::fs::write(&file, b"x").expect("a file");
+        let refused = artifact(
+            State(lane_state(&scratch.pool, &file)),
+            Path((id, "sbom".to_owned())),
+            bearer(&token),
+            Body::from("{}"),
+        )
+        .await
+        .expect_err("no folder");
+        assert!(
+            matches!(&refused, ApiError::Internal(m) if m.contains("the build's folder")),
+            "{refused:?}"
+        );
+
+        // The build freezes while its upload streams in.
+        let db = scratch.pool.clone();
+        let freezing = futures_util::stream::once(async move {
+            assert!(build_records::freeze(&db, PROJECT, id)
+                .await
+                .expect("frozen"));
+            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"late"))
+        });
+        let refused = artifact(
+            State(lane_state(&scratch.pool, &dir)),
+            Path((id, "bundle".to_owned())),
+            bearer(&token),
+            Body::from_stream(freezing),
+        )
+        .await
+        .expect_err("frozen");
+        assert!(
+            matches!(&refused, ApiError::Conflict(m) if m.contains("stopped taking uploads")),
+            "{refused:?}"
+        );
+        let build = dir.join(id.to_string());
+        assert!(
+            !build.join("bundle.part").exists(),
+            "the partial file is gone"
+        );
+        assert!(!build.join("bundle").exists(), "nothing landed");
+        let _ = std::fs::remove_dir_all(&dir);
+        scratch.remove().await;
+    }
+
+    /// A finish whose freeze finds the build no longer running is a 409, and nothing concludes.
+    #[tokio::test]
+    async fn a_finish_whose_freeze_finds_no_running_build_is_a_conflict() {
+        let scratch = crate::test_db::scratch().await;
+        let dir = work();
+        let (id, token) = running(&scratch.pool, "bikes").await;
+        // Every update of a build is skipped, so the freeze changes no row.
+        for statement in [
+            "CREATE FUNCTION jc_skip_builds() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RETURN NULL; END $$",
+            "CREATE TRIGGER jc_skip_builds BEFORE UPDATE ON app_builds \
+             FOR EACH ROW EXECUTE FUNCTION jc_skip_builds()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("the trigger");
+        }
+        let report = Report {
+            succeeded: false,
+            sdk_version: None,
+            reason: None,
+        };
+        let refused = finish(
+            State(lane_state(&scratch.pool, &dir)),
+            Path(id),
+            bearer(&token),
+            Json(report),
+        )
+        .await
+        .expect_err("not frozen");
+        assert!(
+            matches!(&refused, ApiError::Conflict(m) if m.contains("no longer running")),
+            "{refused:?}"
+        );
+        let build = build_records::get(&scratch.pool, id)
+            .await
+            .expect("read")
+            .expect("the build");
+        assert_eq!(build.state, "running");
+        let _ = std::fs::remove_dir_all(&dir);
+        scratch.remove().await;
+    }
+
+    /// A failed build without a reason gets the lane's own; a long reason is cut; an end the
+    /// store does not record still answers the outcome.
+    #[tokio::test]
+    async fn a_failed_build_is_concluded_with_its_reason_even_when_the_store_is_down() {
+        let dir = work();
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let quiet = conclude(
+            state.clone(),
+            crate::test_db::dead_pool(),
+            settings(&dir),
+            record(7),
+            Report {
+                succeeded: false,
+                sdk_version: None,
+                reason: None,
+            },
+        )
+        .await;
+        assert_eq!(quiet.state, "failed");
+        assert_eq!(quiet.digest, None);
+        assert_eq!(
+            quiet.reason.as_deref(),
+            Some("the build failed; its log says why")
+        );
+        let long = conclude(
+            state,
+            crate::test_db::dead_pool(),
+            settings(&dir),
+            record(8),
+            Report {
+                succeeded: false,
+                sdk_version: None,
+                reason: Some("é".repeat(2500)),
+            },
+        )
+        .await;
+        assert_eq!(long.reason.map(|r| r.chars().count()), Some(2000));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A build reporting no SDK version, or of an App gone from main, publishes nothing.
+    #[tokio::test]
+    async fn a_build_without_its_sdk_version_or_its_app_publishes_nothing() {
+        let dir = work();
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let build = record(9);
+        for sdk in ["", "0.4.1; rm -rf"] {
+            let refused = publish(&state, &dir, &build, sdk)
+                .await
+                .expect_err("no version");
+            assert!(refused.contains("no SDK version"), "{refused}");
+        }
+        let refused = publish(&state, &dir, &build, "0.4.1")
+            .await
+            .expect_err("no App");
+        assert_eq!(
+            refused,
+            format!("project {PROJECT} holds no App 'bikes' on main any more")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

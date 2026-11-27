@@ -155,6 +155,27 @@ pub fn router() -> axum::Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::media_type;
+    use crate::error::ApiError;
+    use axum::extract::{Path, State};
+
+    /// A branding file naming the inline SVG while no look carries one: the asset is a 404.
+    #[tokio::test]
+    async fn an_inline_svg_nobody_carries_is_not_found() {
+        let dir = std::env::temp_dir().join(format!("jc-branding-inline-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("a directory");
+        let file = dir.join("branding.yaml");
+        std::fs::write(&file, "logo: \"organization.svg\"\n").expect("branding");
+        let mut config = crate::config::Config::for_tests();
+        config.branding_file = Some(file.display().to_string());
+        let state = crate::state::AppState::new(config, None);
+        let answer = super::get_asset(State(state), Path("logo".to_owned())).await;
+        assert!(
+            matches!(&answer, Err(ApiError::NotFound(why)) if why == "no logo is configured"),
+            "{:?}",
+            answer.as_ref().err()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn only_image_types_are_named_and_anything_else_downloads() {

@@ -448,6 +448,11 @@ pub(crate) async fn land(
 #[cfg(test)]
 mod tests {
     use super::rewrite_imports;
+    use base64::Engine;
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
+    use wiremock::matchers::{method, path, query_param};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     /// An export of a project with no model still asks the organization's forge for its models'
     /// index: with no forge configured it answers 503 naming the forge.
@@ -524,5 +529,549 @@ mod tests {
         );
         assert_eq!(rewrite_imports("", &landed), "");
         assert_eq!(rewrite_imports(source, &[]), source);
+    }
+
+    const REPO: &str = "/odata/Repositories(Owner='bb',Name='org')";
+
+    async fn forge() -> (MockServer, crate::forge::ShakoClient) {
+        let server = MockServer::start().await;
+        let client = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("a url"),
+            "bb",
+            "org",
+            "token",
+        )
+        .expect("a client");
+        Mock::given(method("GET"))
+            .and(path(REPO))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        (server, client)
+    }
+
+    /// The repository holds `content` at `at`; every other file is not there.
+    async fn holds(server: &MockServer, at: &str, content: &str) {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{at}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "blob",
+                "Content": base64::engine::general_purpose::STANDARD.encode(content),
+            })))
+            .mount(server)
+            .await;
+    }
+
+    async fn tree(server: &MockServer, paths: &[&str]) {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "tree",
+                "Truncated": false,
+                "Tree": paths.iter().map(|p| json!({ "Path": p, "Type": "blob", "Sha": "b" })).collect::<Vec<_>>(),
+            })))
+            .mount(server)
+            .await;
+    }
+
+    fn identity() -> crate::auth::session::Identity {
+        crate::auth::session::Identity {
+            client: None,
+            subject: "sub-jana".into(),
+            username: "jana".into(),
+            email: Some("jana@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    fn index(names: &[&str]) -> super::Bundle {
+        let models: Vec<Value> = names
+            .iter()
+            .map(|name| {
+                json!({
+                    "name": name, "version": "1.0.0",
+                    "manifest": format!("models/{name}.v1.yaml"),
+                    "file": format!("models/{name}.v1.linkml.yaml"),
+                    "sha256": "0".repeat(64),
+                    "origin": { "organization": "bbsk", "name": name }
+                })
+            })
+            .collect();
+        serde_json::from_value(json!({
+            "apiVersion": jc_core::API_VERSION,
+            "kind": "Bundle",
+            "metadata": { "name": "air", "namespace": crate::permissions::ORG_NAMESPACE },
+            "spec": {
+                "exportedAt": "2026-11-25T00:00:00Z",
+                "exportedBy": "jana",
+                "sourceRevision": "abc1234",
+                "items": [],
+                "files": [],
+                "omitted": 0,
+                "models": models
+            }
+        }))
+        .expect("a Bundle")
+    }
+
+    fn planned(name: &str, action: super::ModelAction) -> super::PlannedModel {
+        super::PlannedModel {
+            name: name.to_owned(),
+            version: "1.0.0".to_owned(),
+            action,
+        }
+    }
+
+    fn manifest(kind: &str, name: &str, spec: Value) -> String {
+        serde_norway::to_string(&json!({
+            "apiVersion": jc_core::API_VERSION,
+            "kind": kind,
+            "metadata": { "name": name, "namespace": "org" },
+            "spec": spec,
+        }))
+        .expect("yaml")
+    }
+
+    fn model_spec(name: &str) -> Value {
+        json!({
+            "linkml": format!("./{name}.linkml.yaml"),
+            "version": "1.0.0",
+            "lifecycle": "published",
+            "classes": ["Station"]
+        })
+    }
+
+    fn stations_files(manifest: &[u8], source: &[u8]) -> BTreeMap<String, Vec<u8>> {
+        BTreeMap::from([
+            ("models/stations.v1.yaml".to_owned(), manifest.to_vec()),
+            ("models/stations.v1.linkml.yaml".to_owned(), source.to_vec()),
+        ])
+    }
+
+    /// MF-49, MF-50: a carried manifest that is no DataModel, names no source or does not read,
+    /// a model compiled for nobody, and a source that is not text each refuse the landing by
+    /// the file, and nothing is committed.
+    #[tokio::test]
+    async fn a_carried_model_that_cannot_land_refuses_the_landing() {
+        let (server, mounted) = forge().await;
+        tree(&server, &[]).await;
+        let compiled = BTreeMap::from([(
+            "stations".to_owned(),
+            crate::tools::model_tools::Artifacts::default(),
+        )]);
+        let lands = [planned("stations", super::ModelAction::Land)];
+        let good = manifest("DataModel", "stations", model_spec("stations"));
+        let mut unread = model_spec("stations");
+        unread["notAField"] = json!(1);
+        let mut invalid = model_spec("stations");
+        invalid["classes"] = json!(["station"]);
+        for (files, artifacts, needle) in [
+            (
+                stations_files(manifest("App", "stations", json!({})).as_bytes(), b"id: s"),
+                &compiled,
+                "is not a DataModel manifest (MF-49)",
+            ),
+            (
+                stations_files(good.as_bytes(), b"id: s"),
+                &BTreeMap::new(),
+                "'stations' lands uncompiled",
+            ),
+            (
+                stations_files(
+                    manifest("DataModel", "stations", json!("text")).as_bytes(),
+                    b"id: s",
+                ),
+                &compiled,
+                "names no linkml source",
+            ),
+            (
+                stations_files(
+                    manifest("DataModel", "stations", unread).as_bytes(),
+                    b"id: s",
+                ),
+                &compiled,
+                "does not read",
+            ),
+            (
+                stations_files(
+                    manifest("DataModel", "stations", invalid).as_bytes(),
+                    b"id: s",
+                ),
+                &compiled,
+                "PascalCase",
+            ),
+            (
+                stations_files(good.as_bytes(), &[0xff, 0xfe]),
+                &compiled,
+                "models/stations.v1.linkml.yaml is not UTF-8 text",
+            ),
+        ] {
+            let refused = super::land(
+                &mounted,
+                &identity(),
+                "p",
+                &index(&["stations"]),
+                &files,
+                &lands,
+                artifacts,
+            )
+            .await
+            .expect_err(needle);
+            assert!(
+                format!("{refused:?}").contains(needle),
+                "{needle}: {refused:?}"
+            );
+        }
+        let commits = server
+            .received_requests()
+            .await
+            .expect("requests")
+            .into_iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .count();
+        assert_eq!(commits, 0);
+    }
+
+    /// MF-50: the landing reads past what is not one of the project's models (a file gone, one
+    /// that does not parse, another kind, a model with no source, one outside its folder, one
+    /// whose source is gone) and rewrites only the sources that import the landed model.
+    #[tokio::test]
+    async fn the_landing_rewrites_only_the_sources_that_import_it() {
+        let (server, mounted) = forge().await;
+        let folder = "projects/p/datamodels";
+        tree(
+            &server,
+            &[
+                "projects/p/README.md",
+                &format!("{folder}/gone.yaml"),
+                &format!("{folder}/garbled.yaml"),
+                &format!("{folder}/app.yaml"),
+                &format!("{folder}/nolink.yaml"),
+                &format!("{folder}/outside.yaml"),
+                &format!("{folder}/lost.yaml"),
+                &format!("{folder}/plain.yaml"),
+                &format!("{folder}/parking.yaml"),
+            ],
+        )
+        .await;
+        holds(&server, &format!("{folder}/garbled.yaml"), "kind: [").await;
+        holds(
+            &server,
+            &format!("{folder}/app.yaml"),
+            &manifest("App", "app", json!({})),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/nolink.yaml"),
+            &manifest("DataModel", "nolink", json!({})),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/outside.yaml"),
+            &manifest(
+                "DataModel",
+                "outside",
+                json!({ "linkml": "../outside.linkml.yaml" }),
+            ),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/lost.yaml"),
+            &manifest("DataModel", "lost", model_spec("lost")),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/plain.yaml"),
+            &manifest("DataModel", "plain", model_spec("plain")),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/plain.linkml.yaml"),
+            "id: plain\n",
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/parking.yaml"),
+            &manifest("DataModel", "parking", model_spec("parking")),
+        )
+        .await;
+        holds(
+            &server,
+            &format!("{folder}/parking.linkml.yaml"),
+            "id: parking\nimports: [linkml:types, org.stations.v1]\n",
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0mm1t" })))
+            .mount(&server)
+            .await;
+
+        let files = stations_files(
+            manifest("DataModel", "stations", model_spec("stations")).as_bytes(),
+            b"id: stations\n",
+        );
+        let compiled = BTreeMap::from([(
+            "stations".to_owned(),
+            crate::tools::model_tools::Artifacts::default(),
+        )]);
+        let commit = super::land(
+            &mounted,
+            &identity(),
+            "p",
+            &index(&["stations"]),
+            &files,
+            &[planned("stations", super::ModelAction::Land)],
+            &compiled,
+        )
+        .await
+        .expect("landed");
+        assert_eq!(commit.as_deref(), Some("c0mm1t"));
+
+        let commits: Vec<Value> = server
+            .received_requests()
+            .await
+            .expect("requests")
+            .into_iter()
+            .filter(|r| r.method.as_str() == "POST")
+            .map(|r| serde_json::from_slice(&r.body).expect("json"))
+            .collect();
+        assert_eq!(commits.len(), 1);
+        let written: BTreeMap<String, String> = commits[0]["Files"]
+            .as_array()
+            .expect("files")
+            .iter()
+            .map(|f| {
+                let bytes = base64::engine::general_purpose::STANDARD
+                    .decode(f["content"].as_str().expect("content"))
+                    .expect("base64");
+                (
+                    f["path"].as_str().expect("path").to_owned(),
+                    String::from_utf8(bytes).expect("utf-8"),
+                )
+            })
+            .collect();
+        assert!(
+            written.contains_key(&format!("{folder}/stations/stations.yaml")),
+            "{written:?}"
+        );
+        assert!(
+            written[&format!("{folder}/parking.linkml.yaml")].contains("project.stations.v1"),
+            "{written:?}"
+        );
+        for untouched in ["plain", "lost", "outside", "nolink"] {
+            assert!(
+                !written
+                    .keys()
+                    .any(|p| p.contains(&format!("/{untouched}."))),
+                "{untouched}: {written:?}"
+            );
+        }
+    }
+
+    /// DM-02: a landing source that is not text is refused before Model Tools is asked.
+    #[tokio::test]
+    async fn a_landing_source_that_is_not_text_is_refused() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let files = stations_files(b"", &[0xff, 0xfe]);
+        let refused = super::compile(
+            &state,
+            &index(&["stations"]),
+            &files,
+            &[planned("stations", super::ModelAction::Land)],
+        )
+        .await
+        .expect_err("not text");
+        assert!(
+            matches!(&refused, crate::error::ApiError::BadRequest(m) if m == "models/stations.v1.linkml.yaml is not UTF-8 text"),
+            "{refused:?}"
+        );
+    }
+
+    /// DM-76: a landing model compiles with every carried model it may import, a mapped one
+    /// under its organization name, and only the landing one is compiled.
+    #[tokio::test]
+    async fn a_landing_model_compiles_with_the_mapped_ones_as_imports() {
+        let tools = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/generate"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "jsonSchema": { "title": "Station" } })),
+            )
+            .mount(&tools)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.model_tools_url = Some(tools.uri());
+        let state = crate::state::AppState::new(config, None);
+        let mut files = stations_files(b"", b"id: stations\nimports: [org.bikes.v1]\n");
+        files.insert(
+            "models/bikes.v1.linkml.yaml".to_owned(),
+            b"id: bikes\n".to_vec(),
+        );
+        let compiled = super::compile(
+            &state,
+            &index(&["stations", "bikes"]),
+            &files,
+            &[
+                planned("stations", super::ModelAction::Land),
+                planned("bikes", super::ModelAction::Map),
+            ],
+        )
+        .await
+        .expect("compiled");
+        assert_eq!(compiled.keys().collect::<Vec<_>>(), ["stations"]);
+        let asked = tools.received_requests().await.expect("requests");
+        assert_eq!(asked.len(), 1);
+        let body: Value = serde_json::from_slice(&asked[0].body).expect("json");
+        assert_eq!(body["imports"], json!({ "org.bikes.v1": "id: bikes\n" }));
+    }
+
+    /// The project `p` holding each `(name, source)` as a model, on a forge, and the
+    /// organization holding `stations` with `spec`.
+    async fn carrying(
+        models: &[(&str, &str)],
+        stations: Option<Value>,
+    ) -> (MockServer, crate::state::AppState) {
+        let (server, client) = forge().await;
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        for (name, source) in models {
+            let spec = json!({ "linkml": format!("./{name}.linkml.yaml") });
+            let folder = super::model_folder("p", &spec, name);
+            holds(&server, &format!("{folder}/{name}.linkml.yaml"), source).await;
+            state.mirror.upsert(
+                serde_json::from_value(json!({
+                    "apiVersion": jc_core::API_VERSION,
+                    "kind": "DataModel",
+                    "metadata": { "name": name, "namespace": "p" },
+                    "spec": spec,
+                }))
+                .expect("a model"),
+            );
+        }
+        if let Some(spec) = stations {
+            state.mirror.upsert(
+                serde_json::from_value(json!({
+                    "apiVersion": jc_core::API_VERSION,
+                    "kind": "DataModel",
+                    "metadata": { "name": "stations", "namespace": crate::permissions::ORG_NAMESPACE },
+                    "spec": spec,
+                }))
+                .expect("an organization model"),
+            );
+        }
+        (server, state)
+    }
+
+    /// MF-49: a source that does not parse, or imports no organization model, carries nothing.
+    #[tokio::test]
+    async fn sources_that_import_no_organization_model_carry_nothing() {
+        let (_server, state) = carrying(
+            &[
+                ("garbled", "imports: ["),
+                ("local", "imports: [linkml:types, project.other.v1]\n"),
+            ],
+            None,
+        )
+        .await;
+        let (models, files) = super::carry(&state, "p", "bbsk").await.expect("carried");
+        assert!(models.is_empty() && files.is_empty());
+    }
+
+    /// MF-49: a malformed import, and an organization model whose manifest does not read, refuse
+    /// the export.
+    #[tokio::test]
+    async fn a_malformed_import_or_an_unreadable_organization_model_refuses_the_export() {
+        let (_server, state) = carrying(&[("parking", "imports: [org.Bad.v1]\n")], None).await;
+        let refused = super::carry(&state, "p", "bbsk")
+            .await
+            .expect_err("malformed");
+        assert!(
+            matches!(&refused, crate::error::ApiError::Conflict(m) if m.contains("the project's models") && m.contains("MF-49")),
+            "{refused:?}"
+        );
+
+        let (_server, state) = carrying(
+            &[("parking", "imports: [org.stations.v1]\n")],
+            Some(json!({ "linkml": "./stations.linkml.yaml" })),
+        )
+        .await;
+        let refused = super::carry(&state, "p", "bbsk")
+            .await
+            .expect_err("unreadable");
+        assert!(
+            matches!(&refused, crate::error::ApiError::Internal(m) if m.starts_with("stations: ")),
+            "{refused:?}"
+        );
+    }
+
+    /// MF-49: an organization model whose manifest is not in the organization repository refuses
+    /// the export by its path; once it is there, two models importing it carry it once.
+    #[tokio::test]
+    async fn an_organization_model_is_carried_once_and_only_with_its_manifest() {
+        let spec = json!({
+            "linkml": "./stations.linkml.yaml",
+            "version": "1.3.0",
+            "lifecycle": "published",
+            "classes": ["Station"],
+            "artifacts": {
+                "jsonSchema": "./s.json", "context": "./s.jsonld",
+                "docs": "./s.md", "example": "./s.example.json"
+            }
+        });
+        let (server, state) = carrying(
+            &[
+                ("parking", "imports: [org.stations.v1]\n"),
+                ("bikes", "imports: [org.stations.v1]\n"),
+            ],
+            Some(spec.clone()),
+        )
+        .await;
+        let folder = super::model_folder(crate::permissions::ORG_NAMESPACE, &spec, "stations");
+        holds(
+            &server,
+            &format!("{folder}/stations.linkml.yaml"),
+            "id: stations\n",
+        )
+        .await;
+        let refused = super::carry(&state, "p", "bbsk")
+            .await
+            .expect_err("no manifest");
+        assert!(
+            matches!(&refused, crate::error::ApiError::Conflict(m) if m == &format!("{folder}/stations.yaml is not in the organization repository")),
+            "{refused:?}"
+        );
+
+        holds(
+            &server,
+            &format!("{folder}/stations.yaml"),
+            "kind: DataModel\n",
+        )
+        .await;
+        let (models, files) = super::carry(&state, "p", "bbsk").await.expect("carried");
+        assert_eq!(models.len(), 1, "{models:?}");
+        assert_eq!(models[0].name, "stations");
+        assert_eq!(
+            files
+                .iter()
+                .map(|(path, _)| path.as_str())
+                .collect::<Vec<_>>(),
+            ["models/stations.v1.yaml", "models/stations.v1.linkml.yaml"]
+        );
     }
 }

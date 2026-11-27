@@ -108,18 +108,10 @@ pub async fn rename_shapes(
         .map_err(|err| refused(&app.metadata.name, err))?;
         match checked {
             ProposeOutcome::DryRun(result) if result.valid => lane = riskiest(lane, result.lane),
-            ProposeOutcome::DryRun(result) => {
-                return Err(ApiError::Invalid {
-                    detail: format!(
-                        "App '{}' does not pass the App door after the rename",
-                        app.metadata.name
-                    ),
-                    errors: result.findings,
-                })
-            }
+            // The door's dry run answers a passing plan or refuses with an error (mutate.rs).
             _ => {
                 return Err(ApiError::Internal(
-                    "a dry run answered with something other than its plan".into(),
+                    "a dry run answered with something other than a passing plan".into(),
                 ))
             }
         }

@@ -1620,4 +1620,245 @@ mod tests {
         assert!(inclusion_body(&change(MAX_IDS)).is_ok());
         assert!(inclusion_body(&change(MAX_IDS + 1)).is_err());
     }
+
+    /// A realm whose token endpoint answers `token_status`.
+    async fn realm(token_status: u16) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        let issuer = format!("{}/realms/hel", realm.uri());
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [] })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(token_status).set_body_json(serde_json::json!({
+                "access_token": "the-portals-own-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        realm
+    }
+
+    /// A state asking the assistant at `assistant` with a token from `realm`.
+    async fn asking(realm: &wiremock::MockServer, assistant: &str) -> crate::state::AppState {
+        let oidc = crate::auth::oidc::OidcClient::discover(
+            &crate::config::OidcConfig {
+                issuer: format!("{}/realms/hel", realm.uri())
+                    .parse()
+                    .expect("an issuer"),
+                client_id: "portal-api".into(),
+                auth: crate::config::ClientAuth::Secret("test-secret".into()),
+                extra_ca_pem: None,
+                admin_url: None,
+            },
+            "https://portal.test/api/v1/auth/callback",
+        )
+        .await
+        .expect("discovery");
+        let mut config = crate::config::Config::for_tests();
+        config.knowledge_url = Some(assistant.to_owned());
+        crate::state::AppState::new(config, Some(oidc))
+    }
+
+    /// A local server answering every request with `answer` and then closing the connection.
+    async fn cut_short(answer: &'static str) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("a port");
+        let addr = listener.local_addr().expect("an address");
+        tokio::spawn(async move {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
+                tokio::spawn(async move {
+                    let mut buffer = [0u8; 4096];
+                    let _ = socket.read(&mut buffer).await;
+                    let _ = socket.write_all(answer.as_bytes()).await;
+                    // Closed for writing, then drained: the client reads the cut, not a reset.
+                    let _ = socket.shutdown().await;
+                    while matches!(socket.read(&mut buffer).await, Ok(n) if n > 0) {}
+                });
+            }
+        });
+        format!("http://{addr}")
+    }
+
+    fn admin(state: &crate::state::AppState) -> crate::auth::CurrentUser {
+        crate::auth::CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec![state.config.bootstrap_admins.clone()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// A realm that refuses the Portal its own token leaves the assistant unasked: 503.
+    #[tokio::test]
+    async fn a_realm_refusing_the_portals_token_is_503() {
+        let realm = realm(401).await;
+        let state = asking(
+            &realm,
+            &format!("http://{}:9", std::net::Ipv4Addr::LOCALHOST),
+        )
+        .await;
+        let asked = super::request(
+            &state,
+            reqwest::Method::GET,
+            "helsinki/knowledge",
+            Duration::from_secs(5),
+        )
+        .await;
+        assert!(
+            matches!(&asked, Err(crate::error::ApiError::Unavailable(why)) if why.contains("no token for the knowledge assistant")),
+            "{:?}",
+            asked.err()
+        );
+    }
+
+    /// An export the assistant cuts short is a 503 that says it broke off.
+    #[tokio::test]
+    async fn an_export_cut_short_is_503() {
+        let realm = realm(200).await;
+        let assistant = cut_short(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/csv\r\nContent-Length: 100\r\n\r\nshort",
+        )
+        .await;
+        let state = asking(&realm, &assistant).await;
+        let text = super::ask_text(
+            &state,
+            "helsinki/knowledge/conversations/export",
+            Duration::from_secs(5),
+            &[("from", "2026-09-01")],
+        )
+        .await;
+        assert!(
+            matches!(&text, Err(crate::error::ApiError::Unavailable(why)) if why.contains("broke off")),
+            "{:?}",
+            text.err()
+        );
+    }
+
+    /// A chat answer that breaks off mid-stream passes on what came and ends in an error.
+    #[tokio::test]
+    async fn a_chat_answer_that_breaks_off_ends_its_stream_in_an_error() {
+        use futures_util::StreamExt;
+        let realm = realm(200).await;
+        let assistant = cut_short(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n",
+        )
+        .await;
+        let state = asking(&realm, &assistant).await;
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "AssistantDeployment".into(),
+            metadata: crate::resource::ObjectMeta::new("public", "helsinki"),
+            spec: serde_json::json!({}),
+            status: None,
+        });
+        let question: super::ChatRequest =
+            serde_json::from_value(serde_json::json!({ "message": "hello?" })).expect("a question");
+        let answer = super::chat(
+            admin(&state),
+            axum::extract::State(state.clone()),
+            axum::extract::Path(("helsinki".to_owned(), "public".to_owned())),
+            axum::http::HeaderMap::new(),
+            axum::Json(question),
+        )
+        .await
+        .expect("the stream starts");
+        let mut events = answer.into_body().into_data_stream();
+        let first = events
+            .next()
+            .await
+            .expect("a first chunk")
+            .expect("its bytes");
+        assert_eq!(&first[..], b"hello");
+        assert!(
+            events.next().await.is_some_and(|next| next.is_err()),
+            "the break is an error"
+        );
+    }
+
+    /// An upload past the largest a source takes is 413, read no further than the cap.
+    #[tokio::test]
+    async fn an_upload_past_the_cap_is_413() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let chunk = axum::body::Bytes::from(vec![0u8; 1 << 20]);
+        let chunks = (super::MAX_UPLOAD_BODY >> 20) + 2;
+        let body = axum::body::Body::from_stream(futures_util::stream::iter(
+            (0..chunks).map(move |_| Ok::<_, std::io::Error>(chunk.clone())),
+        ));
+        let request = axum::http::Request::post("/").body(body).expect("request");
+        let answer = super::upload_file(
+            admin(&state),
+            axum::extract::State(state.clone()),
+            axum::extract::Path(("helsinki".to_owned(), "files".to_owned())),
+            axum::extract::Query(super::FileName {
+                name: "big.csv".into(),
+            }),
+            request,
+        )
+        .await;
+        assert!(
+            matches!(&answer, Err(crate::error::ApiError::TooLarge(why)) if why.contains("larger than")),
+            "{:?}",
+            answer.err()
+        );
+    }
+
+    /// An upload's or a transcript read's activity event that cannot be stored is logged and the
+    /// call goes on: both return with the activity store down.
+    #[tokio::test]
+    async fn an_activity_event_that_cannot_be_stored_does_not_fail_the_call() {
+        let mut state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state.activity = crate::activity::ActivityStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let user = admin(&state);
+        tokio::time::timeout(Duration::from_secs(30), async {
+            super::record(
+                &state,
+                "helsinki",
+                "knowledge.file",
+                "a file".into(),
+                serde_json::json!({}),
+            )
+            .await;
+            super::audited(&state, &user, "helsinki", "read", serde_json::json!({})).await;
+        })
+        .await
+        .expect("both return although nothing was stored");
+    }
 }

@@ -772,6 +772,256 @@ mod tests {
         assert!((604_790..=604_810).contains(&back), "{back}");
     }
 
+    fn session(state: &AppState, client: Option<&str>) -> Session {
+        Session {
+            identity: Identity {
+                client: client.map(str::to_owned),
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec![state.config.bootstrap_admins.clone()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        }
+    }
+
+    /// A workload's token is refused even when its groups would admit the draft.
+    #[test]
+    fn a_workload_token_is_refused_the_check() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let draft = serde_json::json!({ "kind": "Pipeline", "metadata": { "name": "kpi" } });
+        let workload = session(&state, Some("claude-code"));
+        let refused = admitted(&state, &workload.identity, "city", draft.clone());
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(reason)) if reason.contains("not a workload token")),
+            "{refused:?}"
+        );
+        let person = session(&state, None);
+        let admitted = admitted(&state, &person.identity, "city", draft).expect("a person's");
+        assert_eq!(admitted["metadata"]["namespace"], "city");
+    }
+
+    /// A source reading no attributes asks only for its type, and no join key is added.
+    #[test]
+    fn a_source_of_no_attributes_reads_its_type_alone() {
+        let input = Input {
+            name: "stops".into(),
+            entity_type: "TransitStop".into(),
+            ..Default::default()
+        };
+        let step: KpiStep = serde_json::from_value(serde_json::json!({
+            "name": "n", "formula": "count(stops)", "unitCode": "C62", "join": { "by": "time" }
+        }))
+        .expect("a step");
+        assert_eq!(
+            query_of(&input, &step),
+            "type=TransitStop&limit=100&offset=0"
+        );
+    }
+
+    /// The kpi step is found after a processor step.
+    #[test]
+    fn the_kpi_step_is_found_after_a_processor() {
+        let spec: PipelineSpec = serde_json::from_value(serde_json::json!({
+            "class": "scheduled", "schedule": "0 * * * *",
+            "sources": [{ "name": "stops", "endpointRef": { "kind": "Endpoint", "name": "stops" },
+                          "query": { "type": "TransitStop" } }],
+            "steps": [
+                { "processor": { "log": {} } },
+                { "kind": "kpi", "kpi": { "name": "stops-now", "formula": "count(stops)",
+                  "unitCode": "C62", "join": { "by": "time" } } }
+            ],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:city-kpi:kpi-writer" }]
+        }))
+        .expect("a spec");
+        assert_eq!(
+            kpi_step(&spec).map(|step| step.name.as_str()),
+            Some("stops-now")
+        );
+        let only: PipelineSpec = serde_json::from_value(serde_json::json!({
+            "class": "scheduled", "schedule": "0 * * * *",
+            "steps": [{ "processor": { "log": {} } }],
+            "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:city-kpi:kpi-writer" }]
+        }))
+        .expect("a spec");
+        assert!(kpi_step(&only).is_none());
+    }
+
+    const SLUG: &str = "p4y7pq2mzt6vhx3nbwrs5cjdaf";
+
+    /// A realm whose token endpoint answers `status` to the exchange.
+    async fn realm(status: u16) -> (wiremock::MockServer, crate::auth::oidc::OidcClient) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        let issuer = format!("{}/realms/hel", realm.uri());
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/.well-known/openid-configuration"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "issuer": issuer,
+                "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+                "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+                "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+                "response_types_supported": ["code"],
+                "subject_types_supported": ["public"],
+                "id_token_signing_alg_values_supported": ["ES256"]
+            })))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({ "keys": [] })),
+            )
+            .mount(&realm)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/realms/hel/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(status).set_body_json(serde_json::json!({
+                    "access_token": "an-exchanged-token", "token_type": "Bearer", "expires_in": 300
+                })),
+            )
+            .mount(&realm)
+            .await;
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::config::OidcConfig {
+                issuer: issuer.parse().expect("an issuer"),
+                client_id: "portal-api".into(),
+                auth: crate::config::ClientAuth::Secret("test-secret".into()),
+                extra_ca_pem: None,
+                admin_url: None,
+            },
+            "https://portal.test/api/v1/auth/callback",
+        )
+        .await
+        .expect("discovery");
+        (realm, client)
+    }
+
+    /// A state reading history through `gateway`, its Endpoint `parking` of `audience`.
+    fn reading(
+        gateway: &str,
+        oidc: Option<crate::auth::oidc::OidcClient>,
+        audience: &str,
+    ) -> AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.gateway_url = Some(gateway.to_owned());
+        let state = AppState::new(config, oidc);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta::new("parking", "city"),
+            spec: serde_json::json!({ "contextSpaceRef": "mobility", "slug": SLUG, "audience": audience }),
+            status: None,
+        });
+        state
+    }
+
+    fn parking() -> (Input, Earlier) {
+        let input = Input {
+            name: "parking".into(),
+            entity_type: "ParkingSite".into(),
+            attrs: vec!["occupied".into()],
+            endpoint: "parking".into(),
+            ..Default::default()
+        };
+        let read = Earlier {
+            input: "parking".into(),
+            period: "P7D".into(),
+            attrs: vec!["occupied".into()],
+        };
+        (input, read)
+    }
+
+    async fn history_of(state: &AppState, token: Option<&str>) -> Result<Vec<Value>, String> {
+        let session = session(state, None);
+        let reader = Reader {
+            state,
+            session: &session,
+            project: "city",
+            token,
+        };
+        let (input, read) = parking();
+        history(&reader, &input, &read).await
+    }
+
+    /// PL-117: on an Endpoint that is not public the person's token is exchanged for this
+    /// Endpoint and the gateway's rows are the read back; a refused exchange reads nothing.
+    #[tokio::test]
+    async fn a_persons_history_is_read_with_their_exchanged_token() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(format!("/api/endpoint/{SLUG}/ngsi-ld/v1/temporal/entities")))
+            .and(header("authorization", "Bearer an-exchanged-token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!([
+                { "id": "p1", "type": "ParkingSite", "occupied": [{ "type": "Property", "value": 3 }] }
+            ])))
+            .mount(&gateway)
+            .await;
+        let (_granting, client) = realm(200).await;
+        let state = reading(&gateway.uri(), Some(client), "organization");
+        let rows = history_of(&state, Some("a-persons-token"))
+            .await
+            .expect("rows");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0]["id"], "p1");
+
+        let (_refusing, client) = realm(400).await;
+        let refused = reading(&gateway.uri(), Some(client), "organization");
+        let reason = history_of(&refused, Some("a-persons-token"))
+            .await
+            .expect_err("a refused exchange");
+        assert!(!reason.is_empty());
+
+        let no_client = reading(&gateway.uri(), None, "organization");
+        let reason = history_of(&no_client, Some("a-persons-token"))
+            .await
+            .expect_err("no client to exchange at");
+        assert!(reason.contains("no Keycloak client"), "{reason}");
+        assert_eq!(
+            gateway.received_requests().await.unwrap_or_default().len(),
+            1
+        );
+    }
+
+    /// A gateway that fails or does not answer gives no history, in words.
+    #[tokio::test]
+    async fn a_failing_or_silent_gateway_reads_no_history() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let gateway = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&gateway)
+            .await;
+        let failing = reading(&gateway.uri(), None, "public");
+        assert_eq!(
+            history_of(&failing, None).await,
+            Err("the gateway answered 500 reading its history".to_owned())
+        );
+        let silent = reading(
+            &format!("http://{}:9", std::net::Ipv4Addr::LOCALHOST),
+            None,
+            "public",
+        );
+        assert_eq!(
+            history_of(&silent, None).await,
+            Err("the gateway did not answer; try again shortly".to_owned())
+        );
+    }
+
     #[test]
     fn a_refusal_keeps_the_field_jc_core_names() {
         let err = jc_core::Error::Invalid {

@@ -572,6 +572,54 @@ mod tests {
                     && errors == &["spec.roles[0]: names no ServiceAccount".to_string()]),
             "{refused:?}"
         );
+        let committed = ProposeOutcome::Bundled(crate::api::mutate::BundledCommit {
+            path: "projects/p/mqttbrokers/edge.yaml".into(),
+            lane: Lane::Yellow,
+            waits_on: Vec::new(),
+        });
+        let odd = lane_of("mqttbrokers", "edge", committed);
+        assert!(
+            matches!(&odd, Err(ApiError::Internal(m)) if m.contains("other than its plan")),
+            "{odd:?}"
+        );
+    }
+
+    /// A kind the catalogue does not hold has no file to write.
+    #[test]
+    fn a_kind_outside_the_catalogue_has_no_file() {
+        let refused = file("NoSuchKind", "p", &json!({ "metadata": { "name": "x" } }));
+        assert!(
+            matches!(&refused, Err(ApiError::Internal(m)) if m.contains("NoSuchKind")),
+            "{refused:?}"
+        );
+    }
+
+    /// A broker whose manifest holds no such role adds nobody: 422 naming the role, and
+    /// nothing is proposed.
+    #[tokio::test]
+    async fn a_device_for_a_role_the_broker_lacks_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let person = crate::ops::testkit::person("ana", &[]);
+        let request = AddDevice {
+            name: "meter-1".into(),
+            role: "publisher".into(),
+            topic: None,
+            jwks: json!({ "keys": [key()] }),
+        };
+        let jwks = public_jwks(&request.jwks).expect("a public key set");
+        let env: ResourceEnvelope = serde_json::from_value(json!({
+            "apiVersion": API_VERSION, "kind": "MqttBroker",
+            "metadata": { "name": "edge", "namespace": "helsinki" },
+            "spec": { "roles": [{ "name": "reader" }] }
+        }))
+        .expect("an envelope");
+        let refused =
+            propose_device(&state, &person, "helsinki", "edge", &request, &jwks, env).await;
+        assert!(
+            matches!(&refused, Err(ApiError::Unprocessable { errors, .. })
+                if errors == &["role: broker 'edge' has no role 'publisher'".to_string()]),
+            "{refused:?}"
+        );
     }
 
     #[test]

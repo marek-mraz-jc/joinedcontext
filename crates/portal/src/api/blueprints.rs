@@ -640,6 +640,55 @@ spec:
         .expect("the blueprint parses")
     }
 
+    fn flow(blueprint: &str) -> FlowRequest {
+        FlowRequest {
+            blueprint: blueprint.into(),
+            version: "1.0.0".into(),
+            parameters: json!({ "name": "air-open" }),
+        }
+    }
+
+    /// A Blueprint the organization repository holds broken is the Portal's 500, never the
+    /// caller's 400: one that is no Blueprint manifest, and one whose template does not render.
+    #[test]
+    fn a_blueprint_git_holds_broken_is_an_internal_error() {
+        let state = crate::ops::testkit::state();
+        let mut approver = crate::ops::testkit::person("ana", &[]);
+        approver.roles = vec!["portal-approver".into()];
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            BLUEPRINT_KIND,
+            "no-templates",
+            ORG_NAMESPACE,
+            json!({ "version": "1.0.0", "allowedRoles": ["portal-approver"] }),
+        ));
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            BLUEPRINT_KIND,
+            "bad-filter",
+            ORG_NAMESPACE,
+            json!({
+                "version": "1.0.0",
+                "category": "alerting",
+                "riskClass": "green",
+                "allowedRoles": ["portal-approver"],
+                "parameterSchema": {
+                    "type": "object",
+                    "properties": { "name": { "type": "string" } },
+                },
+                "templates": [{ "name": "endpoint", "template": "{{ name | no_such_filter }}" }],
+            }),
+        ));
+        let invalid = plan_flow(&state, &approver, "city", &flow("no-templates")).err();
+        assert!(
+            matches!(&invalid, Some(ApiError::Internal(m)) if m.contains("not a valid Blueprint")),
+            "{invalid:?}"
+        );
+        let unrendered = plan_flow(&state, &approver, "city", &flow("bad-filter")).err();
+        assert!(
+            matches!(&unrendered, Some(ApiError::Internal(m)) if m.contains("endpoint")),
+            "{unrendered:?}"
+        );
+    }
+
     fn slug_of(key: &[u8], project: &str, parameters: serde_json::Value) -> String {
         with_minted_slugs(key, project, &blueprint(), &parameters)["endpointSlug"]
             .as_str()
