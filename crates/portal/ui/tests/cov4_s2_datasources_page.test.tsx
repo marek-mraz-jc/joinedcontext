@@ -46,10 +46,16 @@ afterEach(() => {
 /** As `answerWith`, and the draft door saves: a form whose draft is refused checks nothing. */
 function drafting(dry: (request: Request) => Response | Promise<Response>, drafts: unknown[] = []) {
   const rest = answerWith(dry);
-  return async (path: string, request: Request): Promise<Response | undefined> => {
+  return (path: string, request: Request): Response | Promise<Response> | undefined => {
     if (!path.includes("/drafts/")) return rest(path, request);
-    if (request.method === "PUT") drafts.push(await request.clone().json());
-    return jsonResponse({ version: 1 });
+    if (request.method !== "PUT") return jsonResponse({ version: 1 });
+    return request
+      .clone()
+      .json()
+      .then((body: unknown) => {
+        drafts.push(body);
+        return jsonResponse({ version: 1 });
+      });
   };
 }
 
