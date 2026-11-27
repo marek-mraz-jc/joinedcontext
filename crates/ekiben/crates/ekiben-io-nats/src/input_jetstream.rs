@@ -409,12 +409,12 @@ impl JetStreamInput {
     }
 }
 
-/// One JetStream message as a Bento part: the same metadata keys, ack = Ack, nack = Nak.
 /// A consumer the server would not create, open or start, named.
 fn consumer_failed(e: impl std::fmt::Display) -> CoreError {
     CoreError::other(format!("failed to create JetStream consumer: {e}"))
 }
 
+/// One JetStream message as a Bento part: the same metadata keys, ack = Ack, nack = Nak.
 fn live_part(msg: jetstream::Message) -> Result<(Batch, AckResponder), CoreError> {
     let mut part = Part::new(msg.message.payload.clone());
     part.meta_set_str("nats_subject", msg.message.subject.to_string());
@@ -510,14 +510,18 @@ mod tests {
             context: jetstream::new(client.clone()),
         };
         let ts = "1790230470084404000";
-        let (batch, ack) =
-            live_part(msg(Some(&format!("$JS.ACK.hub.ACC.events.durable.2.10.7.{ts}.3")))).expect("part");
+        let (batch, ack) = live_part(msg(Some(&format!(
+            "$JS.ACK.hub.ACC.events.durable.2.10.7.{ts}.3"
+        ))))
+        .expect("part");
         let part = &batch[0];
         assert_eq!(part.meta_get_str("nats_domain"), "hub");
         assert_eq!(part.meta_get_str("nats_sequence_stream"), "10");
         assert_eq!(part.meta_get_str("nats_num_pending"), "3");
-        let (batch, _) =
-            live_part(msg(Some(&format!("$JS.ACK._.ACC.events.durable.2.10.7.{ts}.3")))).expect("part");
+        let (batch, _) = live_part(msg(Some(&format!(
+            "$JS.ACK._.ACC.events.durable.2.10.7.{ts}.3"
+        ))))
+        .expect("part");
         assert!(batch[0].meta_get("nats_domain").is_none());
 
         drop(ack);
@@ -533,7 +537,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         assert!(
-            logs.text().contains("nats_jetstream ack failed, the server redelivers"),
+            logs.text()
+                .contains("nats_jetstream ack failed, the server redelivers"),
             "{}",
             logs.text()
         );

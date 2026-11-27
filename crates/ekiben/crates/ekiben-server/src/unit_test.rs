@@ -1301,7 +1301,10 @@ mod tests {
                 && out.contains("exceeds per-run memory limit (268435456 bytes)"),
             "{out}"
         );
-        assert!(out.contains("wrong batch count, expected 1, got 0"), "{out}");
+        assert!(
+            out.contains("wrong batch count, expected 1, got 0"),
+            "{out}"
+        );
         assert!(out.contains("next [line 9]:"), "{out}");
     }
 

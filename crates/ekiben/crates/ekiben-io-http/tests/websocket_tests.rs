@@ -284,7 +284,10 @@ async fn an_open_message_the_closed_server_cannot_take_fails_the_connect() {
         &reg,
     );
     let err = input.connect(&ctx).await.expect_err("refused");
-    assert!(err.to_string().contains("websocket open message: "), "{err}");
+    assert!(
+        err.to_string().contains("websocket open message: "),
+        "{err}"
+    );
 }
 
 /// A header case: name, the configured headers, and the headers the server must see.

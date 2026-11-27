@@ -397,7 +397,8 @@ async fn a_host_tls_cannot_name_is_a_configuration_error() {
     let e = error(Conn::connect("2130706433", port, &s).await);
     assert!(matches!(e, CoreError::Config(_)), "{e:?}");
     assert!(
-        e.to_string().contains("kafka_franz input: broker 2130706433: "),
+        e.to_string()
+            .contains("kafka_franz input: broker 2130706433: "),
         "{e}"
     );
 }

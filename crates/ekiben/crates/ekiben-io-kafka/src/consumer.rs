@@ -616,8 +616,7 @@ impl KafkaInput {
             .parts
             .iter()
             .filter(|(tp, p)| {
-                self.leader(tp).ok() == Some(node)
-                    && p.unacked() < self.s.checkpoint_limit
+                self.leader(tp).ok() == Some(node) && p.unacked() < self.s.checkpoint_limit
             })
             .map(|(tp, p)| (tp.clone(), p.fetch))
             .collect();

@@ -199,6 +199,10 @@ async fn an_ack_after_close_fails_and_the_message_stays_queued() {
         )
         .await
         .expect("passive declare");
-    assert_eq!(q.message_count(), 1, "the unacked message went back to the queue");
+    assert_eq!(
+        q.message_count(),
+        1,
+        "the unacked message went back to the queue"
+    );
     let _ = ch.queue_delete(queue.into(), Default::default()).await;
 }

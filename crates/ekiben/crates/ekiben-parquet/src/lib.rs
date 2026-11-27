@@ -722,7 +722,9 @@ mod tests {
     /// A footer counting more rows than the row group's columns hold is refused, not read short.
     #[test]
     fn a_row_group_counting_more_rows_than_its_columns_hold_is_refused() {
-        use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataReader, ParquetMetaDataWriter};
+        use parquet::file::metadata::{
+            ParquetMetaData, ParquetMetaDataReader, ParquetMetaDataWriter,
+        };
         let f = file(
             "message m { required int32 n; }",
             vec![Col::I32(vec![7], vec![0], vec![0])],
