@@ -847,6 +847,13 @@ async fn the_runtime_loads_the_realms_keys_and_says_why_it_cannot() {
         functions::refresh_keys(&verifier, &http, &url("/certs")).await,
         Ok(1)
     );
+    // The background refresh loads the same set, logs how many keys it holds and sleeps on.
+    let kept = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        functions::keep_keys(Arc::clone(&verifier), http.clone(), url("/certs")),
+    )
+    .await;
+    assert!(kept.is_err(), "keep_keys returned");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
