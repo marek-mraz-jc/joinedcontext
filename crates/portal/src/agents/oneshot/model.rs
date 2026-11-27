@@ -956,9 +956,8 @@ impl Streamed {
         if self.calls.len() <= at {
             self.calls.resize(at + 1, (String::new(), String::new()));
         }
-        let Some((name, arguments)) = self.calls.get_mut(at) else {
-            return;
-        };
+        // In bounds: the calls were just resized past `at`.
+        let (name, arguments) = &mut self.calls[at];
         if let Some(part) = call.pointer("/function/name").and_then(Value::as_str) {
             name.push_str(part);
         }
@@ -1280,6 +1279,27 @@ mod stream_tests {
         let parsed = tools_registry::calls(&registry);
         assert_eq!(parsed[0].name, "jc_resource_list");
         assert_eq!(parsed[0].arguments, json!({ "kind": "Endpoint" }));
+    }
+
+    /// T-7923: a provider that sends a call's name in one delta and its arguments in the next
+    /// gets one call; a delta naming no index joins the last call.
+    #[test]
+    fn a_name_and_its_arguments_in_separate_deltas_are_one_call() {
+        let delta = |call: Value| {
+            format!(
+                "data: {}\n\n",
+                json!({ "choices": [{ "index": 0, "delta": { "tool_calls": [call] } }] })
+            )
+        };
+        let mut stream = Streamed::default();
+        stream.push(
+            delta(json!({ "index": 0, "function": { "name": "search_catalog" } })).as_bytes(),
+        );
+        stream.push(delta(json!({ "function": { "arguments": "{\"q\":\"bikes\"}" } })).as_bytes());
+        assert_eq!(
+            stream.calls,
+            [("search_catalog".to_owned(), "{\"q\":\"bikes\"}".to_owned())]
+        );
     }
 
     #[test]
@@ -2030,6 +2050,185 @@ mod transport_tests {
             fence("search_catalog", json!("bare")),
             fence("search_catalog", json!({}))
         );
+    }
+
+    /// T-7923: a stream that breaks off after its first words fails with "stopped part way",
+    /// having shown those words once as a partial; words arriving within the partial interval
+    /// are not shown again.
+    #[tokio::test]
+    async fn a_stream_cut_off_mid_answer_says_it_stopped_part_way() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("an address");
+        let upstream = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("a call");
+            // The whole request first, so closing the socket is a short body and not a reset.
+            let mut seen = Vec::new();
+            let mut buffer = [0u8; 4096];
+            loop {
+                let read = socket.read(&mut buffer).await.expect("read");
+                if read == 0 {
+                    break;
+                }
+                seen.extend_from_slice(&buffer[..read]);
+                let text = String::from_utf8_lossy(&seen).into_owned();
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|line| {
+                            line.to_ascii_lowercase()
+                                .strip_prefix("content-length:")
+                                .map(|value| value.trim().parse::<usize>().unwrap_or(0))
+                        })
+                        .unwrap_or(0);
+                    if seen.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let frame = |content: &str| {
+                format!(
+                    "data: {}\n\n",
+                    json!({ "choices": [{ "delta": { "content": content } }] })
+                )
+            };
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: 100000\r\n\r\n",
+                )
+                .await
+                .expect("headers");
+            for content in ["Reading ", "the list."] {
+                socket
+                    .write_all(frame(content).as_bytes())
+                    .await
+                    .expect("a frame");
+                socket.flush().await.expect("flushed");
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            }
+        });
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.proxy_base = format!("http://{address}");
+        driver.provider = "openrouter".into();
+        let err = driver
+            .complete_once("rules", "hi", 100, true, &[])
+            .await
+            .expect_err("cut off");
+        let said = err.said(100);
+        assert!(said.contains("stopped part way"), "{said}");
+        upstream.await.expect("the upstream ran");
+        let partials = driver
+            .state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "partial")
+            .count();
+        assert_eq!(partials, 1);
+    }
+
+    /// T-7923: an Anthropic tool answer without content is empty, asked once more, and still
+    /// no answer.
+    #[tokio::test]
+    async fn a_tool_answer_without_content_is_asked_again_and_fails() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "usage": { "input_tokens": 3, "output_tokens": 0 }
+            })))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "anthropic").await;
+        let answer = driver
+            .complete_tools(
+                "rules",
+                &[json!({ "role": "user", "content": "hi" })],
+                &[],
+                100,
+            )
+            .await;
+        assert!(matches!(answer, Err(CallError::Empty)), "{answer:?}");
+        assert_eq!(calls(&server).await.len(), 2);
+    }
+
+    /// T-7923: a type two needs name is read once; a second endpoint that holds none of the
+    /// entities already read is read again whole, and a page that is no list adds nothing.
+    #[tokio::test]
+    async fn a_second_endpoint_without_the_read_ids_is_read_whole_and_a_non_list_adds_nothing() {
+        use wiremock::matchers::{path, query_param};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/data/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "urn:ngsi-ld:Bike:1", "type": "Bike", "n": 1 }
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/data/endpoints/dockslug/ngsi-ld/v1/entities"))
+            .and(query_param("id", "urn:ngsi-ld:Bike:1"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/v1/data/endpoints/dockslug/ngsi-ld/v1/entities"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "not": "a list" })))
+            .mount(&server)
+            .await;
+        let mut driver = driver_at(&server, "anthropic").await;
+        driver.endpoints = vec![
+            endpoints::RunEndpoint {
+                name: "bikes".into(),
+                slug: "bikeslug".into(),
+                space: "bikes".into(),
+            },
+            endpoints::RunEndpoint {
+                name: "docks".into(),
+                slug: "dockslug".into(),
+                space: "docks".into(),
+            },
+        ];
+        driver.data_needs = json!([
+            { "contextSpaceRef": "bikes", "types": ["Bike", "Bike"] },
+            { "contextSpaceRef": "docks", "types": ["Bike"] }
+        ]);
+        assert_eq!(driver.types(), ["Bike"]);
+        let samples = driver.samples(&["Bike".to_owned()]).await.expect("samples");
+        assert_eq!(
+            samples,
+            json!({ "Bike": [{ "id": "urn:ngsi-ld:Bike:1", "type": "Bike", "n": 1 }] })
+        );
+        let docks = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|request| request.url.path().contains("dockslug"))
+            .count();
+        assert_eq!(docks, 2, "asked by id, then whole");
+    }
+
+    /// T-7923: a page that is not JSON is no entities, and a status the store cannot set is
+    /// the store's refusal.
+    #[tokio::test]
+    async fn a_page_that_is_not_json_and_a_status_of_no_run_are_errors() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>"))
+            .mount(&server)
+            .await;
+        let driver = driver_at(&server, "openrouter").await;
+        assert!(driver
+            .read_entities(&format!("{}/page", server.uri()))
+            .await
+            .is_err());
+        assert!(driver.status(AgentRunStatus::Starting).await.is_err());
     }
 
     /// A page the proxy refuses is its status and the start of its body.

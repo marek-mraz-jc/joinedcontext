@@ -433,7 +433,8 @@ pub async fn run(
                 }
                 // The parser is not Send: read every document before anything awaits.
                 let docs: Vec<Value> = serde_norway::Deserializer::from_str(&file.content)
-                    .filter_map(|doc| Value::deserialize(doc).ok())
+                    // `map_while`: after a parse error the iterator answers it forever.
+                    .map_while(|doc| Value::deserialize(doc).ok())
                     .collect();
                 for mut val in docs {
                     // An uploaded Endpoint's slug is settled before its draft is kept: a draft's

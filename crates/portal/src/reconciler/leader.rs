@@ -97,9 +97,8 @@ impl Leadership {
                 Ok(_) => return Ok(true),
                 Err(err) => {
                     tracing::warn!(error = %err, "the connection holding the reconciler lock died");
-                    if let Some(connection) = held.take() {
-                        close(connection).await;
-                    }
+                    // The slot was just read as held, under the same guard.
+                    futures_util::future::OptionFuture::from(held.take().map(close)).await;
                     self.leader.store(false, Ordering::Relaxed);
                 }
             }
@@ -147,9 +146,8 @@ impl Leadership {
                 };
                 if let Err(err) = sqlx::query("SELECT 1").execute(&mut **connection).await {
                     tracing::warn!(error = %err, "the reconciler lock's heartbeat failed; this replica stops leading");
-                    if let Some(connection) = guard.take() {
-                        close(connection).await;
-                    }
+                    // The slot was just read as held, under the same guard.
+                    futures_util::future::OptionFuture::from(guard.take().map(close)).await;
                     leader.store(false, Ordering::Relaxed);
                     return;
                 }

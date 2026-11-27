@@ -584,6 +584,34 @@ async fn refused_roles_audiences_and_scopes_are_all_named_and_the_secret_kept() 
     assert_eq!(run.secrets.len(), 1, "{:?}", run.outcomes);
 }
 
+/// T-7923: a published App whose manifest does not parse keeps its login client and its secret;
+/// its roles, audiences and scopes are not touched and the outcome says why.
+#[tokio::test]
+async fn an_app_whose_manifest_does_not_parse_keeps_its_login_and_writes_no_roles() {
+    let keycloak = bikes_realm(json!([managed_client("uuid-bikes", "helsinki", "bikes")])).await;
+    let broken = app_with("helsinki", "bikes", "published", json!({ "kind": 42 }));
+
+    let run = sync(&keycloak).converge(&mirror_with(vec![broken])).await;
+
+    assert_eq!(run.outcomes.len(), 1, "{:?}", run.outcomes);
+    assert_eq!(
+        run.outcomes[0].error.as_deref(),
+        Some("roles of app-bikes: the App manifest does not parse, so its roles were not written")
+    );
+    assert_eq!(
+        run.secrets.get("bikes").map(|s| s.expose()),
+        Some("generated-by-keycloak")
+    );
+    assert!(wrote(&keycloak).await.is_empty());
+    let asked = keycloak.received_requests().await.unwrap_or_default();
+    assert!(
+        !asked.iter().any(|r| r.url.path().contains("/roles")
+            || r.url.path().contains("/protocol-mappers")
+            || r.url.path().contains("/optional-client-scopes")),
+        "nothing of the roles or mappers is read"
+    );
+}
+
 /// A refused token or client listing is one `*` failure; a stale client whose delete is refused,
 /// or that the realm lists without an id, is reported under its App, and a listed entry without
 /// a clientId is skipped.

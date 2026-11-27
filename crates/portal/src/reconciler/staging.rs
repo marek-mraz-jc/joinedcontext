@@ -683,6 +683,18 @@ mod tests {
         );
     }
 
+    /// T-7923: a staging directory already gone when the run ends costs only a warning: the
+    /// drop's removal thread does not panic and leaves no directory behind.
+    #[test]
+    fn a_scratch_already_removed_drops_with_only_a_warning() {
+        let scratch = Scratch::new("rev-gone").expect("scratch");
+        let path = scratch.path().to_path_buf();
+        std::fs::remove_dir_all(&path).expect("removed beforehand");
+        drop(scratch);
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!path.exists(), "nothing is made again");
+    }
+
     /// A poisoned blob cache still answers: a panic elsewhere in the process costs no sync.
     #[test]
     fn a_poisoned_blob_cache_still_answers() {

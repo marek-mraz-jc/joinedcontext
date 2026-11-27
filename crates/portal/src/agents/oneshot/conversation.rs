@@ -2889,6 +2889,243 @@ mod tests {
         assert!(sent[1].contains("jc_ask asks nothing"), "{}", sent[1]);
     }
 
+    /// The capabilities `preset` with `endpoints` at read-write, as a person's message sets them.
+    fn choosing(driver: &Driver, preset: crate::agents::capabilities::Preset, endpoints: &[&str]) {
+        *driver
+            .capabilities
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) =
+            Some(crate::agents::capabilities::Capabilities {
+                preset,
+                endpoints: endpoints
+                    .iter()
+                    .map(|name| {
+                        (
+                            (*name).to_owned(),
+                            crate::agents::capabilities::EndpointAccess::ReadWrite,
+                        )
+                    })
+                    .collect(),
+                segment: None,
+            });
+    }
+
+    /// T-7923: a write_entities call to an endpoint the person left at read is refused under
+    /// `propose`; one to an endpoint they opened for writing, a call naming no endpoint, and an
+    /// answer under no chosen capabilities pass the check.
+    #[test]
+    fn a_write_to_an_endpoint_left_at_read_is_off_the_capabilities() {
+        use crate::agents::capabilities::Preset;
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state, "helsinki");
+        let write = |endpoint: &str| {
+            fenced(json!({ "tool": "write_entities", "endpoint": endpoint, "entities": [] }))
+        };
+        assert_eq!(driver.off_capabilities(&write("bikes")), None);
+
+        choosing(&driver, Preset::Propose, &["bikes"]);
+        assert_eq!(driver.off_capabilities(&write("bikes")), None);
+        assert_eq!(
+            driver.off_capabilities(&fenced(json!({ "tool": "write_entities" }))),
+            None,
+            "a call that names no endpoint is the write's own check"
+        );
+        let (tool, reason) = driver.off_capabilities(&write("parking")).expect("refused");
+        assert_eq!(tool, "write_entities");
+        assert!(
+            reason.contains("the person chose 'propose'")
+                && reason.contains("the entities of 'parking', which they left at read"),
+            "{reason}"
+        );
+    }
+
+    /// T-7923: a path is refused when the installation hides it, when the chosen capabilities
+    /// leave it out, or when no role of the person proposes what it ends in; finding data needs
+    /// none of these.
+    #[test]
+    fn a_path_is_taken_only_when_shown_chosen_and_proposable() {
+        use crate::agents::capabilities::Preset;
+        let mut config = crate::config::Config::for_tests();
+        config.dashboards = false;
+        let driver = Driver::for_tests(AppState::new(config, None), "helsinki");
+        let hidden = driver
+            .may_take(Path::BuildDashboard)
+            .expect_err("hidden dashboards");
+        assert!(hidden.contains("hides dashboards"), "{hidden}");
+        let unproposable = driver
+            .may_take(Path::IntegratePipeline)
+            .expect_err("no role proposes a Pipeline");
+        assert!(
+            unproposable.contains("ends by proposing a Pipeline"),
+            "{unproposable}"
+        );
+        assert_eq!(driver.may_take(Path::FindData), Ok(()));
+
+        choosing(&driver, Preset::Read, &[]);
+        assert_eq!(
+            driver.may_take(Path::ShareData),
+            Err("the capabilities 'read' do not include the path 'share-data'".to_owned())
+        );
+        assert_eq!(driver.may_take(Path::FindData), Ok(()));
+    }
+
+    /// T-7923: a hand-over to a path the chosen capabilities leave out goes back with the
+    /// refusal, the path stays where it was, and the next answer is the person's.
+    #[tokio::test]
+    async fn a_hand_over_the_capabilities_leave_out_goes_back() {
+        let model = wiremock::MockServer::start().await;
+        let share = fenced(
+            json!({ "tool": "jc_switch_path", "arguments": { "path": "share-data", "reason": "share" } }),
+        );
+        scripted(&model, &[&share, "Switch on propose to share it."]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        choosing(&driver, crate::agents::capabilities::Preset::Read, &[]);
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "share the bikes".into())
+            .await;
+        assert_eq!(conversation[0].1, "Switch on propose to share it.");
+        assert_eq!(driver.current_path(), None);
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), 2);
+        assert!(
+            sent[1].contains("error: the capabilities 'read' do not include the path 'share-data'"),
+            "{}",
+            sent[1]
+        );
+    }
+
+    /// T-7923: a model that keeps writing to an endpoint the person left at read is told so
+    /// each time, and its last try ends the turn with the refusal, without a fourth call.
+    #[tokio::test]
+    async fn a_call_off_the_capabilities_three_times_ends_the_turn() {
+        let model = wiremock::MockServer::start().await;
+        let write =
+            fenced(json!({ "tool": "write_entities", "endpoint": "parking", "entities": [] }));
+        scripted(&model, &[&write]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        choosing(&driver, crate::agents::capabilities::Preset::Propose, &[]);
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "add a parking spot".into())
+            .await;
+        let answer = &conversation[0].1;
+        assert!(
+            answer.starts_with("I stayed on this path: the person chose 'propose'")
+                && answer.contains("which they left at read"),
+            "{answer}"
+        );
+        assert_eq!(sent(&model).await.len(), data_query::MAX_DRAFTS);
+        let failed = state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == "tool" && event.payload["tool"] == "write_entities")
+            .count();
+        assert_eq!(failed, data_query::MAX_DRAFTS);
+    }
+
+    /// T-7923: a query_endpoint call that names no endpoint is a failed step on the log and
+    /// goes back with its reason; the answer after it is the person's.
+    #[tokio::test]
+    async fn a_query_call_naming_no_endpoint_goes_back_with_its_reason() {
+        let model = wiremock::MockServer::start().await;
+        let query = fenced(json!({ "tool": "query_endpoint", "name": "query_entities" }));
+        scripted(&model, &[&query, "Which endpoint should I read?"]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "how many bikes are free".into())
+            .await;
+        assert_eq!(conversation[0].1, "Which endpoint should I read?");
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].contains("names no endpoint"), "{}", sent[1]);
+        let events = state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        let step = events
+            .iter()
+            .find(|event| event.kind == "tool" && event.payload["tool"] == "query_endpoint")
+            .expect("the failed step");
+        assert_eq!(step.payload["status"], "failed");
+        assert_eq!(step.payload["input"]["endpoint"], "");
+    }
+
+    /// T-7923: a well-formed compute_kpi outside the run's access is refused before any read,
+    /// and the refusal ends the turn.
+    #[tokio::test]
+    async fn an_indicator_outside_the_access_ends_the_turn_with_the_refusal() {
+        let model = wiremock::MockServer::start().await;
+        let kpi = fenced(json!({
+            "tool": "compute_kpi", "name": "bikes", "type": "Bike", "attribute": "n", "agg": "sum"
+        }));
+        scripted(&model, &[&kpi]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "how many bikes are there".into())
+            .await;
+        assert!(
+            conversation[0]
+                .1
+                .starts_with("That is outside what this assistant may do"),
+            "{conversation:?}"
+        );
+        assert_eq!(sent(&model).await.len(), 1);
+        let events = state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        let step = events
+            .iter()
+            .find(|event| event.kind == "tool" && event.payload["tool"] == "compute_kpi")
+            .expect("the refused step");
+        assert_eq!(step.payload["status"], "failed");
+        assert_eq!(step.payload["input"]["type"], "Bike");
+    }
+
+    /// T-7923: an answer of nothing but whitespace is no answer: the person reads what the
+    /// assistant can do.
+    #[tokio::test]
+    async fn a_blank_answer_says_what_the_assistant_does() {
+        let model = wiremock::MockServer::start().await;
+        scripted(&model, &["  \n "]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "hm".into()).await;
+        let default = "Ask about the project's data, share it, or have something built.";
+        assert_eq!(conversation[0].1, default);
+        assert_eq!(said(&state).await, vec![(default.to_owned(), false)]);
+    }
+
+    /// T-7923: a store that fails while the turn checks whether a question was answered fails
+    /// the turn; the failed answer it cannot store either is logged, and nothing is answered.
+    #[tokio::test]
+    async fn a_store_that_fails_mid_turn_fails_the_answer_quietly() {
+        let model = wiremock::MockServer::start().await;
+        let ask = fenced(json!({ "tool": "jc_ask", "question": "Which space should it land in?" }));
+        scripted(&model, &[&ask]).await;
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(crate::test_db::dead_pool());
+        // A placed project, so a run's lookup reaches the database and fails there.
+        crate::agents::oneshot::placed(&state);
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = model.uri();
+        driver.answer_timeout = std::time::Duration::from_secs(10);
+        assert!(driver.converse(&[], "share it").await.is_err());
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "share it".into()).await;
+        assert!(conversation.is_empty());
+        assert_eq!(sent(&model).await.len(), 2, "one model call per turn");
+        assert!(state.agents.events_since("test-run", 0).await.is_err());
+    }
+
     /// The call of T-5962's S-27, as the model wrote it.
     const STRAY_BRACE: &str =
         "```json\n{ \"tool\": \"describe_tool\", \"name\": \"grant_role\" }\n}\n```";
@@ -3229,6 +3466,241 @@ mod loop_tests {
                     .as_str()
                     .is_some_and(|text| text.starts_with("The answer failed: "))),
             "{said:?}"
+        );
+    }
+
+    /// An inbox whose channel is closed: the loop reads no event and ends.
+    fn closed_inbox() -> crate::agents::events::RunInbox {
+        let (sender, live) = tokio::sync::broadcast::channel(1);
+        drop(sender);
+        crate::agents::events::RunInbox::new(live, "test-run", 0)
+    }
+
+    fn deadline() -> tokio::time::Instant {
+        tokio::time::Instant::now() + Duration::from_secs(60)
+    }
+
+    /// A model stub answering every call with `status` and, on a 200, the completion `text`.
+    async fn model(status: u16, text: &str) -> wiremock::MockServer {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(wiremock::ResponseTemplate::new(status).set_body_json(json!({
+                "choices": [{ "index": 0, "message": { "role": "assistant", "content": text }, "finish_reason": "stop" }],
+                "usage": { "total_tokens": 9 }
+            })))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    async fn events_of(state: &AppState, kind: &str) -> Vec<Value> {
+        state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == kind)
+            .map(|event| event.payload)
+            .collect()
+    }
+
+    /// T-7923: a continuation keeps the path the person picked over the one the run it
+    /// continues ended on, and takes that one when none was picked; a closed inbox ends the loop.
+    #[tokio::test]
+    async fn a_continuation_keeps_a_picked_path_and_a_closed_inbox_ends_the_loop() {
+        // A conversing run beside a prior one that ended on finding data.
+        async fn continuing() -> AppState {
+            let state = AppState::new(crate::config::Config::for_tests(), None);
+            let mut prior = Driver::for_tests(state.clone(), "helsinki");
+            prior.run_id = "prior".into();
+            prior
+                .event("path", json!({ "path": "find-data", "by": "person" }))
+                .await
+                .expect("stored");
+            conversing(&state).await;
+            state
+        }
+        let state = continuing().await;
+        let model = model(200, "The bikes endpoint is ready to share.").await;
+
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.continues = Some("prior".into());
+        driver.prompt = "share the bike counts".into();
+        driver.proxy_base = model.uri();
+        *driver.path.lock().unwrap_or_else(PoisonError::into_inner) = Some(Path::ShareData);
+        driver
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("a closed inbox ends the loop");
+        assert_eq!(driver.current_path(), Some(Path::ShareData));
+        assert!(
+            thoughts(&state)
+                .await
+                .iter()
+                .any(|t| t["text"] == "The bikes endpoint is ready to share."),
+            "{:?}",
+            thoughts(&state).await
+        );
+
+        let state = continuing().await;
+        let mut unpicked = Driver::for_tests(state.clone(), "helsinki");
+        unpicked.continues = Some("prior".into());
+        unpicked
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("a closed inbox ends the loop");
+        assert_eq!(unpicked.current_path(), Some(Path::FindData));
+    }
+
+    /// T-7923: a router whose model call fails leaves the conversation on no path, and the
+    /// turn after it says its own failure.
+    #[tokio::test]
+    async fn a_router_that_fails_leaves_the_conversation_on_no_path() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        conversing(&state).await;
+        let model = model(400, "").await;
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.prompt = "hello".into();
+        driver.proxy_base = model.uri();
+        driver
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("the loop ends");
+        assert_eq!(driver.current_path(), None);
+        assert!(events_of(&state, "path").await.is_empty());
+        assert!(
+            thoughts(&state).await.iter().any(|t| t["failed"] == true),
+            "{:?}",
+            thoughts(&state).await
+        );
+    }
+
+    /// T-7923: a first step whose pick holds nothing is asked as free text after saying why,
+    /// on the page the step works on; a step of fixed options offers each, none disabled.
+    #[tokio::test]
+    async fn a_first_step_with_nothing_to_pick_asks_in_words_on_its_page() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        conversing(&state).await;
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        *driver.path.lock().unwrap_or_else(PoisonError::into_inner) = Some(Path::UploadData);
+        driver
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("the loop ends");
+        let said = thoughts(&state).await;
+        assert!(
+            said.iter().any(|t| t["text"]
+                .as_str()
+                .is_some_and(|text| text.ends_with("; say it in your own words."))),
+            "{said:?}"
+        );
+        let navigated = events_of(&state, "navigate").await;
+        assert_eq!(navigated.len(), 1, "{navigated:?}");
+        assert_eq!(navigated[0]["route"], "/projects/helsinki/spaces/upload");
+        let asked = events_of(&state, "question").await;
+        assert_eq!(asked.len(), 1, "{asked:?}");
+        assert_eq!(asked[0]["options"], json!([]));
+        assert_eq!(asked[0]["pick"], Value::Null);
+
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        conversing(&state).await;
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        *driver.path.lock().unwrap_or_else(PoisonError::into_inner) = Some(Path::CreateDataModel);
+        driver
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("the loop ends");
+        let asked = events_of(&state, "question").await;
+        let options = asked[0]["options"].as_array().expect("options");
+        assert_eq!(
+            options.len(),
+            Path::CreateDataModel.first_step().options.len()
+        );
+        assert!(!options.is_empty());
+        assert!(options.iter().all(|o| o.get("disabledReason").is_none()));
+        assert_eq!(
+            events_of(&state, "navigate").await[0]["route"],
+            "/projects/helsinki/models"
+        );
+    }
+
+    /// T-7923: a path step the Portal takes itself that fails (a new space with nothing handed
+    /// over; a description before the endpoints, access and audience) is a failed answer, and
+    /// the loop goes on to the next event.
+    #[tokio::test]
+    async fn a_step_that_fails_is_a_failed_answer_and_the_loop_goes_on() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        conversing(&state).await;
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        *driver.path.lock().unwrap_or_else(PoisonError::into_inner) = Some(Path::BuildApp);
+        let feeder = Driver::for_tests(state.clone(), "helsinki");
+        let live = state.agent_events.subscribe("test-run").await;
+        let mut inbox = crate::agents::events::RunInbox::new(live, "test-run", 0);
+        fn failed(said: &[Value]) -> usize {
+            said.iter()
+                .filter(|t| {
+                    t["failed"] == true
+                        && t["text"]
+                            .as_str()
+                            .is_some_and(|text| text.starts_with("That step failed: "))
+                })
+                .count()
+        }
+        let feed = async {
+            // The first step's own question comes first, so the description is the newest.
+            for _ in 0..200 {
+                if !events_of(&state, "question").await.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            for (kind, payload) in [
+                (
+                    "question",
+                    json!({ "questionId": "q-target", "step": "integrate-target" }),
+                ),
+                (
+                    "answer",
+                    json!({ "questionId": "q-target", "answers": { "answer": "new" } }),
+                ),
+                (
+                    "question",
+                    json!({ "questionId": "q-describe", "step": "build-app-describe" }),
+                ),
+                (
+                    "message",
+                    json!({ "sentBy": "test-user", "text": "A map of the bike stations." }),
+                ),
+            ] {
+                feeder.event(kind, payload).await.expect("stored");
+            }
+            for _ in 0..200 {
+                if failed(&thoughts(&state).await) >= 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            feeder
+                .event("status", json!({ "status": "cancelled" }))
+                .await
+                .expect("stored");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_conversation(&mut inbox, deadline()), feed);
+        ended.expect("the loop ends");
+        let said = thoughts(&state).await;
+        assert_eq!(failed(&said), 2, "{said:?}");
+        let texts: Vec<&str> = said.iter().filter_map(|t| t["text"].as_str()).collect();
+        assert!(
+            texts.contains(&"That step failed: nothing was handed over to draft a space from"),
+            "{texts:?}"
+        );
+        assert!(
+            texts.contains(
+                &"That step failed: the endpoints, the access and the audience are answered \
+                  before the app is described"
+            ),
+            "{texts:?}"
         );
     }
 

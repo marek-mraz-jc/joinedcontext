@@ -96,21 +96,22 @@ impl EdgeLimits {
     pub fn of(limits: Option<&OrganizationLimits>, bounds: &OrganizationBounds) -> Self {
         let edge = limits.map(|limits| &limits.edge);
         let set = edge.map(|edge| &edge.requests_per_minute);
-        let mut rates = BTreeMap::new();
-        for class in RATE_CLASSES {
-            let own = set.and_then(|rates| match class {
-                "web" => rates.web,
-                "api" => rates.api,
-                "dataRead" => rates.data_read,
-                "dataWrite" => rates.data_write,
-                _ => rates.public_endpoint,
-            });
-            let path = format!("spec.limits.edge.requestsPerMinute.{class}");
-            if let Some(rate) = effective(&path, own, bounds) {
+        // Every class has a catalog entry with a default, so each one gets its rate.
+        let rates = RATE_CLASSES
+            .into_iter()
+            .filter_map(|class| {
+                let own = set.and_then(|rates| match class {
+                    "web" => rates.web,
+                    "api" => rates.api,
+                    "dataRead" => rates.data_read,
+                    "dataWrite" => rates.data_write,
+                    _ => rates.public_endpoint,
+                });
+                let path = format!("spec.limits.edge.requestsPerMinute.{class}");
                 // APISIX refuses a count of 0, and one refused entry stops the whole file.
-                rates.insert(class, rate.max(1));
-            }
-        }
+                effective(&path, own, bounds).map(|rate| (class, rate.max(1)))
+            })
+            .collect();
         let own = edge.and_then(|edge| edge.max_request_body_megabytes);
         let body_bytes = effective(jc_core::kinds::org_settings::EDGE_BODY, own, bounds)
             .map(|megabytes| u64::from(megabytes.max(1)) * 1024 * 1024);
@@ -1076,9 +1077,10 @@ impl EdgeFile {
             return (EdgeOutcome::Unchanged { apps: routed }, composed.skipped);
         }
         let mut next = served;
-        if let Some(object) = next.as_object_mut() {
-            object.remove("stringData");
-        }
+        // A Secret the API answers is an object: the removal always finds it.
+        let _ = next
+            .as_object_mut()
+            .and_then(|object| object.remove("stringData"));
         next["data"] = json!({ FILE_KEY: engine.encode(composed.file.as_bytes()) });
         if !next["metadata"]["annotations"].is_object() {
             next["metadata"]["annotations"] = json!({});
@@ -1925,6 +1927,98 @@ routes:
         )
         .expect("composes");
         assert_eq!(composed.file, again.file);
+    }
+
+    /// T-7923: a login template without a session object still gets the App's own session:
+    /// its key, its `__Host-` cookie on `/`, Secure, and no shared cookie domain.
+    #[test]
+    fn a_login_template_without_a_session_gets_the_apps_own() {
+        let plugin = login(
+            &json!({ "session": "not an object" }),
+            "air.city.example",
+            &app("air-quality", false, Upstream::Static),
+            "auth",
+        );
+        let session = &plugin["session"];
+        assert_eq!(session["cookie_name"], "__Host-jc_app_air_quality");
+        assert_eq!(session["cookie_path"], "/");
+        assert_eq!(session["cookie_secure"], true);
+        assert!(session.get("cookie_domain").is_none());
+        let own = ClientSecret::from("secret-of-air-quality".to_owned());
+        assert_eq!(
+            session["secret"],
+            json!(session_secret("air-quality", &own))
+        );
+        assert_eq!(plugin["redirect_uri"], "https://air.city.example/callback");
+        assert_eq!(plugin["unauth_action"], "auth");
+        let public = app("b", true, Upstream::Static);
+        let bare = login(&json!({}), "b.city.example", &public, "pass");
+        assert_eq!(bare["session"]["cookie_name"], "__Host-jc_app_b");
+        assert_eq!(bare["unauth_action"], "pass");
+    }
+
+    fn published_app(project: &str, name: &str, class: &str) -> crate::resource::ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "App",
+            "metadata": { "name": name, "namespace": project },
+            "spec": {
+                "kind": class,
+                "source": { "path": "./src" },
+                "build": { "rust": "1.90", "node": "22" },
+                "visibility": "project",
+                "lifecycle": "published",
+                "csp": { "connectSrc": [] },
+                "dataNeeds": [{
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "all" },
+                    "types": ["AirQualityObserved"],
+                    "operations": ["queryEntity"],
+                    "representations": ["ngsi-ld"]
+                }],
+                "limits": { "requestsPerMinute": 600, "maxFileRows": 20000 }
+            }
+        }))
+        .expect("an App")
+    }
+
+    /// T-7923: one App name published in two projects is routed once (its client is one), and
+    /// a pod App with no release to name its namespace is skipped with the reason, while a
+    /// static App beside it is still routed.
+    #[test]
+    fn a_second_app_of_one_name_and_a_pod_app_without_a_namespace_are_not_routed() {
+        let mirror = Mirror::new();
+        mirror.upsert(published_app("helsinki", "air", "ui"));
+        mirror.upsert(published_app("espoo", "air", "ui"));
+        mirror.upsert(published_app("helsinki", "pod-app", "ui-rust"));
+        let secrets: BTreeMap<String, ClientSecret> = ["air", "pod-app"]
+            .into_iter()
+            .map(|name| (name.to_owned(), ClientSecret::from(format!("s-{name}"))))
+            .collect();
+        let settings = Settings {
+            host: "portal.city.example".into(),
+            apex: "city.example".into(),
+            gateway_url: None,
+            service_url: None,
+            namespace: "jc".into(),
+            release: None,
+            service_account: None,
+            org_domain: "city.example".into(),
+            apisix_namespace: "apisix".into(),
+            image_repository: None,
+            pull_secret: None,
+            basemap_base: None,
+        };
+        let (apps, skipped) = edge_apps(&mirror, &secrets, &settings, None);
+        let names: Vec<&str> = apps.iter().map(|app| app.name.as_str()).collect();
+        assert_eq!(names, ["air"], "one route for the name");
+        assert_eq!(apps[0].upstream, Upstream::Static);
+        assert_eq!(skipped.len(), 1, "{skipped:?}");
+        assert_eq!(skipped[0].0, "pod-app");
+        assert!(!skipped[0].1.is_empty(), "the reason is said");
+        let (none, nothing) = edge_apps(&Mirror::new(), &secrets, &settings, None);
+        assert!(
+            none.is_empty() && nothing.is_empty(),
+            "an empty mirror routes nothing"
+        );
     }
 
     #[test]

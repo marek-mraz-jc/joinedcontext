@@ -1271,6 +1271,11 @@ mod tests {
         );
         assert_eq!(title_of("A map of alerts.").0, None);
         assert_eq!(title_of("**ab** too short").0, None);
+        // T-7923: bold that never closes names nothing and leaves the prose as it was.
+        assert_eq!(
+            title_of("**Helsinki Traffic Alerts Map shows"),
+            (None, "**Helsinki Traffic Alerts Map shows".to_owned())
+        );
     }
 
     #[test]
@@ -1398,6 +1403,13 @@ mod tests {
             navigate_tool_call("```json\n{not json}\n```\n```json\n{\"tool\":\"navigate\"}\n```"),
             None,
             "a broken block is skipped and a call without a route opens nothing"
+        );
+        // T-7923: another tool's block is passed over for the navigate call after it.
+        assert_eq!(
+            navigate_tool_call(
+                "```json\n{\"tool\":\"other\"}\n```\n```json\n{\"tool\":\"navigate\",\"route\":\"/projects/x\"}\n```"
+            ),
+            Some("/projects/x".to_owned())
         );
     }
 
@@ -1562,6 +1574,103 @@ mod lifecycle_tests {
         assert_eq!(said, [json!("awaiting_approval")]);
     }
 
+    /// T-7923: a run with no stored record still expires: its status event is said, and no
+    /// approval lease holds it.
+    #[tokio::test]
+    async fn a_run_the_store_does_not_hold_expires_all_the_same() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state, "helsinki");
+        driver.expire().await;
+        let said = statuses(&driver).await;
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert_eq!(said[0]["status"], "expired");
+    }
+
+    /// T-7923: a started conversation that nobody writes to ends on its lease, expired and not
+    /// failed: the background drive ended without an error.
+    #[tokio::test]
+    async fn a_spawned_conversation_ends_on_its_lease_without_failing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.kind = "conversation".to_owned();
+        run.prompt = String::new();
+        state.agents.create_run(&run).await.expect("stored");
+        let profile = Profile {
+            name: "assistant".into(),
+            role: "assistant".into(),
+            image: String::new(),
+            model_name: "test-model".into(),
+            model_provider: "anthropic".into(),
+            reasoning_effort: None,
+            routing: None,
+            max_tokens_per_run: 100_000,
+            steps_per_run: 10,
+            requests_per_minute: 10,
+            max_response_bytes: 1_000_000,
+            allowed_hosts: Vec::new(),
+            max_egress_bytes_per_run: 0,
+            cpu: String::new(),
+            memory: String::new(),
+            ephemeral_storage: String::new(),
+            access: Access::default(),
+        };
+        let settings = crate::config::AgentSettings {
+            namespace: None,
+            portal_namespace: "jc".into(),
+            proxy_base: "http://127.0.0.1:9".into(),
+            run_ttl_secs: 1,
+            approval_ttl_secs: 60,
+        };
+        let identity = Driver::for_tests(state.clone(), "helsinki").identity;
+        spawn(
+            state.clone(),
+            &run,
+            &identity,
+            "ticket",
+            &profile,
+            &settings,
+            Opening::default(),
+        );
+        let mut status = String::new();
+        for _ in 0..100 {
+            status = state
+                .agents
+                .get_run("test-run")
+                .await
+                .expect("read")
+                .expect("the run")
+                .status;
+            if status == "expired" || status == "failed" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(status, "expired");
+    }
+
+    /// T-7923: a payload that is no object is stored as it is, with no time stamped into it.
+    #[tokio::test]
+    async fn a_step_payload_that_is_no_object_is_stored_as_it_is() {
+        let driver = driver_with("previewing").await;
+        let event = driver
+            .append("navigate", json!("/projects/helsinki"))
+            .await
+            .expect("stored");
+        assert_eq!(event.payload, json!("/projects/helsinki"));
+    }
+
+    /// T-7923: waiting on a time ends at it, and waiting on none never ends.
+    #[tokio::test]
+    async fn a_wait_ends_at_its_time_and_never_without_one() {
+        sleep_until_some(Some(tokio::time::Instant::now())).await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), sleep_until_some(None))
+                .await
+                .is_err()
+        );
+    }
+
     /// CC-06: an event that echoes the run's ticket is stored without it.
     #[tokio::test]
     async fn an_event_never_stores_the_runs_ticket() {
@@ -1623,6 +1732,19 @@ mod lifecycle_tests {
         driver.looking_at(&mut pack);
         assert!(
             pack.contains("`audience`") && !pack.contains("jc_draft_put"),
+            "{pack}"
+        );
+
+        // T-7923: a form with no field named says nothing about a field.
+        let mut pack = String::new();
+        driver.form = FormContext {
+            kind: Some("Endpoint".into()),
+            name: Some("bikes".into()),
+            field: None,
+        };
+        driver.looking_at(&mut pack);
+        assert!(
+            pack.contains("the Endpoint form open") && !pack.contains("last in is"),
             "{pack}"
         );
     }

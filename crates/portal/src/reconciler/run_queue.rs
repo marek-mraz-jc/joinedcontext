@@ -832,31 +832,45 @@ impl RunQueue {
                     .into_iter()
                     .partition(|(_, key)| self.is_unbound(key));
                 waiting = rest;
-                for (_, key) in refused {
-                    if let Some(entry) = self.entries.get_mut(&key) {
-                        crate::telemetry::pipeline_run("failed", 0.0);
-                        entry.queued = None;
-                        entry.last = Some(Last::Failed {
-                            at: now,
-                            reason: "not started: the realm holds no client for its account \
-                                     yet, so the gateway would refuse its writes (401); it runs \
-                                     at its next due time once the client is there"
-                                .to_owned(),
-                        });
-                    }
+                // Every key waiting was read from the entries above, so each one is found.
+                let refused: HashSet<Key> = refused.into_iter().map(|(_, key)| key).collect();
+                for (_, entry) in self
+                    .entries
+                    .iter_mut()
+                    .filter(|(key, _)| refused.contains(*key))
+                {
+                    crate::telemetry::pipeline_run("failed", 0.0);
+                    entry.queued = None;
+                    entry.last = Some(Last::Failed {
+                        at: now,
+                        reason: "not started: the realm holds no client for its account \
+                                 yet, so the gateway would refuse its writes (401); it runs \
+                                 at its next due time once the client is there"
+                            .to_owned(),
+                    });
                 }
             }
             let room = if fresh { limit.saturating_sub(busy) } else { 0 };
-            for (due, key) in waiting.iter().take(room) {
-                if let Some(entry) = self.entries.get_mut(key) {
-                    let run = stamp(*due);
-                    entry.queued = None;
-                    entry.running = Some(now);
-                    let stream = entry.stream.text().unwrap_or_default();
-                    starts.push((key.clone(), with_run(&stream, &run)));
-                    entry.run = Some(run);
-                    entry.run_stream = Some(entry.stream.hash());
-                }
+            let starting: HashMap<Key, TimestampTz> = waiting
+                .iter()
+                .take(room)
+                .map(|(due, key)| (key.clone(), *due))
+                .collect();
+            // Every key waiting was read from the entries above; they start in waiting order.
+            let mut chosen: Vec<(TimestampTz, &Key, &mut Entry)> = self
+                .entries
+                .iter_mut()
+                .filter_map(|(key, entry)| starting.get(key).map(|due| (*due, key, entry)))
+                .collect();
+            chosen.sort_by(|a, b| (a.0, a.1).cmp(&(b.0, b.1)));
+            for (due, key, entry) in chosen {
+                let run = stamp(due);
+                entry.queued = None;
+                entry.running = Some(now);
+                let stream = entry.stream.text().unwrap_or_default();
+                starts.push((key.clone(), with_run(&stream, &run)));
+                entry.run = Some(run);
+                entry.run_stream = Some(entry.stream.hash());
             }
             crate::telemetry::pipeline_queue_depth(
                 lane.label(),
@@ -1541,6 +1555,94 @@ mod tests {
         fake.refuse.lock().unwrap().clear();
         step(&queue, &fake, now + jiff::SignedDuration::from_mins(15)).await;
         assert_eq!(fake.log(), ["start a"]);
+    }
+
+    /// T-7923: a rules change in a project whose pipeline has no pending retry brings nothing
+    /// forward: it keeps waiting for its clock, and no run starts.
+    #[tokio::test]
+    async fn a_rules_change_without_a_pending_retry_leaves_the_clock() {
+        let queue = Mutex::new(RunQueue::new(1, 1));
+        let fake = Fake::default();
+        let now = at("2026-10-25T16:00:00Z");
+        pass(&queue, None, 1, now);
+        step(&queue, &fake, now).await;
+        fake.log();
+        pass(&queue, None, 2, now + jiff::SignedDuration::from_mins(2));
+        step(&queue, &fake, now + jiff::SignedDuration::from_mins(2)).await;
+        assert!(fake.log().is_empty(), "nothing runs");
+        assert_eq!(said(&queue), "Waiting: next run 2026-10-29T00:00:00Z");
+        assert_eq!(
+            said(&Mutex::new(RunQueue::new(1, 1))),
+            "None",
+            "an unknown pipeline has no outcome"
+        );
+    }
+
+    /// T-7923: a retry that comes due while the pipeline is already queued (a run now) is
+    /// spent on that run: the pipeline starts once, and nothing is queued after it ends.
+    #[tokio::test]
+    async fn a_retry_due_while_queued_starts_one_run_only() {
+        let queue = Mutex::new(RunQueue::new(1, 1));
+        let fake = Fake::default();
+        let now = at("2026-10-25T16:00:00Z");
+        pass(&queue, Some("2026-10-25T14:00:00Z"), 1, now);
+        step(&queue, &fake, now).await;
+        fake.log();
+        let due = at("2026-10-25T16:15:00Z");
+        queue
+            .lock()
+            .unwrap()
+            .run_now(&key("a"), due)
+            .expect("queued");
+        step(&queue, &fake, due).await;
+        assert_eq!(
+            fake.log(),
+            ["start a"],
+            "one run for the retry and the run now"
+        );
+        fake.end("a", RunState::Finished);
+        step(&queue, &fake, due + jiff::SignedDuration::from_mins(1)).await;
+        assert_eq!(fake.log(), ["delete a"]);
+        step(&queue, &fake, due + jiff::SignedDuration::from_mins(30)).await;
+        assert!(fake.log().is_empty(), "the retry is not run again");
+    }
+
+    /// T-7923: the runner's answers about a pipeline the queue does not hold change nothing,
+    /// and a refusal of a pipeline that never had a run is its error without a retry.
+    #[test]
+    fn a_refusal_or_hang_of_an_unknown_or_unrun_pipeline() {
+        let mut queue = RunQueue::new(1, 1);
+        let now = at("2026-10-25T16:00:00Z");
+        queue.stuck(&key("nope"), now);
+        queue.failed_to_start(&key("nope"), "400 bad config".to_owned(), now);
+        assert_eq!(queue.outcome(&key("nope")), None, "no entry is made");
+        queue.plan([(key("a"), planned(weekly()))].into(), now);
+        queue.failed_to_start(&key("a"), "400 bad config".to_owned(), now);
+        assert!(
+            matches!(queue.outcome(&key("a")), Some(StreamOutcome::Error(e))
+                if e.contains("the runner refused the run: 400 bad config")
+                    && !e.contains("next try")),
+            "{:?}",
+            queue.outcome(&key("a"))
+        );
+    }
+
+    /// T-7923: a held stream whose deflated bytes do not inflate reads as no text, so the run
+    /// starts with an empty stream rather than a half one.
+    #[test]
+    fn a_stream_that_does_not_inflate_has_no_text() {
+        let broken = Packed {
+            digest: [0; 32],
+            deflated: Some(Arc::from(&b"\xff\xfe not deflate"[..])),
+        };
+        assert_eq!(broken.text(), None);
+        assert_eq!(
+            Packed::known([0; 32]).text(),
+            None,
+            "a digest alone has no text"
+        );
+        let good = Packed::new("{\"a\":1}");
+        assert_eq!(good.text().as_deref(), Some("{\"a\":1}"));
     }
 
     fn daily_at_5() -> Clock {
@@ -2492,6 +2594,30 @@ mod tests {
             "output": {"label": sink, "drop": {}},
         });
         assert_eq!(one_run(&nowhere), nowhere);
+    }
+
+    /// T-7923: a feed whose metadata is no map becomes one tick with no meta lines of its own,
+    /// and a stream with an outcome sink but no pipeline processors gets no catch added.
+    #[test]
+    fn a_feed_without_metadata_and_a_sink_without_processors() {
+        let report = "http://portal.jc:8080/internal/runs/report";
+        let sink = crate::pipeline_log::SINK_LABELS[1];
+        let stream = serde_json::json!({
+            "input": {"http_client": {"url": "https://feed/vp", "metadata": "odd"}},
+            "output": {"label": sink, "http_client": {"url": report}},
+        });
+        let run = one_run(&stream);
+        let mapping = run["input"]["generate"]["mapping"].as_str().unwrap();
+        assert_eq!(
+            mapping,
+            format!("root = \"\"\n{}", crate::pipeline_log::TICK)
+        );
+        assert_eq!(
+            run["input"]["processors"][1],
+            crate::pipeline_log::source_failure(report)
+        );
+        assert!(run.get("pipeline").is_none(), "no processors are made up");
+        assert_eq!(run["output"], stream["output"]);
     }
 
     /// T-5778: on a full batch lane a restarted Portal forgot the runs still queued, and each

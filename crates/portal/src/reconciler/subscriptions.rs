@@ -904,6 +904,57 @@ mod tests {
         assert_eq!(read_lost.deliveries("t", "air", "urn:x").await, None);
     }
 
+    /// T-7923: a body that is no JSON object (nothing to strip the id from) is patched as it
+    /// is after the space answers 409, and the patch the space takes is the write's success.
+    #[tokio::test]
+    async fn a_conflict_on_a_body_without_members_patches_it_unchanged() {
+        const PATCHED: &str =
+            "HTTP/1.1 204 No Content\r\ncontent-length: 0\r\nconnection: close\r\n\r\n";
+        let sync = SubscriptionSync::new(
+            scripted(vec![Some(CONFLICT), Some(PATCHED)]),
+            "https://id.example/realms/city",
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+            "hel.fi",
+        );
+        assert_eq!(
+            sync.write("t", "air", "urn:x", &json!(["urn:x"])).await,
+            Ok(())
+        );
+        let refused = SubscriptionSync::new(
+            scripted(vec![Some(CONFLICT), Some(CONFLICT)]),
+            "https://id.example/realms/city",
+            "portal".to_owned(),
+            ClientAuth::Secret("s".into()),
+            "hel.fi",
+        );
+        let said = refused
+            .write("t", "air", "urn:x", &json!("urn:x"))
+            .await
+            .expect_err("a refused patch");
+        assert!(said.starts_with("the space refused the update"), "{said}");
+    }
+
+    /// T-7923: a Subscription manifest whose spec does not parse is left out of what is
+    /// written, and the well-formed one beside it is still declared with its space.
+    #[test]
+    fn a_manifest_that_does_not_parse_is_not_declared() {
+        let mirror = Mirror::new();
+        mirror.upsert(subscription("mesto", "good", spec("air", json!({}))));
+        mirror.upsert(subscription(
+            "mesto",
+            "broken",
+            json!({ "contextSpaceRef": 7 }),
+        ));
+        let found = declared(&mirror);
+        let names: Vec<&str> = found.iter().map(|(_, name, _, _)| name.as_str()).collect();
+        assert_eq!(names, ["good"]);
+        assert!(
+            declared(&Mirror::new()).is_empty(),
+            "an empty mirror declares nothing"
+        );
+    }
+
     /// A read-back that is no JSON object with a notification shows nothing.
     #[tokio::test]
     async fn a_read_back_that_does_not_read_shows_nothing() {

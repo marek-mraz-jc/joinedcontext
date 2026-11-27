@@ -1426,6 +1426,189 @@ mod tests {
         assert_eq!(said, "GET /users: 500 Internal Server Error");
     }
 
+    /// An [`Admin`] of the realm `r` on `server`.
+    fn admin_on(server: &wiremock::MockServer) -> Admin {
+        Admin::new(
+            &format!("{}/realms/r", server.uri()),
+            "c".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL")
+    }
+
+    /// T-7923: a realm nobody answers on is a token error, and a token answer that is not JSON
+    /// is one too; neither hands on a token.
+    #[tokio::test]
+    async fn an_unreachable_realm_or_an_unreadable_token_answer_is_no_token() {
+        let dead = Admin::new(
+            "http://127.0.0.1:1/realms/r",
+            "c".into(),
+            ClientAuth::Secret("s".into()),
+        )
+        .expect("a realm URL");
+        assert!(dead.token().await.is_err());
+
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path(
+                "/realms/r/protocol/openid-connect/token",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        let said = admin_on(&server).token().await.expect_err("unreadable");
+        assert!(!said.is_empty());
+        assert!(!said.contains("not json"), "the body is not echoed: {said}");
+    }
+
+    /// T-7923: a GET whose answer is not JSON, or not the shape asked for, is an error naming
+    /// the path without its query; a POST for a value refused or answered unreadably is too.
+    #[tokio::test]
+    async fn an_unreadable_or_misshapen_realm_answer_is_an_error_naming_the_path() {
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/groups"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200).set_body_json(json!({ "not": "a list" })),
+            )
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/admin/realms/r/clients/u1/client-secret"))
+            .respond_with(wiremock::ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/admin/realms/r/clients/u2/client-secret"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string("s3cr3t-raw"))
+            .mount(&server)
+            .await;
+        let admin = admin_on(&server);
+
+        let unreadable = admin
+            .send("t", reqwest::Method::GET, "/clients?clientId=app-x", None)
+            .await
+            .expect_err("not JSON");
+        assert!(!unreadable.is_empty());
+        let misshapen = admin
+            .get::<Vec<Value>>("t", "/groups?briefRepresentation=true")
+            .await
+            .expect_err("an object is no list");
+        assert!(misshapen.starts_with("GET /groups: "), "{misshapen}");
+
+        let refused = admin
+            .post_for("t", "/clients/u1/client-secret")
+            .await
+            .expect_err("refused");
+        assert_eq!(
+            refused,
+            "POST /clients/u1/client-secret: 500 Internal Server Error"
+        );
+        let garbled = admin
+            .post_for("t", "/clients/u2/client-secret")
+            .await
+            .expect_err("not JSON");
+        assert_eq!(
+            garbled,
+            "POST /clients/u2/client-secret: the realm's answer is not JSON"
+        );
+        assert!(!garbled.contains("s3cr3t-raw"));
+    }
+
+    /// Answers every page of a listing full with items no page held before, numbered from the
+    /// request's `first`: a listing that never ends.
+    struct EndlessListing;
+
+    impl wiremock::Respond for EndlessListing {
+        fn respond(&self, request: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let first: u64 = request
+                .url
+                .query_pairs()
+                .find(|(key, _)| key == "first")
+                .and_then(|(_, value)| value.parse().ok())
+                .unwrap_or(0);
+            let page: Vec<u64> = (first..first + 1000).collect();
+            wiremock::ResponseTemplate::new(200).set_body_json(page)
+        }
+    }
+
+    /// T-7923: a listing that never ends stops at 200 000 items with an error, rather than
+    /// reading forever; an item that is not the shape asked for fails the listing, naming the
+    /// path without its query.
+    #[tokio::test]
+    async fn an_endless_or_misshapen_listing_is_an_error() {
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/users"))
+            .respond_with(EndlessListing)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/groups"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([{ "id": 7 }])))
+            .mount(&server)
+            .await;
+        let admin = admin_on(&server);
+
+        let endless = admin
+            .get_all::<Value>("t", "/users")
+            .await
+            .expect_err("never ends");
+        assert_eq!(endless, "GET /users: more than 200000 items");
+        let asked = server.received_requests().await.unwrap_or_default();
+        assert_eq!(asked.len(), 200, "one request per page of 1000");
+
+        let misshapen = admin
+            .get_all::<KcNamed>("t", "/groups?briefRepresentation=true")
+            .await
+            .expect_err("a group without a name");
+        assert!(misshapen.starts_with("GET /groups: "), "{misshapen}");
+    }
+
+    /// T-7923: a mapper to remove that the realm lists without an id, or one of ours to write
+    /// back without one, fails the mappers before anything is written.
+    #[tokio::test]
+    async fn a_mapper_without_an_id_fails_the_mappers_and_writes_nothing() {
+        use wiremock::matchers::{method, path};
+        let wanted = [audience_mapper("app-x")];
+        let rogue = json!({ "name": "rogue", "protocolMapper": "oidc-hardcoded-claim-mapper" });
+        let mut changed = audience_mapper("app-x");
+        changed["config"]["included.custom.audience"] = json!("someone-else");
+        for (held, said) in [
+            (
+                rogue,
+                "the oidc-hardcoded-claim-mapper mapper rogue has no id, so it cannot be removed",
+            ),
+            (changed, "the mapper \"audience-app-x\" has no id"),
+        ] {
+            let server = wiremock::MockServer::start().await;
+            wiremock::Mock::given(method("GET"))
+                .and(path("/admin/realms/r/clients/u1/protocol-mappers/models"))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([held])))
+                .mount(&server)
+                .await;
+            let mut outcome = ClientOutcome::of("app-x");
+            let error = admin_on(&server)
+                .converge_mappers("t", "u1", &wanted, "the App", &mut outcome)
+                .await
+                .expect_err("no id");
+            assert_eq!(error, said);
+            let asked = server.received_requests().await.unwrap_or_default();
+            assert!(
+                asked.iter().all(|r| r.method.as_str() == "GET"),
+                "nothing written"
+            );
+            assert!(outcome.drift.is_empty(), "{:?}", outcome.drift);
+        }
+    }
+
     /// T-6301: a client the Portal creates inherits the realm's optional scopes (the CIMD
     /// clients' `connector` and `offline_access`); each pass unlinks every one and says so.
     #[tokio::test]
@@ -1532,6 +1715,60 @@ mod tests {
         .expect("an envelope")
     }
 
+    /// T-7923: `record` names the removed mappers only on an App the mirror holds with a
+    /// status, replacing its old `ClientSynced` condition and keeping every other one; an
+    /// outcome that removed nothing, an App the mirror lacks and an App without a status are
+    /// left as they are.
+    #[test]
+    fn a_removed_mapper_replaces_only_the_apps_client_condition() {
+        let mirror = Mirror::new();
+        let mut alerts = envelope_of(json!({ "name": "alerts", "namespace": "helsinki" }));
+        alerts.status = Some(
+            serde_json::from_value(json!({
+                "phase": "Live",
+                "conditions": [
+                    { "type": "ClientSynced", "status": "False", "reason": "Old" },
+                    { "type": "Ready", "status": "True" },
+                ],
+            }))
+            .expect("a status"),
+        );
+        mirror.upsert(alerts);
+        mirror.upsert(envelope_of(
+            json!({ "name": "bare", "namespace": "helsinki" }),
+        ));
+        let removed = |app: &str| {
+            let mut outcome = ClientOutcome::of(app);
+            outcome.removed_mappers = vec!["oidc-hardcoded-claim-mapper mapper rogue".into()];
+            outcome
+        };
+        record(
+            &mirror,
+            &[
+                ClientOutcome::of("alerts"),
+                removed("ghost"),
+                removed("bare"),
+                removed("alerts"),
+            ],
+        );
+        let status = |name: &str| {
+            mirror
+                .find(|env| env.kind == "App" && env.metadata.name == name)
+                .expect("the App")
+                .status
+        };
+        assert!(status("bare").is_none(), "an App without a status stays so");
+        assert!(mirror.find(|env| env.metadata.name == "ghost").is_none());
+        let conditions = status("alerts").expect("a status").conditions;
+        let types: Vec<&str> = conditions.iter().map(|c| c.r#type.as_str()).collect();
+        assert_eq!(types, ["Ready", "ClientSynced"]);
+        assert_eq!(conditions[1].reason.as_deref(), Some("MapperRemoved"));
+        assert!(conditions[1]
+            .message
+            .as_deref()
+            .is_some_and(|m| m.contains("rogue")));
+    }
+
     #[test]
     fn a_secret_never_shows_in_debug() {
         let secret = ClientSecret("hunter2-value".to_owned());
@@ -1620,6 +1857,14 @@ mod tests {
             .any(|d| d.contains("pkce.code.challenge.method")));
     }
 
+    /// T-7923: a wanted client that is not an object sets no field, so nothing drifts.
+    #[test]
+    fn drift_of_a_wanted_client_that_is_no_object_is_nothing() {
+        let held = desired("helsinki", "bikes", "Bikes", "city.example", &[]);
+        assert!(drift(&json!("app-bikes"), &held).is_empty());
+        assert!(drift(&Value::Null, &json!({})).is_empty());
+    }
+
     #[test]
     fn drift_ignores_the_order_of_a_set_valued_field() {
         let mut want = desired("helsinki", "bikes", "Bikes", "city.example", &[]);
@@ -1676,6 +1921,138 @@ mod tests {
         );
         assert!(held["steward"].is_empty());
         assert!(!held.contains_key("ghost"));
+    }
+
+    /// A sync of the realm `r` on `server`, every call as its one client.
+    fn sync_on(server: &wiremock::MockServer) -> AppClientSync {
+        AppClientSync::new(
+            &format!("{}/realms/r", server.uri()),
+            "c".into(),
+            ClientAuth::Secret("s".into()),
+            "city.example".into(),
+        )
+        .expect("a realm URL")
+    }
+
+    /// T-7923: a group that already holds its role is left alone, and a user named in two roles
+    /// is looked up once, by username when the name has no `@`, then mapped to both.
+    #[tokio::test]
+    async fn a_held_group_is_kept_and_a_user_of_two_roles_is_looked_up_once() {
+        use wiremock::matchers::{method, path, query_param};
+        let server = wiremock::MockServer::start().await;
+        let answer = |at: &str, body: Value| {
+            wiremock::Mock::given(method("GET"))
+                .and(path(format!("/admin/realms/r/clients/u1{at}")))
+                .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(body))
+        };
+        answer(
+            "/roles",
+            json!([{ "id": "r1", "name": "viewer" }, { "id": "r2", "name": "steward" }]),
+        )
+        .mount(&server)
+        .await;
+        answer(
+            "/roles/viewer/groups",
+            json!([{ "id": "g1", "name": "stewards" }]),
+        )
+        .mount(&server)
+        .await;
+        for at in [
+            "/roles/viewer/users",
+            "/roles/steward/groups",
+            "/roles/steward/users",
+        ] {
+            answer(at, json!([])).mount(&server).await;
+        }
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/users"))
+            .and(query_param("username", "jana"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!([{ "id": "u-jana", "username": "jana" }])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(path(
+                "/admin/realms/r/users/u-jana/role-mappings/clients/u1",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(204))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let spec: AppSpec = serde_json::from_value(json!({
+            "kind": "static", "source": { "path": "." }, "build": {}, "visibility": "project",
+            "dataNeeds": [],
+            "roles": [{ "name": "viewer" }, { "name": "steward" }],
+            "access": [
+                { "role": "viewer", "subjects": [{ "group": "stewards" }, { "user": "jana" }] },
+                { "role": "steward", "subjects": [{ "user": "Jana" }] },
+            ],
+        }))
+        .expect("an App spec");
+        let mut outcome = ClientOutcome::of("app-x");
+        sync_on(&server)
+            .converge_grants(
+                "t",
+                "t",
+                "u1",
+                &spec,
+                &mut RealmIndex::default(),
+                &mut outcome,
+            )
+            .await
+            .expect("converged");
+        assert!(outcome.drift.is_empty(), "{:?}", outcome.drift);
+        assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
+        let asked = server.received_requests().await.unwrap_or_default();
+        assert!(
+            !asked
+                .iter()
+                .any(|r| r.method.as_str() == "DELETE" || r.url.path().contains("/groups/g1")),
+            "the group's mapping stays as it is"
+        );
+    }
+
+    /// T-7923: a role the realm accepted but does not list on the read back fails the grants
+    /// with its name, before any holder is looked at.
+    #[tokio::test]
+    async fn a_created_role_that_cannot_be_read_back_fails_the_grants() {
+        use wiremock::matchers::{method, path};
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(method("GET"))
+            .and(path("/admin/realms/r/clients/u1/roles"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        wiremock::Mock::given(method("POST"))
+            .and(path("/admin/realms/r/clients/u1/roles"))
+            .respond_with(wiremock::ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let spec: AppSpec = serde_json::from_value(json!({
+            "kind": "static", "source": { "path": "." }, "build": {}, "visibility": "project",
+            "dataNeeds": [],
+            "roles": [{ "name": "viewer" }],
+            "access": [{ "role": "viewer", "subjects": [{ "group": "stewards" }] }],
+        }))
+        .expect("an App spec");
+        let mut outcome = ClientOutcome::of("app-x");
+        let error = sync_on(&server)
+            .converge_grants(
+                "t",
+                "t",
+                "u1",
+                &spec,
+                &mut RealmIndex::default(),
+                &mut outcome,
+            )
+            .await
+            .expect_err("not read back");
+        assert_eq!(error, "the role viewer was created and cannot be read back");
     }
 
     #[test]

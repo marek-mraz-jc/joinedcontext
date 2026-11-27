@@ -647,8 +647,9 @@ fn identity(object: &Value) -> (String, String) {
 
 /// The kinds a release is made of, read from the template itself: what a retired broker left.
 fn template_kinds(template: &str) -> BTreeSet<(String, String)> {
+    // `map_while`: after a parse error the document iterator answers the same error forever.
     serde_norway::Deserializer::from_str(template)
-        .filter_map(|document| serde::Deserialize::deserialize(document).ok())
+        .map_while(|document| serde::Deserialize::deserialize(document).ok())
         .filter_map(|object: Value| {
             Some((
                 object.get("apiVersion")?.as_str()?.to_owned(),
@@ -1813,6 +1814,20 @@ spec:
             .expect_err("refused")
             .contains("no object"));
         assert!(render("a: [", &brokers[0], &spec).is_err());
+    }
+
+    /// T-7923: a template that does not parse ends the read at the broken document; the
+    /// iterator repeats a parse error forever, so skipping it hung the MQTT wave.
+    #[test]
+    fn a_template_that_does_not_parse_ends_at_the_broken_document() {
+        assert!(template_kinds("kind: [\n").is_empty());
+        let kinds = template_kinds(
+            "apiVersion: v1\nkind: Service\n---\nkind: [\n---\napiVersion: v1\nkind: Secret\n",
+        );
+        assert_eq!(
+            kinds.into_iter().collect::<Vec<_>>(),
+            vec![("v1".to_owned(), "Service".to_owned())]
+        );
     }
 
     #[test]
