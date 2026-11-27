@@ -16,7 +16,10 @@ fuzz_target!(|data: &[u8]| {
     for link in [None, Some(link)] {
         let guessed = guess(&url, &body, link);
         if guessed.pages.is_some() {
-            assert!(guessed.total.is_some(), "pages come from an announced total");
+            assert!(
+                guessed.total.is_some(),
+                "pages come from an announced total"
+            );
         }
         let _ = serde_json::to_string(&guessed);
     }
