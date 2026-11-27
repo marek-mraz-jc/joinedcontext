@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use ekiben_core::{redact_url_str, CoreError, OrgContext};
+use ekiben_core::{CoreError, OrgContext};
 use url::Url;
 
 /// The AWS/Azure/GCP IPv6 metadata address, inside the ULA range and never reachable.
@@ -121,16 +121,12 @@ pub fn check_url(url: &Url, org: &OrgContext) -> Result<(), CoreError> {
         org: org.org_id.0.clone(),
         reason,
     };
-    if !matches!(url.scheme(), "http" | "https") {
+    // An http(s) URL always has a host: `Url::parse` refuses one without.
+    let web = matches!(url.scheme(), "http" | "https");
+    let Some(host) = url.host_str().filter(|_| web) else {
         return Err(denied(format!(
             "refused URL scheme '{}': only 'http' and 'https' are allowed",
             url.scheme()
-        )));
-    }
-    let Some(host) = url.host_str() else {
-        return Err(denied(format!(
-            "URL '{}' has no host",
-            redact_url_str(url.as_str())
         )));
     };
     org.check_http_host(host)?;
@@ -245,6 +241,18 @@ mod tests {
 
     fn ip(s: &str) -> IpAddr {
         s.parse().expect("ip")
+    }
+
+    /// The invariant the URL check leans on: an http(s) URL without a host does not parse.
+    #[test]
+    fn an_http_url_without_a_host_does_not_parse() {
+        for raw in ["http://", "https://", "https://:80/", "http://?q"] {
+            assert!(url::Url::parse(raw).is_err(), "{raw}");
+        }
+        for (raw, host) in [("http:example.org", "example.org"), ("http:///path", "path")] {
+            let odd = url::Url::parse(raw).expect("parses");
+            assert_eq!(odd.host_str(), Some(host), "{raw}");
+        }
     }
 
     #[test]
@@ -488,10 +496,12 @@ mod tests {
             .expect("bind");
         let addr = listener.local_addr().expect("addr");
         tokio::spawn(async move {
-            while let Ok((mut sock, _)) = listener.accept().await {
-                let mut buf = [0u8; 4096];
-                let _ = sock.read(&mut buf).await;
-                let _ = sock.write_all(raw.as_bytes()).await;
+            loop {
+                if let Ok((mut sock, _)) = listener.accept().await {
+                    let mut buf = [0u8; 4096];
+                    let _ = sock.read(&mut buf).await;
+                    let _ = sock.write_all(raw.as_bytes()).await;
+                }
             }
         });
         format!("http://{addr}/")

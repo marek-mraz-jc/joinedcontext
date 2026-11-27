@@ -1054,6 +1054,22 @@ fn json_check(act: &[u8], exp: &str, superset_ok: bool) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// A mock keeps the original's label unless it brings its own; a mock that is no object
+    /// (a scalar) replaces the component as it is.
+    #[test]
+    fn set_mock_keeps_the_label_of_the_component_it_replaces() {
+        let segs = |p: &str| pointer_segments(p);
+        let mut root = serde_json::json!({"a": {"label": "orig", "x": 1}, "b": 2});
+        set_mock(&mut root, &serde_json::json!({"y": 1}), &segs("/a")).expect("set");
+        assert_eq!(root["a"], serde_json::json!({"label": "orig", "y": 1}));
+        set_mock(&mut root, &serde_json::json!({"label": "own"}), &segs("/a")).expect("set");
+        assert_eq!(root["a"], serde_json::json!({}), "a mock's own label is dropped");
+        set_mock(&mut root, &serde_json::json!({"z": 1}), &segs("/b")).expect("set");
+        assert_eq!(root["b"], serde_json::json!({"z": 1}), "no label to keep");
+        set_mock(&mut root, &serde_json::json!("plain"), &segs("/b")).expect("set");
+        assert_eq!(root["b"], "plain");
+    }
+
     #[test]
     fn clean_matches_go() {
         assert_eq!(clean("./config/test/"), "config/test");

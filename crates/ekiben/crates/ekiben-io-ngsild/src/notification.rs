@@ -243,6 +243,14 @@ impl NotificationReader {
         if self.guard.is_some() {
             return Ok(());
         }
+        self.register(ctx).map(|_| ())
+    }
+
+    /// Registers the route and holds its receiver.
+    fn register(
+        &mut self,
+        ctx: &StreamContext,
+    ) -> Result<&mut mpsc::Receiver<Delivery>, CoreError> {
         let (tx, rx) = mpsc::channel(self.in_flight);
         let route = Arc::new(Route {
             auth: match &self.auth {
@@ -264,16 +272,13 @@ impl NotificationReader {
         );
         lock(routes()).insert(key.clone(), route.clone());
         self.guard = Some(RouteGuard { key, route });
-        self.rx = Some(rx);
-        Ok(())
+        Ok(self.rx.insert(rx))
     }
 
     pub async fn read(&mut self, ctx: &StreamContext) -> Result<(Batch, AckResponder), CoreError> {
-        if self.rx.is_none() {
-            self.connect(ctx)?;
-        }
-        let Some(rx) = self.rx.as_mut() else {
-            return Err(CoreError::NotConnected);
+        let rx = match self.rx {
+            Some(ref mut rx) => rx,
+            None => self.register(ctx)?,
         };
         let mut shutdown = ctx.shutdown_rx.clone();
         let mut watching = true;

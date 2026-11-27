@@ -129,6 +129,14 @@ pub fn sign(
 mod tests {
     use super::*;
 
+    /// The invariant `hmac` leans on: HMAC takes a key of any length.
+    #[test]
+    fn hmac_takes_a_key_of_any_length() {
+        for len in [0, 1, 64, 65, 4096] {
+            assert_eq!(hmac(&vec![7u8; len], "x").expect("any key").len(), 32, "{len}");
+        }
+    }
+
     /// The example key of the AWS documentation, assembled so no scanner reads it as a leak.
     fn example() -> Credentials {
         Credentials {

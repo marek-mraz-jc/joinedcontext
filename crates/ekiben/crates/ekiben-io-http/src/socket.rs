@@ -440,7 +440,11 @@ mod tests {
     async fn a_udp_peer_the_kernel_refuses_names_the_connect() {
         // A broadcast address needs SO_BROADCAST: the connect fails, named.
         let mut i = input(json!({"network": "udp", "address": "255.255.255.255:9"})).unwrap();
-        let e = i.connect(&ctx(true)).await.err().expect("connected to broadcast");
+        let e = i
+            .connect(&ctx(true))
+            .await
+            .err()
+            .expect("connected to broadcast");
         assert!(e.to_string().contains("socket input: udp connect: "), "{e}");
     }
 

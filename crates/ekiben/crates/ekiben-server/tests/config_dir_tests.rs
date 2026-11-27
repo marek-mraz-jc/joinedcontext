@@ -201,6 +201,19 @@ async fn a_file_moved_to_another_organization_moves_its_stream() {
     let errors = cd.sync(&m).await;
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert!(m.read("s", Some(&OrgId::new("org-b"))).await.is_ok());
+    // Moved to another organization, a version that does not build is refused there too.
+    std::fs::write(
+        dir.path().join("s.yaml"),
+        STREAM.replace("org-a", "org-c").replace(
+            "output:",
+            "pipeline:\n  processors:\n    - mapping: 'root = ('\noutput:",
+        ),
+    )
+    .unwrap();
+    let errors = cd.sync(&m).await;
+    assert_eq!(errors.len(), 1, "{errors:?}");
+    assert!(errors[0].starts_with("s:"), "{errors:?}");
+    assert!(m.read("s", Some(&OrgId::new("org-c"))).await.is_err());
     m.stop_all(Duration::from_secs(5)).await;
 }
 

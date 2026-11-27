@@ -486,6 +486,16 @@ fn lint_names_what_ekiben_refuses() {
     assert!(!lint(&json!({"code": "1", "memory_mb": 65})).is_empty());
 }
 
+/// A script QuickJS cannot take as source (a NUL byte) fails the message with the engine's
+/// own error, not a thrown exception.
+#[tokio::test]
+async fn a_script_with_a_nul_byte_fails_the_message_by_name() {
+    let out = run("var a = 1;\u{0}", vec![Part::from_str("x")]).await;
+    let why = flag(&out[0]);
+    assert!(why.starts_with("javascript: "), "{why}");
+    assert!(!why.contains("an exception"), "{why}");
+}
+
 /// Console errors and warnings reach the stream's log at their own level. (The info line is not
 /// asserted: other tests log it on threads without a subscriber, and tracing caches a callsite's
 /// interest process-wide, so this subscriber can miss it.)
@@ -502,7 +512,8 @@ async fn console_lines_are_logged_at_their_level() {
             Ok(())
         }
     }
-    let buf = Buf(Arc::default());
+    let mut buf = Buf(Arc::default());
+    std::io::Write::flush(&mut buf).expect("flush");
     let writer = buf.clone();
     let subscriber = tracing_subscriber::fmt()
         .with_ansi(false)
