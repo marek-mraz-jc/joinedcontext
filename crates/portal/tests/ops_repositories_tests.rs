@@ -836,14 +836,12 @@ async fn an_empty_repository_is_empty_and_a_failing_root_read_is_an_error() {
     );
 }
 
-/// A forge answer short of a field reads its default: an empty default branch is `main` and an
-/// empty owner the client's. A broken one is an error: an id that is no UUID, a file that does
+/// A forge answer short of a field reads its default: an empty default branch is `main`. A broken one is an error: an id that is no UUID, a file that does
 /// not decode, a failing file read. A binary README is not shown.
 #[tokio::test]
 async fn a_forge_answer_short_of_a_field_reads_its_default_and_a_broken_one_is_an_error() {
     let (server, state) = world_on(Some("https://git.public.example")).await;
     let mut bare = repo(CONFIG_ID, "ovzdusie-config", "");
-    bare["Owner"] = json!("");
     bare["DefaultBranch"] = json!("");
     Mock::given(method("GET"))
         .and(path("/odata/Repositories"))
