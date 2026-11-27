@@ -571,16 +571,12 @@ mod tests {
             .collect();
         assert_eq!(listed.len(), vendored.len());
         for (path, bytes) in vendored {
-            let want = listed
-                .iter()
-                .find(|(_, p)| p == path)
-                .unwrap_or_else(|| panic!("{path} not in SHA256SUMS"))
-                .0;
+            let want = listed.iter().find(|(_, p)| p == path).map(|(sum, _)| *sum);
             let got: String = Sha256::digest(bytes)
                 .iter()
                 .map(|b| format!("{b:02x}"))
                 .collect();
-            assert_eq!(got, want, "{path}");
+            assert_eq!(want, Some(got.as_str()), "{path} in SHA256SUMS");
         }
     }
 
@@ -623,13 +619,13 @@ mod tests {
                 .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
                 .map(|l| l.split_once("  ").expect("sum  name"))
             {
-                let bytes = file(&format!("{dir}/{name}"))
-                    .unwrap_or_else(|| panic!("{dir}/{name} not served"));
-                let got: String = Sha256::digest(bytes)
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect();
-                assert_eq!(got, sum, "{dir}/{name}");
+                let got: Option<String> = file(&format!("{dir}/{name}")).map(|bytes| {
+                    Sha256::digest(bytes)
+                        .iter()
+                        .map(|b| format!("{b:02x}"))
+                        .collect()
+                });
+                assert_eq!(got.as_deref(), Some(sum), "{dir}/{name} served");
                 n += 1;
             }
             assert!(n >= 2, "{dir}");

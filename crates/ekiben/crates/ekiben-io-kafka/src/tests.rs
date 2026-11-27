@@ -10,10 +10,7 @@ pub(crate) mod client;
 pub(crate) mod fake;
 
 fn refusal(v: JsonValue) -> String {
-    match parse(&v) {
-        Ok(_) => panic!("accepted {v}"),
-        Err(e) => e,
-    }
+    parse(&v).err().expect("accepted")
 }
 
 pub(crate) fn ctx(quotas: OrgQuotas) -> StreamContext {
@@ -364,11 +361,8 @@ fn regexp_topics_compile_anchored() {
         "regexp_topics": true,
     }))
     .expect("parses");
-    let Topics::Patterns(p) = s.topics else {
-        panic!("patterns")
-    };
-    assert!(p[0].is_match("traffic-north"));
-    assert!(!p[0].is_match("old-traffic-north"));
+    assert!(matches!(&s.topics, Topics::Patterns(p)
+        if p[0].is_match("traffic-north") && !p[0].is_match("old-traffic-north")));
 }
 
 /// A seed (and so any advertised broker, which goes through the same connect) on a cloud

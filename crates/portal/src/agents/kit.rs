@@ -62,22 +62,16 @@ mod tests {
     /// Each getter answers the embedded file exactly, or `None` when the build carried no SDK.
     #[test]
     fn the_getters_answer_the_embedded_files_or_none() {
-        match Dist::get("kit-worker.js") {
-            Some(file) => assert_eq!(
-                base64::engine::general_purpose::STANDARD
-                    .decode(worker().expect("the worker"))
-                    .expect("base64"),
-                file.data.as_ref()
-            ),
-            None => assert!(worker().is_none()),
-        }
-        match Dist::get("functions-server.js") {
-            Some(file) => assert_eq!(
-                functions_server().expect("the module").as_bytes(),
-                file.data.as_ref()
-            ),
-            None => assert!(functions_server().is_none()),
-        }
+        let worker_file = Dist::get("kit-worker.js").map(|file| file.data.into_owned());
+        let decoded = worker().map(|text| {
+            base64::engine::general_purpose::STANDARD
+                .decode(text)
+                .expect("base64")
+        });
+        assert_eq!(decoded, worker_file);
+        let server_file = Dist::get("functions-server.js").map(|file| file.data.into_owned());
+        let module = functions_server().map(|text| text.as_bytes().to_vec());
+        assert_eq!(module, server_file);
         assert_eq!(
             script_hash(""),
             "'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='"

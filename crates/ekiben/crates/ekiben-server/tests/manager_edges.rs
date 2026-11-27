@@ -219,6 +219,14 @@ async fn restore_starts_a_kept_stream_and_refuses_a_missing_variable() {
         .await
         .unwrap_err();
     assert!(err.to_string().contains("missing variables"), "{err}");
+    // A variable is filled into the JSON text raw: a quote in it leaves no JSON to parse.
+    std::env::set_var("EKIBEN_VAR_T7873_QUOTE", "x\"");
+    let quoted = json!({"input": {"generate": {"mapping": "root = \"${EKIBEN_VAR_T7873_QUOTE}\""}}, "output": {"drop": {}}});
+    let err = m
+        .restore(org("city-a"), "q".into(), quoted)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("line 1"), "{err}");
     let err = m
         .restore(org("city-a"), "b".into(), json!({"input": 5}))
         .await

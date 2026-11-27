@@ -1365,11 +1365,12 @@ mod tests {
         };
         let fine = ask(&["data-read"], false, vec![ConnectorVerb::Read]);
         assert!(organization_item(0, &item(Some("air"), read), &fine).is_ok());
-        let refused = |item: connectors::ScopeItem, new: &NewConnector| match organization_item(
-            0, &item, new,
-        ) {
-            Err(ApiError::Denied(why)) => why,
-            other => panic!("{other:?}"),
+        let refused = |item: connectors::ScopeItem, new: &NewConnector| {
+            let why = organization_item(0, &item, new).expect_err("refused");
+            why.to_string()
+                .strip_prefix("forbidden: ")
+                .expect("a 403")
+                .to_owned()
         };
         assert!(refused(item(None, read), &fine).starts_with("scope[0].endpoint:"));
         assert!(refused(item(Some("*"), read), &fine).starts_with("scope[0].endpoint:"));
@@ -1478,15 +1479,11 @@ mod tests {
         assert!(ok.is_ok(), "{ok:?}");
         // A write item asks `propose`, which Petra does not hold in doprava.
         let writes = asked(&state, "write", true).await;
-        match within_own_rights(&state, &petra, &writes) {
-            Err(ApiError::Denied(why)) => {
-                assert!(
-                    why.starts_with("scope[0]") && why.contains("doprava"),
-                    "{why}"
-                )
-            }
-            other => panic!("approved above her rights: {other:?}"),
-        }
+        let refused = within_own_rights(&state, &petra, &writes);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.starts_with("scope[0]") && why.contains("doprava")),
+            "approved above her rights: {refused:?}"
+        );
         // Nobody holds anything in a project no binding names.
         let nobody = person("eva@hel.fi");
         assert!(within_own_rights(&state, &nobody, &reads).is_err());
@@ -1510,10 +1507,11 @@ mod tests {
         let mut connector = asked(&state, "write", true).await;
         connector.autonomous = true;
         let petra = person("petra@hel.fi");
-        match within_own_rights(&state, &petra, &connector) {
-            Err(ApiError::Denied(why)) => assert!(why.contains("Approve"), "{why}"),
-            other => panic!("approved autonomous without approve: {other:?}"),
-        }
+        let refused = within_own_rights(&state, &petra, &connector);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.contains("Approve")),
+            "approved autonomous without approve: {refused:?}"
+        );
         state
             .mirror
             .upsert(grant(json!(["read", "propose", "delete", "approve"])));
@@ -1574,12 +1572,11 @@ mod tests {
             ("ticks-propose", json!(["propose"])),
         ] {
             let deletes = with(name, json!([{ "kind": "Endpoint", "verbs": verbs }])).await;
-            match within_own_rights(&state, &petra, &deletes) {
-                Err(ApiError::Denied(why)) => {
-                    assert!(why.contains("Delete on Endpoint"), "{why}")
-                }
-                other => panic!("approved a delete she does not hold: {other:?}"),
-            }
+            let refused = within_own_rights(&state, &petra, &deletes);
+            assert!(
+                matches!(&refused, Err(ApiError::Denied(why)) if why.contains("Delete on Endpoint")),
+                "approved a delete she does not hold: {refused:?}"
+            );
         }
         // Without a kinds list the connector changes everything its segments reach, delete too.
         let every = with("every", Value::Null).await;
@@ -1610,16 +1607,18 @@ mod tests {
         assert!(administrator(&state, &admin).is_ok());
         // The same administrator through an AI client's token decides nothing (AG-151).
         admin.client = Some("mcp-local".into());
-        match administrator(&state, &admin) {
-            Err(ApiError::Denied(why)) => assert!(why.contains("AG-151"), "{why}"),
-            other => panic!("{other:?}"),
-        }
+        let refused = administrator(&state, &admin);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.contains("AG-151")),
+            "{refused:?}"
+        );
         // Nor through an agent's token exchanged for the administrator (no connector client).
         admin.client = Some("agent-runner".into());
-        match administrator(&state, &admin) {
-            Err(ApiError::Denied(why)) => assert!(why.contains("AG-151"), "{why}"),
-            other => panic!("an agent token decided a request: {other:?}"),
-        }
+        let refused = administrator(&state, &admin);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(why)) if why.contains("AG-151")),
+            "an agent token decided a request: {refused:?}"
+        );
         // A workload's account is no person.
         let mut workload = person("service-account-pipeline");
         workload.groups = vec![state.config.bootstrap_admins.clone()];
@@ -2008,20 +2007,17 @@ mod tests {
                 patch(body),
             )
         };
-        let Err(ApiError::Denied(detail)) =
-            edit(json!({ "scope": [{ "project": "espoo", "access": "read" }] })).await
-        else {
-            panic!("another project is refused");
-        };
-        assert!(detail.starts_with("scope[0].project"), "{detail}");
-        let Err(ApiError::Unprocessable { errors, .. }) = edit(
+        let refused = edit(json!({ "scope": [{ "project": "espoo", "access": "read" }] })).await;
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(detail)) if detail.starts_with("scope[0].project")),
+            "another project is refused: {refused:?}"
+        );
+        let refused = edit(
             json!({ "scope": [{ "project": "helsinki", "endpoint": "nope", "access": "read" }] }),
         )
         .await
-        else {
-            panic!("an Endpoint the project lacks is refused");
-        };
-        assert_eq!(errors, vec!["scope[0].endpoint"]);
+        .expect_err("an Endpoint the project lacks is refused");
+        assert_eq!(refused.field_errors(), ["scope[0].endpoint"]);
         let Json(edited) = edit(json!({ "scope": [{ "project": "helsinki", "endpoint": "helsinki-air", "access": "read" }] }))
             .await
             .expect("edited");
