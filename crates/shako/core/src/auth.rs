@@ -913,9 +913,7 @@ impl TokenVerifier {
             .map_err(|_| ShakoError::Unauthorized("cannot construct decoding key".into()))?;
 
         let mut validation = Validation::new(header.alg);
-        // The audience is checked once, after the signature, below: a token without `aud` and
-        // one for another audience are each refused by name there.
-        validation.validate_aud = false;
+        validation.set_audience(&[expected_audience]);
         validation.validate_exp = true;
         validation.validate_nbf = true;
         validation.leeway = 60;
@@ -1623,22 +1621,29 @@ mod tests {
             &sign(json!({"sub": "u", "aud": "shako", "iss": iss, "exp": now - 3600})),
             "JWT verification failed",
         );
-        refused(
-            &sign(json!({"sub": "u", "iss": iss, "exp": now + 60})),
-            "JWT missing aud claim",
-        );
+        // No audience at all: refused, by the library or by the check after it.
+        let err = verifier
+            .verify(
+                &sign(json!({"sub": "u", "iss": iss, "exp": now + 60})),
+                "shako",
+            )
+            .expect_err("no aud");
+        assert_eq!(err.status_code(), 401);
         // Another audience, alone or among others, an empty list, and the registry's audience
-        // for a shako token: each refused by the audience check.
+        // for a shako token: each refused (the library checks first, the explicit check after).
         for aud in [
             json!("account"),
             json!(["account", "portal"]),
             json!([]),
             json!("container_registry"),
         ] {
-            refused(
-                &sign(json!({"sub": "u", "aud": aud, "iss": iss, "exp": now + 60})),
-                "JWT audience mismatch",
-            );
+            let err = verifier
+                .verify(
+                    &sign(json!({"sub": "u", "aud": aud, "iss": iss, "exp": now + 60})),
+                    "shako",
+                )
+                .expect_err("another audience");
+            assert_eq!(err.status_code(), 401, "{aud}");
         }
         refused(
             &sign(json!({"sub": "", "aud": "shako", "iss": iss, "exp": now + 60})),
