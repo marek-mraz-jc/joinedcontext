@@ -684,6 +684,34 @@ mod tests {
         }
     }
 
+    /// The router `build` hands jc serves the pages under the mount's base, and the start
+    /// says whether this jc carries the explorer bundle.
+    #[tokio::test]
+    async fn the_built_router_serves_the_pages_and_logs_the_bundle() {
+        use tower::ServiceExt;
+        let (file, guard) = crate::modules::capture_log();
+        let mount = Mount::new("viz", "https", "city.test", "").unwrap();
+        let router = build(&live(), &mount);
+        drop(guard);
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        let bundled = EXPLORER.iter().all(|path| packed(path).is_some());
+        assert_eq!(log.contains("viz: explorer bundle"), bundled, "{log}");
+        assert_eq!(
+            log.contains("built without the explorer bundle"),
+            !bundled,
+            "{log}"
+        );
+        let res = router
+            .oneshot(
+                axum::http::Request::get("/explore.html")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
     #[tokio::test]
     async fn the_explorer_names_its_hosts_in_a_meta_and_its_csp() {
         let res = get("/explore.html");

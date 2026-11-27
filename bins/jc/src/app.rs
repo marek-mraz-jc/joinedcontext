@@ -766,14 +766,15 @@ pub async fn build_router(
         if !hosted.contains(&plan.module) {
             return;
         }
-        if let Some(inner) = in_pod.take() {
-            let spec = MountSpec {
-                module: plan.module.name().to_owned(),
-                host: None,
-                path_prefix: Some(format!("/{}", plan.module.slug())),
-            };
-            in_pod = Some(inner.mount(spec, access::layer(plan.module.name(), router.clone())));
-        }
+        // `in_pod` is set whenever a module is hosted in the pod.
+        let spec = MountSpec {
+            module: plan.module.name().to_owned(),
+            host: None,
+            path_prefix: Some(format!("/{}", plan.module.slug())),
+        };
+        in_pod = in_pod
+            .take()
+            .map(|inner| inner.mount(spec, access::layer(plan.module.name(), router.clone())));
     };
     for plan in plans {
         for spec in plan.specs() {
@@ -2213,6 +2214,81 @@ mod tests {
                 "{mount:?}"
             );
         }
+    }
+
+    /// A server that stopped with an error or panicked makes `wait` an error; every server is
+    /// still awaited and the background tasks closed.
+    #[tokio::test]
+    async fn a_server_that_failed_or_panicked_is_an_error_of_wait() {
+        let running = |server: JoinHandle<std::io::Result<()>>| Running {
+            addr: SocketAddr::from(([127, 0, 0, 1], 1)),
+            admin_addr: None,
+            in_pod_addr: None,
+            apps_addr: None,
+            shutdown: CancellationToken::new(),
+            tasks: TaskTracker::new(),
+            servers: vec![tokio::spawn(async { Ok(()) }), server],
+            portal: None,
+        };
+        let failed = running(tokio::spawn(async {
+            Err(std::io::Error::other("refused"))
+        }));
+        let e = failed.wait().await.unwrap_err();
+        assert!(
+            matches!(&e, StartError::Serve(io) if io.to_string() == "refused"),
+            "{e}"
+        );
+        let panicked = running(tokio::spawn(async { panic!("the server panicked") }));
+        let e = panicked.wait().await.unwrap_err();
+        assert!(e.to_string().contains("panicked"), "{e}");
+        running(tokio::spawn(async { Ok(()) }))
+            .stop()
+            .await
+            .unwrap();
+    }
+
+    /// A usable age identity is handed to the Portal as the path it was read from; without the
+    /// Portal role none is read at all.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_usable_age_identity_is_the_portals_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("age.key");
+        let identity = age::x25519::Identity::generate();
+        std::fs::write(
+            &path,
+            format!(
+                "{}\n",
+                age::secrecy::ExposeSecret::expose_secret(&identity.to_string())
+            ),
+        )
+        .unwrap();
+        let secrets = crate::config::Secrets {
+            portal_age_key_file: Some(path.clone()),
+            ..crate::config::Secrets::default()
+        };
+        let cfg = dev_config("portal", "");
+        assert_eq!(portal_age_key(&cfg, &secrets).unwrap(), Some(path));
+        let cfg = dev_config("gateway", "");
+        assert_eq!(portal_age_key(&cfg, &secrets).unwrap(), None);
+    }
+
+    /// A further Portal host of an Organization is bound to it with no role of its own: the
+    /// registry answers it as the Organization's, and a request there reaches no role header.
+    #[cfg(feature = "portal")]
+    #[test]
+    fn a_further_portal_host_is_bound_without_a_role() {
+        let text = format!(
+            "mode = \"host\"\nbase_host = \"city.test\"\n{}",
+            include_str!("../tests/fixtures/two-orgs.toml").replace(
+                "mcp = \"mcp.alpha.test\" }",
+                "mcp = \"mcp.alpha.test\", portals = [\"maps.alpha.test\"] }"
+            )
+        );
+        let cfg = dev_config("dataroom,gateway,portal", &text);
+        assert_eq!(cfg.organizations[0].hosts.portals, ["maps.alpha.test"]);
+        let plans = plan_mounts(&cfg).unwrap();
+        host_table(&cfg, &plans).unwrap().expect("a registry");
     }
 
     /// The Portal's `*.apps.{domain}` entry gives its hosts the Apps role in the host registry:

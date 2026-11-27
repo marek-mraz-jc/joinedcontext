@@ -1264,8 +1264,19 @@ mod tests {
             "00000000-0000-7000-8000-0000000000a1"
         );
         assert_ne!(tenants.dataroom["beta"].org, alpha.org);
-        let portal_only = crate::config::Config::merge(cli("portal"), file).expect("config");
+        let portal_only =
+            crate::config::Config::merge(cli("portal"), file.clone()).expect("config");
         assert!(backup_vars(&portal_only).is_empty());
+        // A `[dataroom] org_id` that does not read names no dataroom tenant.
+        let mut unread = cfg.clone();
+        unread.dataroom.org_id = "not an id".into();
+        let vars = backup_vars(&unread);
+        let read = joinedcontext_portal::org_backup::modules::BackupModules::from_lookup(|k| {
+            vars.get(k).cloned()
+        })
+        .expect("the Portal reads what jc writes");
+        assert!(read.tenants.dataroom.is_empty());
+        assert!(read.tenants.shako.is_some());
     }
 
     /// jc-multiorg-portal: every Organization's Portal host reaches the Portal, and with
@@ -2114,6 +2125,14 @@ mod tests {
             );
             assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"), "{set}");
         }
+        // The operator's reach with no Organization of its own sign-in host: nothing to warn of.
+        let mut vars = installation();
+        let reach = |key: &str| (key == "JC_PORTAL_REACH_HOSTS").then(|| "idm.x".to_owned());
+        assert_eq!(
+            organization_realm_vars(&[], &siblings, "https", &mut vars, reach),
+            None
+        );
+        assert!(!vars.contains_key("JC_PORTAL_ORGANIZATION_REALMS"));
         // Without the installation's own reach, jc's sibling listener is the reach and the
         // realms' sign-in hosts start the list.
         let mut bare = installation();

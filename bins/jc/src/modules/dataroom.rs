@@ -1532,6 +1532,22 @@ mod tests {
             .await
             .unwrap();
         started(true, city()).await.expect("a whole start again");
+        // A catalogue found under the installation's OrgId again moves at the next start, and a
+        // refused move stops that start.
+        let installation = OrgId::parse_verified(&DataroomSection::default().org_id).unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "SET session_replication_role = replica;
+             UPDATE dataroom.cat_catalogue SET org_id = '{}'
+                 WHERE id = '00000000-0000-7000-8000-000000007903';
+             RESET session_replication_role;",
+            installation.as_uuid()
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        refuse("cat_catalogue").await;
+        let e = started(false, city()).await.expect_err("the move");
+        assert!(e.contains("move catalogue") && quiet(&e), "{e}");
         drop(admin);
         sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE IF EXISTS {db} WITH (FORCE)"

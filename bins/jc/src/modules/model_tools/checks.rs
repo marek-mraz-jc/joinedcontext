@@ -560,6 +560,32 @@ slots:
         )
     }
 
+    /// A class that lists a slot its parent declares as an attribute reads that attribute's
+    /// range; a class that lists another class's attribute without inheriting it is refused.
+    #[test]
+    fn a_slot_listed_from_another_classes_attributes_reads_its_range() {
+        let body = "\
+classes:
+  A:
+    is_a: Entity
+    attributes:
+      shared:
+        range: integer
+        annotations:
+          ngsi_ld_kind: Property
+  B:
+    is_a: A
+    slots: [shared]
+";
+        assert_eq!(errors(body), Vec::<String>::new());
+        let e = errors(&body.replace("    is_a: A\n", "    is_a: Entity\n"));
+        assert!(
+            e.iter()
+                .any(|m| m.contains("No such slot shared as an attribute of B ancestors")),
+            "{e:?}"
+        );
+    }
+
     #[test]
     fn a_reciprocal_pair_compiles_and_an_unknown_kind_is_named() {
         assert_eq!(errors(&pair("", "")), Vec::<String>::new());
@@ -917,6 +943,15 @@ slots:
     #[test]
     fn a_data_structure_definition_with_its_dimensions_and_a_measure_compiles() {
         assert_eq!(errors(CUBE), Vec::<String>::new());
+        // Without a default range either, a dimension without a range is a string term.
+        assert_eq!(
+            compiled(&format!(
+                "{}{}",
+                HEAD.replace("default_range: string\n", ""),
+                CUBE.replace("    range: string\n", "")
+            )),
+            Vec::<String>::new()
+        );
         // A dimension without a range is a string, as LinkML's default range is.
         assert_eq!(
             errors(&CUBE.replace("    range: string\n", "")),

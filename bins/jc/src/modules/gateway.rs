@@ -1406,6 +1406,16 @@ mod tests {
             read(unreachable, "__Host-jc_session=pia").await,
             "anonymous"
         );
+        // The listener answers no caller without the gateway's own token.
+        let anonymous = reqwest::Client::new()
+            .post(format!("{base}/internal/endpoint-token"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, "__Host-jc_session=pia")
+            .body(r#"{"slug": "closedslug", "host": "portal.test"}"#)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(anonymous.status(), StatusCode::UNAUTHORIZED);
     }
 
     /// T-6783: only a same-origin browser `GET`/`HEAD` under `/api/endpoint/{slug}` with a cookie
@@ -1849,21 +1859,49 @@ mod tests {
             addr: "127.0.0.1:1".parse().unwrap(),
             secret: "s".into(),
         };
+        #[cfg(feature = "portal")]
+        let _published = crate::modules::sign_in::PUBLISH_LOCK.lock().await;
         let (file, guard) = crate::modules::capture_log();
         let _router = build(
             ctx,
             &cfg.organizations,
             true,
-            mount,
+            mount.clone(),
             Some(hop),
             portal,
             None,
         )
         .await
         .expect("the gateway starts while kaisatsu's keys do not answer yet");
+        // A registry set that names one Organization twice keeps the realms the gateway holds.
+        #[cfg(feature = "portal")]
+        {
+            let twice = |host: &str| crate::modules::sign_in::SignIn {
+                organization: "bbsk".into(),
+                host: host.into(),
+                portals: Vec::new(),
+            };
+            crate::modules::sign_in::publish(vec![twice("idm.bbsk.sk"), twice("idm2.bbsk.sk")]);
+            crate::modules::sign_in::publish(Vec::new());
+        }
+        // Without jc's own hop and without an operator's broker URL there is no broker to ask.
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let e = build(ctx, &cfg.organizations, true, mount, None, portal, None)
+            .await
+            .expect_err("no broker without the hop")
+            .to_string();
+        assert!(e.contains("JC_GATEWAY_BROKER_URL is not set"), "{e}");
         drop(guard);
         let log = std::fs::read_to_string(file.path()).unwrap();
         assert!(filled(&log), "{log}");
+        #[cfg(feature = "portal")]
+        assert!(log.contains("gateway: Organization realms kept"), "{log}");
     }
 
     #[test]
@@ -2193,14 +2231,17 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
+            let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-                .unwrap()
-                .block_on(async move {
-                    let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                    axum::serve(listener, router).await.unwrap();
-                });
+                .unwrap();
+            let _entered = runtime.enter();
+            let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+            runtime
+                .block_on(std::future::IntoFuture::into_future(axum::serve(
+                    listener, router,
+                )))
+                .unwrap();
         });
         format!("http://{addr}")
     }
@@ -2623,6 +2664,67 @@ mod tests {
         assert!(e.contains("no archive of"), "{e}");
     }
 
+    /// A cache the checkout cannot write refuses it with the system's reason, and a later pass
+    /// over a writable cache reads the tree: the cache a file, a partial tree in a file's place,
+    /// a tree in a file's place.
+    #[test]
+    fn a_cache_the_checkout_cannot_write_refuses_it() {
+        use jc_manifest::assemble::Resolver as _;
+        let (base, _) = forge(zip_of(&[("conf-main/org.yaml", b"kind: Organization\n")]));
+        let conf = entry(serde_json::json!({"repository": {"name": "conf"}}));
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let refused = |cache: &Path| {
+            let why = archives(&base, cache).checkout("conf", &conf).unwrap_err();
+            assert!(why.contains("os error"), "{why}");
+        };
+        std::fs::write(&cache, b"a file").unwrap();
+        refused(&cache);
+        std::fs::remove_file(&cache).unwrap();
+        std::fs::create_dir(&cache).unwrap();
+        let partial = cache.join(format!(".conf.tree-{SHA}.partial"));
+        std::fs::write(&partial, b"a file").unwrap();
+        refused(&cache);
+        std::fs::remove_file(&partial).unwrap();
+        let tree = cache.join(format!("conf.tree-{SHA}"));
+        std::fs::write(&tree, b"a file").unwrap();
+        refused(&cache);
+        std::fs::remove_file(&tree).unwrap();
+        let read = archives(&base, &cache).checkout("conf", &conf).unwrap();
+        assert!(read.join("org.yaml").is_file());
+    }
+
+    /// A work directory the link to the tree cannot be placed in refuses the sync and links
+    /// nothing: `repo` a file, `repo/.current.next` a directory, `repo/current` a directory
+    /// that holds a file. Once each is cleared the sync links the tree.
+    #[test]
+    fn a_work_directory_that_cannot_hold_the_link_refuses_the_sync() {
+        let (base, _) = forge(zip_of(&[("conf-main/org.yaml", b"kind: Organization\n")]));
+        let repo = setup::ForgeRepo {
+            owner: "city".into(),
+            repo: "conf".into(),
+        };
+        let token = jc_secret::Secret::new("forge-token-not-secret".to_owned());
+        let work = tempfile::tempdir().unwrap();
+        let links = work.path().join("repo");
+        let refused = || {
+            let why = sync_forge(&base, &repo, &token, work.path()).unwrap_err();
+            assert!(why.contains("os error"), "{why}");
+        };
+        std::fs::write(&links, b"a file").unwrap();
+        refused();
+        std::fs::remove_file(&links).unwrap();
+        std::fs::create_dir_all(links.join(".current.next/held")).unwrap();
+        refused();
+        std::fs::remove_dir_all(links.join(".current.next")).unwrap();
+        std::fs::create_dir_all(links.join("current")).unwrap();
+        std::fs::write(links.join("current/held"), b"x").unwrap();
+        refused();
+        std::fs::remove_dir_all(links.join("current")).unwrap();
+        sync_forge(&base, &repo, &token, work.path()).unwrap();
+        assert!(links.join("current/org.yaml").is_file());
+    }
+
     /// The forge's wrapper directory and directory entries are skipped, and an entry that names
     /// the wrapper's parent lands nowhere; a file in a directory's place or the reverse, one
     /// whose checksum fails and one the reader cannot open are refused.
@@ -2751,6 +2853,17 @@ mod tests {
         );
         assert_eq!(text(ask("/a", None).await.unwrap()).await, "/a");
         assert_eq!(text(ask("/a", Some("")).await.unwrap()).await, "/a");
+        // The router's prefix wins over the mount's; one that makes no URI leaves the path.
+        let routed = |prefix: &str| {
+            let req = axum::http::Request::get("/a")
+                .extension(jc_router::RoutePrefix(prefix.to_owned()))
+                .extension(Mount::new("gateway", "https", "api.test", "/gw").unwrap())
+                .body(axum::body::Body::empty())
+                .unwrap();
+            app.clone().oneshot(req)
+        };
+        assert_eq!(text(routed("/org").await.unwrap()).await, "/org/a");
+        assert_eq!(text(routed("/a b").await.unwrap()).await, "/a");
     }
 
     /// The Portal-session reader exists only with a client of the gateway's own; it then asks
@@ -2827,6 +2940,17 @@ mod tests {
         let big = vec![0u8; MAX_ENTRY as usize + 1];
         let why = refused(zip_of(&[("conf-main/big", &big)]));
         assert!(why.contains("size limits"), "{why}");
+        // Headers that understate the entry's size: the reader refuses the extra bytes.
+        let mut lying = zip_of(&[("conf-main/big", &big)]);
+        for (signature, offset) in [(b"PK\x03\x04", 22), (b"PK\x01\x02", 24)] {
+            let at = lying.windows(4).position(|w| w == signature).unwrap();
+            lying[at + offset..at + offset + 4].copy_from_slice(&1u32.to_le_bytes());
+        }
+        let why = refused(lying);
+        assert!(
+            why.starts_with("`conf-main/big`: ") && why.contains("declared uncompressed size"),
+            "{why}"
+        );
         let mut out = std::io::Cursor::new(Vec::new());
         let mut zip = zip::ZipWriter::new(&mut out);
         for i in 0..=MAX_ENTRIES {

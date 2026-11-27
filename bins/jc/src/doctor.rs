@@ -691,6 +691,9 @@ struct Net {
     ct_base: String,
     /// The port the zones' name servers answer on: 53 (a test serves a zone on another).
     dns_port: u16,
+    /// The kubectl program the certificates are read with: `kubectl` on the PATH (a test runs
+    /// a script of its own).
+    kubectl: PathBuf,
 }
 
 /// crt.sh, the certificate transparency search the weekly count reads.
@@ -725,6 +728,7 @@ impl Net {
             portal_database_url,
             ct_base: CT_BASE.to_owned(),
             dns_port: 53,
+            kubectl: PathBuf::from("kubectl"),
         })
     }
 
@@ -900,7 +904,7 @@ impl World for Net {
 
     fn certificates(&self) -> Option<Result<Vec<CertificateState>, String>> {
         let kubeconfig = self.kubeconfig.as_ref()?;
-        Some(kubectl_certificates(kubeconfig))
+        Some(kubectl_certificates(&self.kubectl, kubeconfig))
     }
 
     /// Read with the Portal's own `JC_PORTAL_DATABASE_URL` where it is set (in jc's pod); the
@@ -965,8 +969,11 @@ fn civil(secs: u64) -> String {
     )
 }
 
-fn kubectl_certificates(kubeconfig: &std::path::Path) -> Result<Vec<CertificateState>, String> {
-    let out = jc_secret::spawn::command("kubectl")
+fn kubectl_certificates(
+    kubectl: &std::path::Path,
+    kubeconfig: &std::path::Path,
+) -> Result<Vec<CertificateState>, String> {
+    let out = jc_secret::spawn::command(kubectl)
         .arg("--kubeconfig")
         .arg(kubeconfig)
         .args([
@@ -1312,6 +1319,18 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         );
     }
 
+    /// An Organization with neither `host = "auto"` nor hosts of its own has no origin to check.
+    #[test]
+    fn an_organization_without_hosts_has_no_origins() {
+        let toml = format!(
+            "{FIVE}\n[[organizations]]\nname = \"praha\"\n\
+             catalogue_id = \"00000000-0000-7000-8000-000000000099\"\n"
+        );
+        let r = report_for(&toml, &[], None, &Stub::pointed(ALL));
+        let out = text(&r);
+        assert!(out.contains("Organization praha"), "{out}");
+    }
+
     #[test]
     fn a_merged_configuration_says_what_it_loses() {
         let r = report_for(FIVE, &[], None, &Stub::pointed(ALL));
@@ -1415,6 +1434,16 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
             "{}",
             text(&r)
         );
+    }
+
+    /// A name past its registered domain (a trailing dot) walks up to the root and stops there
+    /// with no CAA found: nothing is said.
+    #[test]
+    fn caa_walks_up_to_the_root_when_no_name_holds_records() {
+        let stub = Stub::pointed(ALL);
+        let mut r = Report { lines: Vec::new() };
+        caa(&mut r, &stub, "portal.example.");
+        assert!(r.lines.is_empty(), "{:?}", r.lines);
     }
 
     #[test]
@@ -1624,16 +1653,17 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
-        std::thread::spawn(move || {
-            let rt = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap();
-            rt.block_on(async move {
-                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
-                axum::serve(listener, router).await.unwrap();
-            });
-        });
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let listener = {
+            let _in = rt.enter();
+            tokio::net::TcpListener::from_std(listener).unwrap()
+        };
+        // The server never ends: no line of this thread runs after it.
+        let server = std::future::IntoFuture::into_future(axum::serve(listener, router));
+        std::thread::spawn(move || rt.block_on(server));
         addr
     }
 
@@ -1872,7 +1902,11 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
                     "/busy/",
                     axum::routing::get(|| async { axum::http::StatusCode::BAD_GATEWAY }),
                 )
-                .route("/junk/", axum::routing::get(|| async { "<html>" })),
+                .route("/junk/", axum::routing::get(|| async { "<html>" }))
+                .route(
+                    "/bytes/",
+                    axum::routing::get(|| async { vec![0xff_u8, 0xfe, b'['] }),
+                ),
         );
         net.ct_base = format!("http://{addr}");
         assert_eq!(net.issued_last_week("city.example"), Ok(2));
@@ -1888,6 +1922,10 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
                 .unwrap_err()
                 .starts_with("crt.sh answer")
         );
+        // A body that is no UTF-8 text is an error of its own, before any JSON is read.
+        net.ct_base = format!("http://{addr}/bytes");
+        let e = net.issued_last_week("city.example").unwrap_err();
+        assert!(e.contains("UTF-8"), "{e}");
     }
 
     #[test]
@@ -1896,6 +1934,21 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         let net = Net::new(Some(dir.path().join("missing-kubeconfig")), None).unwrap();
         let e = net.certificates().expect("asked").unwrap_err();
         assert!(e.starts_with("kubectl"), "{e}");
+        // A kubectl that is not there names itself; one that answers is read.
+        let mut net = Net::new(Some(dir.path().join("kubeconfig")), None).unwrap();
+        net.kubectl = dir.path().join("no-kubectl");
+        let e = net.certificates().expect("asked").unwrap_err();
+        assert!(e.starts_with("kubectl: "), "{e}");
+        let script = dir.path().join("kubectl");
+        std::fs::write(&script, "#!/bin/sh\necho '{\"items\": []}'\n").unwrap();
+        std::fs::set_permissions(
+            &script,
+            <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o700),
+        )
+        .unwrap();
+        net.kubectl = script;
+        let listed = net.certificates().expect("asked").map(|c| c.len());
+        assert_eq!(listed, Ok(0));
         let (gone, _held) = refused();
         let url = format!("postgres://portal:pw-not-shown@{gone}/portal");
         let net = Net::new(None, Some(url)).unwrap();
