@@ -582,6 +582,11 @@ mod tests {
 
     #[test]
     fn the_chat_config_names_what_is_missing() {
+        assert_eq!(
+            config(&env(&[])).err().map(|(what, _)| what),
+            Some("the chat is not configured"),
+            "no credential, no chat"
+        );
         let ChatConfig { gateway, model, .. } = config(&env(&chat_env(&[]))).expect("configured");
         assert_eq!(gateway, "http://gateway:8080");
         assert_eq!(model.proxy, "http://proxy:8080");

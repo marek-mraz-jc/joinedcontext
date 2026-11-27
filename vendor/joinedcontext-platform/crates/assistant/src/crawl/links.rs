@@ -77,10 +77,7 @@ pub fn extract_language(html_text: &str) -> Option<String> {
 /// Extracts all `<a href>` links from HTML, canonicalising and classifying each.
 pub fn extract_links(base_url: &Url, html_text: &str, site_host: &str) -> Vec<ExtractedLink> {
     let document = Html::parse_document(html_text);
-    let selector = match Selector::parse("a[href]") {
-        Ok(s) => s,
-        Err(_) => return Vec::new(),
-    };
+    let selector = Selector::parse("a[href]").expect("`a[href]` is a valid selector");
 
     let mut links = Vec::new();
     // `a[href]` selects only anchors that carry the attribute.

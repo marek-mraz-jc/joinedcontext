@@ -298,6 +298,7 @@ async fn crawl_end_to_end() {
         .respond_with(
             ResponseTemplate::new(200)
                 .insert_header("content-type", "application/pdf")
+                .insert_header("last-modified", "Thu, 01 Oct 2026 07:30:00 GMT")
                 .set_body_bytes(pdf_bytes.to_vec()),
         )
         .mount(&server1)
@@ -426,6 +427,15 @@ async fn crawl_end_to_end() {
 
     assert!(documents.contains(&(expected_report.clone(), "fetched".to_string(), true, false)));
     assert!(documents.contains(&(expected_annex.clone(), "skipped".to_string(), false, true)));
+    // The server's own change date is what a document states when its file and the sitemap say none.
+    let changed: Option<String> = sqlx::query_scalar(
+        "SELECT to_char(modified AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS') FROM documents WHERE url = $1",
+    )
+    .bind(&expected_report)
+    .fetch_one(&mut *tx)
+    .await
+    .expect("the document's change date");
+    assert_eq!(changed.as_deref(), Some("2026-10-01T07:30:00"));
 
     let links: Vec<(String, String)> =
         sqlx::query("SELECT to_url, kind FROM links ORDER BY to_url")
@@ -1587,6 +1597,12 @@ async fn wordpress_types_are_paged_newest_first_on_the_site_host_only() {
     let none =
         wordpress::fetch_wordpress_urls(&client, &policy, "www.city.test", &start, &[], 10).await;
     assert!(none.is_empty());
+    // An address no path joins onto names no REST API.
+    let base_less = url::Url::parse("mailto:clerk@city.test").unwrap();
+    let nowhere =
+        wordpress::fetch_wordpress_urls(&client, &policy, "www.city.test", &base_less, &types, 10)
+            .await;
+    assert!(nowhere.is_empty());
 }
 
 /// T-4749: www.zilina.sk and www.praha.eu answer every request with a redirect to the same name

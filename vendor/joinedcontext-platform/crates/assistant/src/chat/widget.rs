@@ -571,6 +571,26 @@ mod tests {
         assert!(!MISSING_PAGE.contains("<script"));
     }
 
+    /// A policy that cannot be written as a header value (an origin with a line break in it) is
+    /// not sent, and the page still comes: the page and its other headers are unchanged.
+    #[tokio::test]
+    async fn a_page_whose_policy_cannot_be_a_header_is_served_without_one() {
+        let mut snapshot = crate::worker::Snapshot::default();
+        let mut odd = crate::chat::test_world::public_deployment("odd", &[]);
+        odd.spec.allowed_origins = vec!["https://a.example\nb".into()];
+        let fine = crate::chat::test_world::public_deployment("fine", &[]);
+        snapshot.deployments = vec![odd, fine];
+        let state = crate::chat::test_world::state(snapshot, "http://127.0.0.1:9");
+        let odd = serve(&state, "hronov-odd", false);
+        assert_eq!(odd.status(), StatusCode::OK);
+        assert!(!odd.headers().contains_key(header::CONTENT_SECURITY_POLICY));
+        assert_eq!(odd.headers()[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
+        let fine = serve(&state, "hronov-fine", true);
+        assert!(fine.headers()[header::CONTENT_SECURITY_POLICY]
+            .to_str()
+            .is_ok_and(|p| p.contains("frame-ancestors https://www.hronov.example")));
+    }
+
     #[tokio::test]
     async fn the_visitor_worker_is_served_as_a_script_that_is_never_sniffed() {
         let answer = visitor().await;

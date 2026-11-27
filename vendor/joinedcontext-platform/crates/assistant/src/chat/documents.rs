@@ -933,6 +933,41 @@ mod tests {
         assert_eq!(at(Some("2021-03-01T00:00:00Z"), None), 0.7);
     }
 
+    /// An embedder that is down is the store being unsearchable, said in words and never in the
+    /// embedder's; and no source in scope ranks no passage, whatever the store.
+    #[tokio::test]
+    async fn a_search_with_the_embedder_down_is_a_503_and_an_empty_scope_ranks_nothing() {
+        use tower::ServiceExt as _;
+        let state = Arc::new(crate::chat::test_world::state(
+            crate::worker::Snapshot::default(),
+            "http://127.0.0.1:9",
+        ));
+        let request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/internal/v1/search")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(
+                json!({"query": "knižnica", "sources": [{"project": "hronov", "source": "web"}]})
+                    .to_string(),
+            ))
+            .expect("a request");
+        let response = router(Arc::clone(&state))
+            .oneshot(request)
+            .await
+            .expect("an answer");
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+        let body = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .expect("a body");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("could not be searched"), "{body}");
+        let ranked = ranked(&state, &[], "knižnica", &[0.0], (None, &[]), 5, true).await;
+        assert!(ranked.expect("nothing to rank").is_empty());
+    }
+
     #[test]
     fn a_forwarded_request_came_through_the_edge() {
         let mut headers = HeaderMap::new();

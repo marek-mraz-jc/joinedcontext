@@ -792,6 +792,184 @@ mod tests {
             .collect()
     }
 
+    /// The chat state over two Endpoints, `a` and `b`, that the deployments `one` and `two` both
+    /// read, on `gateway`.
+    fn state_over(gateway: &str) -> ChatState {
+        let mut snapshot = Snapshot::default();
+        crate::chat::test_world::publish(
+            &mut snapshot,
+            "a",
+            "slugaaaaaaaaaaaaaaaaaaaaaaaaa",
+            &["T0"],
+        );
+        crate::chat::test_world::publish(
+            &mut snapshot,
+            "b",
+            "slugbbbbbbbbbbbbbbbbbbbbbbbbb",
+            &["T0"],
+        );
+        snapshot.deployments = vec![
+            crate::chat::test_world::public_deployment("one", &["a", "b"]),
+            crate::chat::test_world::public_deployment("two", &["a"]),
+        ];
+        crate::chat::test_world::state(snapshot, gateway)
+    }
+
+    /// The minute's round: no gateway reads nothing; a round still running keeps the next away;
+    /// an Endpoint two deployments read is counted once, and one with no page not at all.
+    #[tokio::test]
+    async fn a_round_without_a_gateway_or_inside_another_counts_nothing_and_each_endpoint_once() {
+        let (url, _, total) = gateway(StatusCode::OK, Duration::from_millis(300)).await;
+        let state = Arc::new(state_over(url.as_str()));
+        let http = reqwest::Client::new();
+        count(Arc::clone(&state), http.clone(), None).await;
+        assert_eq!(total.load(Ordering::SeqCst), 0, "no gateway, no read");
+        // Both rounds start together; the first holds the round for the gateway's 300 ms.
+        tokio::join!(
+            count(Arc::clone(&state), http.clone(), Some(url.clone())),
+            count(Arc::clone(&state), http.clone(), Some(url.clone())),
+        );
+        assert_eq!(
+            total.load(Ordering::SeqCst),
+            2,
+            "two Endpoints of one type each, read once between the two rounds"
+        );
+        assert_eq!(state.contexts.lock().expect("the hold").counts.len(), 2);
+        // An Endpoint whose page the manifests do not hold is not read.
+        let mut snapshot = state
+            .snapshot
+            .read()
+            .expect("the snapshot")
+            .as_ref()
+            .clone();
+        snapshot.pages.remove("slugbbbbbbbbbbbbbbbbbbbbbbbbb");
+        *state.snapshot.write().expect("the snapshot") = Arc::new(snapshot);
+        state.contexts.lock().expect("the hold").answered.clear();
+        count(Arc::clone(&state), http, Some(url)).await;
+        assert_eq!(
+            total.load(Ordering::SeqCst),
+            3,
+            "only the Endpoint with a page"
+        );
+        assert_eq!(state.contexts.lock().expect("the hold").counts.len(), 1);
+    }
+
+    /// A panic in another thread poisons the hold while a round reads: the round leaves it alone.
+    #[tokio::test]
+    async fn a_hold_poisoned_during_a_round_is_left_as_it_is() {
+        let held = Arc::new(Mutex::new(Held::default()));
+        let poisoned = Arc::clone(&held);
+        let app = Router::new().fallback(move || {
+            let poisoned = Arc::clone(&poisoned);
+            async move {
+                let _ = std::thread::spawn(move || {
+                    let _held = poisoned.lock();
+                    std::panic::resume_unwind(Box::new("poisoned on purpose"));
+                })
+                .join();
+                (StatusCode::OK, [("NGSILD-Results-Count", "7")])
+            }
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let address = listener.local_addr().expect("its address");
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        let url = url::Url::parse(&format!("http://{address}/")).expect("url");
+        let pages = endpoints(1, 1);
+        let pages: Vec<_> = pages.iter().collect();
+        count_due(&held, &reqwest::Client::new(), &url, &pages, COUNT_FRESH).await;
+        assert!(held.is_poisoned());
+    }
+
+    /// The page of a deployment: computed again once its minute is over, the held documents
+    /// forgotten at a thousand, a poisoned hold no obstacle, a poisoned snapshot no deployment.
+    #[tokio::test]
+    async fn a_stale_document_is_computed_again_and_a_poisoned_hold_or_snapshot_is_survived() {
+        let state = state_over("http://127.0.0.1:9");
+        let (_, document) = {
+            let first = held(&state, "hronov-one")
+                .await
+                .expect("computed")
+                .expect("held");
+            (first.0, first.1)
+        };
+        let again = held(&state, "hronov-one")
+            .await
+            .expect("held")
+            .expect("held");
+        assert!(
+            Arc::ptr_eq(&document, &again.1),
+            "within the minute it is the same document"
+        );
+        assert!(held(&state, "nobody").await.expect("no error").is_none());
+        let old = Instant::now()
+            .checked_sub(KEEP * 2)
+            .expect("a clock that has run for two minutes");
+        state
+            .contexts
+            .lock()
+            .expect("the hold")
+            .documents
+            .insert("hronov-one".into(), (old, Arc::clone(&document)));
+        let renewed = held(&state, "hronov-one")
+            .await
+            .expect("computed")
+            .expect("held");
+        assert!(
+            !Arc::ptr_eq(&document, &renewed.1),
+            "a stale document is written again"
+        );
+
+        {
+            let mut hold = state.contexts.lock().expect("the hold");
+            for n in 0..MAX_HELD {
+                hold.documents.insert(
+                    format!("other-{n}"),
+                    (Instant::now(), Arc::clone(&document)),
+                );
+            }
+        }
+        state
+            .contexts
+            .lock()
+            .expect("the hold")
+            .documents
+            .remove("hronov-one");
+        held(&state, "hronov-one")
+            .await
+            .expect("computed")
+            .expect("held");
+        assert_eq!(
+            state.contexts.lock().expect("the hold").documents.len(),
+            1,
+            "a full hold keeps only the page just written"
+        );
+
+        std::thread::scope(|s| {
+            let holder = s.spawn(|| {
+                let _hold = state.contexts.lock();
+                std::panic::resume_unwind(Box::new("poisoned on purpose"));
+            });
+            assert!(holder.join().is_err());
+        });
+        assert!(held(&state, "hronov-one")
+            .await
+            .expect("computed")
+            .is_some());
+        std::thread::scope(|s| {
+            let holder = s.spawn(|| {
+                let _snapshot = state.snapshot.write();
+                std::panic::resume_unwind(Box::new("poisoned on purpose"));
+            });
+            assert!(holder.join().is_err());
+        });
+        assert!(held(&state, "hronov-one")
+            .await
+            .expect("no error")
+            .is_none());
+    }
+
     /// T-5781: a round asks the gateway at most `COUNT_PARALLEL` counts at once.
     #[tokio::test]
     async fn a_round_counts_at_most_count_parallel_at_once() {

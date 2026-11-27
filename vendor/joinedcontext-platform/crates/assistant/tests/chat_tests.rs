@@ -6881,6 +6881,29 @@ async fn the_mcp_search_reads_a_named_publisher_first_and_says_when_the_store_is
     .await;
     assert_eq!(status, StatusCode::OK, "{held}");
     assert_eq!(held["publishers"], json!(["hronov"]), "{held}");
+    // A passage whose language is not known counts as a passage and names no language.
+    let mut tx = assistant::project_scope(&w.pool, "trutnov")
+        .await
+        .expect("scope");
+    sqlx::query("UPDATE chunks SET lang = NULL WHERE project = 'trutnov'")
+        .execute(&mut *tx)
+        .await
+        .expect("an unknown language");
+    tx.commit().await.expect("commit");
+    let (status, unknown) = internal_post(
+        &w.app,
+        "/internal/v1/sources",
+        json!({"sources": [{"project": "trutnov", "source": "web"}]}),
+        false,
+    )
+    .await;
+    assert_eq!(
+        (status, unknown),
+        (
+            StatusCode::OK,
+            json!({"passages": 1, "publishers": ["trutnov"], "languages": {}})
+        )
+    );
     let web = json!([{"project": "hronov", "source": "web"}]);
     for (uri, body) in [
         ("/internal/v1/sources", json!({"sources": []})),

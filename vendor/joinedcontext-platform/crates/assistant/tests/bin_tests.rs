@@ -11,6 +11,26 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+/// The log lines written on this thread while the guard of a subscriber over it lives.
+#[derive(Clone, Default)]
+struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("the log").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Log {
+    fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
+    }
+}
+
 /// A scratch directory of this test's own, empty.
 fn scratch(test: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("jc-assistant-bin-{test}-{}", std::process::id()));
@@ -370,6 +390,53 @@ async fn a_configured_service_stops_on_ctrl_c() {
     db::drop_database(admin, pool, &name).await;
 }
 
+/// Without `JC_ASSISTANT_BIND` the service listens on port 8080 of every address, and without
+/// `HOSTNAME` it names itself `jc-assistant`. Port 8080 is the pod's own; where something else
+/// holds it here, the refusal names that address, which is the default all the same.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_start_without_a_bind_address_or_hostname_takes_the_pods_defaults() {
+    let (admin, pool, name) = db::database("bin_defaults").await;
+    let dir = scratch("defaults");
+    let vars = without(
+        &without(&configured(&dir, &test_url(&name)), "JC_ASSISTANT_BIND"),
+        "HOSTNAME",
+    );
+    let free = std::net::TcpListener::bind("0.0.0.0:8080").is_ok();
+    let mut child = command(&vars)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the binary starts");
+    let client = reqwest::Client::new();
+    let deadline = Instant::now() + Duration::from_secs(90);
+    let mut ready = false;
+    while Instant::now() < deadline && child.try_wait().expect("child status").is_none() {
+        let answered = client
+            .get("http://127.0.0.1:8080/readyz")
+            .timeout(Duration::from_secs(2))
+            .send()
+            .await;
+        if answered.is_ok_and(|a| a.status() == reqwest::StatusCode::OK) {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }
+    if child.try_wait().expect("child status").is_none() {
+        let _ = child.kill();
+    }
+    let output = child.wait_with_output().expect("the binary stops");
+    let log = String::from_utf8_lossy(&output.stdout).into_owned()
+        + &String::from_utf8_lossy(&output.stderr);
+    if free {
+        assert!(ready, "it listened on 8080\n{log}");
+    } else {
+        assert!(log.contains("0.0.0.0:8080"), "{log}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    db::drop_database(admin, pool, &name).await;
+}
+
 /// A minute over a live database with the real model: a source that is not due queues nothing,
 /// a guide source is queued as changed, a passage without an embedding is embedded and one
 /// whose terms are pending gets them, and a chat state whose lock a panic poisoned is left as it
@@ -378,6 +445,7 @@ async fn a_configured_service_stops_on_ctrl_c() {
 async fn a_minute_over_a_live_database_does_each_of_its_steps() {
     use std::sync::atomic::AtomicBool;
     use std::sync::Arc;
+    use tracing::instrument::WithSubscriber as _;
 
     let (admin, pool, name) = db::database("bin_minute").await;
     let dir = scratch("livepool");
@@ -436,7 +504,22 @@ async fn a_minute_over_a_live_database_does_each_of_its_steps() {
         chat_state,
         ready,
     );
-    minute.work().await;
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let dispatch = tracing::Dispatch::new(subscriber);
+    minute.work().with_subscriber(dispatch.clone()).await;
+    assert!(
+        log.text().contains("sources due"),
+        "the guide was queued: {}",
+        log.text()
+    );
+    // The next minute finds the same guide and the same sources: no catalogue is seen changed.
+    minute.work().with_subscriber(dispatch).await;
+    assert!(!log.text().contains("catalogues changed"), "{}", log.text());
 
     let mut tx = assistant::project_scope(&pool, "liveproj")
         .await

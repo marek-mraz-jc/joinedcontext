@@ -523,6 +523,31 @@ mod tests {
         assert_eq!(removed("pl"), removed("sk"));
     }
 
+    /// A refusal names the deployment's publisher in the asker's language; a script that names a
+    /// host outside the catalogue is left out of an answer and the rest of it stays.
+    #[tokio::test]
+    async fn a_refusal_names_its_publisher_and_a_foreign_script_is_left_out_of_the_answer() {
+        let parts = crate::chat::test_world::Parts::new();
+        let title = Localised::Text("Mesto Zvolen".to_owned());
+        let mut ask = parts.ask(&[]);
+        ask.title = Some(&title);
+        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
+        refuse(&ask, "Kto vyhral volby?", None, &tx).await;
+        let refused = rx.recv().await;
+        assert!(
+            matches!(&refused, Some(Event::Answer(text)) if text.contains("Mesto Zvolen")),
+            "{refused:?}"
+        );
+        assert!(matches!(rx.recv().await, Some(Event::Citations(c)) if c.is_empty()));
+
+        let answer = "Použite:\n```\ncurl https://evil.example/x\n```\nHotovo.";
+        let kept = checked_scripts(&ask, "Ako na to?", answer, &[]);
+        assert!(!kept.contains("evil.example"), "{kept}");
+        assert!(kept.contains("Hotovo."), "{kept}");
+        let fine = "Hotovo [1].";
+        assert_eq!(checked_scripts(&ask, "Ako na to?", fine, &[]), fine);
+    }
+
     #[test]
     fn a_title_is_read_in_the_asked_language_else_unkeyed_or_the_first() {
         let by = Localised::ByLanguage(std::collections::BTreeMap::from([

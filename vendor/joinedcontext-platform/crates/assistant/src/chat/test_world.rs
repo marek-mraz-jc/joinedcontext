@@ -124,3 +124,132 @@ pub(crate) fn connector(
         dataset: None,
     }
 }
+
+/// A chat state over `snapshot` and the gateway at `gateway`, whose store, embedder and model are
+/// closed local ports: a path that reads the manifests and the gateway runs, a query fails fast.
+pub(crate) fn state(snapshot: crate::worker::Snapshot, gateway: &str) -> super::ChatState {
+    let parts = Parts::new();
+    super::ChatState {
+        pool: parts.pool,
+        embedder: parts.embedder,
+        model: parts.model,
+        http: parts.http,
+        gateway: gateway.into(),
+        functions: None,
+        portal_client: "portal-api".into(),
+        public_origin: Some("https://assistant.example".into()),
+        snapshot: std::sync::RwLock::new(std::sync::Arc::new(snapshot)),
+        limits: Default::default(),
+        questions: std::sync::Arc::new(tokio::sync::Semaphore::new(super::MAX_QUESTIONS)),
+        answers: Default::default(),
+        endpoint_base: None,
+        viz: None,
+        organization: "hronov".into(),
+        contexts: Default::default(),
+        turns: Default::default(),
+        map_sources: Default::default(),
+    }
+}
+
+/// An enabled public deployment `name` of project `hronov` (publicId `hronov-{name}`) over the
+/// connectors named in `endpoints`, each with `query_entities`, and no source.
+pub(crate) fn public_deployment(name: &str, endpoints: &[&str]) -> crate::worker::Deployment {
+    let connectors: Vec<Value> = endpoints
+        .iter()
+        .map(|e| serde_json::json!({"endpoint": e, "tools": ["query_entities"]}))
+        .collect();
+    crate::worker::Deployment {
+        project: "hronov".into(),
+        name: name.into(),
+        spec: serde_json::from_value(serde_json::json!({
+            "publicId": format!("hronov-{name}"),
+            "channel": "public",
+            "sources": [],
+            "connectors": connectors,
+            "allowedOrigins": ["https://www.hronov.example"],
+            "rateLimit": {"requestsPerMinute": 60, "perClientPerMinute": 10, "perClientPerHour": 40},
+            "budget": {"tokensPerDay": 1_000_000, "tokensPerConversation": 20_000, "costPerDayUsd": 2.5},
+            "languages": ["sk"],
+        }))
+        .expect("a deployment spec"),
+    }
+}
+
+/// The snapshot's entry for a public Endpoint `name` of project `hronov` with `slug`, and its page
+/// over the entity types `types`.
+pub(crate) fn publish(
+    snapshot: &mut crate::worker::Snapshot,
+    name: &str,
+    slug: &str,
+    types: &[&str],
+) {
+    snapshot.endpoints.insert(
+        ("hronov".into(), name.into()),
+        crate::worker::EndpointRef {
+            titles: BTreeMap::new(),
+            slug: slug.into(),
+            audience: "public".into(),
+            publisher: None,
+            space: String::new(),
+            title: None,
+            dataset: None,
+        },
+    );
+    snapshot.pages.insert(
+        slug.into(),
+        crate::worker::Page {
+            project: "hronov".into(),
+            page: crate::catalogue::EndpointPage {
+                name: name.into(),
+                title: None,
+                description: None,
+                space: String::new(),
+                slug: slug.into(),
+                audience: "public".into(),
+                ckan_dataset: None,
+                types: types
+                    .iter()
+                    .map(|class| crate::catalogue::EntityType {
+                        class: (*class).into(),
+                        description: None,
+                        attributes: Vec::new(),
+                    })
+                    .collect(),
+                datasets: Vec::new(),
+            },
+            themes: Vec::new(),
+        },
+    );
+}
+
+/// The log lines of this thread, kept by a subscriber over them (see `Log::capture` of the model's
+/// tests): a line is only written when a subscriber wants it, so a test of a log line holds one.
+#[derive(Clone, Default)]
+pub(crate) struct Log(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for Log {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().expect("the log").extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Log {
+    /// The log, and the guard that keeps this thread's subscriber alive.
+    pub(crate) fn capture() -> (Self, tracing::subscriber::DefaultGuard) {
+        let log = Self::default();
+        let writer = log.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        (log, tracing::subscriber::set_default(subscriber))
+    }
+
+    pub(crate) fn text(&self) -> String {
+        String::from_utf8_lossy(&self.0.lock().expect("the log")).into_owned()
+    }
+}
