@@ -280,3 +280,26 @@ pub fn router() -> Router<AppState> {
             put(update_view).delete(delete_view),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each store refusal reads as its status, and a database failure keeps the driver's words
+    /// in the log, never in the answer (TS-09, T-7909).
+    #[test]
+    fn each_store_refusal_answers_its_status_and_a_database_failure_hides_its_words() {
+        assert!(matches!(
+            ApiError::from(DataViewError::Unplaced("air".into())),
+            ApiError::NotFound(why) if why.contains("air")
+        ));
+        assert!(matches!(
+            ApiError::from(DataViewError::Limit),
+            ApiError::Conflict(_)
+        ));
+        assert!(matches!(
+            ApiError::from(DataViewError::Db("relation data_views does not exist".into())),
+            ApiError::Internal(why) if !why.contains("relation")
+        ));
+    }
+}

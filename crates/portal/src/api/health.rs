@@ -192,7 +192,7 @@ pub fn router() -> axum::Router<crate::state::AppState> {
 
 #[cfg(test)]
 mod tests {
-    use super::commit_of;
+    use super::{commit_of, ui_build};
 
     #[test]
     fn the_build_argument_wins_and_the_environment_fills_in() {
@@ -208,5 +208,24 @@ mod tests {
         assert_eq!(commit_of(None, Some("<script>")), "");
         assert_eq!(commit_of(None, Some(&"a".repeat(65))), "");
         assert_eq!(commit_of(Some("main"), Some("abc")), "abc");
+    }
+
+    /// A `portal-ui` that answers an error, or answers no `version.json`, names no build.
+    #[tokio::test]
+    async fn a_ui_that_answers_an_error_or_no_version_names_no_build() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let ui = MockServer::start().await;
+        Mock::given(path("/version.json"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&ui)
+            .await;
+        assert!(ui_build(Some(&ui.uri())).await.is_none());
+        let garbled = MockServer::start().await;
+        Mock::given(path("/version.json"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&garbled)
+            .await;
+        assert!(ui_build(Some(&garbled.uri())).await.is_none());
     }
 }

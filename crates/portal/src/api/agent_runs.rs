@@ -3371,4 +3371,20 @@ mod invocation_tests {
         assert!(anonymous["token"].is_null());
         assert!(anonymous.get("via").is_none());
     }
+
+    /// A run of a project no active Organization holds reads as not found, and an unknown run's
+    /// status change as no such run (T-7909).
+    #[test]
+    fn an_unplaced_project_and_an_unknown_run_read_as_not_found() {
+        use super::{status_error, unavailable, StatusChangeError, StoreError};
+        use crate::error::ApiError;
+        assert!(matches!(
+            unavailable(StoreError::Unplaced("helsinki".into())),
+            ApiError::NotFound(why) if why.contains("helsinki")
+        ));
+        assert!(matches!(
+            status_error(StatusChangeError::Unknown),
+            ApiError::NotFound(why) if why == "no such run"
+        ));
+    }
 }

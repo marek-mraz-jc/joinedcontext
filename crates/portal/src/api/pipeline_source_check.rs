@@ -499,23 +499,62 @@ mod tests {
     /// when a limit cut it.
     #[tokio::test(start_paused = true)]
     async fn the_check_ends_quiet_or_at_its_cap_and_says_a_cap_cut_it() {
+        // One check for every gather, so the quiet run's never-called check is the same code.
+        let none = |_: &Value| Vec::new();
         let (sender, mut receiver) = mpsc::unbounded_channel();
         for _ in 0..3 {
             sender.send(message(json!({ "id": "a" }))).expect("sent");
         }
-        let tally = gather(&mut receiver, |_: &Value| Vec::new()).await;
+        let tally = gather(&mut receiver, none).await;
         assert_eq!((tally.accepted, tally.limited), (3, false));
         assert!(tally.errors.is_empty(), "{:?}", tally.errors);
 
         for _ in 0..=RECORDS {
             sender.send(message(json!({ "id": "a" }))).expect("sent");
         }
-        let tally = gather(&mut receiver, |_: &Value| Vec::new()).await;
+        let tally = gather(&mut receiver, none).await;
         assert_eq!((tally.records(), tally.limited), (RECORDS as u64, true));
         assert_eq!(tally.errors.len(), 1, "{:?}", tally.errors);
 
         let mut silent = mpsc::unbounded_channel::<Captured>().1;
-        let tally = gather(&mut silent, |_: &Value| Vec::new()).await;
+        let tally = gather(&mut silent, none).await;
         assert!(tally.errors[0].starts_with("the source sent nothing within 60 s"));
+    }
+
+    /// A group keeps EXAMPLES rows and the tally KEPT rows, however many more are rejected; a
+    /// failed step's record is what the step before it made, else its input (T-7909).
+    #[test]
+    fn a_tally_keeps_its_caps_and_a_failed_step_shows_the_record_before_it() {
+        let mut tally = Tally::default();
+        let reason = || Reason {
+            rule: "required".into(),
+            path: "/id".into(),
+            message: "id is missing".into(),
+            step: None,
+            run: None,
+        };
+        for _ in 0..=KEPT {
+            tally.reject(json!({ "n": 1 }), reason());
+        }
+        assert_eq!(tally.rows.len(), KEPT);
+        let groups = tally.groups();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].count, (KEPT + 1) as u64);
+        assert_eq!(groups[0].examples.len(), EXAMPLES);
+
+        let failed = Captured {
+            input: Some("{\"raw\": 1}".into()),
+            steps: Some(vec![Some("{\"made\": 2}".into()), None]),
+            ..Captured::default()
+        };
+        assert_eq!(failed_record(&failed, Some(1)), json!({ "made": 2 }));
+        // The step before was not kept whole: the input stands in.
+        assert_eq!(failed_record(&failed, Some(2)), json!({ "raw": 1 }));
+        assert_eq!(failed_record(&failed, Some(0)), json!({ "raw": 1 }));
+        let unparsed = Captured {
+            input: Some("not json".into()),
+            ..Captured::default()
+        };
+        assert_eq!(failed_record(&unparsed, None), json!("not json"));
     }
 }

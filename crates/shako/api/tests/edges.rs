@@ -781,6 +781,40 @@ async fn allowed_on_a_set_judges_a_key() {
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{answer}");
+    // A key the set does not hold, or one of the wrong shape, is judged, not an error.
+    for (path, reason) in [
+        (
+            "/odata/Repositories/$allowed(op='update',key='no-such-repository')",
+            "served read only",
+        ),
+        (
+            "/odata/PullRequests/$allowed(op='read',key='not-a-number')",
+            "has no such entity",
+        ),
+    ] {
+        let (s, dec) = send(&w.app, "GET", path, None).await;
+        assert_eq!(s, StatusCode::OK, "{path}: {dec}");
+        assert_eq!(dec["allowed"], false, "{path}: {dec}");
+        assert!(
+            dec["reason"].as_str().is_some_and(|r| r.contains(reason)),
+            "{path}: {dec}"
+        );
+    }
+    // A set the service does not serve is a 404 naming it, whatever is asked of it.
+    for path in [
+        "/odata/NoSuchSet/$allowed(op='read')",
+        "/odata/NoSuchSet/$count",
+        "/odata/NoSuchSet",
+    ] {
+        let (s, answer) = send(&w.app, "GET", path, None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{path}: {answer}");
+        assert!(
+            answer["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("unknown OData entity set 'NoSuchSet'")),
+            "{path}: {answer}"
+        );
+    }
 }
 
 /// A path three segments deep names only a pull request's part; anything else is not found,

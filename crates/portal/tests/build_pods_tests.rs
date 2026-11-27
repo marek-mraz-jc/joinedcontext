@@ -1335,6 +1335,30 @@ async fn an_upload_over_its_cap_is_refused_before_more_of_it_is_written() {
         StatusCode::PAYLOAD_TOO_LARGE,
         "a log is at most 1 MiB"
     );
+    // A declared length over the cap is refused before a byte is read (T-7909).
+    let declared = server::build_app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri(format!("/builds/{id}/artifacts/sbom"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_LENGTH, (16 * 1024 * 1024 + 1).to_string())
+                .body(Body::from("short"))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(declared.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    // A log inside its cap is kept.
+    let (status, text) = listener(
+        &state,
+        "PUT",
+        &format!("/builds/{id}/log"),
+        Some(&token),
+        Body::from("step 1 of 3: npm ci\n"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{text}");
 }
 
 #[tokio::test]

@@ -514,6 +514,47 @@ mod tests {
     /// EP-80 (T-7815): what the draft knows comes from the mirror: the space's language and
     /// model classes, the Organization's open-data contact (a contact without an e-mail is
     /// none), and the project's own CKAN instance before another.
+    /// A body naming no Endpoint, or a name longer than 63 characters, is refused naming the
+    /// field before anything of the project is read (T-7909).
+    #[tokio::test]
+    async fn a_body_naming_no_endpoint_is_refused_naming_the_field() {
+        use crate::auth::session::{Identity, Session};
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for endpoint in ["   ".to_owned(), "a".repeat(64)] {
+            let user = crate::auth::CurrentUser(Session {
+                identity: Identity {
+                    client: None,
+                    subject: "sub-ada".into(),
+                    username: "ada".into(),
+                    email: None,
+                    name: None,
+                    roles: Vec::new(),
+                    groups: Vec::new(),
+                    second_factor: false,
+                },
+                expires_at: 9_999_999_999,
+                issued_at: 1000,
+                signed_in_at: None,
+                stepped_up_at: None,
+                id_token: String::new(),
+                access_expires_at: 9_999_999_999,
+                refresh_token: None,
+            });
+            let refused = draft_publication(
+                user,
+                State(state.clone()),
+                Path("helsinki".to_owned()),
+                Json(CatalogueDraftRequest { endpoint }),
+            )
+            .await;
+            assert!(
+                matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("endpoint:")),
+                "{:?}",
+                refused.err()
+            );
+        }
+    }
+
     #[tokio::test]
     async fn the_draft_knows_the_spaces_model_the_open_data_contact_and_the_projects_instance() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
