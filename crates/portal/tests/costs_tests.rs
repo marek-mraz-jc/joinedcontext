@@ -130,6 +130,131 @@ async fn an_administrator_reads_each_projects_parts_adding_up_to_the_table() {
     assert!(!text.contains("admin-token"), "no token in the answer");
 }
 
+/// A realm that hands the Portal a token of its own, so the assistant can be asked.
+async fn realm() -> MockServer {
+    let realm = MockServer::start().await;
+    let issuer = format!("{}/realms/helsinki", realm.uri());
+    Mock::given(method("GET"))
+        .and(path("/realms/helsinki/.well-known/openid-configuration"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "issuer": issuer,
+            "authorization_endpoint": format!("{issuer}/protocol/openid-connect/auth"),
+            "token_endpoint": format!("{issuer}/protocol/openid-connect/token"),
+            "jwks_uri": format!("{issuer}/protocol/openid-connect/certs"),
+            "response_types_supported": ["code"],
+            "subject_types_supported": ["public"],
+            "id_token_signing_alg_values_supported": ["ES256"]
+        })))
+        .mount(&realm)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/realms/helsinki/protocol/openid-connect/certs"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "keys": [] })))
+        .mount(&realm)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/realms/helsinki/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "the-portals-own-token", "token_type": "Bearer", "expires_in": 300
+        })))
+        .mount(&realm)
+        .await;
+    realm
+}
+
+/// With an assistant to ask: an answered month is priced, a refused one keeps its reason; a
+/// space the broker does not count keeps its own, and each project lists its lines by name.
+#[tokio::test]
+async fn an_assistants_answered_month_is_priced_and_each_refusal_keeps_its_reason() {
+    use joinedcontext_portal::auth::client_auth::ClientAuth;
+    use joinedcontext_portal::auth::oidc::OidcClient;
+    use joinedcontext_portal::config::OidcConfig;
+    use wiremock::matchers::query_param;
+
+    let server = broker().await;
+    let token = token("assistant");
+    let base = state(&server, &token, true);
+    for (kind, name) in [("ContextSpace", "bikes"), ("AssistantDeployment", "desk")] {
+        base.mirror
+            .upsert(envelope(kind, name, "doprava", json!({})));
+    }
+    let realm = realm().await;
+    let assistant = MockServer::start().await;
+    let usage = "/internal/v1/projects/doprava/knowledge/conversations/usage";
+    Mock::given(method("GET"))
+        .and(path(usage))
+        .and(query_param("deployment", "help"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "questions": 4, "uncostedQuestions": 1, "costUsd": { "total": 2.0 }
+        })))
+        .mount(&assistant)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(usage))
+        .and(query_param("deployment", "desk"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&assistant)
+        .await;
+    let mut config = (*base.config).clone();
+    config.knowledge_url = Some(assistant.uri());
+    let oidc = OidcClient::discover(
+        &OidcConfig {
+            issuer: format!("{}/realms/helsinki", realm.uri())
+                .parse()
+                .expect("an issuer"),
+            client_id: "portal-api".into(),
+            auth: ClientAuth::Secret("test-secret".into()),
+            extra_ca_pem: None,
+            admin_url: None,
+        },
+        "https://portal.test/api/v1/auth/callback",
+    )
+    .await
+    .expect("discovery");
+    let state = AppState::new(config, Some(oidc)).with_mirror(std::sync::Arc::clone(&base.mirror));
+    let (status, text) = get(&state, "jana", "/api/v1/organization/costs?month=2026-09").await;
+    let _ = std::fs::remove_file(&token);
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let body: Value = serde_json::from_str(&text).expect("json");
+    let doprava = &body["projects"][0];
+    assert_eq!(doprava["project"], "doprava", "{body}");
+    let spaces: Vec<&str> = doprava["spaces"]
+        .as_array()
+        .expect("spaces")
+        .iter()
+        .filter_map(|s| s["space"].as_str())
+        .collect();
+    assert_eq!(spaces, ["bikes", "cars"]);
+    let bikes = &doprava["spaces"][0];
+    assert!(bikes["bytes"].is_null(), "{bikes}");
+    assert!(
+        bikes["reason"].as_str().is_some_and(|r| r.contains("404")),
+        "{bikes}"
+    );
+    let assistants = doprava["assistants"].as_array().expect("assistants");
+    assert_eq!(assistants.len(), 2, "{doprava}");
+    let (desk, help) = (&assistants[0], &assistants[1]);
+    assert_eq!(
+        (&desk["assistant"], &help["assistant"]),
+        (&json!("desk"), &json!("help"))
+    );
+    assert_eq!(help["costUsd"], 2.0, "{help}");
+    assert_eq!(
+        (&help["questions"], &help["uncostedQuestions"]),
+        (&json!(4), &json!(1))
+    );
+    assert!(help.get("reason").is_none(), "{help}");
+    assert!(desk["costUsd"].is_null(), "{desk}");
+    assert!(
+        desk["reason"].as_str().is_some_and(|r| r.contains("500")),
+        "{desk}"
+    );
+    assert!(
+        !text.contains("the-portals-own-token"),
+        "no token in the answer"
+    );
+}
+
 #[tokio::test]
 async fn the_export_is_a_csv_download_of_the_same_month() {
     let server = broker().await;

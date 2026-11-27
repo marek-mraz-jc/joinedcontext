@@ -112,6 +112,40 @@ async fn the_keys_failure_and_recovery_reach_the_org_feed_once_each() {
         "{events:?}"
     );
     assert_eq!(events[1].1, "The model key works again.");
+
+    // A feed that is not written loses the event, never the report: still 204.
+    let broken = AppState::new(config(), None).with_db(
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(50))
+            .connect_lazy("postgres://nobody@localhost:1/none")
+            .expect("a lazy pool"),
+    );
+    broken.mirror.upsert(common::envelope(
+        "Organization",
+        "somewhere",
+        "org",
+        serde_json::json!({}),
+    ));
+    broken
+        .bearer
+        .as_ref()
+        .expect("a realm")
+        .refresh()
+        .await
+        .expect("jwks");
+    let broken_app = server::internal_app(broken.clone());
+    assert_eq!(
+        post(&broken_app, Some(&proxy), dead).await,
+        StatusCode::NO_CONTENT
+    );
+    let everything = ActivityFilter::default();
+    let unread = broken.activity.list("org", &everything).await;
+    assert!(unread.is_err(), "the broken feed reads nothing either");
+    assert_eq!(
+        org_events(&state).await.len(),
+        2,
+        "the other feed kept its two"
+    );
 }
 
 #[tokio::test]

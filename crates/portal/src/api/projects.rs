@@ -2150,4 +2150,375 @@ mod tests {
         assert!(in_group(&state, &person(ID), "openers"));
         assert!(!in_group(&state, &person("sub-other"), "openers"));
     }
+
+    /// A member written as a plain address is the person of that address, and an empty one is
+    /// nobody.
+    #[test]
+    fn a_group_member_written_as_an_address_is_its_person() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Group",
+            "mailers",
+            json!({ "members": ["", "jana@hel.fi"] }),
+        ));
+        assert!(in_group(&state, &person("sub-jana"), "mailers"));
+        let mut other = person("sub-ota");
+        other.email = Some("ota@aa.sk".into());
+        assert!(!in_group(&state, &other, "mailers"));
+    }
+
+    fn session(identity: crate::auth::session::Identity) -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity,
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "dummy-token".into(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    fn bootstrap(state: &AppState) -> crate::auth::session::Identity {
+        let mut admin = person("sub-admin");
+        admin.groups = vec![state.config.bootstrap_admins.clone()];
+        admin
+    }
+
+    /// A forge whose files are `files`, at any ref; every other file is not there.
+    async fn forge_holding(
+        files: &[(&str, &str)],
+    ) -> (wiremock::MockServer, crate::forge::ShakoClient) {
+        use base64::Engine as _;
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(repo))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        let file = format!("{repo}/Shako.File(Path=@p,Ref=@r)");
+        for (at, content) in files {
+            let encoded = base64::engine::general_purpose::STANDARD.encode(content);
+            Mock::given(method("GET"))
+                .and(path(file.as_str()))
+                .and(query_param("@p", format!("'{at}'")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(json!({ "Sha": "s1", "Content": encoded })),
+                )
+                .mount(&server)
+                .await;
+        }
+        let base = server.uri().parse().expect("url");
+        let forge = crate::forge::ShakoClient::new(base, "o", "r", "t").expect("client");
+        (server, forge)
+    }
+
+    /// T-7190: a project list whose id registry does not answer is refused, not listed without
+    /// ids.
+    #[tokio::test]
+    async fn a_list_whose_id_registry_does_not_answer_is_unavailable() {
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.db = Some(crate::test_db::dead_pool());
+        let item = ProjectSummary {
+            name: "air".into(),
+            sample: false,
+            title: None,
+            organization: None,
+            id: None,
+        };
+        let answer = with_ids(&state, vec![item]).await;
+        let refused = answer.expect_err("no registry");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("project id")),
+            "{refused:?}"
+        );
+    }
+
+    /// PF-05: a project with no manifest and no directory is not there, even for an
+    /// administrator.
+    #[tokio::test]
+    async fn a_project_nothing_names_is_not_found_even_for_an_administrator() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = session(bootstrap(&state));
+        let ghost = axum::extract::Path("ghost".to_owned());
+        let answer = get_project(admin, State(state), ghost).await;
+        let refused = answer.err().expect("not found");
+        assert!(
+            matches!(&refused, ApiError::NotFound(m) if m.contains("ghost")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-6766: with one Organization, another one named is not found and that one is taken.
+    #[test]
+    fn with_one_organization_another_one_named_is_not_found() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Organization",
+            "aa",
+            json!({ "domain": "aa.sk", "installation": true, "projects": { "creation": "anyone" } }),
+        ));
+        let jana = person("sub-jana");
+        let asked = opening_organization(&state, &jana, Some("bb"));
+        let refused = asked.expect_err("unknown");
+        assert!(
+            matches!(&refused, ApiError::NotFound(m) if m.contains("'bb'")),
+            "{refused:?}"
+        );
+        let named = opening_organization(&state, &jana, Some("aa"));
+        assert_eq!(named.expect("its own"), "aa");
+    }
+
+    /// PF-86: the registry entry is made from the project's own manifest, which must be there
+    /// and parse.
+    #[test]
+    fn a_registry_entry_needs_the_projects_own_manifest_that_parses() {
+        let mut files = vec![("projects/air/other.yaml".to_owned(), "a: 1\n".to_owned())];
+        let made = into_registry_entry(&mut files, "air", "air", None);
+        let refused = made.expect_err("missing");
+        assert!(
+            matches!(&refused, ApiError::Internal(m) if m.contains("missing")),
+            "{refused:?}"
+        );
+        let mut files = vec![("projects/air/project.yaml".to_owned(), "key: [".to_owned())];
+        let made = into_registry_entry(&mut files, "air", "air", None);
+        let refused = made.expect_err("garbled");
+        assert!(
+            matches!(&refused, ApiError::Internal(m) if m.contains("did not parse")),
+            "{refused:?}"
+        );
+    }
+
+    /// CC-88, PF-86: the values of a copy are checked against an origin project.yaml that is
+    /// on main and loads, and a registry entry that is there and loads.
+    #[tokio::test]
+    async fn the_values_of_a_copy_need_an_origin_and_an_entry_that_load() {
+        let good = format!(
+            "apiVersion: {API_VERSION}\nkind: Project\nmetadata:\n  name: good\n  \
+             namespace: org\nspec:\n  organizationRef: aa\n"
+        );
+        let (_server, source) = forge_holding(&[
+            ("projects/garbled/project.yaml", "key: ["),
+            ("projects/good/project.yaml", good.as_str()),
+        ])
+        .await;
+        let entry = |text: &str| vec![("projects/copy.yaml".to_owned(), text.to_owned())];
+        let gone = check_parameters(&source, "gone", "copy", &entry(""))
+            .await
+            .expect_err("no project.yaml");
+        assert!(
+            matches!(&gone, ApiError::Conflict(m) if m.contains("no project.yaml")),
+            "{gone:?}"
+        );
+        let garbled = check_parameters(&source, "garbled", "copy", &entry(""))
+            .await
+            .expect_err("garbled");
+        assert!(
+            matches!(&garbled, ApiError::Conflict(m) if m.contains("does not load")),
+            "{garbled:?}"
+        );
+        let missing = check_parameters(&source, "good", "copy", &[])
+            .await
+            .expect_err("no entry");
+        assert!(
+            matches!(&missing, ApiError::Internal(m) if m.contains("entry is missing")),
+            "{missing:?}"
+        );
+        let broken = check_parameters(&source, "good", "copy", &entry("key: ["))
+            .await
+            .expect_err("a broken entry");
+        assert!(
+            matches!(&broken, ApiError::BadRequest(m) if m.contains("entry does not load")),
+            "{broken:?}"
+        );
+    }
+
+    /// PF-86: a project.yaml at a ref that does not load is the caller's 400, naming the ref;
+    /// one that is not there is none.
+    #[tokio::test]
+    async fn a_project_file_at_a_ref_that_does_not_load_is_a_bad_request() {
+        let files = [("projects/air/project.yaml", "key: [")];
+        let (_server, local) = forge_holding(&files).await;
+        let refused = project_file_at(&local, "air", "v1")
+            .await
+            .expect_err("garbled");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("'v1'")),
+            "{refused:?}"
+        );
+        let absent = project_file_at(&local, "sea", "v1").await;
+        assert!(absent.expect("a read").is_none());
+    }
+
+    /// PF-86: a registry entry that does not parse, does not load or names no repository is
+    /// the platform's fault, and one that is not there is not found.
+    #[tokio::test]
+    async fn a_registry_entry_that_does_not_read_is_an_internal_error() {
+        let (_server, forge) = forge_holding(&[
+            ("projects/garbled.yaml", "key: ["),
+            ("projects/unloadable.yaml", "spec:\n  colour: red\n"),
+            ("projects/local.yaml", "spec:\n  organizationRef: aa\n"),
+        ])
+        .await;
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(forge));
+        state.mirror.set_layout(2);
+        let admin = bootstrap(&state);
+        for (project, words) in [
+            ("garbled", "does not parse"),
+            ("unloadable", "does not load"),
+            ("local", "names no repository"),
+        ] {
+            let refused = registered(&state, &admin, project)
+                .await
+                .err()
+                .expect("refused");
+            assert!(
+                matches!(&refused, ApiError::Internal(m) if m.contains(words)),
+                "{project}: {refused:?}"
+            );
+        }
+        let gone = registered(&state, &admin, "gone")
+            .await
+            .err()
+            .expect("not there");
+        assert!(matches!(&gone, ApiError::NotFound(_)), "{gone:?}");
+    }
+
+    /// EP-02, AP-75: a slug nobody asks anew and an App URL that already names its repository,
+    /// or names none of the copied ones, change nothing; another name moves the namespace only.
+    #[test]
+    fn a_kept_slug_and_an_app_url_already_right_change_nothing() {
+        let text = concat!(
+            "kind: Endpoint\nmetadata:\n  name: e\n  namespace: air\nspec:\n  slug: kept\n",
+            "---\nkind: App\nmetadata:\n  name: a\n  namespace: air\nspec:\n  source:\n",
+            "    git:\n      url: https://git.example/o/air-app.git\n",
+            "---\nkind: App\nmetadata:\n  name: b\n  namespace: air\nspec:\n  source:\n",
+            "    git:\n      url: https://git.example/o/other.git\n",
+            "---\nkind: App\nmetadata:\n  name: c\n  namespace: air\nspec:\n  image: x\n",
+        );
+        let applications = BTreeMap::from([(
+            "air-app".to_owned(),
+            "https://git.example/o/air-app.git".to_owned(),
+        )]);
+        let keep = Remount {
+            origin: "air",
+            name: "air",
+            fresh_slug: &|_| false,
+            applications: &applications,
+            keep_secrets: true,
+            message: String::new(),
+        };
+        assert_eq!(remount_manifests(text, &keep), None);
+        let moved = Remount {
+            origin: "air",
+            name: "sea",
+            fresh_slug: &|_| false,
+            applications: &applications,
+            keep_secrets: true,
+            message: String::new(),
+        };
+        let remounted = remount_manifests(text, &moved);
+        let remounted = remounted.expect("a moved file");
+        assert!(remounted.contains("namespace: sea"), "{remounted}");
+        assert!(!remounted.contains("namespace: air"), "{remounted}");
+        assert!(remounted.contains("slug: kept"), "{remounted}");
+        assert!(remounted.contains("o/other.git"), "{remounted}");
+    }
+
+    /// PF-89: a copy whose CODEOWNERS is right already, whose listed file is gone and whose
+    /// other files are no manifests takes no commit.
+    #[tokio::test]
+    async fn a_copy_that_already_reads_as_its_project_takes_no_commit() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let files = [("projects/sea/CODEOWNERS", "* @o/sea-writers\n")];
+        let (server, copy) = forge_holding(&files).await;
+        let tree = json!({ "Sha": "t", "Truncated": false, "Tree": [
+            { "Path": "projects/sea/CODEOWNERS", "Type": "blob", "Sha": "b1" },
+            { "Path": "projects/sea/gone.yaml", "Type": "blob", "Sha": "b2" },
+            { "Path": "projects/sea/README.md", "Type": "blob", "Sha": "b3" },
+        ] });
+        let listing = concat!(
+            "/odata/Repositories(Owner='o',Name='r')/",
+            "Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        );
+        Mock::given(method("GET"))
+            .and(path(listing))
+            .respond_with(ResponseTemplate::new(200).set_body_json(tree))
+            .mount(&server)
+            .await;
+        let remount = Remount {
+            origin: "sea",
+            name: "sea",
+            fresh_slug: &|_| false,
+            applications: &BTreeMap::new(),
+            keep_secrets: true,
+            message: "remount".into(),
+        };
+        let commit = remount_copy(&copy, &person("sub-jana"), &remount)
+            .await
+            .expect("a read");
+        assert_eq!(commit, None);
+        let writes = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.method.as_str() != "GET")
+            .count();
+        assert_eq!(writes, 0);
+    }
+
+    /// PF-89: a duplicate needs the origin's own repository and a forge, in that order.
+    #[tokio::test]
+    async fn a_duplicate_needs_the_origins_repository_and_a_forge() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(envelope(
+            "Organization",
+            "aa",
+            json!({ "domain": "aa.sk", "installation": true, "projects": { "creation": "anyone" } }),
+        ));
+        state.mirror.set_layout(2);
+        let request = || -> DuplicateProject {
+            serde_json::from_value(json!({ "name": "copy" })).expect("a request")
+        };
+        let ghost = || axum::extract::Path("ghost".to_owned());
+        let refused = duplicate_project(
+            session(bootstrap(&state)),
+            State(state.clone()),
+            ghost(),
+            Json(request()),
+        )
+        .await
+        .err()
+        .expect("no repository");
+        assert!(
+            matches!(&refused, ApiError::NotFound(m) if m.contains("ghost")),
+            "{refused:?}"
+        );
+        state
+            .mirror
+            .set_repositories(BTreeMap::from([("ghost".to_owned(), "ghost".to_owned())]));
+        let refused = duplicate_project(
+            session(bootstrap(&state)),
+            State(state.clone()),
+            ghost(),
+            Json(request()),
+        )
+        .await
+        .err()
+        .expect("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
 }

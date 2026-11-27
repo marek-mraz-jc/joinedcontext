@@ -1437,7 +1437,7 @@ async fn a_function_call_needs_a_json_body_and_a_portal_token() {
 #[tokio::test]
 async fn conversation_members_are_refused_on_an_application_run() {
     let config = config();
-    let (app, _) = both(mirror(Some(builder_profile_spec())), &config);
+    let (state, app, _) = with_state(mirror(Some(builder_profile_spec())), &config);
     let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
     let id = create_run(&app, &cookie).await["id"]
         .as_str()
@@ -1489,6 +1489,67 @@ async fn conversation_members_are_refused_on_an_application_run() {
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    // The same list again changes nothing, so nothing is said about it.
+    let changes = || async {
+        state
+            .agents
+            .events_since(conversation, 0)
+            .await
+            .expect("events")
+            .iter()
+            .filter(|event| event.kind == "endpoints")
+            .count()
+    };
+    let before = changes().await;
+    assert!(before >= 1, "a new list is said on the run");
+    let (status, answer) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &messages,
+        Some(json!({ "text": "still no data", "endpointNames": [] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+    assert_eq!(changes().await, before);
+}
+
+/// AG-70: a conversation is not moved onto an endpoint its profile does not grant reading.
+#[tokio::test]
+async fn a_conversation_is_not_moved_onto_an_endpoint_its_profile_does_not_grant() {
+    let config = config();
+    let mut spec = builder_profile_spec();
+    spec["access"] = json!({
+        "operations": ["jc_catalog_search"],
+        "endpoints": [{ "name": "helsinki-air", "verbs": ["read"] }]
+    });
+    let app = router(mirror(Some(spec)), &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let (status, created) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/assistant/conversations"),
+        Some(json!({ "message": "Find datasets about bikes" })),
+    )
+    .await;
+    assert!(status.is_success(), "{created}");
+    let conversation = created["id"].as_str().expect("id");
+    let (status, problem) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{conversation}/messages"),
+        Some(json!({ "text": "only bikes", "endpointNames": ["helsinki-bikes"] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("does not grant reading endpoint 'helsinki-bikes'")),
+        "{problem}"
+    );
 }
 
 #[tokio::test]
@@ -1546,6 +1607,75 @@ async fn a_person_steers_a_live_run_and_the_workspace_reads_it() {
             .as_array()
             .is_some_and(|items| items.is_empty()),
         "{body}"
+    );
+}
+
+/// AG-45: a waiting inbox lets the run's own thoughts pass, answers the moment the person
+/// writes, and answers empty the moment the run ends rather than at the end of its wait.
+#[tokio::test]
+async fn a_waiting_inbox_answers_a_message_at_once_and_a_cancel_ends_the_wait() {
+    let config = config();
+    let (app, internal) = both(mirror(Some(builder_profile_spec())), &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let inbox = |after: i64| format!("/internal/agent-runs/{id}/inbox?after={after}&wait=20");
+
+    let started = std::time::Instant::now();
+    let first = inbox(0);
+    let ((status, body), ()) = tokio::join!(
+        internal_call(&internal, Some(proxy_bearer()), Method::GET, &first, None),
+        async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let (status, body) = internal_call(
+                &internal,
+                Some(proxy_bearer()),
+                Method::POST,
+                "/internal/agent-runs/events",
+                Some(json!({ "runId": id, "kind": "thought", "payload": { "text": "hmm" } })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            let (status, _) = call(
+                &app,
+                &cookie,
+                Method::POST,
+                &format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/messages"),
+                Some(json!({ "text": "Add a district filter." })),
+            )
+            .await;
+            assert_eq!(status, StatusCode::NO_CONTENT);
+        }
+    );
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let items = body["items"].as_array().expect("items");
+    assert_eq!(items.len(), 1, "the thought is not the person's: {body}");
+    assert_eq!(items[0]["payload"]["text"], "Add a district filter.");
+    let seq = items[0]["seq"].as_i64().expect("a seq");
+
+    let next = inbox(seq);
+    let ((status, body), ()) = tokio::join!(
+        internal_call(&internal, Some(proxy_bearer()), Method::GET, &next, None),
+        async {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let (status, _) = call(
+                &app,
+                &cookie,
+                Method::POST,
+                &format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/cancel"),
+                None,
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+        }
+    );
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["items"], json!([]), "{body}");
+    assert!(
+        started.elapsed() < Duration::from_secs(15),
+        "neither wait ran to its end"
     );
 }
 
@@ -2021,12 +2151,29 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
     }
 
     let summary = format!("{}?types=Station", uri("summary"));
+    // The realm refuses the Portal's first token: the call is a 503 that names it, and the
+    // next call asks the realm again.
+    Mock::given(method("POST"))
+        .and(path("/realms/helsinki/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&realm)
+        .await;
     let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
     if !kit::sdk_built_or_skip(kit::functions_server().is_some(), "functions-server.js") {
         // A Portal built without sdk/dist says so rather than invoking without the SDK.
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
         return;
     }
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert!(
+        answer["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("no token for jc-functions")),
+        "{answer}"
+    );
+    let (status, answer) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
     assert_eq!(status, StatusCode::CREATED, "{answer}");
     assert_eq!(answer, json!({ "types": [] }));
 
@@ -2080,7 +2227,10 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
         .into_iter()
         .filter(|r| r.method == wiremock::http::Method::POST)
         .count();
-    assert_eq!(tokens, 1, "the Portal's token is fetched once and kept");
+    assert_eq!(
+        tokens, 2,
+        "a refused token is asked for again, a given one is kept"
+    );
 
     let stream = read_stream(
         &app,
@@ -2126,6 +2276,23 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
         assert_eq!(status, expected, "{answer}");
     }
 
+    // An empty body is no input, and an error that names neither a file nor a message comes
+    // back as it is, with no detail taken from it.
+    Mock::given(method("POST"))
+        .and(path("/invoke"))
+        .and(body_partial_json(json!({ "request": { "body": null } })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "status": 500, "error": { "line": 3 }, "logs": []
+        })))
+        .with_priority(1)
+        .up_to_n_times(1)
+        .mount(&runtime)
+        .await;
+    let (status, answer) = call(&app, &cookie, Method::POST, &summary, None).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{answer}");
+    assert_eq!(answer["error"], json!({ "line": 3 }), "{answer}");
+    assert_ne!(answer["detail"], "boom", "{answer}");
+
     files.insert(
         "functions/broken.ts".to_owned(),
         "export default (".to_owned(),
@@ -2149,8 +2316,48 @@ async fn a_function_of_the_run_answers_through_jc_functions() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let (status, _) = call(&app, &cookie, Method::POST, &summary, body).await;
+    let (status, _) = call(&app, &cookie, Method::POST, &summary, body.clone()).await;
     assert_eq!(status, StatusCode::CONFLICT);
+
+    // A runtime that takes no connection is a 503, and the run's log says it did not answer.
+    let mut unreachable = config.clone();
+    unreachable.functions_url = Some("http://localhost:1".into());
+    let oidc = OidcClient::discover(
+        unreachable.oidc.as_ref().expect("a realm"),
+        "https://portal.test/api/v1/auth/callback",
+    )
+    .await
+    .expect("discovery");
+    let state =
+        AppState::new(unreachable, Some(oidc)).with_mirror(mirror(Some(builder_profile_spec())));
+    let app = server::app(state.clone());
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    files.remove("functions/broken.ts");
+    state.agents.set_files(&id, json!(files)).await.unwrap();
+    let uri = format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/functions/summary");
+    let (status, problem) = call(&app, &cookie, Method::POST, &uri, body).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("jc-functions did not answer")),
+        "{problem}"
+    );
+    let stream = read_stream(
+        &app,
+        &cookie,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{id}/events"),
+        Some(1),
+        1,
+    )
+    .await;
+    assert!(
+        stream.contains(r#""error":"jc-functions did not answer""#),
+        "{stream}"
+    );
 }
 
 /// Without a runtime address a function call is 503, not a call that goes nowhere.
@@ -2288,6 +2495,36 @@ async fn usage_and_the_preview_url_are_recorded_from_the_stream() {
         run["previewUrl"],
         json!("https://portal.hel.fi/apps/city-bikes-overview/")
     );
+
+    // A later preview moves the address and keeps the first frame's time; one that names no
+    // address changes nothing.
+    for payload in [
+        json!({ "previewUrl": "https://portal.hel.fi/apps/city-bikes-overview/?v=2" }),
+        json!({ "phase": "reloading" }),
+    ] {
+        let (status, body) = internal_call(
+            &internal,
+            Some(proxy_bearer()),
+            Method::POST,
+            "/internal/agent-runs/events",
+            Some(json!({ "runId": id, "kind": "preview", "payload": payload })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    let (_, later) = call(
+        &app,
+        &cookie,
+        Method::GET,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{id}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        later["previewUrl"],
+        json!("https://portal.hel.fi/apps/city-bikes-overview/?v=2")
+    );
+    assert_eq!(later["firstFrameMs"], run["firstFrameMs"], "{later}");
 }
 
 #[tokio::test]
@@ -2498,6 +2735,40 @@ async fn the_diagnostics_door_answers_the_proxy_for_the_runs_own_project_only() 
     )
     .await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+}
+
+/// AG-57: a pipeline of the run's own project answers with the runner's counters, named.
+#[tokio::test]
+async fn the_diagnostics_door_reads_a_pipeline_of_the_runs_project() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let runner = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/{PROJECT}/metrics")))
+        .respond_with(ResponseTemplate::new(200).set_body_string(""))
+        .mount(&runner)
+        .await;
+    let mut config = config();
+    config.pipeline_runner_url = Some(format!("{}/{{project}}", runner.uri()));
+    let mirror = mirror(Some(builder_profile_spec()));
+    mirror.upsert(envelope("Pipeline", "hsl-bikes", PROJECT, json!({})));
+    let (app, internal) = both(mirror, &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let id = create_run(&app, &cookie).await["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    let (status, metrics) = internal_call(
+        &internal,
+        Some(proxy_bearer()),
+        Method::GET,
+        &format!("/internal/agent-runs/{id}/diagnostics/pipeline/hsl-bikes"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{metrics}");
+    assert_eq!(metrics["pipeline"], "hsl-bikes", "{metrics}");
+    assert!(metrics["scrapedAt"].is_string(), "{metrics}");
 }
 
 #[tokio::test]
@@ -3478,7 +3749,49 @@ async fn a_profile_that_lists_endpoints_refuses_a_run_on_one_it_does_not_grant()
         .is_some_and(|d| d.contains("helsinki-bikes") && d.contains("AG-70")));
 
     let app = with_endpoints(json!([{ "name": "helsinki-bikes", "verbs": ["read"] }]));
+    // A run that writes needs write on its endpoint too: read alone is refused, naming both.
+    let mut writes = create_body();
+    writes["dataNeeds"][0]["operations"] = json!(["queryEntity", "updateAttrs"]);
+    let (status, problem) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs"),
+        Some(writes),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
+    assert!(
+        problem["detail"]
+            .as_str()
+            .is_some_and(|d| d.contains("read and write") && d.contains("helsinki-bikes")),
+        "{problem}"
+    );
     create_run(&app, &cookie).await;
+}
+
+/// AP-75: a static application whose repository name would exceed the forge's limit is refused
+/// before anything is recorded, with the longest name that fits.
+#[tokio::test]
+async fn a_static_application_whose_repository_name_is_too_long_is_refused() {
+    let config = config();
+    let app = router(mirror(Some(builder_profile_spec())), &config);
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let project = "p".repeat(55);
+    let (status, problem) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{project}/agent-runs"),
+        Some(static_body(&"b".repeat(50))),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("AP-75") && detail.contains("at most 44 characters"),
+        "{problem}"
+    );
 }
 
 /// PF-73, PF-74: a project starts as many runs a day as its quota allows, and the next one is
@@ -3667,6 +3980,32 @@ mod the_registry_a_run_reaches {
         );
     }
 
+    /// T-6226: once the person a run acts for signs out, the run calls nothing more in their
+    /// name, and the refusal says to start it again.
+    #[tokio::test]
+    async fn a_run_whose_person_signed_out_calls_nothing() {
+        let config = config();
+        let (state, app, internal) = with_state(mirror(Some(builder_profile_spec())), &config);
+        let run = run_for(&app, &config).await;
+        state
+            .revoke_subject(&format!("f:1:{STEWARD}"), session::now_unix() + 60)
+            .await;
+        let (status, answer) = mcp(
+            &internal,
+            &run,
+            json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list",
+                    "params": { "project": PROJECT } }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{answer}");
+        assert!(
+            answer["detail"]
+                .as_str()
+                .is_some_and(|d| d.contains("signed out since it started")),
+            "{answer}"
+        );
+    }
+
     /// The same list from the person's own door, with no run: the profile is what took the rest
     /// away, and a steward at a keyboard still has it.
     #[tokio::test]
@@ -3844,7 +4183,8 @@ async fn a_static_application_run_lives_in_its_own_repository() {
     let state = AppState::new(config.clone(), None)
         .with_mirror(mirror(Some(builder_profile_spec())))
         .with_shako(forge(&server));
-    let app = server::app(state);
+    let app = server::app(state.clone());
+    let internal = server::internal_app(state);
     let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
 
     let (status, created) = call(
@@ -3858,6 +4198,21 @@ async fn a_static_application_run_lives_in_its_own_repository() {
     assert_eq!(status, StatusCode::ACCEPTED, "{created}");
     let run = &created;
     assert_eq!(run["pathPrefix"], json!(""), "{created}");
+    // The proxy reads no repository for it: the Portal writes the application's own one.
+    let (status, context) = internal_call(
+        &internal,
+        Some(proxy_bearer()),
+        Method::GET,
+        &format!(
+            "/internal/agent-runs/{}",
+            run["id"].as_str().unwrap_or_default()
+        ),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{context}");
+    assert_eq!(context["pathPrefix"], json!(""), "{context}");
+    assert!(context.get("repository").is_none(), "{context}");
     let source = run["sourceUrl"].as_str().unwrap_or_default().to_owned();
     let (_, read) = call(
         &app,
@@ -3997,6 +4352,127 @@ async fn a_previewing_workspace_run_publishes_as_a_change_and_awaits_approval() 
         .expect("run");
     assert_eq!(stored.status, "awaiting_approval");
     std::mem::forget(server);
+}
+
+/// AP-46, AP-69, AP-71: an unattended run waiting for approval publishes over the App the
+/// project already has, stays waiting, and a Change number past what the store keeps is not
+/// remembered while the Change is still made.
+#[tokio::test]
+async fn an_unattended_run_publishes_over_its_app_and_keeps_waiting() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    let server = common::forge().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{}/Shako.OpenPullRequest", common::REPO)))
+        .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+            "Number": 3_000_000_000_u64,
+            "HtmlUrl": "https://shako.example/pulls/3000000000",
+            "State": "open",
+            "Mergeable": true,
+            "Merged": false
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let config = config();
+    let client = joinedcontext_portal::forge::ShakoClient::new(
+        server.uri().parse().expect("a url"),
+        "test-owner",
+        "test-repo",
+        "forge-token",
+    )
+    .expect("a client");
+    let state = AppState::new(config.clone(), None)
+        .with_mirror(mirror(Some(builder_profile_spec())))
+        .with_shako(Arc::new(client));
+    state.mirror.upsert(envelope(
+        "ContextSpace",
+        "helsinki",
+        PROJECT,
+        json!({ "isSandbox": true }),
+    ));
+    state.mirror.upsert(envelope(
+        "App",
+        "city-bikes",
+        PROJECT,
+        json!({ "kind": "ui-rust", "visibility": "project", "source": { "path": "./src" } }),
+    ));
+    let mut run = a_static_run(AgentRunStatus::AwaitingApproval);
+    run.path_prefix = "apps/city-bikes".into();
+    run.app_class = "ui-rust".into();
+    run.unattended = true;
+    run.data_needs = create_body()["dataNeeds"].clone();
+    run.preview_url = Some("https://preview.example/city-bikes/".into());
+    state.agents.create_run(&run).await.expect("a run");
+    let app = server::app(state.clone());
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let (status, change) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{}/publish", run.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{change}");
+    let stored = state
+        .agents
+        .get_run(&run.id)
+        .await
+        .expect("store")
+        .expect("run");
+    assert_eq!(stored.status, "awaiting_approval");
+    assert_eq!(stored.merge_request, None, "{change}");
+    std::mem::forget(server);
+}
+
+/// SDK-38: a version whose tests failed is not published; the refusal names the failing test
+/// and the run does not move.
+#[tokio::test]
+async fn a_version_whose_tests_failed_is_not_published() {
+    let config = config();
+    let state =
+        AppState::new(config.clone(), None).with_mirror(mirror(Some(builder_profile_spec())));
+    let mut run = a_static_run(AgentRunStatus::Previewing);
+    run.preview_url = Some("https://preview.example/city-bikes/?v=2".into());
+    state.agents.create_run(&run).await.expect("a run");
+    state
+        .agents
+        .append_event(
+            &run.id,
+            "tests",
+            json!({
+                "version": 2,
+                "outcome": "failed",
+                "failed": 1,
+                "failures": [{ "name": "renders", "file": "src/App.test.tsx" }]
+            }),
+        )
+        .await
+        .expect("an event");
+    let app = server::app(state.clone());
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let (status, problem) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs/{}/publish", run.id),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{problem}");
+    let detail = problem["detail"].as_str().unwrap_or_default();
+    assert!(
+        detail.contains("fails 1 of its tests") && detail.contains("src/App.test.tsx › renders"),
+        "{problem}"
+    );
+    let stored = state
+        .agents
+        .get_run(&run.id)
+        .await
+        .expect("store")
+        .expect("run");
+    assert_eq!(stored.status, "previewing");
 }
 
 /// AP-77: a static run with nothing committed to its branch is not published, and the refusal

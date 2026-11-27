@@ -163,3 +163,158 @@ pub fn router() -> Router<AppState> {
             get(retention_deleted),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::extract::FromRequest;
+    use serde_json::json;
+    use wiremock::matchers::{method, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn owner(state: &AppState) -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec![state.config.bootstrap_admins.clone()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// The space `city/air`, its rules counted by the broker at `broker`.
+    fn world(broker: &MockServer, tag: &str) -> AppState {
+        let token = std::env::temp_dir().join(format!("jc-retention-{}-{tag}", std::process::id()));
+        std::fs::write(&token, "broker-admin").expect("a token file");
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.views = Some(std::sync::Arc::new(
+            crate::reconciler::views::ViewSync::new(broker.uri(), token),
+        ));
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "ContextSpace".into(),
+            metadata: crate::resource::ObjectMeta::new("air", "city"),
+            spec: json!({}),
+            status: None,
+        });
+        state
+    }
+
+    fn draft(rules: serde_json::Value) -> Result<Json<RetentionDraft>, JsonRejection> {
+        Ok(Json(
+            serde_json::from_value(json!({ "retention": rules })).expect("a draft"),
+        ))
+    }
+
+    fn at() -> Path<(String, String)> {
+        Path(("city".to_owned(), "air".to_owned()))
+    }
+
+    /// DM-85: an owner's draft is counted by the broker, per class and kind; what the sweeps
+    /// deleted is read the same way.
+    #[tokio::test]
+    async fn an_owners_draft_and_the_deletions_are_counted_by_the_broker() {
+        let broker = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/q/retention/[^/]+/preview$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "counts": [{ "type": "https://e.org/Bus", "kind": "entity", "count": 3 }]
+            })))
+            .mount(&broker)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(r"^/q/retention/[^/]+/deleted$"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "counts": [{ "type": "https://e.org/Bus", "kind": "history", "count": 7 }]
+            })))
+            .mount(&broker)
+            .await;
+        let state = world(&broker, "counted");
+        let rows = |counts: &[RetentionCount]| {
+            counts
+                .iter()
+                .map(|c| (c.entity_type.clone(), c.kind.clone(), c.count))
+                .collect::<Vec<_>>()
+        };
+        let Json(preview) = preview_retention(
+            owner(&state),
+            State(state.clone()),
+            at(),
+            draft(json!([{ "entityType": "Bus", "current": "PT5M" }])),
+        )
+        .await
+        .expect("counted");
+        assert_eq!(
+            rows(&preview.counts),
+            [("Bus".to_owned(), "entity".to_owned(), 3)]
+        );
+        let Json(deleted) = retention_deleted(owner(&state), State(state.clone()), at())
+            .await
+            .expect("counted");
+        assert_eq!(
+            rows(&deleted.counts),
+            [("Bus".to_owned(), "history".to_owned(), 7)]
+        );
+    }
+
+    /// A body that is no draft, a rule the manifest refuses, and a broker that refuses the
+    /// count: each answered before or instead of a count.
+    #[tokio::test]
+    async fn a_bad_draft_or_a_refusing_broker_is_said_plainly() {
+        let broker = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/q/retention/[^/]+/preview$"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&broker)
+            .await;
+        let state = world(&broker, "refused");
+        let request = axum::http::Request::builder()
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from("[1]"))
+            .expect("a request");
+        let rejected = Json::<RetentionDraft>::from_request(request, &()).await;
+        assert!(rejected.is_err());
+        let answer = preview_retention(owner(&state), State(state.clone()), at(), rejected).await;
+        assert!(
+            matches!(answer, Err(ApiError::BadRequest(_))),
+            "{:?}",
+            answer.err()
+        );
+        let refused = preview_retention(
+            owner(&state),
+            State(state.clone()),
+            at(),
+            draft(json!([{ "entityType": "*", "current": "PT5M" }])),
+        )
+        .await;
+        assert!(
+            matches!(&refused, Err(ApiError::BadRequest(why)) if why.contains("DM-97")),
+            "{:?}",
+            refused.err()
+        );
+        let down = preview_retention(
+            owner(&state),
+            State(state.clone()),
+            at(),
+            draft(json!([{ "entityType": "Bus", "current": "PT5M" }])),
+        )
+        .await;
+        assert!(
+            matches!(&down, Err(ApiError::Unavailable(why)) if why.contains("did not count")),
+            "{:?}",
+            down.err()
+        );
+    }
+}

@@ -485,4 +485,35 @@ mod tests {
             "{refused:?}"
         );
     }
+
+    /// An import into a project the organization does not hold is 404 naming it, before the
+    /// archive is read.
+    #[tokio::test]
+    async fn an_import_into_a_project_that_is_not_there_is_not_found() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.set_layout(2);
+        let identity = crate::auth::session::Identity {
+            client: None,
+            subject: "sub-jana".into(),
+            username: "jana".into(),
+            email: Some("jana@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        };
+        let refused = super::import(
+            &state,
+            &identity,
+            "nowhere",
+            b"not a zip",
+            crate::api::import_git::GitImport::default(),
+        )
+        .await
+        .expect_err("no such project");
+        assert!(
+            matches!(&refused, crate::error::ApiError::NotFound(m) if m == "project 'nowhere' not found"),
+            "{refused:?}"
+        );
+    }
 }

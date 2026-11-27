@@ -208,7 +208,7 @@ fn judge(
 /// The archive's files as `(projects/{project}/…, text)`, each once. A path is the repository's
 /// own (`spaces/air/endpoints/air.yaml`) or the Portal's (`projects/{project}/…`); another
 /// project's path, a file that is not text and an unencrypted file under `secrets/` are refused.
-fn repository_files(bytes: &[u8], project: &str) -> Result<Vec<(String, String)>, ApiError> {
+pub fn repository_files(bytes: &[u8], project: &str) -> Result<Vec<(String, String)>, ApiError> {
     if bytes.len() > MAX_UPLOAD_BYTES {
         return Err(ApiError::BadRequest(format!(
             "the upload is larger than the {MAX_UPLOAD_BYTES} byte import limit"
@@ -339,6 +339,26 @@ mod tests {
             ("projects/zilina/a.yaml", b"a: 2\n")
         ]))
         .contains("twice"));
+    }
+
+    /// An entry whose bytes fail their checksum did not read, and is refused by name.
+    #[test]
+    fn an_entry_that_does_not_read_is_refused_by_name() {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let method = zip::CompressionMethod::Stored;
+        let stored = SimpleFileOptions::default().compression_method(method);
+        writer.start_file("spaces/a/x.yaml", stored).expect("entry");
+        writer.write_all(b"marker: 1111\n").expect("write");
+        let mut bytes = writer.finish().expect("finish").into_inner();
+        let at = bytes
+            .windows(4)
+            .position(|w| w == b"1111")
+            .expect("the stored content");
+        bytes[at] = b'2';
+        let why = refusal(&bytes);
+        assert!(why.contains("'spaces/a/x.yaml' did not read"), "{why}");
     }
 
     #[test]
