@@ -354,6 +354,18 @@ async fn host_mode_reaches_every_module_and_404s_unknown_hosts() {
             "{path} on the API host: {body}"
         );
     }
+    // A Portal page's read of an Endpoint (T-6783): the Portal in this jc is asked for the
+    // person's token; a cookie that names no session leaves the read anonymous, never wider.
+    let anonymous = get(addr, "api.city.test", "/api/endpoint/x").await;
+    let session = reqwest::Client::new()
+        .get(format!("http://{addr}/api/endpoint/x"))
+        .header("host", "api.city.test")
+        .header("cookie", "jc_session=names-nobody")
+        .header("sec-fetch-site", "same-origin")
+        .send()
+        .await
+        .expect("the gateway answers");
+    assert_eq!(session.status(), anonymous.0, "{}", anonymous.1);
 
     let apps = running.apps_addr.expect("an apps listener");
     for path in [
@@ -857,6 +869,13 @@ async fn the_gateway_starts_as_a_data_plane_without_the_portal() {
         answer.status()
     );
     running.stop().await.expect("stop");
+    // A data plane whose gateway the environment breaks stops whole and names the setting.
+    // SAFETY of the test: env access is serialized by the lock above; removed before unlocking.
+    unsafe { std::env::set_var("JC_GATEWAY_BIND", "no-address-7903") };
+    let result = jc::start(&cfg, CancellationToken::new()).await;
+    unsafe { std::env::remove_var("JC_GATEWAY_BIND") };
+    let err = result.err().expect("the gateway is refused");
+    assert!(err.to_string().contains("JC_GATEWAY_BIND"), "{err}");
 }
 
 /// `[antares.database]` names PostgreSQL: a store the environment sets to anything else is

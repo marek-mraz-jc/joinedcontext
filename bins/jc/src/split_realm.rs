@@ -712,6 +712,24 @@ mod tests {
         assert_eq!(report.realms["bbsk"].copied, 2);
     }
 
+    /// A store that refuses a copy for any reason but a duplicate stops the run with the store
+    /// named; a duplicate alone is counted (above).
+    #[tokio::test]
+    async fn a_copy_the_store_refuses_stops_the_run() {
+        let (store, ..) = fixture().await;
+        let faulty = crate::modules::faulty_store::FaultyStore::new(std::sync::Arc::new(store));
+        faulty.fail("create_user");
+        let e = run(&faulty, "dev", &orgs(), "platform-admins", Mode::Apply)
+            .await
+            .unwrap_err();
+        assert!(e.starts_with("kaisatsu store: "), "{e}");
+        assert!(e.contains(crate::modules::faulty_store::REFUSED), "{e}");
+        let report = run(&faulty, "dev", &orgs(), "platform-admins", Mode::DryRun)
+            .await
+            .expect("a dry run writes nothing");
+        assert_eq!(report.realms["hel"].copied, 0);
+    }
+
     #[tokio::test]
     async fn a_copy_that_changed_its_password_is_left_as_it_is() {
         let (store, _, hel, _) = fixture().await;

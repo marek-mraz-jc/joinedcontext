@@ -1360,6 +1360,187 @@ mod tests {
         }
     }
 
+    /// Each store write of a Postgres start that the server refuses stops it with a module
+    /// error, on real Postgres (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares):
+    /// after one clean start a trigger refuses the catalogue table's writes for the hidden list,
+    /// then for an Organization's catalogue, then the publisher table's for its publisher, and
+    /// last the default catalogue once it is gone. Each refusal leaves the next start whole.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test reads its database URL, as the split test does.
+    async fn each_refused_store_write_of_a_postgres_start_refuses_it() {
+        use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+        use std::str::FromStr;
+        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
+            println!("SKIP each_refused_store_write: DATAROOM_TEST_DATABASE_URL is unset");
+            return;
+        };
+        let base = PgConnectOptions::from_str(&admin_url).unwrap();
+        let server = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone())
+            .await
+            .unwrap();
+        let db = format!("jc_drwrite_{}", std::process::id());
+        let dir = tempfile::tempdir().unwrap();
+        let mut statements = vec![
+            format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
+            format!("CREATE DATABASE {db}"),
+            "DO $$ BEGIN CREATE ROLE dataroom_app NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE \
+             NOBYPASSRLS; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;"
+                .to_owned(),
+        ];
+        for role in ["jc_drw_owner", "jc_drw_app"] {
+            statements.push(format!(
+                "DO $$ BEGIN CREATE ROLE {role}; EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$;
+                 ALTER ROLE {role} LOGIN NOSUPERUSER NOBYPASSRLS PASSWORD 'pw-{role}-7903';
+                 GRANT CREATE, CONNECT ON DATABASE {db} TO {role};"
+            ));
+        }
+        for statement in statements {
+            sqlx::raw_sql(sqlx::AssertSqlSafe(statement))
+                .execute(&server)
+                .await
+                .unwrap();
+        }
+        let url = |role: &str| {
+            format!(
+                "postgres://{role}@{}:{}/{db}",
+                base.get_host(),
+                base.get_port()
+            )
+        };
+        let file = |role: &str| {
+            let file = dir.path().join(role);
+            std::fs::write(&file, format!("pw-{role}-7903")).unwrap();
+            file
+        };
+        let database = crate::pg::DatabaseSection {
+            url: url("jc_drw_app"),
+            password_file: file("jc_drw_app"),
+            max_connections: Some(2),
+            migrate_url: Some(url("jc_drw_owner")),
+            migrate_password_file: Some(file("jc_drw_owner")),
+            maintenance_url: None,
+            maintenance_password_file: None,
+        };
+        let (setup, secrets) = (
+            crate::setup::Setup::default(),
+            crate::config::Secrets::default(),
+        );
+        let siblings = crate::siblings::Siblings::new(&[], "127.0.0.1:1".parse().unwrap());
+        let started = |hidden: bool, organizations: Vec<OrganizationSection>| {
+            let cfg = DataroomSection {
+                database: Some(database.clone()),
+                hidden: hidden.then(|| BTreeMap::from([("air".to_owned(), "gate".to_owned())])),
+                ..DataroomSection::default()
+            };
+            let ctx = crate::modules::BuildCtx {
+                setup: &setup,
+                siblings: &siblings,
+                secrets: &secrets,
+                door: None,
+                portal_internal: None,
+            };
+            async move {
+                let (shutdown, tasks) = (
+                    tokio_util::sync::CancellationToken::new(),
+                    tokio_util::task::TaskTracker::new(),
+                );
+                let built = build_with_writer(
+                    &cfg,
+                    &organizations,
+                    ctx,
+                    Mount::default(),
+                    None,
+                    &shutdown,
+                    &tasks,
+                )
+                .await
+                .map(|_| ())
+                .map_err(|e| e.to_string());
+                shutdown.cancel();
+                built
+            }
+        };
+        let city = || vec![organization("city", "00000000-0000-7000-8000-000000007903")];
+        started(false, Vec::new())
+            .await
+            .expect("a clean first start");
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(base.clone().database(&db))
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE TABLE public.refuse (tbl text NOT NULL);
+             CREATE FUNCTION public.refuse() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$
+             BEGIN
+                 IF EXISTS (SELECT 1 FROM public.refuse WHERE tbl = TG_TABLE_NAME) THEN
+                     RAISE EXCEPTION 'the test refuses %', TG_TABLE_NAME;
+                 END IF;
+                 RETURN NEW;
+             END $$;
+             CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON dataroom.cat_catalogue
+                 FOR EACH ROW EXECUTE FUNCTION public.refuse();
+             CREATE TRIGGER refuse BEFORE INSERT OR UPDATE ON dataroom.cat_publisher
+                 FOR EACH ROW EXECUTE FUNCTION public.refuse();",
+        )
+        .execute(&admin)
+        .await
+        .unwrap();
+        let refuse = |table: &'static str| {
+            let admin = admin.clone();
+            async move {
+                sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                    "DELETE FROM public.refuse; INSERT INTO public.refuse VALUES ('{table}')"
+                )))
+                .execute(&admin)
+                .await
+                .unwrap();
+            }
+        };
+        let quiet = |e: &str| !e.contains("-7903");
+        refuse("cat_catalogue").await;
+        // The default catalogue is there: only the hidden list writes it.
+        started(false, Vec::new())
+            .await
+            .expect("a start that writes nothing");
+        let e = started(true, Vec::new())
+            .await
+            .expect_err("the hidden list");
+        assert!(e.contains("[dataroom.hidden]") && quiet(&e), "{e}");
+        let e = started(false, city())
+            .await
+            .expect_err("the city's catalogue");
+        assert!(e.contains("dataroom") && quiet(&e), "{e}");
+        refuse("cat_publisher").await;
+        let e = started(false, city())
+            .await
+            .expect_err("the city's publisher");
+        assert!(e.contains("dataroom") && quiet(&e), "{e}");
+        refuse("cat_catalogue").await;
+        sqlx::raw_sql("TRUNCATE dataroom.cat_catalogue CASCADE")
+            .execute(&admin)
+            .await
+            .unwrap();
+        let e = started(false, Vec::new())
+            .await
+            .expect_err("the default catalogue");
+        assert!(e.contains("dataroom") && quiet(&e), "{e}");
+        sqlx::raw_sql("DELETE FROM public.refuse")
+            .execute(&admin)
+            .await
+            .unwrap();
+        started(true, city()).await.expect("a whole start again");
+        drop(admin);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE IF EXISTS {db} WITH (FORCE)"
+        )))
+        .execute(&server)
+        .await
+        .unwrap();
+    }
+
     /// ODP-12 on real Postgres (`DATAROOM_TEST_DATABASE_URL`, a superuser that only prepares):
     /// two Organizations' catalogues written as before the split, under the installation's one
     /// OrgId, then a start of the module as its NOSUPERUSER migration and request roles. Every

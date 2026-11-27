@@ -936,19 +936,14 @@ pub async fn build(
         );
     }
     let config = config(env, &filled)?;
-    if filled.contains_key("JC_GATEWAY_REPO_DIR") {
-        let forge = ctx
-            .siblings
-            .get(Module::Shako)
-            .map(|s| s.internal.clone())
-            .ok_or_else(|| err("no shako"))?;
-        // The shako token is held in memory (per boot, or the operator's file read at start).
-        let token = ctx
-            .setup
-            .get(Secret::ShakoToken)
-            .ok_or_else(|| err("no shako token"))?
-            .value
-            .clone();
+    // `vars` fills the forge's directories only beside shako and its token, which is held in
+    // memory (per boot, or the operator's file read at start).
+    let shako = ctx
+        .siblings
+        .get(Module::Shako)
+        .zip(ctx.setup.get(Secret::ShakoToken));
+    if let (true, Some((shako, given))) = (filled.contains_key("JC_GATEWAY_REPO_DIR"), shako) {
+        let (forge, token) = (shako.internal.clone(), given.value.clone());
         // The repository the Portal writes, read the same way (JC_SHAKO_OWNER, JC_SHAKO_REPO).
         let repo = setup::forge_repo(env).map_err(err)?;
         let work = work_dir(ctx.setup);
@@ -1536,6 +1531,19 @@ mod tests {
             let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
             assert_eq!(body, link.as_bytes(), "{org} on {host}");
         }
+        // An Organization the router placed whose links jc holds neither from jc.toml nor from
+        // the registry (one added or removed a moment ago) is refused: the gateway would else
+        // answer for every Organization.
+        let mut req = axum::http::Request::builder()
+            .uri("/x")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.extensions_mut()
+            .insert(Mount::new("gateway", "https", "api.gone7903.sk", "").unwrap());
+        req.extensions_mut()
+            .insert(jc_router::Organization("gone7903".to_owned()));
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::MISDIRECTED_REQUEST);
     }
 
     /// A read from a sandboxed page reaches the gateway anonymously and gets CORS for `null`; a
@@ -2300,6 +2308,42 @@ mod tests {
         assert!(to.join("repo/current/projects/p.yaml").is_file());
         assert!(to.join("projects/p/project.yaml").is_file());
         std::fs::rename(&to, work.path()).unwrap();
+    }
+
+    /// A pass of the follower against a forge that answers nothing keeps the last tree, says
+    /// why and tries again on the next pass; no token reaches the log.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_forge_pass_is_logged_and_the_follower_goes_on() {
+        let (log, _guard) = super::super::capture_log();
+        let work = tempfile::tempdir().unwrap();
+        let repo = setup::ForgeRepo {
+            owner: "city".into(),
+            repo: "conf".into(),
+        };
+        let token = jc_secret::Secret::new("forge-token-7903-not-secret".to_owned());
+        let follower = tokio::spawn(follow_forge(
+            "http://127.0.0.1:9".into(),
+            repo,
+            token,
+            work.path().to_owned(),
+        ));
+        let text = || std::fs::read_to_string(log.path()).unwrap();
+        for _ in 0..2_000 {
+            if text().matches("the forge checkout failed").count() >= 2 {
+                break;
+            }
+            // The checkout runs on a blocking thread in real time; the paused clock moves on
+            // only while this task sleeps.
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        follower.abort();
+        let text = text();
+        assert!(
+            text.matches("the forge checkout failed").count() >= 2,
+            "{text}"
+        );
+        assert!(!text.contains("forge-token-7903"), "{text}");
     }
 
     #[test]

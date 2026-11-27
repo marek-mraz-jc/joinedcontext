@@ -2808,6 +2808,32 @@ mod tests {
                 .unwrap(),
             "import\n"
         );
+        // An imported jc-assistant without the jc-functions audience (T-7774): a refused write
+        // stops the start, the Portal's hosts already in place; the next start adds it.
+        let assistant = || ClientRepresentation {
+            id: uuid_like(),
+            realm_id: realm.clone(),
+            client_id: setup::ASSISTANT_CLIENT.into(),
+            ..ClientRepresentation::default()
+        };
+        store.upsert_client(assistant()).await.unwrap();
+        faults.fail("upsert_client");
+        refused(
+            apply_portal_realm(&store, imported.ctx(), true, true)
+                .await
+                .unwrap_err(),
+        );
+        let (faults, store) = faulty();
+        with_realm(&store, &realm).await;
+        store.upsert_client(portal_client()).await.unwrap();
+        store.upsert_client(assistant()).await.unwrap();
+        apply_portal_realm(&store, imported.ctx(), true, true)
+            .await
+            .unwrap();
+        assert!(
+            logs.text()
+                .contains("jc-assistant's tokens name jc-functions")
+        );
         faults.fail("get_client_by_client_id");
         refused(
             apply_portal_realm(&store, imported.ctx(), true, true)
