@@ -221,6 +221,7 @@ mod tests {
             );
         }
         assert!(<Runtime as RustEmbed>::get("no/such/file").is_none());
+        assert!(Runtime::get("no/such/file").is_none());
         let by_name: Vec<String> = Template::iter().map(|path| path.into_owned()).collect();
         let by_trait: Vec<String> = <Template as RustEmbed>::iter()
             .map(|path| path.into_owned())
@@ -233,6 +234,7 @@ mod tests {
             );
         }
         assert!(<Template as RustEmbed>::get("no/such/file").is_none());
+        assert!(Template::get("no/such/file").is_none());
         let by_name: Vec<String> = TemplateWasm::iter().map(|path| path.into_owned()).collect();
         let by_trait: Vec<String> = <TemplateWasm as RustEmbed>::iter()
             .map(|path| path.into_owned())
@@ -245,6 +247,7 @@ mod tests {
             );
         }
         assert!(<TemplateWasm as RustEmbed>::get("no/such/file").is_none());
+        assert!(TemplateWasm::get("no/such/file").is_none());
     }
 
     fn config() -> serde_json::Value {

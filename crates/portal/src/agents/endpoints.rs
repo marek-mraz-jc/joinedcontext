@@ -209,13 +209,12 @@ pub fn join_by_id(rows: &mut Vec<Value>, read: Vec<Value>) {
                 .filter_map(Value::as_object_mut)
                 .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
         });
-        match known {
-            Some(row) => {
-                for (name, value) in attributes {
-                    row.entry(name).or_insert(value);
-                }
-            }
-            None => rows.push(Value::Object(attributes)),
+        let Some(row) = known else {
+            rows.push(Value::Object(attributes));
+            continue;
+        };
+        for (name, value) in attributes {
+            row.entry(name).or_insert(value);
         }
     }
 }

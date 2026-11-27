@@ -74,6 +74,7 @@ mod tests {
             );
         }
         assert!(<Dist as RustEmbed>::get("no/such/file").is_none());
+        assert!(Dist::get("no/such/file").is_none());
     }
 
     /// Each getter answers the embedded file exactly, or `None` when the build carried no SDK.

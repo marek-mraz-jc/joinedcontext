@@ -293,6 +293,7 @@ mod tests {
             );
         }
         assert!(<Gallery as RustEmbed>::get("no/such/file").is_none());
+        assert!(Gallery::get("no/such/file").is_none());
         let by_name: Vec<String> = Overlay::iter().map(|path| path.into_owned()).collect();
         let by_trait: Vec<String> = <Overlay as RustEmbed>::iter()
             .map(|path| path.into_owned())
@@ -305,6 +306,7 @@ mod tests {
             );
         }
         assert!(<Overlay as RustEmbed>::get("no/such/file").is_none());
+        assert!(Overlay::get("no/such/file").is_none());
     }
 
     fn name(request: &str) -> Option<String> {
