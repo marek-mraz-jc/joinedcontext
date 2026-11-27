@@ -689,3 +689,293 @@ fn an_import_pinned_to_another_major_or_to_a_draft_fails_the_model_dm22() {
     assert!(!output.status.success());
     assert!(report(&output)["models"].to_string().contains("is a draft"));
 }
+
+/// A DataModel `name` in `namespace` under `rel_dir`, with `spec` as its whole spec block and,
+/// when given, its LinkML source beside it as `{name}.linkml.yaml`.
+fn data_model(
+    dir: &Path,
+    rel_dir: &str,
+    name: &str,
+    namespace: &str,
+    spec: &str,
+    source: Option<&str>,
+) {
+    common::write(
+        dir,
+        &format!("{rel_dir}/{name}.yaml"),
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: {name}\n  namespace: {namespace}\nspec:\n{spec}"),
+    );
+    if let Some(source) = source {
+        common::write(dir, &format!("{rel_dir}/{name}.linkml.yaml"), source);
+    }
+}
+
+/// A published model's spec at major 1, its source `{name}.linkml.yaml`, only a JSON Schema.
+fn published(name: &str) -> String {
+    format!("  contextSpaceRef: ovzdusie\n  linkml: {name}.linkml.yaml\n  version: 1.0.0\n  lifecycle: published\n  classes: [\"Zone\"]\n  artifacts:\n    jsonSchema: json-schema/{name}.v1.json\n")
+}
+
+fn validate(dir: &Path, url: &str, source: &str) -> String {
+    common::write(
+        dir,
+        &format!("{MODEL_DIR}/parking-spot.linkml.yaml"),
+        source,
+    );
+    let tools = jcctl::model::ModelTools::new(url);
+    jcctl::model::run(dir, None, &tools, jcctl::model::Mode::Validate)
+        .expect("the run reports")
+        .to_json()
+        .to_string()
+}
+
+/// DM-76, DM-22: each way an import resolves or fails names the import; a model that does not
+/// read or leaves its directory is reported, not fatal; a repository or organization checkout
+/// that is not there stops the run.
+#[test]
+fn every_import_outcome_and_every_unreadable_model_is_reported() {
+    let dir = repo("model-import-outcomes", PIN);
+    with_organization_model(&dir);
+    data_model(
+        &dir,
+        MODEL_DIR,
+        "zones",
+        "ovzdusie",
+        &published("zones"),
+        Some("id: https://example.org/zones\nname: zones\n"),
+    );
+    data_model(
+        &dir,
+        MODEL_DIR,
+        "broken",
+        "ovzdusie",
+        "  version: banana\n",
+        None,
+    );
+    data_model(
+        &dir,
+        MODEL_DIR,
+        "outside",
+        "ovzdusie",
+        &published("outside").replace(
+            "linkml: outside.linkml.yaml",
+            "linkml: ../outside.linkml.yaml",
+        ),
+        None,
+    );
+    let (url, _) = spawn_recording();
+
+    let said = validate(
+        &dir,
+        &url,
+        "name: parking\nimports: [project.zones.v1, org.stations.v1, org.stations.v1]\n",
+    );
+    assert!(said.contains("broken.yaml"), "{said}");
+    assert!(said.contains("outside.yaml"), "{said}");
+    let parking = |said: &str| {
+        let report: Value = serde_json::from_str(said).expect("json");
+        report["models"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|m| {
+                m["id"]
+                    .as_str()
+                    .is_some_and(|id| id.contains("parking-spot"))
+            })
+            .map(|m| m["errors"].to_string())
+            .unwrap_or_default()
+    };
+    assert_eq!(parking(&said), "[]", "{said}");
+    for (imports, expected) in [
+        ("project.nothing.v1", "no model of this project `nothing`"),
+        ("project.broken.v1", "broken.yaml"),
+        ("project.outside.v1", "import 'project.outside.v1'"),
+        ("org.Bad.v1", "a model import is"),
+    ] {
+        let said = validate(
+            &dir,
+            &url,
+            &format!("name: parking\nimports: [{imports}]\n"),
+        );
+        assert!(parking(&said).contains(expected), "{imports}: {said}");
+    }
+    // An organization model imports organization models only; one that does not parse is
+    // Model Tools' to report.
+    common::write(
+        &dir,
+        "datamodels/stations/stations.linkml.yaml",
+        "name: stations\nimports: [project.zones.v1]\n",
+    );
+    let said = validate(&dir, &url, IMPORTING_SOURCE);
+    assert!(
+        parking(&said).contains("organization models only"),
+        "{said}"
+    );
+    common::write(&dir, "datamodels/stations/stations.linkml.yaml", "a: [");
+    let said = validate(&dir, &url, IMPORTING_SOURCE);
+    assert_eq!(parking(&said), "[]", "{said}");
+    let said = validate(&dir, &url, "a: [");
+    assert_eq!(parking(&said), "[]", "{said}");
+
+    let tools = jcctl::model::ModelTools::new(&url);
+    let gone = dir.join("not-there");
+    for (repo_dir, org_dir) in [
+        (gone.as_path(), None),
+        (dir.as_path(), Some(gone.as_path())),
+    ] {
+        let got = jcctl::model::run(repo_dir, org_dir, &tools, jcctl::model::Mode::Validate);
+        assert!(
+            matches!(got, Err(jcctl::model::Error::Repository(_))),
+            "{got:?}"
+        );
+    }
+}
+
+/// DM-02: an artifact the model does not declare is not written; a target that cannot be
+/// created or written stops the run naming it.
+#[test]
+fn generate_skips_an_undeclared_artifact_and_names_one_it_cannot_write() {
+    let dir = repo("model-generate-write-failures", PIN);
+    std::fs::remove_file(dir.join(MODEL_PATH)).expect("the default model goes");
+    data_model(
+        &dir,
+        MODEL_DIR,
+        "zones",
+        "ovzdusie",
+        &published("zones").replace("published", "draft"),
+        Some(SOURCE),
+    );
+    let (url, _) = spawn_recording();
+    let tools = jcctl::model::ModelTools::new(&url);
+    let generate = || jcctl::model::run(&dir, None, &tools, jcctl::model::Mode::Generate);
+    let report = generate().expect("the run reports").to_json();
+    assert_eq!(
+        report["models"][0]["written"],
+        json!([format!("{MODEL_DIR}/json-schema/zones.v1.json")]),
+        "{report}"
+    );
+
+    let target = dir.join(MODEL_DIR).join("json-schema");
+    std::fs::remove_dir_all(&target).expect("the artifact dir goes");
+    std::fs::write(&target, "a file where a directory goes").expect("a blocking file");
+    let got = generate();
+    assert!(
+        matches!(got, Err(jcctl::model::Error::Io { .. })),
+        "{got:?}"
+    );
+    std::fs::remove_file(&target).expect("the blocking file goes");
+    std::fs::create_dir_all(target.join("zones.v1.json")).expect("a directory where the file goes");
+    let got = generate();
+    assert!(
+        matches!(got, Err(jcctl::model::Error::Io { .. })),
+        "{got:?}"
+    );
+}
+
+/// DM-07: an import into a path that is no file is an error naming it.
+#[test]
+fn an_import_into_the_root_directory_is_an_io_error() {
+    let url = spawn(vec![(
+        "/import-sdm",
+        json!({ "generatorVersion": PIN, "linkml": "name: air\n", "errors": [] }).to_string(),
+    )]);
+    let tools = jcctl::model::ModelTools::new(&url);
+    let got = jcctl::model::import(&tools, "sdm/Air", Path::new("/"));
+    assert!(
+        matches!(got, Err(jcctl::model::Error::Io { .. })),
+        "{got:?}"
+    );
+}
+
+/// MF-49: what an export carries of the organization's models, and each way it is refused.
+#[test]
+fn organization_imports_carry_what_resolves_and_refuse_what_does_not() {
+    let organization = common::temp_dir("model-org-imports-organization");
+    with_organization_model(&organization);
+    let project = |test: &str, source: &str| {
+        let dir = common::demo_repo(test);
+        data_model(
+            &dir,
+            MODEL_DIR,
+            "zones",
+            "ovzdusie",
+            &published("zones"),
+            Some(source),
+        );
+        data_model(
+            &dir,
+            MODEL_DIR,
+            "broken",
+            "ovzdusie",
+            "  version: banana\n",
+            None,
+        );
+        dir
+    };
+    let carried = |dir: &Path, org: Option<&Path>| jcctl::model::organization_imports(dir, org);
+
+    let dir = project(
+        "model-org-imports-ok",
+        "name: zones\nimports: [project.other.v1, org.stations.v1]\n",
+    );
+    let other = common::demo_repo("model-org-imports-unparsed");
+    data_model(
+        &other,
+        MODEL_DIR,
+        "zones",
+        "ovzdusie",
+        &published("zones"),
+        Some("a: ["),
+    );
+    let got = carried(&dir, Some(&organization)).expect("the import resolves");
+    assert_eq!(got.len(), 1, "{got:?}");
+    assert_eq!(got[0].name, "stations");
+    assert_eq!(carried(&other, None), Ok(Vec::new()));
+
+    // Twice the same organization model, transitively: carried once.
+    common::write(
+        &organization,
+        "datamodels/stations/stations.linkml.yaml",
+        "name: stations\nimports: [org.stations.v1]\n",
+    );
+    assert_eq!(carried(&dir, Some(&organization)).map(|c| c.len()), Ok(1));
+
+    for (source, org, expected) in [
+        (
+            "name: zones\nimports: [org.Bad.v1]\n",
+            Some(organization.as_path()),
+            "a model import is",
+        ),
+        (
+            "name: zones\nimports: [org.nothing.v1]\n",
+            Some(organization.as_path()),
+            "import 'org.nothing.v1'",
+        ),
+        (
+            "name: zones\nimports: [org.stations.v1]\n",
+            Some(Path::new("/nonexistent-jcctl-org")),
+            "",
+        ),
+    ] {
+        let dir = project("model-org-imports-refused", source);
+        let got = carried(&dir, org);
+        assert!(
+            got.as_ref().is_err_and(|why| why.contains(expected)),
+            "{source}: {got:?}"
+        );
+    }
+    std::fs::remove_file(organization.join("datamodels/stations/stations.linkml.yaml"))
+        .expect("the source goes");
+    assert!(carried(&dir, Some(&organization)).is_err());
+    let lost = common::demo_repo("model-org-imports-lost");
+    data_model(
+        &lost,
+        MODEL_DIR,
+        "zones",
+        "ovzdusie",
+        &published("zones"),
+        None,
+    );
+    assert!(carried(&lost, None).is_err());
+    assert!(carried(&lost.join("not-there"), None).is_err());
+}

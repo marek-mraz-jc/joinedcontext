@@ -731,10 +731,8 @@ fn render(value: &Value) -> String {
             // on `preserve_order`, and the bytes `diff` compares must not depend on the build.
             let mut sorted = other.clone();
             sorted.sort_all_objects();
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&sorted).unwrap_or_else(|_| sorted.to_string())
-            )
+            // `{:#}` is serde_json's pretty printer, which cannot fail on a `Value`.
+            format!("{sorted:#}\n")
         }
     }
 }
@@ -748,12 +746,11 @@ fn read(root: &Path, relative: &Path) -> Result<String, Error> {
 
 fn write(root: &Path, relative: &Path, contents: &str) -> Result<(), Error> {
     let path = root.join(relative);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| Error::Io {
-            path: relative.to_path_buf(),
-            source,
-        })?;
-    }
+    // `relative` names a file, so the joined path always has a parent.
+    std::fs::create_dir_all(path.parent().unwrap_or(root)).map_err(|source| Error::Io {
+        path: relative.to_path_buf(),
+        source,
+    })?;
     std::fs::write(&path, contents).map_err(|source| Error::Io {
         path: relative.to_path_buf(),
         source,
