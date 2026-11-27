@@ -11,8 +11,7 @@
 //! five name a walk the runner can follow; a bare total is said, and the person picks the mode.
 
 use jc_core::kinds::data_source::{refused_target, HttpPaging, HttpPagingMode};
-use jc_core::kinds::PipelineSpec;
-use jcctl::pipeline_test::{harness, Sample, SampleFormat, TestTrace, FETCH_FAILED};
+use jcctl::pipeline_test::{TestTrace, FETCH_FAILED};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use url::Url;
@@ -92,30 +91,16 @@ pub(crate) fn page_read(url: &Url, capture: &str) -> Result<Value, ApiError> {
         ),
         PAGE_BYTES, FETCH_FAILED
     );
-    let probe: PipelineSpec = serde_json::from_value(json!({
-        "class": "auto",
-        "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
-    }))
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-    let sample = Sample {
-        text: Some(String::new()),
-        url: None,
-        format: SampleFormat::Text,
-        records: None,
-        sheet: None,
-    };
-    let mut config =
-        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
-    config["input"] =
-        json!({ "generate": { "count": 1, "interval": "", "mapping": "root = \"\"" } });
-    config["pipeline"] = json!({ "processors": [
-        { "http": { "url": url.as_str(), "verb": "GET", "timeout": "5s", "retries": 0,
-                    "headers": { "Accept": "application/json" },
-                    "extract_headers": { "include_patterns": ["(?i)^link$"] } } },
-        { "mapping": envelope },
-        { "catch": [] },
-    ] });
-    Ok(config)
+    super::datasource_discover::one_read(
+        capture,
+        json!([
+            { "http": { "url": url.as_str(), "verb": "GET", "timeout": "5s", "retries": 0,
+                        "headers": { "Accept": "application/json" },
+                        "extract_headers": { "include_patterns": ["(?i)^link$"] } } },
+            { "mapping": envelope },
+            { "catch": [] },
+        ]),
+    )
 }
 
 /// The guess from one read: what the body and its `Link` header say, or why there is none.

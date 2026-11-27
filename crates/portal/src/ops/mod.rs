@@ -691,13 +691,14 @@ fn named_subject(
         }
         _ => return Ok(()),
     };
-    found.map_err(|missing| match missing {
-        ApiError::NotFound(why) => OpError::Api(ApiError::NotFound(format!(
+    // Both lookups answer only `NotFound`, so that is the one refusal to word here.
+    if let Err(ApiError::NotFound(why)) = found {
+        return Err(OpError::Api(ApiError::NotFound(format!(
             "{why}; one still in an open change exists once that change is approved \
              (jc_change_list lists the open changes)"
-        ))),
-        other => OpError::Api(other),
-    })
+        ))));
+    }
+    Ok(())
 }
 
 /// The route's check of an operation on the organization's people or projects (PF-91, PF-65),

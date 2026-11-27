@@ -214,9 +214,8 @@ impl DraftHub {
             event: event.clone(),
             space: event.space.clone(),
         };
-        let Ok(payload) = serde_json::to_string(&notice) else {
-            return;
-        };
+        // A notice is strings and an event of plain fields: it always serialises.
+        let payload = json!(notice).to_string();
         // This process's streams have it already; a failed NOTIFY only costs the other replicas
         // this one event, and the reader refetches the draft on its next open anyway.
         if let Err(error) = sqlx::query("SELECT pg_notify($1, $2)")
@@ -615,8 +614,7 @@ impl DraftStore {
                 draft.clone()
             }
             DraftStoreInner::Db(pool, mirror) => {
-                let verdict_json =
-                    serde_json::to_value(&verdict).map_err(|e| DraftError::Db(e.to_string()))?;
+                let verdict_json = json!(&verdict);
                 let Some(mut tx) = tenant(pool, mirror, project).await? else {
                     return Err(DraftError::NotFound {
                         project: project.to_owned(),
@@ -1551,6 +1549,48 @@ mod tests {
         assert_eq!(ev.name, "ep-1");
         assert_eq!(ev.event, "put");
         assert_eq!(ev.version, 1);
+    }
+
+    fn event(project: &str) -> DraftEvent {
+        DraftEvent {
+            project: project.into(),
+            kind: "Endpoint".into(),
+            name: "ep-1".into(),
+            version: 1,
+            touched_by: "steward".into(),
+            touched_kind: "person".into(),
+            event: "put".into(),
+            updated_at: jc_time::TimestampTz::now(),
+            space: None,
+        }
+    }
+
+    /// Joined to a database outside any async runtime, a hub keeps its events inside the
+    /// process instead of panicking, and a second join is a no-op.
+    #[test]
+    fn a_hub_joined_without_a_runtime_stays_inside_the_process() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("a runtime");
+        let pool = runtime.block_on(async { crate::test_db::dead_pool() });
+        let hub = DraftHub::new();
+        hub.connect(pool.clone());
+        assert!(hub.database.get().is_some());
+        hub.connect(pool);
+        drop(runtime);
+    }
+
+    /// A NOTIFY the database refuses costs the other replicas the event, never this process's
+    /// own streams: the subscriber still hears it.
+    #[tokio::test]
+    async fn a_notify_that_fails_still_delivers_the_event_here() {
+        let hub = DraftHub::new();
+        let _ = hub.database.set(crate::test_db::dead_pool());
+        let mut sub = hub.subscribe("helsinki").await;
+        hub.broadcast(&event("helsinki")).await;
+        let heard = sub.recv().await.expect("the event");
+        assert_eq!((heard.project.as_str(), heard.version), ("helsinki", 1));
     }
 
     /// OPS-51: another replica's notice becomes this process's event, space included, so the

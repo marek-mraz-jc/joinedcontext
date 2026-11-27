@@ -1235,3 +1235,30 @@ async fn an_address_no_runner_can_fetch_infers_nothing() {
         answer.text
     );
 }
+
+/// A typed sample, no DataSource named, is run with no steps and answered with its records; no
+/// source's personal fields apply to it.
+#[tokio::test]
+async fn a_typed_sample_is_answered_with_its_records() {
+    let runner = runner().await;
+    let state = state("typed", Some(&runner));
+    let rows =
+        [json!({ "input": "a", "output": { "station": "01", "capacity": "12" }, "error": null })];
+    let typed = op("typed", "jc_pipeline_sample_source");
+    let (answer, harness) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &typed,
+            Some(json!({ "sample": { "text": "station,capacity\n01,12\n", "format": "csv" } })),
+        ),
+        play_runner(&runner, &state, 0, &rows),
+    );
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body = json_of(&answer.text);
+    assert_eq!(body["count"], 1, "{body}");
+    assert_eq!(body["fields"], json!(["capacity", "station"]), "{body}");
+    assert!(body.get("withheld").is_none(), "{body}");
+    assert!(harness.is_object(), "{harness}");
+}

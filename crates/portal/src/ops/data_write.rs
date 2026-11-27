@@ -643,6 +643,77 @@ mod tests {
         );
     }
 
+    /// A delete through the caller's own Endpoint goes to the gateway as the person, with the
+    /// reason they gave as `JC-Reason`, and answers the ids written; a gateway that does not
+    /// answer is a 503 that says nothing is known written.
+    #[tokio::test]
+    async fn an_own_delete_sends_its_reason_and_a_silent_gateway_is_unavailable() {
+        use wiremock::matchers::{header_exists, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let slug = "w7m2kd9x4wpz8nhr3vbt6cfy5b";
+        let realm = crate::auth::oidc::tests::mock_realm().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "endpoint-token", "token_type": "Bearer", "expires_in": 300
+            })))
+            .mount(&realm)
+            .await;
+        let gateway = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(format!(
+                "/api/endpoint/{slug}/ngsi-ld/v1/entityOperations/delete"
+            )))
+            .and(header_exists("JC-Reason"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&gateway)
+            .await;
+        let client = crate::auth::oidc::OidcClient::discover(
+            &crate::auth::oidc::tests::config_for(&realm),
+            "https://portal.test/cb",
+        )
+        .await
+        .expect("discovery");
+        let client = std::sync::Arc::new(client);
+        let on = |gateway: String| {
+            let mut config = crate::config::Config::for_tests();
+            config.gateway_url = Some(gateway);
+            let mut state = AppState::new(config, None);
+            state.oidc = Some(client.clone());
+            state.mirror.upsert(crate::ops::testkit::envelope(
+                "Endpoint",
+                "counters",
+                "doprava",
+                json!({ "slug": slug, "audience": "project" }),
+            ));
+            state
+        };
+        let state = on(gateway.uri());
+        let mut caller = crate::ops::testkit::admin(&state);
+        caller.bearer = Some(super::super::Bearer("person-token".into()));
+        let delete = || {
+            input(json!({ "endpoint": "counters", "action": "delete",
+                          "ids": ["urn:ngsi-ld:T:1"], "reason": "a duplicate\nof T:2" }))
+        };
+        let written = run(&caller, &state, "doprava", delete())
+            .await
+            .expect("written");
+        assert_eq!(written["written"], json!(["urn:ngsi-ld:T:1"]), "{written}");
+        gateway.verify().await;
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        drop(closed);
+        let silent = on(format!("http://127.0.0.1:{port}"));
+        let err = run(&caller, &silent, "doprava", delete())
+            .await
+            .expect_err("nobody answers");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("nothing is known written")),
+            "{err:?}"
+        );
+    }
+
     /// A public Endpoint of another project is read, never written, and one the caller may only
     /// read as shared answers as missing: neither write reaches the gateway.
     #[tokio::test]

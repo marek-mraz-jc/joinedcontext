@@ -511,4 +511,44 @@ mod tests {
             "{got:?}"
         );
     }
+
+    /// JC2-59: the Test drawer's dry run answers its steps and publishes nothing; an account
+    /// the broker's roles do not name is the route's 422.
+    #[tokio::test]
+    async fn a_test_publish_answers_its_steps_and_publishes_nothing() {
+        let state = capturing().await;
+        let op = find(TEST_PUBLISH).expect("listed");
+        let answer = run_op(
+            op,
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "name": "cameras", "account": "cam-west", "topic": "cams/cam-west/frame", "payload": "{}" }),
+        )
+        .await
+        .expect("a dry run");
+        assert_eq!(answer["clientId"], "helsinki-cam-west", "{answer}");
+        assert_eq!(answer["published"], false, "{answer}");
+        assert!(
+            answer["steps"]
+                .as_array()
+                .is_some_and(|steps| steps.len() >= 3),
+            "{answer}"
+        );
+        let refused = run_op(
+            op,
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "name": "cameras", "account": "nobody", "topic": "cams/x/frame", "payload": "{}" }),
+        )
+        .await;
+        assert!(
+            matches!(
+                &refused,
+                Err(OpError::Api(crate::error::ApiError::Unprocessable { .. }))
+            ),
+            "{refused:?}"
+        );
+    }
 }

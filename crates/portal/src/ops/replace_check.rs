@@ -76,6 +76,18 @@ async fn refused(
     endpoint: &str,
     entity_type: &str,
 ) -> Option<String> {
+    let naming = context_gateway::store::TenantNames::from_env();
+    refused_as(state, project, manifest, (endpoint, entity_type), naming).await
+}
+
+/// [`refused`] under the broker's tenant `naming`.
+async fn refused_as(
+    state: &AppState,
+    project: &str,
+    manifest: &Value,
+    (endpoint, entity_type): (&str, &str),
+    naming: context_gateway::store::TenantNames,
+) -> Option<String> {
     if state.views.is_none() {
         // Without the broker views no write is judged: every name would pass unseen.
         return unchecked(
@@ -91,18 +103,19 @@ async fn refused(
         );
     };
     let broker = crate::spaces::broker(&state.mirror, project, &space);
-    let (names, partial) = match match crate::spaces::tenant(&state.mirror, project, &space) {
-        Ok(tenant) => {
-            state
-                .space_usage
-                .stored_attributes(&broker, &tenant, entity_type)
-                .await
-        }
-        Err(reason) => Err(reason),
-    } {
-        Ok(read) => read,
-        Err(why) => return unchecked(endpoint, &why),
-    };
+    let (names, partial) =
+        match match crate::spaces::tenant_as(&state.mirror, project, &space, naming) {
+            Ok(tenant) => {
+                state
+                    .space_usage
+                    .stored_attributes(&broker, &tenant, entity_type)
+                    .await
+            }
+            Err(reason) => Err(reason),
+        } {
+            Ok(read) => read,
+            Err(why) => return unchecked(endpoint, &why),
+        };
     let judged = match writable(
         state,
         project,
@@ -117,10 +130,8 @@ async fn refused(
     let not: Vec<String> = judged
         .into_iter()
         .filter(|w| !w.writable)
-        .map(|w| match w.reason {
-            Some(reason) => format!("{} ({reason})", w.name),
-            None => w.name,
-        })
+        // A name is not writable only for a finding, whose reason it carries (writable_reason).
+        .map(|w| format!("{} ({})", w.name, w.reason.unwrap_or_default()))
         .collect();
     let more = if partial {
         "; the broker read only part of the stored entities, so more may exist"
@@ -396,5 +407,24 @@ mod tests {
         let got = warnings(&state, "city", "city", &routed).await;
         assert_eq!(got.len(), 1, "{got:?}");
         assert_eq!(got[0]["path"], "spec.routes");
+    }
+
+    /// A space with no broker tenant yet (the project has no registry id under project-key
+    /// naming) cannot be judged, and the warning says why instead of passing.
+    #[tokio::test]
+    async fn a_space_without_a_tenant_is_a_warning_naming_why() {
+        let state = writing(None);
+        let text = refused_as(
+            &state,
+            "city",
+            &replace(),
+            ("intake", "BikeCounter"),
+            context_gateway::store::TenantNames::ProjectKey,
+        )
+        .await
+        .expect("a warning");
+        assert!(text.contains("could not be checked"), "{text}");
+        assert!(text.contains("has no broker tenant yet"), "{text}");
+        assert!(text.contains("Endpoint 'intake'"), "{text}");
     }
 }

@@ -360,7 +360,7 @@ fn no_steps() -> Result<PipelineSpec, OpError> {
         "class": "auto",
         "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
     }))
-    .map_err(|e| OpError::Api(ApiError::Internal(format!("the sampling spec: {e}"))))
+    .map_err(OpError::from)
 }
 
 /// The sample a DataSource of this project gives: its feed fetched once, as a DataSource Check
@@ -380,8 +380,7 @@ fn sample_of_data_source(
 fn sample_of_spec(name: &str, spec: &Value) -> Result<(Sample, PipelineSpec), OpError> {
     let instead = "give the sample as text (a file of the feed) or as a URL instead";
     match pipeline_test::probe_plan(spec) {
-        Some(Ok(url)) => pipeline_test::sampling(spec, url)
-            .map_err(|e| OpError::Api(ApiError::Internal(format!("the sampling spec: {e}")))),
+        Some(Ok(url)) => pipeline_test::sampling(spec, url).map_err(OpError::from),
         Some(Err(skipped)) => Err(OpError::Api(ApiError::BadRequest(format!(
             "DataSource '{name}' cannot be sampled: {}; {instead}",
             skipped.skipped.unwrap_or_default()
@@ -470,7 +469,17 @@ pub(crate) async fn sample_address(url: &str, path: &str) -> Result<(), OpError>
             }
         }
     }
-    match resolved_address(url, path).await? {
+    let resolved = resolved_address(url, path).await?;
+    public_or_unresolved(path, resolved)
+}
+
+/// [`resolved_public`] at member `path` for a name that resolved; a name that resolved to
+/// nothing, or an address written as one, passes.
+fn public_or_unresolved(
+    path: &str,
+    resolved: Option<(String, Vec<std::net::IpAddr>)>,
+) -> Result<(), OpError> {
+    match resolved {
         Some((host, addresses)) if !addresses.is_empty() => resolved_public(&host, &addresses)
             .map_err(|message| OpError::InvalidInput {
                 path: path.into(),
@@ -1549,5 +1558,78 @@ mod tests {
         ];
         assert_eq!(fields_of(&records), ["no2", "pm10", "station"]);
         assert!(fields_of(&[]).is_empty());
+    }
+
+    /// A name that resolves to a private address is refused at its member, one resolving to
+    /// nothing or an address written as one passes; `localhost` resolves with no network.
+    #[tokio::test]
+    async fn a_name_resolving_to_a_private_address_is_refused_at_its_member() {
+        let loopback: std::net::IpAddr = "127.0.0.1".parse().expect("an address");
+        let got = public_or_unresolved(
+            "/sample/url",
+            Some(("feeds.example".into(), vec![loopback])),
+        );
+        assert!(
+            matches!(&got, Err(OpError::InvalidInput { path, message })
+                if path == "/sample/url" && message.contains("resolves to 127.0.0.1")),
+            "{got:?}"
+        );
+        assert!(
+            public_or_unresolved("/sample/url", Some(("nowhere.invalid".into(), vec![]))).is_ok()
+        );
+        assert!(public_or_unresolved("/sample/url", None).is_ok());
+        let (host, addresses) = resolved_address("http://localhost:8080/a.csv", "/sample/url")
+            .await
+            .expect("a parsed address")
+            .expect("a name, not an address");
+        assert_eq!(host, "localhost");
+        assert!(
+            addresses.iter().all(|ip| ip.is_loopback()) && !addresses.is_empty(),
+            "{addresses:?}"
+        );
+        assert!(resolved_address("http://10.0.0.5/a.csv", "/x")
+            .await
+            .is_err());
+        assert_eq!(
+            resolved_address("http://93.184.215.14/a.csv", "/x")
+                .await
+                .expect("a public address"),
+            None
+        );
+    }
+
+    /// A streaming DataSource whose spec does not parse is the caller's 400 naming it; one that
+    /// is fetched is no streamed source.
+    #[test]
+    fn a_streaming_source_that_does_not_parse_is_named() {
+        let state = super::super::testkit::state();
+        let admin = super::super::testkit::admin(&state);
+        for (name, spec) in [
+            ("broken", json!({ "type": "mqtt", "bogus": 1 })),
+            (
+                "fetched",
+                json!({ "type": "http", "http": { "url": "https://feeds.example/a.csv" } }),
+            ),
+        ] {
+            state.mirror.upsert(super::super::testkit::envelope(
+                "DataSource",
+                name,
+                "helsinki",
+                spec,
+            ));
+        }
+        let got = streamed_source(&admin, &state, "helsinki", "broken");
+        assert!(
+            matches!(&got, Err(OpError::Api(ApiError::BadRequest(why))) if why.contains("DataSource 'broken' does not parse")),
+            "{got:?}"
+        );
+        assert!(matches!(
+            streamed_source(&admin, &state, "helsinki", "fetched"),
+            Ok(None)
+        ));
+        assert!(matches!(
+            streamed_source(&admin, &state, "helsinki", "gone"),
+            Err(OpError::Api(ApiError::NotFound(_)))
+        ));
     }
 }

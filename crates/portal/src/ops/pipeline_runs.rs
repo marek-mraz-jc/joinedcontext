@@ -547,4 +547,51 @@ mod tests {
             }
         }
     }
+
+    /// JC2-32: the rejected panel pages as the route does, an empty list with no cursor here,
+    /// and a snapshot pipeline's source deletes answer its rule; a pipeline without that rule is
+    /// the route's 409.
+    #[tokio::test]
+    async fn the_rejected_and_source_deletes_panels_answer_as_their_routes() {
+        let state = logged().await;
+        state.mirror.upsert(envelope(
+            "Pipeline",
+            "snap",
+            "doprava",
+            json!({ "sourceDeletes": { "mode": "snapshot", "misses": 2, "maxShare": 10 } }),
+        ));
+        let inspect = |input: Value| {
+            let state = &state;
+            async move {
+                call(
+                    find("jc_pipeline_inspect").expect("listed"),
+                    &admin(state),
+                    state,
+                    "doprava",
+                    input,
+                )
+                .await
+            }
+        };
+        let rejected =
+            inspect(json!({ "name": "counters", "view": "rejected", "limit": 5, "cursor": 9 }))
+                .await
+                .expect("the rejected page");
+        assert_eq!(rejected["items"], json!([]), "{rejected}");
+        assert_eq!(rejected["total"], 0, "{rejected}");
+        let deletes = inspect(json!({ "name": "snap", "view": "sourceDeletes" }))
+            .await
+            .expect("the source deletes");
+        assert_eq!(
+            (deletes["misses"].clone(), deletes["maxShare"].clone()),
+            (json!(2), json!(10)),
+            "{deletes}"
+        );
+        assert_eq!(deletes["ledger"], 0, "{deletes}");
+        let refused = inspect(json!({ "name": "counters", "view": "sourceDeletes" })).await;
+        assert!(
+            matches!(&refused, Err(OpError::Api(crate::error::ApiError::Conflict(why))) if why.contains("snapshot")),
+            "{refused:?}"
+        );
+    }
 }

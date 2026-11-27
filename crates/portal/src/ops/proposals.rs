@@ -940,14 +940,9 @@ pub fn operations() -> Vec<Operation> {
                                 .await
                         }
                     };
+                    // A dry run that answers is valid (`propose_with_identity` answers
+                    // `valid: true` or refuses), so `res.valid` only guards the verdict below.
                     let mut findings = Vec::new();
-                    if !res.valid {
-                        findings.push(Finding {
-                            level: Level::Error,
-                            path: "".into(),
-                            message: "plan validation failed".into(),
-                        });
-                    }
                     // A Policy attribute its space's model lacks narrows the grant to nothing
                     // (T-6283): an error on its field, not a green plan.
                     let unknown = super::policy_names::findings(state, project, &manifest).await;
@@ -1418,6 +1413,110 @@ mod tests {
         assert!(
             matches!(&other, ApiError::Internal(why) if why.contains("was not recorded") && why.contains("gone")),
             "{other:?}"
+        );
+    }
+
+    /// A check naming a draft that is not there creates it for a proposer; when the store
+    /// refuses the draft, the check keeps no verdict anywhere and still answers.
+    #[tokio::test]
+    async fn a_check_whose_draft_cannot_be_created_keeps_no_verdict() {
+        let scratch = crate::test_db::scratch().await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("hel").await,
+        );
+        let admin = super::super::testkit::admin(&state);
+        scratch.refuse("drafts", "INSERT").await;
+        let manifest = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+            "metadata": { "name": "air", "namespace": "hel" },
+            "spec": { "contextSpaceRef": "air", "audience": "public" }
+        });
+        let draft = DraftRef {
+            kind: "Endpoint".into(),
+            name: "air".into(),
+        };
+        record_verdict(
+            &admin,
+            &state,
+            "hel",
+            &draft,
+            &manifest,
+            &Verdict::green(&manifest, None),
+        )
+        .await;
+        let kept = state
+            .drafts
+            .get("hel", "Endpoint", "air")
+            .await
+            .expect("the store reads");
+        assert!(kept.is_none(), "{kept:?}");
+        scratch.remove().await;
+    }
+
+    /// T-4840: the check of a KPI Pipeline that names no draft keeps the record check of the
+    /// indicator it would write beside its verdict, on the draft the check creates.
+    #[tokio::test]
+    async fn a_kpi_pipelines_check_keeps_the_record_check_of_its_indicator() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = super::super::testkit::admin(&state);
+        let manifest = json!({
+            "apiVersion": "joinedcontext.com/v1alpha2", "kind": "Pipeline",
+            "metadata": { "name": "parking-per-stop", "namespace": "helsinki-kpi" },
+            "spec": {
+                "class": "scheduled", "schedule": "0 * * * *",
+                "sources": [
+                    { "name": "parking", "endpointRef": { "kind": "Endpoint", "name": "helsinki-parking" },
+                      "query": { "type": "ParkingSite", "attrs": ["occupiedSpotNumber", "district"] } },
+                    { "name": "stops", "endpointRef": { "kind": "Endpoint", "name": "helsinki-transit" },
+                      "query": { "type": "TransitStop", "attrs": ["district"] } }
+                ],
+                "steps": [{ "kind": "kpi", "kpi": {
+                    "name": "parking-per-stop", "formula": "sum(parking.occupiedSpotNumber) / count(stops)",
+                    "unitCode": "C62", "join": { "by": "area", "keys": { "parking": "district", "stops": "district" } } } }],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki-kpi:kpi-writer" }]
+            }
+        });
+        record_check(
+            &admin,
+            &state,
+            "helsinki-kpi",
+            &manifest,
+            &Verdict::green(&manifest, None),
+        )
+        .await;
+        let draft = state
+            .drafts
+            .get("helsinki-kpi", "Pipeline", "parking-per-stop")
+            .await
+            .expect("the store reads")
+            .expect("the check made the draft");
+        let records = draft
+            .verdict
+            .and_then(|verdict| verdict.records)
+            .expect("the indicator's record check");
+        assert_eq!(records.checked, 1, "{records:?}");
+    }
+
+    /// EP-72: an Endpoint proposal of fields, no manifest, answers the rendered manifests.
+    #[tokio::test]
+    async fn an_endpoint_proposal_of_fields_answers_the_rendered_manifests() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = super::super::testkit::admin(&state);
+        let op = crate::ops::find("jc_endpoint_propose").expect("registered");
+        let answer = (op.run)(
+            &admin,
+            &state,
+            "city",
+            json!({ "contextSpace": "doprava", "name": "city-events", "audience": "public" }),
+        )
+        .await
+        .expect("rendered");
+        assert_eq!(answer["endpoint"]["kind"], "Endpoint", "{answer}");
+        assert_eq!(
+            answer["endpoint"]["metadata"]["name"], "city-events",
+            "{answer}"
         );
     }
 }
