@@ -669,9 +669,34 @@ async fn a_script_test_needs_a_session_and_the_propose_verb_on_script() {
         "pipeline-author",
         json!({ "rules": [{ "kinds": ["Pipeline", "Script"], "verbs": ["propose"] }] }),
     ));
-    let state = AppState::new(config(None), None).with_mirror(scripts);
+    let state = AppState::new(config(None), None).with_mirror(scripts.clone());
     let (status, answer) = send(&state, "dev@hel.fi", uri, &body).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+
+    // A project name no project can have answers 404 before any right is read (T-7894).
+    let (status, answer) = send(
+        &state,
+        "dev@hel.fi",
+        "/api/v1/projects/Not_A_Name/scripts/test",
+        &body,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{answer}");
+
+    // With a runner each test runs once and answers its result, in the order sent.
+    let runner = common::runner().await;
+    let (create, delete) = runner_mocks(ResponseTemplate::new(200));
+    create.mount(&runner).await;
+    delete.mount(&runner).await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(scripts);
+    let messages = [json!({ "input": "{}", "output": { "x": 1 }, "error": null })];
+    let ((status, answer), _) = tokio::join!(
+        send(&state, "dev@hel.fi", uri, &body),
+        play_runner(&runner, &state, &messages),
+    );
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["results"][0]["name"], "a", "{answer}");
+    assert_eq!(answer["results"].as_array().map(Vec::len), Some(1));
 }
 
 #[tokio::test]
@@ -1762,6 +1787,28 @@ async fn a_webhook_test_event_reaches_the_projects_runner_signed_with_the_source
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(answer["status"], 202);
     assert_eq!(answer["answer"], "é".repeat(2048));
+    // A short answer comes back whole (T-7894).
+    Mock::given(method("POST"))
+        .and(wiremock::matchers::path(
+            "/porvoo/ingest/default/porvoo.uplinks/ttn",
+        ))
+        .and(wiremock::matchers::body_string(r#"{"short": 1}"#))
+        .respond_with(ResponseTemplate::new(200).set_body_string("taken"))
+        .expect(1)
+        .mount(&runner)
+        .await;
+    let (status, answer) = send(
+        &state,
+        "dev@hel.fi",
+        uri,
+        &event("uplinks", r#"{"short": 1}"#.into()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        (answer["status"].as_u64(), answer["answer"].as_str()),
+        (Some(200), Some("taken"))
+    );
 
     // A bound port nobody listens on: the runner is down.
     let closed = tokio::net::TcpSocket::new_v4().expect("a socket");

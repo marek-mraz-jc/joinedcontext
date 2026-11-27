@@ -251,11 +251,14 @@ mod tests {
         let taken = driver
             .run_answer(&json!({ "answer": "run:counters-load" }))
             .await;
-        let Ok(Some(Taken::Done(prose))) = taken else {
-            panic!("the Portal takes the answer");
-        };
-        assert!(prose.contains("did not start"), "{prose}");
-        assert!(prose.contains("no pipeline runner"), "{prose}");
+        assert!(
+            matches!(&taken, Ok(Some(Taken::Done(_)))),
+            "the Portal takes the answer"
+        );
+        if let Ok(Some(Taken::Done(prose))) = taken {
+            assert!(prose.contains("did not start"), "{prose}");
+            assert!(prose.contains("no pipeline runner"), "{prose}");
+        }
         let tools = events(&driver, "tool").await;
         assert_eq!(tools.len(), 1, "{tools:?}");
         assert_eq!(tools[0]["tool"], RUN);
