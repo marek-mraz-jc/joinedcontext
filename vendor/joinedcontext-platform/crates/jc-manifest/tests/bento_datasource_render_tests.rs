@@ -486,6 +486,18 @@ fn a_bento_file_that_is_not_a_mapping_is_refused_by_name() {
     ));
 }
 
+/// A tagged key parses, but the YAML writer cannot put a tag on a mapping key out again: the
+/// render is refused with the writer's reason rather than written differently.
+#[test]
+fn a_bento_file_the_render_cannot_write_back_is_refused() {
+    let tagged_key = "output: {!tag key: value}\n";
+    let refused = render(tagged_key, &source(MQTT), &context("mqtt-mesto"));
+    assert!(
+        matches!(&refused, Err(RenderError::Parse(why)) if why.contains("expected SCALAR")),
+        "{refused:?}"
+    );
+}
+
 /// T-0321, MF-35: a feed whose key goes in a vendor header renders that header with the bare
 /// interpolation. `Bearer ` in front of an API key is what such a feed refuses, so the scheme
 /// is written only where there is one.

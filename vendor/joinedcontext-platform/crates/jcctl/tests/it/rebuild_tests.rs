@@ -167,6 +167,21 @@ fn a_space_filter_rebuilds_only_that_space() {
     let _ = std::fs::remove_dir_all(&out);
 }
 
+/// A repository folder that is not there is refused naming it, and nothing is written.
+#[test]
+fn a_repository_that_is_not_there_is_refused_by_its_path() {
+    let missing = temp_dir("rebuild-missing").join("not-here");
+    let out = temp_dir("rebuild-missing-out");
+    let error = artifacts::rebuild(&missing, &options(&out)).expect_err("no repository");
+    let said = error.to_string();
+    assert!(said.contains("not-here"), "{said}");
+    assert!(matches!(error, artifacts::Error::File { .. }), "{error:?}");
+    assert_eq!(
+        std::fs::read_dir(&out).expect("the output folder").count(),
+        0
+    );
+}
+
 /// T-7210: a project the rebuild has no key for is refused with the flag to pass, and nothing is
 /// written under a name in its place.
 #[test]

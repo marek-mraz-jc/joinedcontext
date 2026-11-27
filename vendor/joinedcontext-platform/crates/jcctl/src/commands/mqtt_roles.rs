@@ -37,10 +37,11 @@ pub fn run(dir: &Path) -> Result<Outcome, String> {
             _ => {}
         }
     }
-    let mut files: BTreeMap<PathBuf, Value> = BTreeMap::new();
+    // Each changed file: the text it was read from and the document it becomes.
+    let mut files: BTreeMap<PathBuf, (String, Value)> = BTreeMap::new();
     let mut outcome = Outcome::default();
     for (project, broker, path) in brokers {
-        let mut manifest = read(dir, &path, &mut files)?;
+        let (text, mut manifest) = read(dir, &path, &files)?;
         let Some(roles) = manifest
             .get_mut("spec")
             .and_then(|spec| spec.get_mut("roles"))
@@ -76,20 +77,18 @@ pub fn run(dir: &Path) -> Result<Outcome, String> {
             }
             for account in &listed {
                 let at = &accounts[&(project.clone(), account.clone())];
-                let mut doc = read(dir, at, &mut files)?;
+                let (text, mut doc) = read(dir, at, &files)?;
                 bind(&mut doc, &format!("mqtt/{broker}/{name}"), &project);
-                files.insert(at.clone(), doc);
+                files.insert(at.clone(), (text, doc));
             }
             role.remove("serviceAccounts");
             changed = true;
         }
         if changed {
-            files.insert(path.clone(), manifest);
+            files.insert(path.clone(), (text, manifest));
         }
     }
-    for (path, doc) in files {
-        let before = std::fs::read_to_string(dir.join(&path))
-            .map_err(|e| format!("{}: {e}", path.display()))?;
+    for (path, (before, doc)) in files {
         let text = serde_norway::to_string(&doc).expect("a parsed document serializes");
         let text =
             jc_core::yaml_fmt::format(&text).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -102,20 +101,27 @@ pub fn run(dir: &Path) -> Result<Outcome, String> {
     Ok(outcome)
 }
 
-/// The manifest at `path`, from the files already changed or else from disk; a file of several
-/// documents is not rewritten.
-fn read(dir: &Path, path: &Path, files: &mut BTreeMap<PathBuf, Value>) -> Result<Value, String> {
-    if let Some(doc) = files.get(path) {
-        return Ok(doc.clone());
+/// The text on disk at `path` and its manifest, from the files already changed or else from
+/// disk; a file of several documents is not rewritten.
+fn read(
+    dir: &Path,
+    path: &Path,
+    files: &BTreeMap<PathBuf, (String, Value)>,
+) -> Result<(String, Value), String> {
+    if let Some(read) = files.get(path) {
+        return Ok(read.clone());
     }
-    let text =
-        std::fs::read_to_string(dir.join(path)).map_err(|e| format!("{}: {e}", path.display()))?;
-    serde_norway::from_str(&text).map_err(|e| {
+    // `path` is one `Repository::load` read as text in this run.
+    let text = std::fs::read_to_string(dir.join(path))
+        .ok()
+        .ok_or(format!("{}: cannot be read", path.display()))?;
+    let doc = serde_norway::from_str(&text).map_err(|e| {
         format!(
             "{}: {e} (a file of several documents is migrated by hand)",
             path.display()
         )
-    })
+    })?;
+    Ok((text, doc))
 }
 
 /// Adds the binding `role` scoped to `project` to the account `doc`, unless it holds it already.
@@ -266,6 +272,54 @@ mod tests {
         );
         let refused = run(&dir).expect_err("several documents");
         assert!(refused.contains("migrated by hand"), "{refused}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A list naming an account that already holds the binding in the canonical layout rewrites
+    /// the broker alone: an unchanged account is not written again.
+    #[test]
+    fn an_account_already_bound_is_not_rewritten() {
+        let dir = std::env::temp_dir().join(format!("jcctl-mqtt-roles-4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let broker = "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [fleet]\n      publish: [\"air/${clientid}/pm10\"]\n";
+        let fleet = "projects/air/access/serviceaccounts/fleet.yaml";
+        let air = "projects/air/mqttbrokers/air.yaml";
+        write(&dir, fleet, &account("fleet"));
+        write(&dir, air, broker);
+        let first = run(&dir).expect("runs");
+        assert_eq!(first.rewritten.len(), 2, "{first:?}");
+        let bound = std::fs::read_to_string(dir.join(fleet)).expect("read");
+
+        write(&dir, air, broker);
+        let again = run(&dir).expect("runs again");
+        assert_eq!(again.rewritten, vec![PathBuf::from(air)], "{again:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(fleet)).expect("read"),
+            bound
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An account the canonical layout cannot write back unchanged (a text ending in kept blank
+    /// lines) is an error naming its file, and nothing of it is written.
+    #[test]
+    fn an_account_the_layout_cannot_keep_is_named() {
+        let dir = std::env::temp_dir().join(format!("jcctl-mqtt-roles-5-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let fleet = "projects/air/access/serviceaccounts/fleet.yaml";
+        let kept = "apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: fleet\n  namespace: air\nspec:\n  owner:\n    user: demo.steward\n  credentials:\n    - kind: oauth-client\n      name: default\n  roles: []\n  purpose: \"sensors\\n\\n\"\n";
+        write(&dir, fleet, kept);
+        write(
+            &dir,
+            "projects/air/mqttbrokers/air.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: MqttBroker\nmetadata:\n  name: air\n  namespace: air\nspec:\n  roles:\n    - name: sensor\n      serviceAccounts: [fleet]\n      publish: [\"air/${clientid}/pm10\"]\n",
+        );
+        let refused = run(&dir).expect_err("the layout would change the account");
+        assert!(refused.starts_with(fleet), "{refused}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(fleet)).expect("read"),
+            kept
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

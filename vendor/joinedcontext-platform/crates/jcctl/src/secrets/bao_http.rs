@@ -53,8 +53,8 @@ impl HttpBao {
             path: ca_pem.to_path_buf(),
             source,
         })?;
-        // `Certificate::from_pem` hands the bytes to rustls, which parses them when the first
-        // handshake happens — so a file that is not a certificate is accepted here and fails
+        // `Certificate::from_pem` hands the bytes to rustls unread, which parses them when the
+        // first handshake happens — so a file that is not a certificate would be accepted and fail
         // much later, on a connection, looking like an unreachable store. One look at the
         // armour turns that into an error where the configuration is read.
         if !String::from_utf8_lossy(&pem).contains("-----BEGIN CERTIFICATE-----") {
@@ -63,12 +63,20 @@ impl HttpBao {
                 message: "not a PEM certificate: no BEGIN CERTIFICATE block".to_owned(),
             });
         }
-        let certificate =
-            reqwest::Certificate::from_pem(&pem).map_err(|e| BaoError::Transport {
+        // The bundle reader decodes the armour now, so a body that is not base64 is refused here
+        // with the file named; one that decodes to no certificate is refused when the client is
+        // built, still before any connection.
+        let certificates =
+            reqwest::Certificate::from_pem_bundle(&pem).map_err(|e| BaoError::Transport {
                 path: ca_pem.display().to_string(),
                 message: format!("not a PEM certificate: {e}"),
             })?;
-        Self::build(address, Client::builder().add_root_certificate(certificate))
+        let builder = certificates
+            .into_iter()
+            .fold(Client::builder(), |builder, certificate| {
+                builder.add_root_certificate(certificate)
+            });
+        Self::build(address, builder)
     }
 
     fn build(address: &str, builder: reqwest::blocking::ClientBuilder) -> Result<Self, BaoError> {

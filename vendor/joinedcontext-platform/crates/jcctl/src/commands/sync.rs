@@ -80,10 +80,9 @@ impl SyncRemote for Checkout<'_> {
         let files = collect(self.dir)?;
         for (path, body) in files {
             let target = into.join(&path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent)
-                    .map_err(|error| RemoteError::Unavailable(error.to_string()))?;
-            }
+            // `target` is a file under `into`, so it always has a parent.
+            std::fs::create_dir_all(target.parent().unwrap_or(into))
+                .map_err(|error| RemoteError::Unavailable(error.to_string()))?;
             std::fs::write(&target, body)
                 .map_err(|error| RemoteError::Unavailable(error.to_string()))?;
         }

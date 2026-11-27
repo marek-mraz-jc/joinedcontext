@@ -103,6 +103,14 @@ fn a_tree_that_cannot_be_put_in_place_is_refused_with_the_reason() {
         .expect_err("the tree cannot be put in place");
     assert!(!err.is_empty() && !err.starts_with("git"), "{err}");
     std::fs::remove_file(&tree).expect("unblock the tree");
+    // The working directory that could not be renamed stays behind; a read-only cache could not
+    // remove it, and it would stand in for the one the next step must fail to make.
+    let partial = cache.join(format!(
+        ".{}.partial",
+        tree.file_name().expect("a tree name").to_string_lossy()
+    ));
+    assert!(partial.is_dir(), "{}", partial.display());
+    std::fs::remove_dir_all(&partial).expect("clear the working directory");
 
     // A cache that cannot take a new folder: the working directory is not made.
     std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o555)).expect("read-only");
@@ -112,6 +120,7 @@ fn a_tree_that_cannot_be_put_in_place_is_refused_with_the_reason() {
     std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o755)).expect("writable");
     assert!(err.contains("denied"), "{err}");
     assert!(!tree.exists());
+    assert!(!partial.exists());
 
     let none = checkouts(
         &forge,

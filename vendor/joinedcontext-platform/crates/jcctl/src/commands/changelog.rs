@@ -100,15 +100,18 @@ pub enum ChangelogError {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Result<String, ChangelogError> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .map_err(|err| ChangelogError::Git {
-            args: args.join(" "),
-            message: err.to_string(),
-        })?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(dir).args(args);
+    output_of(command, args)
+}
+
+/// What a git `command` run with `args` printed; `Err` naming `args` when it does not start or
+/// exits non-zero.
+fn output_of(mut command: Command, args: &[&str]) -> Result<String, ChangelogError> {
+    let output = command.output().map_err(|err| ChangelogError::Git {
+        args: args.join(" "),
+        message: err.to_string(),
+    })?;
     if !output.status.success() {
         return Err(ChangelogError::Git {
             args: args.join(" "),
@@ -395,6 +398,27 @@ fn escaped(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A git that does not start, and one that exits non-zero, are each a git error naming the
+    /// arguments and the reason.
+    #[test]
+    fn a_git_that_does_not_start_or_fails_names_its_arguments() {
+        let err = output_of(
+            Command::new("/nonexistent/jc-no-git"),
+            &["log", "--oneline"],
+        )
+        .expect_err("nothing runs");
+        let ChangelogError::Git { args, message } = err;
+        assert_eq!(args, "log --oneline");
+        assert!(!message.is_empty());
+        let dir = std::env::temp_dir();
+        let err = git(&dir, &["no-such-subcommand-of-git"]).expect_err("git refuses");
+        let shown = err.to_string();
+        assert!(
+            shown.starts_with("git no-such-subcommand-of-git: "),
+            "{shown}"
+        );
+    }
 
     /// `git log --since=` gets the window start as chrono's `to_rfc3339` wrote it, and a commit's
     /// day is its UTC day across the DST nights of Bratislava and Helsinki (T-7252). Strings

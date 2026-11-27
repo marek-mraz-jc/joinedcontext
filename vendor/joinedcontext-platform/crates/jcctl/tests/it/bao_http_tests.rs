@@ -325,8 +325,21 @@ fn a_ca_file_with_a_certificate_is_added_to_the_roots() {
         "-----BEGIN CERTIFICATE-----\n%%%%\n-----END CERTIFICATE-----\n",
     )
     .expect("write");
-    // The armour passes the first look; the client refuses the body when it is built.
+    // The armour passes the first look; a body that is not base64 is refused as it is read.
     let message = transport(HttpBao::with_ca_file("https://bao.example", &garbled));
+    assert!(message.starts_with("not a PEM certificate: "), "{message}");
+
+    let no_certificate = dir.join("no-certificate.pem");
+    std::fs::write(
+        &no_certificate,
+        "-----BEGIN CERTIFICATE-----\nAAAA\n-----END CERTIFICATE-----\n",
+    )
+    .expect("write");
+    // Base64 that decodes to no certificate: the client refuses it when it is built.
+    let message = transport(HttpBao::with_ca_file(
+        "https://bao.example",
+        &no_certificate,
+    ));
     assert!(message.starts_with("HTTP client:"), "{message}");
 }
 

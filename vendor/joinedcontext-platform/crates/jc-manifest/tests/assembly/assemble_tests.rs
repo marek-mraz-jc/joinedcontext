@@ -1038,6 +1038,16 @@ fn a_registry_entry_that_is_invalid_or_has_no_slug_for_a_name_is_refused() {
         error.to_string().starts_with("projects/Ovzdusie.yaml"),
         "{error}"
     );
+
+    // A valid entry in a file whose name is no slug: the file name is refused before the entry's
+    // name is compared with it.
+    let org = organization("registry-file-no-slug", &[("Ovzdusie", ENTRY)]);
+    let error = jc_manifest::assemble::read_registry(&org).expect_err("the file name is no slug");
+    let shown = error.to_string();
+    assert!(
+        shown.starts_with("projects/Ovzdusie.yaml") && !shown.contains("the file name is the slug"),
+        "{shown}"
+    );
 }
 
 /// An organization repository that links to itself cannot be copied: the walk's failure is

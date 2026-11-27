@@ -111,12 +111,12 @@ pub enum Error {
 
 /// Re-renders every artifact the repository declares into the store's layout (DM-44).
 pub fn rebuild(repo_dir: &Path, options: &Options) -> Result<Report, Error> {
-    let repository =
-        Repository::load(repo_dir).map_err(|error| Error::Repository(error.to_string()))?;
     let root = repo_dir.canonicalize().map_err(|e| Error::File {
         path: repo_dir.display().to_string(),
         reason: e.to_string(),
     })?;
+    let repository =
+        Repository::load(&root).map_err(|error| Error::Repository(error.to_string()))?;
     let mut report = Report::default();
     let revision = options.revision.as_deref().unwrap_or("unknown");
 
@@ -273,12 +273,13 @@ fn major_of(manifest: &RawManifest) -> u64 {
 }
 
 fn write(path: &Path, body: &[u8]) -> Result<(), Error> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| Error::File {
-            path: parent.display().to_string(),
-            reason: error.to_string(),
-        })?;
-    }
+    // Every key is `{prefix}/{name}` under the output folder, so a parent is always there; the
+    // empty path, which `create_dir_all` takes as made, stands in for none.
+    let parent = path.parent().unwrap_or(Path::new(""));
+    std::fs::create_dir_all(parent).map_err(|error| Error::File {
+        path: parent.display().to_string(),
+        reason: error.to_string(),
+    })?;
     std::fs::write(path, body).map_err(|error| Error::File {
         path: path.display().to_string(),
         reason: error.to_string(),

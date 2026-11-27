@@ -409,16 +409,16 @@ mod tests {
             .await
             .expect("a port");
         let addr = listener.local_addr().expect("an address");
-        tokio::spawn(async move {
+        let server = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("a connection");
             let _ = socket.read(&mut [0u8; 2048]).await;
             let head =
                 "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nTransfer-Encoding: chunked\r\n\r\n";
-            if socket.write_all(head.as_bytes()).await.is_err() {
-                return;
-            }
             let chunk = format!("400\r\n{}\r\n", "x".repeat(1024));
-            while socket.write_all(chunk.as_bytes()).await.is_ok() {}
+            let mut sent = socket.write_all(head.as_bytes()).await;
+            while sent.is_ok() {
+                sent = socket.write_all(chunk.as_bytes()).await;
+            }
         });
         let response = reqwest::get(format!("http://{addr}/"))
             .await
@@ -431,6 +431,11 @@ mod tests {
         .expect("the cap ends the read");
         let problem = read.expect_err("a body past the cap is refused");
         assert_eq!(problem.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        // The connection the cap dropped ends the endless writer too: nothing streams on.
+        tokio::time::timeout(std::time::Duration::from_secs(3), server)
+            .await
+            .expect("the writer stops once the reader is gone")
+            .expect("the writer ends without a panic");
     }
 
     #[test]
