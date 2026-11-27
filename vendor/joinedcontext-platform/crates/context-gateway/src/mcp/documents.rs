@@ -785,6 +785,93 @@ mod tests {
         value.as_object().cloned().unwrap_or_default()
     }
 
+    /// An assistant on 127.0.0.1 that answers every call `500`.
+    async fn failing_assistant() -> String {
+        let app = axum::Router::new()
+            .fallback(|| async { axum::http::StatusCode::INTERNAL_SERVER_ERROR });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        url
+    }
+
+    fn gateway() -> Gateway {
+        Gateway::new(
+            crate::proxy::Broker::new("http://localhost:9"),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    /// EP-134, T-6183: an assistant that is down or refuses makes a tool error of a search and
+    /// of a read around a hit, and nothing held of what the sources hold; a server without
+    /// sources has neither tool, and a caller past its bucket waits.
+    #[tokio::test]
+    async fn an_assistant_that_cannot_answer_is_a_tool_error() {
+        let sources = vec![("helsinki".to_owned(), "web".to_owned())];
+        let gateway = gateway();
+        let down = Documents::new(
+            &format!("http://{}:1", std::net::Ipv4Addr::LOCALHOST),
+            Vec::new(),
+        );
+        assert!(down.context("a-1").await.is_err());
+        assert_eq!(
+            down.context("Bad!").await.err().as_deref(),
+            Some("not a publicId")
+        );
+        let searched = down
+            .call(
+                &gateway,
+                "c",
+                &sources,
+                json!(1),
+                &arguments(json!({"query": "school"})),
+            )
+            .await;
+        assert_eq!(searched["result"]["isError"], json!(true), "{searched}");
+        let none = down.around(&gateway, "c", &[], json!(3), &Map::new()).await;
+        assert_eq!(none["error"]["code"], -32602);
+
+        let refusing = Documents::new(&failing_assistant().await, Vec::new());
+        let answered = refusing.context("a-1").await.err().unwrap_or_default();
+        assert!(answered.contains("500"), "{answered}");
+        {
+            let mut held = refusing.held.lock().await;
+            for n in 0..MAX_HELD {
+                held.insert(
+                    vec![(format!("p{n}"), "web".to_owned())],
+                    (Instant::now(), None),
+                );
+            }
+        }
+        assert_eq!(refusing.tools(&sources).await.len(), 2);
+        assert_eq!(refusing.held.lock().await.len(), 1);
+        let chunk = arguments(json!({"chunkId": 7}));
+        let read = refusing
+            .around(&gateway, "c", &sources, json!(2), &chunk)
+            .await;
+        assert_eq!(read["result"]["isError"], json!(true), "{read}");
+        let mut last = Value::Null;
+        for n in 0..12 {
+            last = refusing
+                .around(&gateway, "c", &sources, json!(n), &chunk)
+                .await;
+        }
+        assert!(last.to_string().contains("is busy for you"), "{last}");
+    }
+
+    /// A `source` that is no short text is refused; a hit that is no object is ranked as it
+    /// is, and a hit with a title alone is cited by it.
+    #[test]
+    fn odd_sources_and_hits_are_refused_or_kept() {
+        assert!(asked(&arguments(json!({"query": "school", "source": 5}))).is_err());
+        let ranked = fused(vec![vec![json!(5)]], 5);
+        assert_eq!(ranked, [json!(5)]);
+        assert_eq!(cite(&json!({"title": "Schools"})), "Schools");
+    }
+
     #[test]
     fn the_hubs_sources_are_project_source_pairs_once_each() {
         assert_eq!(
