@@ -1281,6 +1281,30 @@ mod tests {
         );
     }
 
+    /// A batch-wide error (the per-run memory limit: five 60 MB messages reach the second
+    /// processor as one 300 MB batch, over the default 256 MiB) fails the case with that error,
+    /// and the run goes on to the next case.
+    #[tokio::test]
+    async fn a_batch_over_the_memory_limit_fails_the_case_with_the_quota_error() {
+        let dir = tempfile::tempdir().expect("dir");
+        let d = dir.path();
+        write(
+            d,
+            "m.yaml",
+            "pipeline:\n  processors:\n    - mapping: 'root = \"x\".repeat(60000000)'\n    - mapping: 'root = \"small\"'\ntests:\n  - name: big\n    input_batch: [{content: a}, {content: b}, {content: c}, {content: d}, {content: e}]\n    output_batches: [[{content_equals: small}]]\n  - name: next\n    input_batch: [{content: b}]\n    output_batches: [[{content_equals: c}]]\n",
+        );
+        let (ok, out, err) = report(&[d.join("m.yaml")], &[]).await;
+        assert!(!ok);
+        assert!(err.is_empty(), "{err}");
+        assert!(
+            out.contains("big [line 6]:\nprocessors resulted in error: ")
+                && out.contains("exceeds per-run memory limit (268435456 bytes)"),
+            "{out}"
+        );
+        assert!(out.contains("wrong batch count, expected 1, got 0"), "{out}");
+        assert!(out.contains("next [line 9]:"), "{out}");
+    }
+
     #[tokio::test]
     async fn a_target_that_does_not_build_stops_the_run() {
         let dir = tempfile::tempdir().expect("dir");
