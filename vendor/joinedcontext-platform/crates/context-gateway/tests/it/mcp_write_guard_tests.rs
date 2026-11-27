@@ -16,7 +16,7 @@ use context_gateway::app::{router, Gateway};
 use context_gateway::auth::accounts::ServiceAccounts;
 use context_gateway::pdp::PolicyPdp;
 use context_gateway::proxy::Broker;
-use context_gateway::resolver::Endpoint;
+use context_gateway::resolver::{DeclaredTypes, Endpoint};
 use jc_core::kinds::{Audience, Creates, PolicySpec, RateLimits, Representation};
 use serde_json::{json, Value};
 use std::sync::{Arc, Mutex};
@@ -234,6 +234,75 @@ async fn a_subscription_to_an_internal_address_is_refused_through_mcp_as_through
     let (_, answer) = send(&app, &mcp(), Some(&bearer), &public).await;
     assert!(refusal(&answer).is_none(), "{answer}");
     assert_eq!(hops.lock().expect("the hop log").len(), 1);
+}
+
+#[tokio::test]
+async fn a_write_that_names_no_resource_is_refused_before_the_broker() {
+    let realm = common::Realm::new();
+    let ok = json!({ "jsonrpc": "2.0", "id": 7, "result": { "content": [] } });
+    let (upstream, hops) = broker(StatusCode::OK, ok).await;
+    let app = router(Arc::new(gateway(&upstream, endpoint(None), &realm)));
+    let bearer = format!("Bearer {}", steward(&realm, "jana"));
+
+    let (_, answer) = send(
+        &app,
+        &mcp(),
+        Some(&bearer),
+        &call("delete_entity", json!({ "id": ".." })),
+    )
+    .await;
+    let why = refusal(&answer).unwrap_or_else(|| panic!("not refused: {answer}"));
+    assert!(why.contains("names no resource"), "{why}");
+
+    assert!(hops.lock().expect("the hop log").is_empty());
+}
+
+#[tokio::test]
+async fn a_batch_the_policy_grants_in_part_is_refused_whole_naming_the_first_refused() {
+    let realm = common::Realm::new();
+    let ok = json!({ "jsonrpc": "2.0", "id": 7, "result": { "content": [] } });
+    let (upstream, hops) = broker(StatusCode::OK, ok).await;
+    let mut modelled = endpoint(None);
+    modelled.declared_types = Some(Arc::new(DeclaredTypes {
+        model: "air".into(),
+        classes: ["AirQualityObserved".to_owned()].into(),
+        units: Default::default(),
+        relationships: Default::default(),
+        quality: Vec::new(),
+        schema: Some(Arc::new(jc_manifest::model_schema::ModelSchema::compile(
+            "air",
+            "1.0.0",
+            &json!({
+                "$schema": "http://json-schema.org/draft-07/schema#",
+                "definitions": { "AirQualityObserved": { "type": "object", "properties": {
+                    "id": { "type": "string" },
+                    "pm10": { "type": "number", "minimum": 0 }
+                } } }
+            }),
+            &["AirQualityObserved".to_owned()],
+            true,
+        ))),
+    }));
+    let app = router(Arc::new(gateway(&upstream, modelled, &realm)));
+    let bearer = format!("Bearer {}", steward(&realm, "jana"));
+    let granted = json!({ "id": "urn:ngsi-ld:AirQualityObserved:a", "type": "AirQualityObserved" });
+    let ungranted = json!({ "id": "urn:ngsi-ld:AirQualityObserved:b", "type": "AirQualityObserved",
+        "pm10": { "type": "Property", "value": -1 } });
+
+    let (_, answer) = send(
+        &app,
+        &mcp(),
+        Some(&bearer),
+        &call("batch_upsert", json!({ "entities": [granted, ungranted] })),
+    )
+    .await;
+    let why = refusal(&answer).unwrap_or_else(|| panic!("not refused: {answer}"));
+    assert!(why.contains("of the entities were refused"), "{why}");
+    assert!(why.contains("urn:ngsi-ld:AirQualityObserved:b"), "{why}");
+    assert!(
+        hops.lock().expect("the hop log").is_empty(),
+        "nothing reached the broker"
+    );
 }
 
 #[tokio::test]

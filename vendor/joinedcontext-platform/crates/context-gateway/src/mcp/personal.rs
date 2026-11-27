@@ -209,9 +209,13 @@ pub fn addressed(name: &str) -> Option<McpServer> {
     })
 }
 
-/// `connector` as the server it is served as: every Endpoint of `endpoints` its scope reaches.
-fn server_of(connector: &Connector, endpoints: &[Arc<Endpoint>]) -> Option<McpServer> {
-    let mut server = addressed(&connector.name)?;
+/// `server` (the address's own, from [`addressed`]) with every Endpoint of `endpoints` the
+/// `connector`'s scope reaches.
+fn reaching(
+    mut server: McpServer,
+    connector: &Connector,
+    endpoints: &[Arc<Endpoint>],
+) -> McpServer {
     server.endpoints = Some(
         endpoints
             .iter()
@@ -219,7 +223,7 @@ fn server_of(connector: &Connector, endpoints: &[Arc<Endpoint>]) -> Option<McpSe
             .map(|e| e.slug.clone())
             .collect(),
     );
-    Some(server)
+    server
 }
 
 fn now() -> i64 {
@@ -284,10 +288,9 @@ pub async fn message(gateway: Arc<Gateway>, name: String, request: Request) -> R
             ))
             .into_response();
     }
-    match server_of(connector, &gateway.resolver.endpoints()) {
-        Some(server) => serve(gateway, server, request).await,
-        None => ProblemDetails::not_found().into_response(),
-    }
+    // The connector answers to `name`, which `addressed` took as a DNS label above.
+    let server = reaching(address, connector, &gateway.resolver.endpoints());
+    serve(gateway, server, request).await
 }
 
 #[cfg(test)]
@@ -321,6 +324,119 @@ mod tests {
         tokio::spawn(async move { axum::serve(listener, app).await });
         let answer = Personal::new(url, None, KEEP).of("person-1").await;
         assert!(answer.is_err(), "{answer:?}");
+    }
+
+    /// A listener's URL and its server: `app` answers on 127.0.0.1.
+    async fn serve_on(app: axum::Router) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        url
+    }
+
+    /// The URL of a port nothing listens on.
+    async fn closed() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("addr"));
+        drop(listener);
+        url
+    }
+
+    /// A Portal that lists one connector for a caller bearing `tok-1` and refuses any other.
+    async fn portal_wanting_a_token() -> String {
+        let app = axum::Router::new().route(
+            "/internal/connectors/{sub}",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                let bearer = headers
+                    .get(AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .unwrap_or_default();
+                if bearer == "Bearer tok-1" {
+                    axum::Json(serde_json::json!({ "connectors": [{
+                        "id": "x", "name": "my-air", "scope": [],
+                        "expiresAt": "2999-01-01T00:00:00Z",
+                    }] }))
+                    .into_response()
+                } else {
+                    axum::http::StatusCode::UNAUTHORIZED.into_response()
+                }
+            }),
+        );
+        format!("{}/internal/connectors", serve_on(app).await)
+    }
+
+    /// The gateway's workload token is sent to the Portal; a realm that cannot give one is an
+    /// error and the Portal is never asked without it.
+    #[tokio::test]
+    async fn the_portal_is_read_as_the_gateways_workload_and_never_without_its_token() {
+        let realm = serve_on(axum::Router::new().route(
+            "/token",
+            axum::routing::post(|| async {
+                axum::Json(serde_json::json!({ "access_token": "tok-1", "expires_in": 300 }))
+            }),
+        ))
+        .await;
+        let token = Arc::new(WorkloadToken::new(
+            format!("{realm}/token"),
+            "context-gateway".to_owned(),
+            "secret".to_owned(),
+        ));
+        let portal = portal_wanting_a_token().await;
+        let listed = Personal::new(portal.clone(), Some(token), KEEP)
+            .of("ana")
+            .await
+            .expect("the Portal answers a bearer of the token");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "my-air");
+
+        let unreachable = Arc::new(WorkloadToken::new(
+            format!("{}/token", closed().await),
+            "context-gateway".to_owned(),
+            "secret".to_owned(),
+        ));
+        let refused = Personal::new(portal.clone(), Some(unreachable), KEEP)
+            .of("ana")
+            .await;
+        assert!(refused.is_err(), "{refused:?}");
+        let without = Personal::new(portal, None, KEEP).of("ana").await;
+        assert_eq!(
+            without.expect_err("the Portal refuses a call without the token"),
+            "the Portal answered 401 Unauthorized"
+        );
+    }
+
+    /// A Portal that cannot be reached is an error that names no URL; a `sub` that is no plain
+    /// segment names nobody and costs no call; a flood of tokens drops the held lists.
+    #[tokio::test]
+    async fn an_unreachable_portal_names_no_url_and_a_flood_drops_the_held_lists() {
+        let url = format!("{}/internal/connectors", closed().await);
+        let down = Personal::new(url.clone(), None, KEEP).of("ana").await;
+        let why = down.expect_err("nothing listens");
+        assert!(!why.contains("127.0.0.1"), "the URL is not repeated: {why}");
+
+        let nobody = Personal::new(url, None, KEEP).of("a/b").await;
+        assert_eq!(nobody.expect("no call is made"), Arc::new(Vec::new()));
+
+        let portal = serve_on(axum::Router::new().route(
+            "/internal/connectors/{sub}",
+            axum::routing::get(|| async { axum::Json(serde_json::json!({ "connectors": [] })) }),
+        ))
+        .await;
+        let personal = Personal::new(format!("{portal}/internal/connectors"), None, KEEP);
+        {
+            let mut held = personal.held.lock().await;
+            for n in 0..MAX_HELD {
+                held.insert(format!("p{n}"), (Instant::now(), Arc::new(Vec::new())));
+            }
+        }
+        personal.of("newcomer").await.expect("a list");
+        let held = personal.held.lock().await;
+        assert_eq!(held.len(), 1, "the held lists were dropped to make room");
+        assert!(held.contains_key("newcomer"));
     }
 
     #[test]
@@ -361,7 +477,7 @@ mod tests {
                 { "project": "skoly", "pipeline": "*", "access": "read" },
             ],
         }));
-        let server = server_of(&c, &endpoints).expect("a server");
+        let server = reaching(addressed("my-air").expect("a label"), &c, &endpoints);
         assert_eq!(server.path(), "/api/mcp/me/my-air");
         assert_eq!(server.audience, Audience::Organization);
         assert!(server.members.is_empty());
@@ -375,7 +491,7 @@ mod tests {
             "scope": [{ "project": "doprava", "endpoint": "lots", "access": "read" }],
         }));
         assert_eq!(
-            server_of(&named, &endpoints).and_then(|s| s.endpoints),
+            reaching(addressed("one").expect("a label"), &named, &endpoints).endpoints,
             Some(vec!["bbbb".to_owned()])
         );
         assert!(addressed("My Air").is_none());

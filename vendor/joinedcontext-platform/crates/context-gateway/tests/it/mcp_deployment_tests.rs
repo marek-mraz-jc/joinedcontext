@@ -286,6 +286,11 @@ fn endpoint(slug: &str, audience: Audience, role: &str) -> Endpoint {
 
 /// The gateway with the deployments the store loads from [`repository`].
 async fn app(realm: &common::Realm) -> Router {
+    app_reading(realm, &assistant().await).await
+}
+
+/// [`app`] with the assistant at `assistant_url`.
+async fn app_reading(realm: &common::Realm, assistant_url: &str) -> Router {
     let dir = repository();
     let servers = context_gateway::store::load(&dir)
         .expect("the repository loads")
@@ -307,7 +312,7 @@ async fn app(realm: &common::Realm) -> Router {
         ServiceAccounts::new(),
         Some(HOST.to_owned()),
     )
-    .search_documents_with(Documents::new(&assistant().await, hub_sources("bbsk/web")));
+    .search_documents_with(Documents::new(assistant_url, hub_sources("bbsk/web")));
     gateway.replace_servers(servers);
     router(Arc::new(gateway))
 }
@@ -467,6 +472,35 @@ async fn an_internal_deployment_asks_for_a_token_and_an_unknown_one_is_404() {
     assert_eq!(status, StatusCode::NOT_FOUND, "a disabled deployment");
     let (status, _) = rpc(&app, "/api/mcp/d/nobody", None, list()).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+/// An assistant that cannot be read leaves the `context` resource a JSON-RPC internal error that
+/// says to try again, and nothing of the assistant's address or its error.
+#[tokio::test]
+async fn an_assistant_that_cannot_be_read_leaves_its_context_an_internal_error() {
+    let realm = common::Realm::new();
+    let closed = {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        format!("http://{}", listener.local_addr().expect("an address"))
+    };
+    let app = app_reading(&realm, &closed).await;
+    let (_, answer) = rpc(
+        &app,
+        "/api/mcp/d/bbsk-data",
+        None,
+        json!({"jsonrpc": "2.0", "id": 2, "method": "resources/read",
+               "params": {"uri": "context://bbsk-data"}}),
+    )
+    .await;
+    assert_eq!(answer["error"]["code"], -32603, "{answer}");
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("try again shortly") && !m.contains("127.0.0.1")),
+        "{answer}"
+    );
 }
 
 /// EP-136, API/05 §5: a public assistant's server offers the resource `context`, the

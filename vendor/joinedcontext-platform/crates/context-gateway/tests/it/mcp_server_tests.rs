@@ -982,6 +982,80 @@ async fn a_selector_reaches_only_what_the_caller_reads() {
     assert!(names.is_empty(), "{names:?}");
 }
 
+/// ADR-N-043 §2.7: a member's own bucket is spent by a call that names it, and a spent one is the
+/// Endpoint's own 429 for the server's caller, not a tool error.
+#[tokio::test]
+async fn a_call_naming_a_member_whose_bucket_is_spent_is_a_429() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let app = app(&broker.url, &realm, true);
+    let edge = token(&realm, json!("context-gateway"));
+    let named = || {
+        post(
+            SERVER,
+            Some(&edge),
+            call(
+                "query_entities",
+                json!({ "endpoint": BIKES, "type": ["AirQualityObserved"] }),
+            ),
+        )
+    };
+    let (status, _, first) = raw(app.clone(), named()).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    let (status, headers, second) = raw(app, named()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{second}");
+    assert!(headers.contains_key("retry-after"), "{headers:?}");
+}
+
+/// ADR-N-043 §2.6: a member that grants the caller other tools but not this one is a `failed`
+/// entry that names it, a read every member failed is a tool error, and a tool no member grants
+/// is the unknown tool the server never listed.
+#[tokio::test]
+async fn a_member_that_does_not_grant_the_tool_fails_apart_and_a_tool_nobody_grants_is_unknown() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let mut bikes = endpoint(BIKES, vec![grant("steward", "queryEntity")]);
+    bikes.rate_limit = Some(RateLimits {
+        requests_per_minute: 1,
+        burst: Some(1),
+    });
+    let types_only = endpoint(AIR, vec![grant("steward", "retrieveEntityTypes")]);
+    let app = serving(
+        &broker.url,
+        &realm,
+        vec![bikes, types_only],
+        vec![
+            server("mobility", &[BIKES, AIR], Audience::Organization),
+            server("types-only", &[AIR], Audience::Organization),
+        ],
+    );
+    let edge = token(&realm, json!("context-gateway"));
+
+    let (_, first) = send(app.clone(), post(SERVER, Some(&edge), every_station())).await;
+    let structured = &first["result"]["structuredContent"];
+    assert_eq!(slugs(&structured["results"]), [BIKES], "{first}");
+    assert_eq!(slugs(&structured["failed"]), [AIR], "{first}");
+    assert_eq!(first["result"]["isError"], json!(false));
+
+    let (_, second) = send(app.clone(), post(SERVER, Some(&edge), every_station())).await;
+    let structured = &second["result"]["structuredContent"];
+    assert_eq!(slugs(&structured["failed"]), [BIKES, AIR], "{second}");
+    assert_eq!(structured["results"], json!([]), "{second}");
+    assert_eq!(
+        second["result"]["isError"],
+        json!(true),
+        "nothing answered: {second}"
+    );
+
+    let (_, unknown) = send(
+        app,
+        post("/api/mcp/ovzdusie/types-only", Some(&edge), every_station()),
+    )
+    .await;
+    assert_eq!(unknown["error"]["code"], json!(-32602), "{unknown}");
+    assert_eq!(unknown["error"]["message"], json!("unknown tool"));
+}
+
 /// EP-120: a public server selects public Endpoints only, for a caller with a token too.
 #[tokio::test]
 async fn a_public_server_selects_public_endpoints_only() {
@@ -1489,4 +1563,119 @@ async fn a_personal_connector_reads_only_and_holds_its_expiry_and_clients() {
         "{problem}"
     );
     assert!(broker.hops().is_empty());
+}
+
+/// EP-123: an address nobody serves answers the bytes of an unknown server, whatever makes it
+/// so: a gateway that reads no connectors, a name that is no DNS label, a `sub` that is no plain
+/// path segment (it names nobody and costs the Portal no call).
+#[tokio::test]
+async fn a_personal_address_nobody_serves_answers_as_an_unknown_server() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let portal = portal(json!({ "ana": [record("my-air", &[AIR])] })).await;
+    let ana = person(&realm, "ana");
+    let ask = |app: &Router, name: &str, token: &str| {
+        raw(
+            app.clone(),
+            post(
+                &format!("/api/mcp/me/{name}"),
+                Some(token),
+                call("list_endpoints", json!({})),
+            ),
+        )
+    };
+
+    let without = app(&broker.url, &realm, false);
+    let (status, _, unread) = ask(&without, "my-air", &ana).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "no connectors are read here");
+
+    let reading = personal(
+        &broker.url,
+        &realm,
+        &portal,
+        std::time::Duration::from_secs(60),
+    );
+    let (status, _, not_a_label) = ask(&reading, "My-Air", &ana).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (_, _, unknown) = ask(&reading, "nothing-here", &ana).await;
+    assert_eq!(not_a_label, unread, "the same bytes as an unknown server");
+    assert_eq!(unknown, unread);
+
+    let before = portal.calls.load(std::sync::atomic::Ordering::SeqCst);
+    let (status, _, odd_sub) = ask(&reading, "my-air", &person(&realm, "a/b")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(odd_sub, unread);
+    assert_eq!(
+        portal.calls.load(std::sync::atomic::Ordering::SeqCst),
+        before,
+        "a sub that is no segment names nobody: the Portal is not asked"
+    );
+}
+
+/// EP-123: a bearer that does not verify, or a gateway with no realm to verify it, is 401 and
+/// the Portal is never asked; a request on another Organization's host verifies against that
+/// Organization's realm alone.
+#[tokio::test]
+async fn a_personal_connector_needs_a_token_the_realm_verifies() {
+    let realm = common::Realm::new();
+    let broker = common::BrokerStub::start(vec![json!([])]).await;
+    let portal = portal(json!({ "ana": [record("my-air", &[AIR])] })).await;
+    let reading = personal(
+        &broker.url,
+        &realm,
+        &portal,
+        std::time::Duration::from_secs(60),
+    );
+    let (status, _, _) = raw(
+        reading.clone(),
+        post(
+            "/api/mcp/me/my-air",
+            Some("not-a-jwt"),
+            call("list_endpoints", json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let no_realm = router(Arc::new(
+        Gateway::new(
+            Broker::new(&broker.url),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .read_personal_connectors(context_gateway::mcp::personal::Personal::new(
+            portal.url.clone(),
+            None,
+            std::time::Duration::from_secs(60),
+        )),
+    ));
+    let (status, _, _) = raw(
+        no_realm,
+        post(
+            "/api/mcp/me/my-air",
+            Some(&person(&realm, "ana")),
+            call("list_endpoints", json!({})),
+        ),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::UNAUTHORIZED,
+        "no realm, no verification"
+    );
+
+    let mut elsewhere = post(
+        "/api/mcp/me/my-air",
+        Some(&person(&realm, "ana")),
+        call("list_endpoints", json!({})),
+    );
+    elsewhere
+        .extensions_mut()
+        .insert(context_gateway::app::HostOrganization("other".to_owned()));
+    let (status, _, body) = raw(reading, elsewhere).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        body.contains("\"total\":0"),
+        "an Organization that is not theirs lists nothing: {body}"
+    );
 }

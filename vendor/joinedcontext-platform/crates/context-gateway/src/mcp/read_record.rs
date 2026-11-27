@@ -217,4 +217,77 @@ mod tests {
             );
         }
     }
+
+    /// An Endpoint that serves one personal attribute, so its reads need their answer read.
+    fn personal_endpoint() -> Endpoint {
+        let model = json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": { "BikeTrip": { "type": "object", "properties": {
+                "id": { "type": "string" },
+                "rider": { "type": "string", "x-personal-data": true }
+            } } }
+        });
+        let schema = jc_manifest::model_schema::ModelSchema::compile(
+            "bike-trips",
+            "1.0.0",
+            &model,
+            &["BikeTrip".to_owned()],
+            true,
+        );
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        endpoint.declared_types = Some(std::sync::Arc::new(crate::resolver::DeclaredTypes {
+            model: "bike-trips".into(),
+            classes: ["BikeTrip".to_owned()].into(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: Some(std::sync::Arc::new(schema)),
+        }));
+        endpoint
+    }
+
+    /// An answer that cannot be held is refused in the shape the request asks for: a JSON-RPC
+    /// error for a resource, a tool error for a tool; neither serves the Entities unlogged.
+    #[test]
+    fn an_answer_that_could_not_be_held_is_refused_in_the_shape_of_its_request() {
+        let endpoint = personal_endpoint();
+        let subject = Subject::anonymous();
+        let resource = json!({"id": 4, "method": "resources/read",
+            "params": {"uri": "ngsi-ld://v/entities/urn%3Aa"}});
+        let refused = recorded(&endpoint, &subject, &resource, None).expect_err("refused");
+        assert_eq!(refused["error"]["code"], -32000, "{refused}");
+        assert_eq!(refused["id"], 4);
+        let tool = json!({"id": 5, "method": "tools/call", "params": {"name": "query_entities"}});
+        let refused = recorded(&endpoint, &subject, &tool, None).expect_err("refused");
+        assert_eq!(refused["result"]["isError"], true, "{refused}");
+        let text = refused["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(text.contains("could not be read"), "{text}");
+        // A tool error, a JSON-RPC error and a listed answer are served.
+        let answered = |answer: Value| recorded(&endpoint, &subject, &tool, Some(&answer));
+        assert!(answered(json!({"error": {"code": 1}})).is_ok());
+        assert!(answered(json!({"result": {"isError": true}})).is_ok());
+        assert!(answered(json!({"result": {"structuredContent": {"entities": []}}})).is_ok());
+        // A request that reads no Entity needs nothing.
+        let other = json!({"method": "tools/list"});
+        assert!(!asks_entities(&other));
+        assert!(recorded(&endpoint, &subject, &other, None).is_ok());
+    }
+
+    #[test]
+    fn a_summary_names_its_samples_and_an_unknown_tool_names_nothing() {
+        let call = |name: &str| json!({"method": "tools/call", "params": {"name": name}});
+        let samples = json!({"structuredContent": {"samples": [{"id": "urn:a"}, {"id": "urn:b"}]}});
+        assert_eq!(
+            entities_of(&call("summarize"), &samples),
+            Some(vec!["urn:a".to_owned(), "urn:b".to_owned()])
+        );
+        let busy = json!({"structuredContent": {"statistics": {}}});
+        assert_eq!(entities_of(&call("summarize"), &busy), Some(Vec::new()));
+        let nameless = json!({"structuredContent": {"samples": [{"no": 1}]}});
+        assert_eq!(entities_of(&call("summarize"), &nameless), None);
+        let any = json!({"structuredContent": {"entities": []}});
+        assert_eq!(entities_of(&call("no_such_tool"), &any), None);
+    }
 }
