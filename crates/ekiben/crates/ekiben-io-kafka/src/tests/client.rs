@@ -383,6 +383,25 @@ async fn tls_verifies_the_broker_against_root_cas() {
     );
 }
 
+/// A host the resolver reads as an address (`2130706433` is 127.0.0.1 to getaddrinfo) but TLS
+/// cannot name is a configuration error, raised after the connect and before any handshake.
+#[tokio::test]
+async fn a_host_tls_cannot_name_is_a_configuration_error() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let port = listener.local_addr().expect("addr").port();
+    let (_, der, _) = localhost_tls();
+    let mut s = settings(&org());
+    s.tls = Some(tls_config(&[der]).expect("roots"));
+    let e = error(Conn::connect("2130706433", port, &s).await);
+    assert!(matches!(e, CoreError::Config(_)), "{e:?}");
+    assert!(
+        e.to_string().contains("kafka_franz input: broker 2130706433: "),
+        "{e}"
+    );
+}
+
 #[test]
 fn a_root_ca_that_is_not_a_certificate_is_a_configuration_error() {
     let e = error(tls_config(&[b"not a certificate".to_vec()]));

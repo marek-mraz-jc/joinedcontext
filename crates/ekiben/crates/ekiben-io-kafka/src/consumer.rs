@@ -609,7 +609,8 @@ impl KafkaInput {
         }
         let node = self.leaders[self.next_leader % self.leaders.len()];
         self.next_leader = self.next_leader.wrapping_add(1);
-        let queued: Vec<&Tp> = self.ready.iter().map(|r| &r.tp).collect();
+        // step() fetches only once take_ready() drained the queue: no partition is queued here.
+        debug_assert!(self.ready.is_empty());
         let want: Vec<(Tp, i64)> = self
             .lock()
             .parts
@@ -617,7 +618,6 @@ impl KafkaInput {
             .filter(|(tp, p)| {
                 self.leader(tp).ok() == Some(node)
                     && p.unacked() < self.s.checkpoint_limit
-                    && !queued.contains(tp)
             })
             .map(|(tp, p)| (tp.clone(), p.fetch))
             .collect();

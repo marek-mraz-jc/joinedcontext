@@ -777,6 +777,10 @@ async fn nats_kv_revisions_updates_purges_and_keys_on_a_real_bucket() {
     };
     let created = run(proc("org_a_ops", "create", "k", None), "v1").await;
     assert!(!created.is_errored(), "{:?}", created.error_get());
+    // A key the client refuses fails create with the reason, not as an existing key.
+    let refused = run(proc("org_a_ops", "create", "two words", None), "v1").await;
+    let err = refused.error_get().expect("refused").to_string();
+    assert!(err.starts_with("nats: key cannot be empty"), "{err}");
     let r1 = created.meta_get_str("nats_kv_revision");
     let updated = run(proc("org_a_ops", "update", "k", Some(&r1)), "v2").await;
     assert!(!updated.is_errored(), "{:?}", updated.error_get());
