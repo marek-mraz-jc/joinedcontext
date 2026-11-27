@@ -141,8 +141,14 @@ impl Jc {
 }
 
 /// jc with every module in host mode on `localhost`, the two Organizations of
-/// `tests/fixtures/two-orgs.toml`, the Portal on `serving` and migrating as `migration`.
-fn spawn(dir: tempfile::TempDir, serving: &str, migration: Option<&str>) -> Jc {
+/// `tests/fixtures/two-orgs.toml`, the Portal on `serving` and migrating as `migration`, and
+/// `env` beside.
+fn spawn(
+    dir: tempfile::TempDir,
+    serving: &str,
+    migration: Option<&str>,
+    env: &[(&str, String)],
+) -> Jc {
     let config = dir.path().join("jc.toml");
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/two-orgs.toml");
     let text = format!(
@@ -186,6 +192,7 @@ fn spawn(dir: tempfile::TempDir, serving: &str, migration: Option<&str>) -> Jc {
     if let Some(migration) = migration {
         cmd.env("JC_PORTAL_MIGRATION_DATABASE_URL", migration);
     }
+    cmd.envs(env.iter().map(|(k, v)| (k, v)));
     let mut child = cmd.spawn().expect("spawn jc");
     let stderr = child.stderr.take().unwrap();
     let log = Arc::new(Mutex::new(Vec::new()));
@@ -203,12 +210,13 @@ fn spawn(dir: tempfile::TempDir, serving: &str, migration: Option<&str>) -> Jc {
 }
 
 /// [`spawn`] until it keeps its port, then waits for the Portal.
-async fn start(db: &Db) -> Jc {
+async fn start(db: &Db, env: &[(&str, String)]) -> Jc {
     for _ in 0..5 {
         let jc = spawn(
             tempfile::tempdir().unwrap(),
             &db.url(APP),
             Some(&db.url(OWNER)),
+            env,
         );
         let deadline = Instant::now() + Duration::from_secs(180);
         while Instant::now() < deadline {
@@ -233,7 +241,14 @@ async fn the_portal_seeds_and_follows_its_registry_on_postgres() {
     let Some(db) = prepare("run").await else {
         return;
     };
-    let jc = start(&db).await;
+    // The Portal's internal listener where JC_INTERNAL_BIND names it: jc reserves none then,
+    // and the Portal binds that address itself.
+    let internal = std::net::SocketAddr::from(([127, 0, 0, 1], free_port()));
+    let jc = start(&db, &[("JC_INTERNAL_BIND", internal.to_string())]).await;
+    assert!(
+        std::net::TcpStream::connect(internal).is_ok(),
+        "the Portal listens at {internal}"
+    );
     jc.wait_for("Organization registry: jc.toml Organizations seeded", 1, 30)
         .await;
     jc.wait_for("host registry: jc.toml hosts seeded", 1, 30)
@@ -311,7 +326,7 @@ async fn a_registry_seed_the_server_refuses_names_its_registry() {
     let Some(db) = prepare("seed").await else {
         return;
     };
-    drop(start(&db).await);
+    drop(start(&db, &[]).await);
     let admin = db.admin().await;
     sqlx::raw_sql(
         "CREATE SCHEMA jc_test;
@@ -337,6 +352,7 @@ async fn a_registry_seed_the_server_refuses_names_its_registry() {
         tempfile::tempdir().unwrap(),
         &db.url(APP),
         Some(&db.url(OWNER)),
+        &[],
     );
     jc.wait_for("the jc.toml Organizations could not be seeded", 1, 120)
         .await;
@@ -361,7 +377,7 @@ async fn a_registry_seed_the_server_refuses_names_its_registry() {
 /// Runs jc with this Portal database setting until its log names `refusal`; the Portal is
 /// built again and again meanwhile, nothing else starts it.
 async fn refused(serving: &str, migration: Option<&str>, refusal: &str) {
-    let jc = spawn(tempfile::tempdir().unwrap(), serving, migration);
+    let jc = spawn(tempfile::tempdir().unwrap(), serving, migration, &[]);
     jc.wait_for(refusal, 1, 120).await;
     let text = jc.text();
     assert!(!text.contains("portal: ready"), "{text}");

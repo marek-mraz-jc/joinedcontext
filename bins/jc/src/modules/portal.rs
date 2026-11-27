@@ -1815,6 +1815,24 @@ mod tests {
             axum::http::StatusCode::MISDIRECTED_REQUEST,
             "no host of a refused set answers"
         );
+        // With the Portal here its Organization hosts are the first step: a name the Portal
+        // refuses stops the rest and names the Portal, and the table keeps what answers.
+        let run = Run {
+            portal: Some(AppState::new(Config::for_tests(), None)),
+            ..run
+        };
+        let e = apply(
+            &run,
+            &[host("smartcity.bad.sk", "Not An Org", "working")],
+            &[org("bbsk", "active"), org("Not An Org", "active")],
+        )
+        .expect_err("a name the Portal refuses");
+        assert!(
+            e.starts_with("the Portal kept its Organization hosts:")
+                && e.contains("is not an Organization name"),
+            "{e}"
+        );
+        assert_eq!(get("smartcity.bbsk.sk", "/").await, ok("bbsk-portal|bbsk"));
     }
 
     /// The registry rebuild on a migrated Portal database (`JC_PG_TEST_DATABASE_URL`, a superuser):
