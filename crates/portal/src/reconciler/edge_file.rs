@@ -285,9 +285,10 @@ fn login(template: &Value, host: &str, app: &EdgeApp, unauth_action: &str) -> Va
     plugin["session"]["cookie_name"] = json!(format!("__Host-jc_app_{}", name.replace('-', "_")));
     plugin["session"]["cookie_path"] = json!("/");
     plugin["session"]["cookie_secure"] = json!(true);
-    if let Some(session) = plugin["session"].as_object_mut() {
-        session.remove("cookie_domain");
-    }
+    // An object since the lines above: the removal always finds it.
+    let _ = plugin["session"]
+        .as_object_mut()
+        .and_then(|session| session.remove("cookie_domain"));
     plugin
 }
 
@@ -1096,6 +1097,25 @@ impl EdgeFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A base with no plugin_configs list, a route of a class without a limit-count plugin and
+    /// one of no class keep what helm wrote; only the labelled limit-count takes the rate.
+    #[test]
+    fn only_a_labelled_limit_count_takes_its_class_rate() {
+        let limits = EdgeLimits {
+            rates: BTreeMap::from([("api", 7)]),
+            body_bytes: None,
+        };
+        let mut document = json!({ "routes": [
+            { "labels": { RATE_CLASS: "api" }, "plugins": { "limit-count": { "count": 1 } } },
+            { "labels": { RATE_CLASS: "api" }, "plugins": { "cors": {} } },
+            { "labels": {}, "plugins": { "limit-count": { "count": 2 } } },
+        ] });
+        apply_limits(&mut document, &limits);
+        assert_eq!(document["routes"][0]["plugins"]["limit-count"]["count"], 7);
+        assert_eq!(document["routes"][1]["plugins"], json!({ "cors": {} }));
+        assert_eq!(document["routes"][2]["plugins"]["limit-count"]["count"], 2);
+    }
 
     const BASE: &str = r#"plugin_configs:
   - id: apps-surface

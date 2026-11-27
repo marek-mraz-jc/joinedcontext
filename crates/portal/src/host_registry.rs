@@ -734,10 +734,7 @@ mod tests {
     /// A registry and a forge that name the same Organizations report an empty drift, unlogged.
     #[tokio::test]
     async fn a_registry_and_a_forge_that_agree_report_no_drift() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         sqlx::query(
             "INSERT INTO organizations (name, host, state, created_by) \
              VALUES ('smartcity', 'smartcity.example', 'active', 'test') ON CONFLICT DO NOTHING",

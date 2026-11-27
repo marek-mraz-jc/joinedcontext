@@ -221,7 +221,7 @@ fn credential_free(origin: &SyncOrigin) -> Result<(), RemoteError> {
 ///
 /// Each pkt-line is `<4 hex length><sha> <name>[\0capabilities]`, and the two fields this needs
 /// survive a split on whitespace.
-fn advertised(text: &str, git_ref: &str) -> Option<String> {
+pub fn advertised(text: &str, git_ref: &str) -> Option<String> {
     let wanted = [
         format!("refs/heads/{git_ref}"),
         format!("refs/tags/{git_ref}"),
@@ -251,11 +251,9 @@ fn advertised(text: &str, git_ref: &str) -> Option<String> {
 
 /// The 40-character object name at the head of an advertisement line, past its pkt-line length.
 fn object_name(field: &str) -> Option<String> {
-    let candidate = if field.len() > 40 {
-        &field[field.len() - 40..]
-    } else {
-        field
-    };
+    // `get`, never an index: the peer writes the line, and a byte index inside a multi-byte
+    // character would panic the sync.
+    let candidate = field.get(field.len().saturating_sub(40)..)?;
     (candidate.len() == 40 && candidate.chars().all(|c| c.is_ascii_hexdigit()))
         .then(|| candidate.to_owned())
 }
@@ -1085,6 +1083,24 @@ mod tests {
             Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
         assert_eq!(advertised(advertisement, "release-1"), None);
+    }
+
+    /// A branch wins over a tag of the same name listed after it, and a line whose object name
+    /// is no sha is passed over.
+    #[test]
+    fn a_branch_listed_first_wins_over_its_tag_and_a_bad_sha_is_skipped() {
+        let advertisement = concat!(
+            "0030not-a-sha refs/heads/main\n",
+            "003fdddddddddddddddddddddddddddddddddddddddd refs/heads/main\n",
+            "003feeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee refs/tags/main\n",
+        );
+        assert_eq!(
+            advertised(advertisement, "main").as_deref(),
+            Some("dddddddddddddddddddddddddddddddddddddddd")
+        );
+        // 14 three-byte characters: 42 bytes, whose last 40 start inside a character.
+        let wide = format!("{} refs/heads/main\n", "€".repeat(14));
+        assert_eq!(advertised(&wide, "main"), None);
     }
 
     #[test]

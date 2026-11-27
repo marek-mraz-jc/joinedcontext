@@ -219,6 +219,26 @@ async fn a_person_is_asked_about_with_their_groups_and_roles() {
 
 /// A ServiceAccount is asked about by its derived client id; a group, a role and the public
 /// carry only what they name.
+/// The MCP operation answers what the route answers: the gateway's decision, as JSON (JC2-28).
+#[tokio::test]
+async fn the_operation_answers_the_routes_decision() {
+    let r = rig().await;
+    granting(&r.gateway).await;
+    let op = joinedcontext_portal::ops::find("jc_access_simulate").expect("registered");
+    let caller =
+        joinedcontext_portal::ops::Caller::new(admin(), joinedcontext_portal::ops::Via::Mcp);
+    let input = json!({
+        "endpoint": "air",
+        "subject": { "kind": "group", "name": "stewards" },
+        "action": "queryEntity"
+    });
+    let answer = joinedcontext_portal::ops::call(op, &caller, &r.state, "helsinki", input)
+        .await
+        .expect("the decision");
+    assert_eq!(answer["decision"], true, "{answer}");
+    assert_eq!(answer["policy"], "air-read", "{answer}");
+}
+
 #[tokio::test]
 async fn every_other_kind_reaches_the_gateway_as_named() {
     let r = rig().await;

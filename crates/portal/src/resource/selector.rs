@@ -318,10 +318,7 @@ mod tests {
         assert!(LabelSelector::parse("tier in (frontend").is_err());
         assert!(LabelSelector::parse("tier in ()").is_err());
         assert!(LabelSelector::parse("!").is_err());
-        let malformed = |input: &str| match LabelSelector::parse(input) {
-            Err(SelectorError::Malformed(message)) => message,
-            other => panic!("{input}: {other:?}"),
-        };
+        let malformed = |input: &str| LabelSelector::parse(input).err();
         for (input, said) in [
             ("tier)", "unbalanced parenthesis: tier)"),
             ("tier in (a,b", "unclosed set parenthesis: tier in (a,b"),
@@ -343,7 +340,10 @@ mod tests {
             ("Bad Key=x", "invalid key in: Bad Key=x"),
             ("Bad Key", "invalid key in: Bad Key"),
         ] {
-            assert_eq!(malformed(input), said);
+            assert_eq!(
+                malformed(input),
+                Some(SelectorError::Malformed(said.into()))
+            );
         }
         assert!(LabelSelector::parse("")
             .expect("empty selector")

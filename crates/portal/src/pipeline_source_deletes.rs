@@ -3355,10 +3355,7 @@ mod tests {
     /// too, the marks are lost and the log says so.
     #[tokio::test]
     async fn marks_the_database_will_not_take_back_are_logged_as_lost() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let state = events_world().with_db(scratch.pool.clone());
         crate::project_ids::placed(&scratch.pool, &state.mirror, "helsinki", "helsinki-org").await;
         let ids = ["urn:a".to_owned()];

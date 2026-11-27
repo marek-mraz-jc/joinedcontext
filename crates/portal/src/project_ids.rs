@@ -1405,10 +1405,7 @@ mod backfill_loop_tests {
     /// named, one that stops waiting clears the list, and an unchanged list is not named again.
     #[tokio::test]
     async fn the_loop_names_the_waiting_projects_once_per_change() {
-        let Some(scratch) = crate::test_db::scratch().await else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let scratch = crate::test_db::scratch().await;
         let forge = forge().await;
         let mut state =
             AppState::new(crate::config::Config::for_tests(), None).with_db(scratch.pool.clone());

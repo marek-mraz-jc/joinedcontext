@@ -136,4 +136,37 @@ mod tests {
         );
         assert!(!outer.contains("inner"), "{outer}");
     }
+
+    /// A write from a thread that captures nothing goes nowhere and still reports its bytes; a
+    /// flush has nothing to do; a buffer a panicking writer poisoned still takes and gives text.
+    #[tokio::test]
+    async fn a_stray_write_a_flush_and_a_poisoned_buffer_are_harmless() {
+        use std::io::Write;
+        assert_eq!(Routed.write(b"nobody listens").expect("a write"), 14);
+        Routed.flush().expect("a flush");
+        let buffer = Buffer::default();
+        let poisoned = Arc::clone(&buffer);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoned.lock().expect("the lock");
+            std::panic::panic_any("a panic while holding the buffer");
+        })
+        .join();
+        assert!(buffer.is_poisoned());
+        let previous = CAPTURE.with(|c| c.replace(Some((Arc::clone(&buffer), LevelFilter::INFO))));
+        assert_eq!(Routed.write(b"kept").expect("a write"), 4);
+        CAPTURE.with(|c| *c.borrow_mut() = previous);
+        assert_eq!(&*buffer.lock().unwrap_or_else(|e| e.into_inner()), b"kept");
+        let ((), text) = logged(LevelFilter::INFO, async {
+            let buffer = CAPTURE.with(|c| c.borrow().as_ref().map(|(b, _)| Arc::clone(b)));
+            let held = buffer.expect("a capture");
+            let _ = std::thread::spawn(move || {
+                let _held = held.lock().expect("the lock");
+                std::panic::panic_any("a panic while holding the capture");
+            })
+            .join();
+            tracing::info!("after the panic");
+        })
+        .await;
+        assert!(text.contains("after the panic"), "{text}");
+    }
 }

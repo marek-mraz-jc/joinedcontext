@@ -125,14 +125,12 @@ impl PlanStore {
     fn keep(&self, id: String, plan: Plan, now: TimestampTz) {
         let mut plans = self.plans.lock().unwrap_or_else(|p| p.into_inner());
         plans.retain(|_, p| p.expires_at > now);
-        if plans.len() >= MAX_PLANS {
-            if let Some(oldest) = plans
-                .iter()
-                .min_by_key(|(_, p)| p.expires_at)
-                .map(|(id, _)| id.clone())
-            {
-                plans.remove(&oldest);
-            }
+        let oldest = plans
+            .iter()
+            .min_by_key(|(_, p)| p.expires_at)
+            .map(|(id, _)| id.clone());
+        if let Some(oldest) = oldest.filter(|_| plans.len() >= MAX_PLANS) {
+            plans.remove(&oldest);
         }
         plans.insert(id, plan);
     }

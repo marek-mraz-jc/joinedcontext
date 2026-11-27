@@ -247,6 +247,9 @@ async fn an_endpoints_reads_are_its_readers() {
             "{name}: the viewer reaches the route: {}",
             read.text()
         );
+        // An MCP client's bearer goes on to the route as its Authorization header.
+        let carried = call(name, &with_bearer(mcp(viewer())), &state, input.clone()).await;
+        assert_eq!(carried.status, read.status, "{name}: {}", carried.text());
         let refused = call(name, &mcp(stranger()), &state, input).await;
         assert_status(&refused, StatusCode::NOT_FOUND, name);
     }

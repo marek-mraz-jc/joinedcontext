@@ -14,6 +14,22 @@ pub(crate) fn dead_pool() -> PgPool {
         .expect("a lazy pool")
 }
 
+/// A mirror holding `project` of an Organization, so a key lookup for it reaches the database
+/// (and fails on a [`dead_pool`]).
+pub(crate) fn placed_mirror(project: &str) -> std::sync::Arc<crate::store::Mirror> {
+    let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+    mirror.upsert(
+        serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Project",
+            "metadata": { "name": project, "namespace": crate::permissions::ORG_NAMESPACE },
+            "spec": { "organizationRef": "somewhere" },
+        }))
+        .expect("a project"),
+    );
+    mirror
+}
+
 /// A migrated database of its own; [`Scratch::remove`] drops it.
 pub(crate) struct Scratch {
     admin: PgPool,
@@ -21,13 +37,12 @@ pub(crate) struct Scratch {
     pub(crate) pool: PgPool,
 }
 
-/// A fresh migrated database, or none when the run names no database
-/// (`JC_PORTAL_TEST_DATABASE_URL` unset).
-pub(crate) async fn scratch() -> Option<Scratch> {
+/// A fresh migrated database beside the one `JC_PORTAL_TEST_DATABASE_URL` names; ci.yml and
+/// coverage.yml always set it, so a run without it fails instead of passing untested.
+pub(crate) async fn scratch() -> Scratch {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
-        .ok()
-        .filter(|url| !url.trim().is_empty())?;
+        .expect("JC_PORTAL_TEST_DATABASE_URL names the test database");
     let admin = jc_pool::options::<sqlx::Postgres>()
         .connect(&url)
         .await
@@ -48,7 +63,7 @@ pub(crate) async fn scratch() -> Option<Scratch> {
     let mut own = url::Url::parse(&url).expect("url");
     own.set_path(&name);
     let pool = crate::db::connect(own.as_str()).await.expect("migrate");
-    Some(Scratch { admin, name, pool })
+    Scratch { admin, name, pool }
 }
 
 impl Scratch {
@@ -70,6 +85,39 @@ impl Scratch {
         .execute(&self.pool)
         .await
         .expect("trigger");
+    }
+
+    /// Makes every commit of a transaction that wrote a row of `table` fail: a deferred
+    /// constraint trigger raises at COMMIT, after each statement succeeded.
+    pub(crate) async fn refuse_commit(&self, table: &str) {
+        let function = format!("jc_refuse_commit_{table}");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'commit refused by the test'; END $$"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger function");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE CONSTRAINT TRIGGER {function} AFTER INSERT OR UPDATE OR DELETE ON {table} \
+             DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION {function}()"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger");
+    }
+
+    /// A mirror placing `project` in an active Organization of this database, so its rows have a
+    /// tenancy key here.
+    pub(crate) async fn placed(&self, project: &str) -> std::sync::Arc<crate::store::Mirror> {
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ('somewhere', 'somewhere.example', 'active', 'test') ON CONFLICT DO NOTHING",
+        )
+        .execute(&self.pool)
+        .await
+        .expect("an Organization of the registry");
+        placed_mirror(project)
     }
 
     /// Makes every statement naming `table`, reads included, fail from now on.
@@ -96,9 +144,7 @@ impl Scratch {
 mod tests {
     #[tokio::test]
     async fn a_refused_table_fails_its_writes_and_keeps_its_reads() {
-        let Some(scratch) = super::scratch().await else {
-            return;
-        };
+        let scratch = super::scratch().await;
         scratch.refuse("organizations", "INSERT").await;
         let write = sqlx::query(
             "INSERT INTO organizations (name, host, state, created_by) \

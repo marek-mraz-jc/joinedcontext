@@ -397,9 +397,9 @@ fn db(err: sqlx::Error) -> DataViewError {
     DataViewError::Db(err.to_string())
 }
 
-fn row_to_view(row: sqlx::postgres::PgRow) -> Result<DataView, DataViewError> {
+fn row_to_view(row: sqlx::postgres::PgRow) -> DataView {
     let config: serde_json::Value = row.get("config");
-    Ok(DataView {
+    DataView {
         id: row.get("id"),
         entity_type: row.get("entity_type"),
         kind: row.get("kind"),
@@ -412,7 +412,7 @@ fn row_to_view(row: sqlx::postgres::PgRow) -> Result<DataView, DataViewError> {
         version: row.get("version"),
         created_at: odt_to_ts(row.get("created_at")),
         updated_at: odt_to_ts(row.get("updated_at")),
-    })
+    }
 }
 
 /// Who saves a view: the durable key and the name shown.
@@ -472,7 +472,7 @@ impl DataViewStore {
                 .await
                 .map_err(db)?;
                 tx.commit().await.map_err(db)?;
-                rows.into_iter().map(row_to_view).collect()
+                Ok(rows.into_iter().map(row_to_view).collect())
             }
         }
     }
@@ -508,9 +508,7 @@ impl DataViewStore {
                 .await
                 .map_err(db)?;
                 tx.commit().await.map_err(db)?;
-                row.map(row_to_view)
-                    .transpose()?
-                    .ok_or(DataViewError::NotFound)
+                row.map(row_to_view).ok_or(DataViewError::NotFound)
             }
         }
     }
@@ -557,8 +555,7 @@ impl DataViewStore {
                 Ok(view)
             }
             Inner::Db(pool, mirror) => {
-                let config = serde_json::to_value(&view.config)
-                    .map_err(|e| DataViewError::Db(e.to_string()))?;
+                let config = sqlx::types::Json(&view.config);
                 let mut tx = Self::tenant(pool, mirror, project).await?;
                 sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1 || '/' || $2 || '/' || $3, 0))")
                     .bind(project)
@@ -590,7 +587,6 @@ impl DataViewStore {
                 .await
                 .map_err(db)?
                 .map(row_to_view)
-                .transpose()?
                 .ok_or(DataViewError::Limit)?;
                 tx.commit().await.map_err(db)?;
                 Ok(saved)
@@ -636,8 +632,7 @@ impl DataViewStore {
                 Ok(view.clone())
             }
             Inner::Db(pool, mirror) => {
-                let config = serde_json::to_value(&request.config)
-                    .map_err(|e| DataViewError::Db(e.to_string()))?;
+                let config = sqlx::types::Json(&request.config);
                 let mut tx = Self::tenant(pool, mirror, project).await?;
                 let updated = sqlx::query(concat!(
                     "UPDATE data_views SET kind = $4, mode = $5, title = $6, config = $7, version = version + 1, updated_at = $8 \
@@ -659,7 +654,7 @@ impl DataViewStore {
                 .map_err(db)?;
                 tx.commit().await.map_err(db)?;
                 match updated {
-                    Some(row) => row_to_view(row),
+                    Some(row) => Ok(row_to_view(row)),
                     // Not written: gone, or moved on since the caller read it.
                     None => Err(DataViewError::Conflict(
                         self.get(project, space, id).await?.version,
@@ -874,13 +869,8 @@ mod tests {
     /// of it is not found, and a save is refused naming the step that places the project.
     #[tokio::test]
     async fn a_project_without_a_key_keeps_no_view_on_the_database() {
-        let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
-            .ok()
-            .filter(|url| !url.trim().is_empty())
-        else {
-            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
-            return;
-        };
+        let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to a PostgreSQL database the Portal migrates");
         let pool = crate::db::connect(&url).await.expect("connect and migrate");
         let store = DataViewStore::new(Some(pool), Default::default());
         assert!(store.list("no-key-here", "bikes").await.unwrap().is_empty());
@@ -892,6 +882,23 @@ mod tests {
             store.create("no-key-here", "bikes", JANA, view()).await,
             Err(DataViewError::Unplaced("no-key-here".into()))
         );
+    }
+
+    /// A database that is down answers every store call with a database error, never as an
+    /// empty list or a missing view: the person sees the failure and tries again.
+    #[tokio::test]
+    async fn a_database_that_is_down_fails_each_call_as_a_database_error() {
+        let store = DataViewStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("hel"),
+        );
+        let down = |got: Result<(), DataViewError>| matches!(got, Err(DataViewError::Db(_)));
+        assert!(down(store.list("hel", "bikes").await.map(drop)));
+        assert!(down(store.get("hel", "bikes", "v1").await.map(drop)));
+        assert!(down(
+            store.create("hel", "bikes", JANA, view()).await.map(drop)
+        ));
+        assert!(down(store.delete("hel", "bikes", "v1").await));
     }
 
     #[tokio::test]
