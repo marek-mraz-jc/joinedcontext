@@ -719,6 +719,34 @@ mod tests {
         assert_eq!(rows[9999], json!({"n": 9999, "o": null}));
     }
 
+    /// A footer counting more rows than the row group's columns hold is refused, not read short.
+    #[test]
+    fn a_row_group_counting_more_rows_than_its_columns_hold_is_refused() {
+        use parquet::file::metadata::{ParquetMetaData, ParquetMetaDataReader, ParquetMetaDataWriter};
+        let f = file(
+            "message m { required int32 n; }",
+            vec![Col::I32(vec![7], vec![0], vec![0])],
+        );
+        let meta = ParquetMetaDataReader::new()
+            .parse_and_finish(&f)
+            .expect("metadata");
+        let tail: [u8; 4] = f[f.len() - 8..f.len() - 4].try_into().expect("4 bytes");
+        let footer = usize::try_from(u32::from_le_bytes(tail)).expect("fits");
+        let rg = meta.row_groups()[0]
+            .clone()
+            .into_builder()
+            .set_num_rows(2)
+            .build()
+            .expect("row group");
+        let meta = ParquetMetaData::new(meta.file_metadata().clone(), vec![rg]);
+        let mut out = f[..f.len() - 8 - footer].to_vec();
+        ParquetMetaDataWriter::new(&mut out, &meta)
+            .finish()
+            .expect("footer");
+        let e = decode(Bytes::from(out), false).expect_err("refused");
+        assert_eq!(e, "column 0 ends before its row group");
+    }
+
     #[test]
     fn a_repeated_field_outside_a_list_is_an_array_per_row() {
         let f = file(
