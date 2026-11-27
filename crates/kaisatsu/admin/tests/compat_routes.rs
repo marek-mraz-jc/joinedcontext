@@ -1894,6 +1894,151 @@ async fn groups_clients_roles_mappers_and_scopes_lifecycle() {
     );
 }
 
+/// A realm admin's body keeps what it names: the person's id, the group's and the scope's
+/// organization, the application moved to another organization with its own mappers, and a
+/// mapper's id; an organization admin's same body keeps none of it.
+#[tokio::test]
+async fn a_realm_admins_body_keeps_the_ids_and_organizations_it_names() {
+    let f = fixture().await;
+    let a = Some(f.admin.as_str());
+    let (st, _, body) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/users"),
+        a,
+        Some(&json!({ "id": "named-person", "username": "named.person", "orgId": "espoo" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let (st, _, person) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/named-person"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{person}");
+    assert_eq!(person["orgId"], "espoo");
+    // An organization admin's id is replaced by one the server mints.
+    let (st, _, body) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/users"),
+        Some(f.hel_admin.as_str()),
+        Some(&json!({ "id": "chosen-by-org-admin", "username": "hel.named" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let (st, _, _) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/users/chosen-by-org-admin"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+
+    let (st, headers, body) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/groups"),
+        a,
+        Some(&json!({ "name": "named-team", "orgId": "espoo" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let at = headers[header::LOCATION].to_str().unwrap().to_owned();
+    let group_id = at.rsplit('/').next().unwrap().to_owned();
+    let (_, _, group) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/groups/{group_id}"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(group["orgId"], "espoo", "{group}");
+    // A group's update reads its `managed-by` attribute as the mark.
+    let (st, _, body) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/groups/{group_id}"),
+        a,
+        Some(&json!({ "name": "named-team", "attributes": { "managed-by": ["portal"] } })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+
+    let mapper = json!({ "id": "pm-named", "name": "tenant", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": { "claim.name": "tenant", "claim.value": "x" } });
+    let (st, _, body) = call(
+        &f.app,
+        &Method::POST,
+        &format!("{R}/clients/c-hel/protocol-mappers/models"),
+        a,
+        Some(&mapper),
+    )
+    .await;
+    assert_eq!(st, StatusCode::CREATED, "{body}");
+    let (st, _, kept) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/clients/c-hel/protocol-mappers/models"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{kept}");
+    assert!(
+        kept.as_array()
+            .unwrap()
+            .iter()
+            .any(|m| m["id"] == "pm-named" && m["name"] == "tenant"),
+        "{kept}"
+    );
+
+    // Moved to Espoo with a mapper list of its own: the list written replaces the stored one.
+    let own = json!({ "id": "pm-own", "name": "own", "protocol": "openid-connect", "protocolMapper": "oidc-hardcoded-claim-mapper", "config": { "claim.name": "own", "claim.value": "y" } });
+    let (st, _, body) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/clients/c-hel"),
+        a,
+        Some(&json!({ "clientId": "hel-app", "orgId": "espoo", "protocolMappers": [own] })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    let (_, _, client) = call(&f.app, &Method::GET, &format!("{R}/clients/c-hel"), a, None).await;
+    assert_eq!(client["orgId"], "espoo", "{client}");
+    let names: Vec<&str> = client["protocolMappers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|m| m["name"].as_str())
+        .collect();
+    assert_eq!(names, ["own"], "{client}");
+
+    let (st, _, body) = call(
+        &f.app,
+        &Method::PUT,
+        &format!("{R}/client-scopes/sc-hel"),
+        a,
+        Some(&json!({ "name": "hel-scope", "protocol": "openid-connect", "orgId": "espoo" })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::NO_CONTENT, "{body}");
+    let (_, _, scope) = call(
+        &f.app,
+        &Method::GET,
+        &format!("{R}/client-scopes/sc-hel"),
+        a,
+        None,
+    )
+    .await;
+    assert_eq!(scope["orgId"], "espoo", "{scope}");
+}
+
 #[tokio::test]
 async fn realm_partial_import_and_native_routes() {
     let f = fixture().await;
