@@ -215,6 +215,49 @@ async fn a_failed_registration_removes_the_new_repository() {
     );
 }
 
+/// CC-85: a removal the forge refuses after a failed registration still answers the failure,
+/// not the cleanup.
+#[tokio::test]
+async fn a_failed_registration_whose_cleanup_fails_answers_the_registration() {
+    let (server, state) = world(false).await;
+    for (verb, route) in [
+        ("POST", format!("{REPO}/Shako.OpenPullRequest")),
+        ("DELETE", NEW.to_owned()),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let (status, text) = open(&state).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    assert_eq!(received(&server, "DELETE", NEW).await.len(), 1);
+}
+
+/// CC-85: a seed the forge does not take removes the new repository, and the organization's
+/// Change is never written, also when that removal fails.
+#[tokio::test]
+async fn a_seed_the_forge_refuses_writes_no_registration() {
+    let (server, state) = world(false).await;
+    for (verb, route) in [
+        ("POST", format!("{NEW}/Shako.CommitFiles")),
+        ("DELETE", NEW.to_owned()),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let (status, text) = open(&state).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    assert_eq!(received(&server, "DELETE", NEW).await.len(), 1);
+    assert!(organization_files(&server).await.is_empty());
+}
+
 /// PF-77, PF-86: deleting a project of layout 2 is the organization's Change that removes its
 /// registry entry and the bindings that name it; the project's repository is not touched here
 /// (the sync archives it once the entry is gone).

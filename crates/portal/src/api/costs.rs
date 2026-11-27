@@ -134,13 +134,11 @@ async fn costs(state: &AppState, user: &CurrentUser, query: CostQuery) -> Result
     let spaces = futures_util::stream::iter(of_kind("ContextSpace"))
         .map(|(project, space)| async move {
             let broker = crate::spaces::broker(&state.mirror, &project, &space);
-            let bytes = match match crate::spaces::tenant(&state.mirror, &project, &space) {
+            let bytes = match crate::spaces::tenant(&state.mirror, &project, &space) {
                 Ok(tenant) => state.space_usage.usage(&broker, &tenant).await,
                 Err(reason) => Err(reason),
-            } {
-                Ok(usage) => Ok(usage.bytes.map_or(0, |b| b.entities + b.attr_instances)),
-                Err(why) => Err(why),
-            };
+            }
+            .map(|usage| usage.bytes.map_or(0, |b| b.entities + b.attr_instances));
             (project, SpaceMeasure { space, bytes })
         })
         .buffer_unordered(AT_ONCE)
@@ -188,12 +186,10 @@ async fn spend(
     let path = format!("{project}/knowledge/conversations/usage");
     let range = [("deployment", assistant), ("from", from), ("to", to)];
     let query = |r: reqwest::RequestBuilder| r.query(&range);
-    let (status, body) = ask_with(state, reqwest::Method::GET, &path, LIST_TIME, query)
+    // `ask_with` answers a refusal as its error, so the body here is a success's.
+    let (_, body) = ask_with(state, reqwest::Method::GET, &path, LIST_TIME, query)
         .await
         .map_err(|e| e.to_string())?;
-    if !status.is_success() {
-        return Err(format!("the assistant answered {status}"));
-    }
     Ok(ai_spend(&body))
 }
 

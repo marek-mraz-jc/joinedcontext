@@ -153,10 +153,10 @@ pub async fn internal_inbox(
                 {
                     return;
                 }
-                // A lagged receiver missed something; the store below is the truth either way.
                 Ok(_) => continue,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => return,
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+                // A lagged receiver missed something, a closed one hears nothing more: the
+                // store below is the truth either way.
+                Err(_) => return,
             }
         }
     })
@@ -246,16 +246,14 @@ pub async fn internal_post_event(
                     .await
                     .map_err(unavailable)?;
                 // The first frame is counted once: `set_preview_url` keeps the first value.
-                if run.first_frame_ms.is_none() {
-                    if let Ok(Some(updated)) = state.agents.get_run(&run.id).await {
-                        if let Some(ms) = updated.first_frame_ms {
-                            crate::telemetry::record_run_timing(
-                                "first_frame",
-                                &updated.profile,
-                                ms,
-                            );
-                        }
-                    }
+                let updated = match run.first_frame_ms {
+                    Some(_) => None,
+                    None => state.agents.get_run(&run.id).await.ok().flatten(),
+                };
+                if let Some((ms, updated)) =
+                    updated.and_then(|updated| Some((updated.first_frame_ms?, updated)))
+                {
+                    crate::telemetry::record_run_timing("first_frame", &updated.profile, ms);
                 }
             }
         }

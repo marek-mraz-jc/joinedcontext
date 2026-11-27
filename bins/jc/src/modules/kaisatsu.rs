@@ -2472,6 +2472,15 @@ mod tests {
             e.contains("20-clients.json") && e.contains("several"),
             "{e}"
         );
+        // A file of the configured realm that is no object stops the merge, before any write.
+        let listed = tempfile::tempdir().unwrap();
+        std::fs::write(listed.path().join("10-realm.json"), r#"{"realm": "dev"}"#).unwrap();
+        std::fs::write(listed.path().join("20-list.json"), "[]").unwrap();
+        let e = apply_import_dir(&store, listed.path(), None, &[], &dev)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("object"), "{e}");
         let broken = tempfile::tempdir().unwrap();
         std::fs::write(broken.path().join("realm.json"), "{ not json").unwrap();
         assert!(

@@ -140,11 +140,12 @@ pub fn only_removes_grants(base: &Value, head: &Value) -> bool {
         };
         rest.remove(at);
     }
+    // Both hold `spec.roles`, so both specs are objects.
     let without_roles = |v: &Value| {
         let mut v = v.clone();
-        if let Some(spec) = v.get_mut("spec").and_then(Value::as_object_mut) {
-            spec.remove("roles");
-        }
+        v.get_mut("spec")
+            .and_then(Value::as_object_mut)
+            .map(|spec| spec.remove("roles"));
         v.as_object_mut().map(|o| o.remove("status"));
         v
     };
@@ -241,19 +242,19 @@ async fn remove_grants(
     indices: &[usize],
     what: &str,
 ) -> Result<crate::change::Change, ApiError> {
-    if let Some(roles) = manifest
+    // Both callers read the account's grants from this manifest, so it holds them.
+    let mut at = 0;
+    manifest
         .pointer_mut("/spec/roles")
         .and_then(Value::as_array_mut)
-    {
-        let mut at = 0;
-        roles.retain(|_| {
-            at += 1;
-            !indices.contains(&(at - 1))
+        .into_iter()
+        .for_each(|roles| {
+            roles.retain(|_| {
+                at += 1;
+                !indices.contains(&(at - 1))
+            })
         });
-    }
-    if let Some(object) = manifest.as_object_mut() {
-        object.remove("status");
-    }
+    manifest.as_object_mut().map(|o| o.remove("status"));
     let outcome = crate::api::mutate::propose_with_identity(
         identity,
         state,
@@ -560,6 +561,89 @@ mod tests {
             tried["p/lapsed"] == at("2026-10-21T13:30:00Z"),
             "not tried again after the hour"
         );
+    }
+
+    /// A replica that does not lead runs the reaper's minute and asks the forge nothing.
+    #[tokio::test]
+    async fn the_reaper_of_a_replica_that_does_not_lead_asks_nothing() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let forge = wiremock::MockServer::start().await;
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(forge.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client"),
+        );
+        let follower = crate::reconciler::Syncer::new(
+            std::sync::Arc::clone(&shako),
+            std::sync::Arc::new(crate::store::Mirror::new()),
+        )
+        .with_leadership(std::sync::Arc::new(
+            crate::reconciler::Leadership::reconciler(crate::test_db::dead_pool()),
+        ));
+        let mut state =
+            crate::state::AppState::new(crate::config::Config::for_tests(), None).with_shako(shako);
+        state.syncer = Some(std::sync::Arc::new(follower));
+        let ended = json!({ "role": "writer", "scope": { "project": "p" }, "validity": { "notAfter": "2020-01-01T00:00:00Z" } });
+        let open = json!({ "role": "reader", "scope": { "project": "p" } });
+        state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: super::KIND.into(),
+            metadata: ObjectMeta::new("lapsed", "p"),
+            spec: json!({
+                "owner": { "user": "jana" }, "purpose": "test", "roles": [open, ended],
+                "credentials": [{ "kind": "oauth-client", "name": "main" }]
+            }),
+            status: None,
+        });
+        assert!(!state.leads());
+        super::spawn_grant_reaper(state);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        assert!(forge
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
+    /// A revoke the activity feed cannot keep is logged and does not fail.
+    #[tokio::test]
+    async fn a_revoke_the_feed_cannot_keep_still_returns() {
+        use crate::change::{Change, ChangeMeta, ChangePhase, ChangeStatus, Lane, PlanSummary};
+        let mut state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        state.activity = crate::activity::ActivityStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("ovzdusie"),
+        );
+        let identity = crate::auth::Identity {
+            subject: "sub-ana".into(),
+            username: "ana".into(),
+            email: None,
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            client: None,
+            second_factor: false,
+        };
+        let change = Change::new(
+            ChangeMeta::new("c7", "ovzdusie"),
+            ChangeStatus::new(
+                Lane::Green,
+                ChangePhase::Deploying,
+                PlanSummary::new(0, 1, 0),
+            ),
+        );
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            super::record(
+                &state,
+                &identity,
+                "ovzdusie",
+                "vendor-ci",
+                "writer",
+                &change,
+            ),
+        )
+        .await
+        .expect("the record returns although nothing was stored");
     }
 
     #[tokio::test]

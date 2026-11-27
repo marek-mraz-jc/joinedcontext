@@ -467,4 +467,34 @@ mod tests {
         let other = failed(RunError::Task("cancelled".into()));
         assert!(matches!(other, ApiError::Unavailable(m) if m.contains("cancelled")));
     }
+
+    /// With the loop running and no forge, a detach is refused before anything is paused.
+    #[tokio::test]
+    async fn a_detach_without_a_forge_is_unavailable() {
+        let mut state = crate::ops::testkit::state();
+        let forge = crate::forge::ShakoClient::new(
+            "http://localhost:1".parse().expect("url"),
+            "o",
+            "r",
+            "t",
+        )
+        .expect("client");
+        let remote = crate::sync::remote::HttpRemote::new().expect("a client");
+        state.sync = Some(std::sync::Arc::new(Driver::new(
+            std::sync::Arc::new(forge),
+            std::sync::Arc::new(crate::sync::state::States::new(None)),
+            std::sync::Arc::new(remote),
+        )));
+        let mut identity = crate::ops::testkit::person("ada", &[]);
+        identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let mut session = crate::auth::endpoint_token::tests::signed_in();
+        session.identity = identity;
+        let refused = detach_for(&state, &CurrentUser(session), "city", "regional")
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m == "git forge is not configured"),
+            "{refused:?}"
+        );
+    }
 }

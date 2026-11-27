@@ -528,6 +528,36 @@ mod tests {
         );
     }
 
+    /// A repository the mirror could not push turns its check red.
+    #[tokio::test]
+    async fn a_mirror_that_did_not_push_is_a_red_check() {
+        let forge_server = wiremock::MockServer::start().await;
+        let forge = crate::forge::ShakoClient::new(
+            forge_server.uri().parse().expect("url"),
+            "o",
+            "configuration",
+            "t",
+        )
+        .expect("client");
+        let mirror = crate::forge::config_mirror::ConfigMirror::new(
+            "http://mirror.invalid/jc-{repo}.git",
+            tempdir("mirror-red").join("token"),
+        )
+        .expect("a mirror");
+        // The forge answers 404 to the mirror listing: the push failed.
+        mirror.pass(&forge, &[]).await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.config_mirror = Some(std::sync::Arc::new(mirror));
+        let health = get_health(admin(), State(state)).await;
+        let checks = health.as_ref().map(|Json(h)| states(&h.checks));
+        assert_eq!(
+            checks.as_deref().ok(),
+            Some(&[("configuration-mirror", CheckState::Red)][..]),
+            "{:?}",
+            health.as_ref().err()
+        );
+    }
+
     /// A path that is a file is a directory the Portal cannot read: the route says to check the
     /// mount instead of answering an empty health; a file over the cap is no digest (T-7813).
     #[tokio::test]
@@ -605,6 +635,41 @@ mod tests {
             ]
         );
         assert!(app_checks(&dir, "espoo", now()).is_empty());
+    }
+
+    /// The route reads the project's chips from the results directory; a project the caller
+    /// cannot read is 404 and a bad name too.
+    #[tokio::test]
+    async fn the_app_checks_route_serves_the_projects_chips() {
+        let dir = tempdir("apps-route");
+        let at = TimestampTz::now().to_rfc3339();
+        write(&dir, "apps.json", &apps_digest(&at, &["helsinki/bikes"]));
+        let mut config = crate::config::Config::for_tests();
+        config.health_dir = Some(dir.to_string_lossy().into_owned());
+        let state = AppState::new(config, None);
+        let Json(answer) = list_app_checks(
+            admin(),
+            State(state.clone()),
+            UrlPath("helsinki".to_owned()),
+        )
+        .await
+        .expect("an administrator reads the chips");
+        let rows: Vec<_> = answer
+            .checks
+            .iter()
+            .map(|c| (c.name.as_str(), c.state))
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("alerts", AppCheckState::Red),
+                ("bikes", AppCheckState::Green)
+            ]
+        );
+        assert!(matches!(
+            list_app_checks(admin(), State(state), UrlPath("Bad!".to_owned())).await,
+            Err(ApiError::NotFound(_))
+        ));
     }
 
     #[test]

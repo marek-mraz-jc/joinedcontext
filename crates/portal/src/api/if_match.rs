@@ -165,4 +165,80 @@ mod tests {
             "no workspace store in this state"
         );
     }
+
+    /// Inside a workspace the caller sees, its copy is the one judged: a forge with no branch
+    /// for it reads main's mirror, so a stale ETag is 412 there too.
+    #[tokio::test]
+    async fn inside_a_workspace_its_copy_is_judged() {
+        let server = wiremock::MockServer::start().await;
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(forge));
+        let admin = crate::auth::session::Identity {
+            client: None,
+            subject: "f:1:ana".into(),
+            username: "ana".into(),
+            email: Some("ana@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: vec![state.config.bootstrap_admins.clone()],
+            second_factor: false,
+        };
+        let pipeline = crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Pipeline".into(),
+            metadata: crate::resource::ObjectMeta {
+                name: "air".into(),
+                namespace: Some("ovzdusie".into()),
+                ..Default::default()
+            },
+            spec: serde_json::json!({}),
+            status: None,
+        };
+        let etag = pipeline.etag();
+        state.mirror.upsert(pipeline);
+        state
+            .workspaces
+            .create(crate::ops::workspaces::Opening {
+                name: "air-v2",
+                title: None,
+                project: "ovzdusie",
+                owner: "ana@hel.fi",
+                base_revision: "base1",
+                scope: crate::ops::workspaces::Scope::Project {},
+                ttl_hours: 1,
+            })
+            .await
+            .expect("opened");
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, "\"stale\"".parse().expect("header"));
+        let answer = check_if_match(
+            &state,
+            &admin,
+            "ovzdusie",
+            "pipelines",
+            "air",
+            Some("air-v2"),
+            &headers,
+        )
+        .await;
+        assert!(
+            matches!(&answer, Err(ApiError::PreconditionFailed { etag: current, .. }) if *current == etag),
+            "{answer:?}"
+        );
+        headers.insert(header::IF_MATCH, etag.parse().expect("header"));
+        assert!(check_if_match(
+            &state,
+            &admin,
+            "ovzdusie",
+            "pipelines",
+            "air",
+            Some("air-v2"),
+            &headers,
+        )
+        .await
+        .is_ok());
+    }
 }

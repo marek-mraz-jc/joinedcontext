@@ -467,6 +467,30 @@ async fn query_pushdown_narrows_without_dropping_matches() {
         .expect("a counted page under a numeric q");
     assert_eq!(ids_of(&counted.rows), ["urn:ngsi-ld:Room:1"]);
     assert_eq!(counted.total, Some(1), "the count under the numeric q");
+    // a page smaller than the match set: the count statement runs and binds
+    // the number of the q as the page statement does
+    let ast = antares_ql::parse_q("temperature>5").expect("parse");
+    let past = s
+        .query(
+            &t,
+            &antares_sql::store::pg::entity::EntityFilter {
+                q: Some(&ast),
+                page: Some(antares_sql::store::pg::entity::Page {
+                    offset: 0,
+                    limit: 1,
+                    count: true,
+                }),
+                ..base()
+            },
+        )
+        .await
+        .expect("a counted short page under a numeric q");
+    assert_eq!(ids_of(&past.rows), ["urn:ngsi-ld:Room:1"]);
+    assert_eq!(
+        past.total,
+        Some(2),
+        "the count statement under the numeric q"
+    );
 
     // q=: string equality, and the AND of two predicates
     let ast = antares_ql::parse_q("name==\"south\";speed==60").expect("parse");

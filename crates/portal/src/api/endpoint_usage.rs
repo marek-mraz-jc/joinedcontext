@@ -273,4 +273,34 @@ mod tests {
         );
         assert_eq!(head(header::CACHE_CONTROL), Some("no-store"));
     }
+
+    fn administrator(state: &AppState) -> CurrentUser {
+        let mut identity = crate::ops::testkit::person("ada", &[]);
+        identity.roles = vec![state.config.bootstrap_admins.clone()];
+        let mut session = crate::auth::endpoint_token::tests::signed_in();
+        session.identity = identity;
+        CurrentUser(session)
+    }
+
+    #[test]
+    fn the_readable_endpoints_come_by_name_and_only_of_the_project() {
+        let state = crate::ops::testkit::state();
+        for (name, project) in [("zeta", "city"), ("alpha", "city"), ("beta", "other")] {
+            state.mirror.upsert(crate::ops::testkit::envelope(
+                "Endpoint",
+                name,
+                project,
+                serde_json::json!({ "slug": name }),
+            ));
+        }
+        let user = administrator(&state);
+        let names: Vec<String> = readable(&state, &user, "city")
+            .expect("a readable project")
+            .into_iter()
+            .map(|e| e.metadata.name)
+            .collect();
+        assert_eq!(names, ["alpha", "zeta"]);
+        let refused = readable(&state, &user, "Not_A_Name").expect_err("no such project");
+        assert!(matches!(refused, ApiError::NotFound(m) if m.contains("Not_A_Name")));
+    }
 }

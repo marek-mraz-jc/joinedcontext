@@ -516,6 +516,52 @@ async fn a_green_flow_is_merged_for_the_person_who_started_it() {
     );
 }
 
+/// A flow run again over a Dashboard the project holds updates it: the file the branch holds is
+/// replaced in place, naming the blob it replaces.
+#[tokio::test]
+async fn a_flow_over_a_dashboard_the_project_holds_updates_it_in_place() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+    let (server, state) = world().await;
+    state.mirror.upsert(envelope(
+        "Dashboard",
+        "alert-air",
+        PROJECT,
+        json!({ "title": "air", "pages": [{ "layers": ["base"] }] }),
+    ));
+    Mock::given(method("GET"))
+        .and(path(format!("{}/Shako.File(Path=@p,Ref=@r)", common::REPO)))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "held-1", "Content": "eA==" })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let change = doors::call(
+        "jc_flow_start",
+        &session(with_role(steward())),
+        &state,
+        flow("threshold-alert", json!({ "title": "air" })),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, change.status, "{}", change.text());
+    let files: Vec<Value> = server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|request| request.url.path().ends_with("/Shako.CommitFiles"))
+        .map(|request| serde_json::from_slice::<Value>(&request.body).unwrap_or(Value::Null))
+        .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
+        .collect();
+    assert!(
+        files
+            .iter()
+            .any(|file| file["operation"] == "update" && file["sha"] == "held-1"),
+        "{files:?}"
+    );
+}
+
 /// CC-63: a merge request that carries a file the Portal did not write waits for a person.
 #[tokio::test]
 async fn a_green_flow_whose_merge_request_holds_another_file_waits_for_a_person() {

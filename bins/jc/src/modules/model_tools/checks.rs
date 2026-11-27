@@ -917,6 +917,11 @@ slots:
     #[test]
     fn a_data_structure_definition_with_its_dimensions_and_a_measure_compiles() {
         assert_eq!(errors(CUBE), Vec::<String>::new());
+        // A dimension without a range is a string, as LinkML's default range is.
+        assert_eq!(
+            errors(&CUBE.replace("    range: string\n", "")),
+            Vec::<String>::new()
+        );
         assert_eq!(
             errors(
                 &CUBE

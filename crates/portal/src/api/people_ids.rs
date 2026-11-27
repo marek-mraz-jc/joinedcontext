@@ -327,10 +327,10 @@ pub fn plan(mirror: &Mirror, users: &[KcUser]) -> Plan {
         let namespace = envelope
             .metadata
             .namespace
-            .clone()
-            .unwrap_or_else(|| ORG_NAMESPACE.to_owned());
-        let repository = match mirror.repository_of(&namespace) {
-            Some(_) if namespace != ORG_NAMESPACE => namespace,
+            .as_deref()
+            .unwrap_or(ORG_NAMESPACE);
+        let repository = match mirror.repository_of(namespace) {
+            Some(_) if namespace != ORG_NAMESPACE => namespace.to_owned(),
             _ => "organization".to_owned(),
         };
         envelope.strip_status();

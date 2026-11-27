@@ -1294,6 +1294,24 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         assert!(!report_for(FIVE, &[], Some("acme.example.net"), &world).failed());
     }
 
+    /// An Organization's own sign-in host is checked as one of its origins, a record of its own.
+    #[test]
+    fn an_organizations_own_sign_in_host_is_one_of_its_origins() {
+        let toml = FIVE.replace(
+            "hosts = { portal = \"smartcity.nitra.sk\" }",
+            "hosts = { portal = \"smartcity.nitra.sk\", idm = \"login.nitra.sk\" }",
+        );
+        let mut hosts = ALL.to_vec();
+        hosts.push("login.nitra.sk");
+        let r = report_for(&toml, &[], Some("acme.example.net"), &Stub::pointed(&hosts));
+        let out = text(&r);
+        assert!(out.contains("login.nitra.sk"), "{out}");
+        assert!(
+            out.contains("record: login.nitra.sk CNAME city.example."),
+            "{out}"
+        );
+    }
+
     #[test]
     fn a_merged_configuration_says_what_it_loses() {
         let r = report_for(FIVE, &[], None, &Stub::pointed(ALL));

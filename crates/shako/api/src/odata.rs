@@ -644,7 +644,8 @@ async fn apply_pr_expansions(
         )));
     }
 
-    for row in rows {
+    // Each row is a pull request this module serialised: an object with its repository's id.
+    for row in rows.iter_mut().filter_map(Value::as_object_mut) {
         let Some(repo_id_str) = row.get("RepoId").and_then(Value::as_str) else {
             continue;
         };
@@ -660,9 +661,7 @@ async fn apply_pr_expansions(
                 .list_reviews(ctx.instance_id, ctx.org_id, Some(repo_id), Some(num))
                 .await?;
             let rev_json: Vec<Value> = revs.iter().map(review_row).collect();
-            if let Some(obj) = row.as_object_mut() {
-                obj.insert("Reviews".into(), Value::Array(rev_json));
-            }
+            row.insert("Reviews".into(), Value::Array(rev_json));
         }
         if want_files {
             let head_sha = row
@@ -682,9 +681,7 @@ async fn apply_pr_expansions(
                 crate::service::blocking(move || diff_refs_files(&disk_path, &base_sha, &head_sha))
                     .await
                     .unwrap_or_default();
-            if let Some(obj) = row.as_object_mut() {
-                obj.insert("Files".into(), files_rows(files));
-            }
+            row.insert("Files".into(), files_rows(files));
         }
     }
     Ok(())

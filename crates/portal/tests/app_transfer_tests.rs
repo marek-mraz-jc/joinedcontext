@@ -259,6 +259,18 @@ async fn import(
     file: &[u8],
     fields: &[(&str, &str)],
 ) -> Answer {
+    import_into(state, who, "doprava", query, file, fields).await
+}
+
+/// [`import`] into `project`.
+async fn import_into(
+    state: &AppState,
+    who: Identity,
+    project: &str,
+    query: &str,
+    file: &[u8],
+    fields: &[(&str, &str)],
+) -> Answer {
     use tower::ServiceExt;
     let boundary = "jcappimport";
     let mut body = Vec::new();
@@ -283,7 +295,7 @@ async fn import(
         .oneshot(
             axum::http::Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/projects/doprava/import{query}"))
+                .uri(format!("/api/v1/projects/{project}/import{query}"))
                 .header(
                     axum::http::header::COOKIE,
                     common::cookie(&state.config, who),
@@ -470,6 +482,88 @@ async fn an_app_that_cannot_travel_whole_is_not_exported() {
     assert!(foreign.text.contains("github.com"), "{}", foreign.text);
 }
 
+/// UI-87: an App the project's repository does not hold, or holds as no manifest, is not
+/// exported, and the answer names which.
+#[tokio::test]
+async fn an_app_whose_manifest_is_missing_or_garbled_is_not_exported() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    for name in ["bikes", "garbled"] {
+        state.mirror.upsert(envelope(
+            "App",
+            name,
+            "ovzdusie",
+            json!({ "source": { "git": { "url": "https://forge.example/test-owner/ovzdusie_air-map.git", "ref": "main" } } }),
+        ));
+    }
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='ovzdusie')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param("@p", "'apps/garbled/app.yaml'"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({ "Sha": "blob-garbled", "Content": STANDARD.encode("kind: [") }),
+            ),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+
+    let missing = export(
+        &state,
+        person("jana"),
+        "/api/v1/projects/ovzdusie/apps/bikes/export",
+    )
+    .await;
+    assert_eq!(missing.status, StatusCode::NOT_FOUND, "{}", missing.text);
+    assert!(
+        missing.text.contains("is not in the project's repository"),
+        "{}",
+        missing.text
+    );
+
+    let garbled = export(
+        &state,
+        person("jana"),
+        "/api/v1/projects/ovzdusie/apps/garbled/export",
+    )
+    .await;
+    assert_eq!(garbled.status, StatusCode::CONFLICT, "{}", garbled.text);
+    assert!(
+        garbled
+            .text
+            .contains("apps/garbled/app.yaml is not a manifest"),
+        "{}",
+        garbled.text
+    );
+}
+
+/// MF-42: an export whose index would not check is not handed out: a session naming no
+/// username writes no `exportedBy`, and the answer is a server error, not an archive.
+#[tokio::test]
+async fn an_export_with_no_exporter_is_not_handed_out() {
+    let (_server, state) = world(APP_HEAD, APP_HEAD).await;
+    let mut nameless = person("jana");
+    nameless.username = " ".into();
+    let answer = export(
+        &state,
+        nameless,
+        "/api/v1/projects/ovzdusie/apps/air-map/export",
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        answer.text
+    );
+    assert!(
+        !answer.text.starts_with("PK"),
+        "no archive: {}",
+        answer.text
+    );
+}
+
 /// UI-87, MF-46, AP-75: the export imports into another project under a new name. The new
 /// repository is created empty and private, the bundle pushed as `main` with its tags, `main`
 /// protected, and the project's red-lane Change adds the App building from it.
@@ -527,6 +621,38 @@ async fn an_exported_app_imports_into_another_project_under_a_new_name() {
         "{app}"
     );
     assert!(sent(&server, "DELETE", LANDED).await.is_empty());
+}
+
+/// UI-87, MF-46: an App repository with no tag exports without a tags file, and its import
+/// pushes `main` and nothing else.
+#[tokio::test]
+async fn an_app_without_tags_exports_and_imports_without_them() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    at("GET", format!("{SOURCE}/Tags"), 200, json!({ "value": [] }))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let file = exported(&state).await;
+    assert_eq!(
+        unzip(&file).keys().map(String::as_str).collect::<Vec<_>>(),
+        ["air-map.bundle", "app.yaml", "bundle.yaml"]
+    );
+
+    let answer = checked_import(&state, &file, &[("name", "mapa")]).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let pushed = sent(
+        &server,
+        "POST",
+        "/test-owner/doprava_mapa.git/git-receive-pack",
+    )
+    .await;
+    assert_eq!(pushed.len(), 1);
+    let push = String::from_utf8_lossy(&pushed[0]);
+    assert!(
+        push.contains(&format!("{APP_HEAD} refs/heads/main")),
+        "{push}"
+    );
+    assert!(!push.contains("refs/tags/"), "{push}");
 }
 
 /// PF-57: the dry run answers the repository it would create and creates nothing.
@@ -683,6 +809,17 @@ async fn an_archive_that_does_not_check_creates_nothing() {
     let two_items = index_edit(&|index| {
         index["spec"]["items"][0]["kind"] = json!("Dashboard");
     });
+    let unsigned = index_edit(&|index| {
+        index["spec"]["exportedBy"] = json!("");
+    });
+    let mut unknown_field = files.clone();
+    let mut parsed: Value = serde_norway::from_slice(&files["app.yaml"]).expect("app.yaml reads");
+    parsed["spec"]["notAField"] = json!(1);
+    let text = serde_norway::to_string(&parsed).expect("app.yaml writes");
+    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+    unknown_field.insert("app.yaml".into(), text.into_bytes());
+    let index = String::from_utf8_lossy(&unknown_field["bundle.yaml"]).replace(&old, &digest);
+    unknown_field.insert("bundle.yaml".into(), index.into_bytes());
     let mut broken_app = files.clone();
     let digest = format!("{:x}", Sha256::digest(b"kind: [".as_slice()));
     broken_app.insert("app.yaml".into(), b"kind: [".to_vec());
@@ -732,6 +869,18 @@ async fn an_archive_that_does_not_check_creates_nothing() {
             vec![],
             StatusCode::BAD_REQUEST,
             "one App as its item",
+        ),
+        (
+            zip_of(&unsigned),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "exportedBy must not be empty",
+        ),
+        (
+            zip_of(&unknown_field),
+            vec![],
+            StatusCode::BAD_REQUEST,
+            "app.yaml is not a valid App",
         ),
         (
             zip_of(&files),
@@ -795,6 +944,155 @@ async fn a_name_that_is_taken_is_not_adopted() {
     )
     .await
     .is_empty());
+}
+
+/// AP-75: beside a project whose name is long, an App name whose repository name would pass
+/// the forge's limit is refused before anything is created.
+#[tokio::test]
+async fn a_repository_name_past_the_forges_limit_is_refused() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    let file = exported(&state).await;
+    let long = "a".repeat(60);
+    state.mirror.upsert(envelope(
+        "Project",
+        &long,
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "bb", "repository": { "name": long }, "ref": "main" }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "jana-reads-long",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "jana@hel.fi" }], "role": "reader", "scope": { "project": long } }),
+    ));
+    let name = "x".repeat(40);
+    let answer = import_into(
+        &state,
+        person("jana"),
+        &long,
+        "?format=app",
+        &file,
+        &[("name", &name)],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(answer.text.contains("AP-75"), "{}", answer.text);
+    nothing_created(&server).await;
+}
+
+/// PF-86: a repository of the name that appears in the forge between the check and the
+/// creation is somebody else's: the import stops and removes nothing.
+#[tokio::test]
+async fn a_repository_that_appears_during_the_import_is_not_adopted() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    let file = exported(&state).await;
+    at(
+        "POST",
+        "/odata/CreateRepository".into(),
+        409,
+        json!({ "message": "already exists" }),
+    )
+    .with_priority(1)
+    .mount(&server)
+    .await;
+    let answer = checked_import(&state, &file, &[("name", "mapa")]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer
+            .text
+            .contains("appeared in the forge during the import"),
+        "{}",
+        answer.text
+    );
+    assert!(sent(&server, "DELETE", LANDED).await.is_empty());
+}
+
+/// One pkt-line of a `git-receive-pack` answer.
+fn pkt(text: &str) -> String {
+    format!("{:04x}{text}", text.len() + 4)
+}
+
+/// MF-46, CC-85: a forge that refuses the branch stops the import and the new repository goes
+/// again; a tag it refuses is reported in the Change, and the import goes on.
+#[tokio::test]
+async fn a_refused_branch_stops_the_import_and_a_refused_tag_is_reported() {
+    for (refused, expected) in [
+        ("ng refs/heads/main denied\n", StatusCode::CONFLICT),
+        ("ng refs/tags/v1.0.0 missing\n", StatusCode::ACCEPTED),
+    ] {
+        let (server, state) = world(APP_HEAD, APP_HEAD).await;
+        let file = exported(&state).await;
+        let answer = format!("{}{}0000", pkt("unpack ok\n"), pkt(refused));
+        Mock::given(method("POST"))
+            .and(path("/test-owner/doprava_mapa.git/git-receive-pack"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(answer.into_bytes()))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let answer = checked_import(&state, &file, &[("name", "mapa")]).await;
+        assert_eq!(answer.status, expected, "{refused}: {}", answer.text);
+        let pulls = sent(&server, "POST", &format!("{TARGET}/Shako.OpenPullRequest")).await;
+        if expected == StatusCode::CONFLICT {
+            assert!(
+                answer
+                    .text
+                    .contains("the forge refused refs/heads/main denied of 'doprava_mapa'"),
+                "{}",
+                answer.text
+            );
+            assert_eq!(sent(&server, "DELETE", LANDED).await.len(), 1);
+            assert!(pulls.is_empty());
+        } else {
+            assert!(sent(&server, "DELETE", LANDED).await.is_empty());
+            assert_eq!(pulls.len(), 1);
+            let body = String::from_utf8_lossy(&pulls[0]);
+            assert!(
+                body.contains("doprava_mapa: refs/tags/v1.0.0 missing"),
+                "{body}"
+            );
+        }
+    }
+}
+
+/// AP-02, CC-85: an App that builds from no repository cannot build from the new one: the
+/// import stops after the push and the new repository goes again.
+#[tokio::test]
+async fn an_app_that_names_no_source_git_removes_the_new_repository() {
+    let (server, state) = world(APP_HEAD, APP_HEAD).await;
+    let mut files = unzip(&exported(&state).await);
+    let old = format!("{:x}", Sha256::digest(&files["app.yaml"]));
+    let mut app: Value = serde_norway::from_slice(&files["app.yaml"]).expect("app.yaml reads");
+    app["spec"]["source"] = json!({ "path": "apps/air-map" });
+    let text = serde_norway::to_string(&app).expect("app.yaml writes");
+    let digest = format!("{:x}", Sha256::digest(text.as_bytes()));
+    files.insert("app.yaml".into(), text.into_bytes());
+    let index = String::from_utf8_lossy(&files["bundle.yaml"]).replace(&old, &digest);
+    files.insert("bundle.yaml".into(), index.into_bytes());
+
+    let answer = checked_import(&state, &zip_of(&files), &[("name", "mapa")]).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(
+        answer.text.contains("app.yaml names no source.git"),
+        "{}",
+        answer.text
+    );
+    assert_eq!(sent(&server, "DELETE", LANDED).await.len(), 1);
+}
+
+/// CC-85: a repository the forge will not remove after a failed import is left behind, and the
+/// import still answers why it failed.
+#[tokio::test]
+async fn a_failed_import_whose_repository_stays_still_answers_why() {
+    let (server, state) = world(APP_HEAD, TAGGED).await;
+    let file = exported(&state).await;
+    at("DELETE", LANDED.to_owned(), 500, json!({ "message": "no" }))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = checked_import(&state, &file, &[("name", "mapa")]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("MF-46"), "{}", answer.text);
+    assert!(!sent(&server, "DELETE", LANDED).await.is_empty());
 }
 
 /// MF-46, CC-85: a head that is not the index's after the push removes the repository the

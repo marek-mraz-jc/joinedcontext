@@ -332,6 +332,28 @@ async fn a_failed_registration_removes_the_copy() {
     assert!(origin_writes(&server).await.is_empty());
 }
 
+/// CC-85: a copy the forge does not remove after a failed registration still answers the
+/// failure, and the origin is only read.
+#[tokio::test]
+async fn a_failed_registration_whose_cleanup_fails_answers_the_registration() {
+    let (server, state) = world(false).await;
+    for (verb, route) in [
+        ("POST", format!("{REPO}/Shako.OpenPullRequest")),
+        ("DELETE", COPY.to_owned()),
+    ] {
+        Mock::given(method(verb))
+            .and(path(route))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let (status, text) = duplicate(&state, "nobody", json!({ "name": "doprava" })).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    assert_eq!(received(&server, "DELETE", COPY).await.len(), 1);
+    assert!(origin_writes(&server).await.is_empty());
+}
+
 /// PF-59, R20: a caller no binding lets read the origin gets the same `404` as for a project
 /// that is not there, and nothing is copied.
 #[tokio::test]

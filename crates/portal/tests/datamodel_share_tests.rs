@@ -503,6 +503,39 @@ async fn only_an_organization_approver_with_the_name_typed_merges_a_share() {
     assert!(merged(&shako.received_requests().await.expect("recorded")));
 }
 
+/// PF-58: a share made with a service account's token is proposed and waits for a person, even
+/// with the name typed.
+#[tokio::test]
+async fn a_share_made_with_a_token_waits_for_a_person() {
+    use joinedcontext_portal::auth::session::{now_unix, Session};
+    let (shako, _tools, state) = world().await;
+    let mut bearer = person("steward");
+    bearer.client = Some("model-sync".into());
+    let now = now_unix();
+    let user = joinedcontext_portal::auth::CurrentUser(Session {
+        identity: bearer,
+        expires_at: now + 3600,
+        access_expires_at: now + 3600,
+        refresh_token: None,
+        issued_at: now,
+        signed_in_at: None,
+        stepped_up_at: None,
+        id_token: "id-token-placeholder".into(),
+    });
+    let answer = joinedcontext_portal::api::datamodels::share_model(
+        user,
+        axum::extract::State(state.clone()),
+        axum::extract::Path(("helsinki".to_owned(), "air".to_owned())),
+        axum::body::Bytes::from_static(br#"{ "confirm": "air" }"#),
+    )
+    .await
+    .expect("a share");
+    assert_eq!(answer.status(), StatusCode::ACCEPTED);
+    let requests = shako.received_requests().await.expect("recorded");
+    assert!(opened_a_change(&requests), "the share is proposed");
+    assert!(!merged(&requests), "a token approves nothing");
+}
+
 #[tokio::test]
 async fn a_service_account_or_an_agent_run_never_approves_a_share() {
     let (shako, _tools, state) = world().await;

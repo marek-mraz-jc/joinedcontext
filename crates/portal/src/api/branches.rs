@@ -142,6 +142,21 @@ async fn key(state: &AppState, project: &str) -> Result<jc_types::ProjectKey, Ap
     project_ids::required(registry(state)?, &state.mirror, project, "branch").await
 }
 
+/// Why no branch of `project` was opened, as the door answers it.
+fn no_branch(why: project_ids::NoBranch, project: &str, per_parent: u32) -> ApiError {
+    match why {
+        // A copy or a branch is no parent (TEN-12): it answers like an unknown project. The
+        // door keys the parent first, so only a parent retired meanwhile gets here.
+        project_ids::NoBranch::NotAParent => {
+            ApiError::NotFound(format!("project '{project}' not found"))
+        }
+        project_ids::NoBranch::AtLimit => ApiError::Conflict(format!(
+            "project {project} keeps {per_parent} live branches, as many as this installation \
+             allows; let one expire or ask an operator to raise branches per project"
+        )),
+    }
+}
+
 /// `POST /api/v1/projects/{project}/branches`: opens a branch of the project for the caller.
 #[utoipa::path(
     post,
@@ -183,17 +198,7 @@ pub async fn open_branch(
     )
     .await
     .map_err(unread)?
-    .map_err(|why| match why {
-        // A copy or a branch is no parent (TEN-12): it answers like an unknown project.
-        project_ids::NoBranch::NotAParent => {
-            ApiError::NotFound(format!("project '{project}' not found"))
-        }
-        project_ids::NoBranch::AtLimit => ApiError::Conflict(format!(
-            "project {project} keeps {} live branches, as many as this installation allows; \
-             let one expire or ask an operator to raise branches per project",
-            settings.per_parent
-        )),
-    })?;
+    .map_err(|why| no_branch(why, &project, settings.per_parent))?;
     tracing::info!(%project, branch = %row.name, "branch opened");
     Ok((StatusCode::CREATED, Json(Branch::of(row, &project))))
 }
@@ -283,6 +288,25 @@ mod tests {
     fn a_failed_branch_registry_is_unavailable() {
         let refused = unread(sqlx::Error::PoolTimedOut);
         assert!(matches!(refused, ApiError::Unavailable(_)), "{refused:?}");
+    }
+
+    /// A parent that is no parent any more answers like an unknown project; a full one says
+    /// what to do.
+    #[test]
+    fn no_branch_is_an_unknown_project_or_a_full_one() {
+        let gone = no_branch(project_ids::NoBranch::NotAParent, "helsinki", 5);
+        assert!(
+            matches!(&gone, ApiError::NotFound(m) if m == "project 'helsinki' not found"),
+            "{gone:?}"
+        );
+        let full = no_branch(project_ids::NoBranch::AtLimit, "helsinki", 5);
+        assert!(matches!(full, ApiError::Conflict(_)), "{full:?}");
+        let text = full.to_string();
+        assert!(text.contains("keeps 5 live branches"), "{text}");
+        assert!(
+            text.contains("installation allows; let one expire"),
+            "{text}"
+        );
     }
 
     #[test]

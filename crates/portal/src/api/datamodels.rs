@@ -356,11 +356,9 @@ fn attributes_as_slots(doc: &Value) -> Value {
         }
     }
     if !inline.is_empty() {
-        if !doc.get("slots").is_some_and(Value::is_object) {
-            doc["slots"] = Value::Object(serde_json::Map::new());
-        }
-        if let Some(slots) = doc["slots"].as_object_mut() {
-            slots.extend(inline);
+        match doc.get_mut("slots").and_then(Value::as_object_mut) {
+            Some(slots) => slots.extend(inline),
+            None => doc["slots"] = Value::Object(inline),
         }
     }
     doc
@@ -2128,5 +2126,296 @@ mod tests {
             let error = bump_version(&version(&raw), severity).expect_err(&raw);
             assert!(error.to_string().contains(&raw), "{error}");
         }
+    }
+
+    /// An inline attribute joins the slots a source declares, or makes the slots of one that
+    /// declares none.
+    #[test]
+    fn inline_attributes_join_the_declared_slots() {
+        let classes = json!({ "Air": { "attributes": { "pm10": { "range": "integer" } } } });
+        let declared = attributes_as_slots(&json!({
+            "classes": classes.clone(), "slots": { "name": { "range": "string" } },
+        }));
+        let names: Vec<&String> = declared["slots"]
+            .as_object()
+            .expect("slots")
+            .keys()
+            .collect();
+        assert_eq!(names, ["Air.pm10", "name"]);
+        let listed = attributes_as_slots(&json!({ "classes": classes, "slots": ["name"] }));
+        assert_eq!(
+            listed["slots"],
+            json!({ "Air.pm10": { "range": "integer" } })
+        );
+    }
+
+    /// A forge answering every source with `id: plain`, and `key: [` for a model named broken.
+    async fn sources() -> (wiremock::MockServer, AppState) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(repo))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        let file = format!("{repo}/Shako.File(Path=@p,Ref=@r)");
+        let encoded = |text: &str| {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode(text)
+        };
+        Mock::given(method("GET"))
+            .and(path(file.as_str()))
+            .and(|request: &wiremock::Request| request.url.as_str().contains("broken"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": "s1", "Content": encoded("key: [") })),
+            )
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(file.as_str()))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": "s2", "Content": encoded("id: plain\n") })),
+            )
+            .mount(&server)
+            .await;
+        let base = server.uri().parse().expect("url");
+        let forge = crate::forge::ShakoClient::new(base, "o", "r", "t").expect("client");
+        let state = crate::ops::testkit::state().with_shako(std::sync::Arc::new(forge));
+        let model = |namespace: &str, name: &str, version: &str| {
+            state.mirror.upsert(crate::ops::testkit::envelope(
+                "DataModel",
+                name,
+                namespace,
+                json!({
+                    "linkml": format!("./{name}.linkml.yaml"),
+                    "version": version,
+                    "lifecycle": "published",
+                    "classes": ["Station"],
+                }),
+            ));
+        };
+        model(ORG_NAMESPACE, "broken", "1.0.0");
+        model(ORG_NAMESPACE, "badspec", "not-a-version");
+        model("city", "local", "1.0.0");
+        for n in 0..=MAX_IMPORTS {
+            model(ORG_NAMESPACE, &format!("m{n}"), "1.0.0");
+        }
+        (server, state)
+    }
+
+    /// DM-76: an import of no model, of a manifest or a source that does not read, and past the
+    /// limit is refused naming why; one import named twice is read once.
+    #[tokio::test]
+    async fn each_import_that_cannot_resolve_is_refused_naming_why() {
+        let (_server, state) = sources().await;
+        let admin = crate::ops::testkit::admin(&state).identity;
+        let resolve = |imports: Vec<String>| {
+            let (state, admin) = (state.clone(), admin.clone());
+            async move { resolve_imports(&state, &admin, "city", &json!({ "imports": imports })).await }
+        };
+        for (import, says) in [
+            ("org.missing.v1", "the organization has no model 'missing'"),
+            ("org.badspec.v1", "its manifest does not read"),
+            ("org.broken.v1", "its source does not read"),
+        ] {
+            let refused = resolve(vec![import.to_owned()]).await.expect_err(import);
+            assert!(refused.to_string().contains(says), "{import}: {refused}");
+        }
+        let twice = resolve(vec!["project.local.v1".into(), "project.local.v1".into()])
+            .await
+            .expect("a project model of its own project");
+        assert_eq!(twice.keys().collect::<Vec<_>>(), ["project.local.v1"]);
+        assert_eq!(twice["project.local.v1"], "id: plain\n");
+        let many: Vec<String> = (0..=MAX_IMPORTS).map(|n| format!("org.m{n}.v1")).collect();
+        let refused = resolve(many).await.expect_err("past the limit");
+        assert!(
+            refused.to_string().contains("imports at most 32"),
+            "{refused}"
+        );
+        assert!(
+            importers_of(&state, "m0").await.is_empty(),
+            "no source imports it"
+        );
+    }
+
+    /// A source that does not read, a current version or a target version that is no semver
+    /// are refused before anything is compiled.
+    #[tokio::test]
+    async fn a_source_or_a_version_that_does_not_read_is_a_bad_request() {
+        let state = crate::ops::testkit::state();
+        let person = crate::ops::testkit::person("jana", &[]);
+        for (spec, source, version, says) in [
+            (json!({}), "key: [", None, "invalid yaml body"),
+            (
+                json!({ "version": "x" }),
+                "id: m\n",
+                None,
+                "invalid current version",
+            ),
+            (
+                json!({ "version": "1.0.0" }),
+                "id: m\n",
+                Some("x"),
+                "invalid version",
+            ),
+        ] {
+            let refused = check_source(&state, &person, "hel", "fresh", &spec, source, version)
+                .await
+                .map(|_| ())
+                .expect_err(says);
+            assert!(
+                matches!(&refused, ApiError::BadRequest(m) if m.contains(says)),
+                "{refused:?}"
+            );
+        }
+    }
+
+    fn user_of(identity: Identity) -> CurrentUser {
+        let mut session = crate::auth::endpoint_token::tests::signed_in();
+        session.identity = identity;
+        CurrentUser(session)
+    }
+
+    /// A source past the byte limit is refused before it is read; the organization's own model
+    /// is no project model to share.
+    #[tokio::test]
+    async fn an_oversized_source_and_a_share_of_an_organization_model_are_refused() {
+        let state = crate::ops::testkit::state();
+        let admin = crate::ops::testkit::admin(&state).identity;
+        let big = Bytes::from(vec![b'a'; MAX_REQUEST_BYTES + 1]);
+        let refused = put_source(
+            user_of(admin.clone()),
+            State(state.clone()),
+            Path(("hel".to_owned(), "air".to_owned())),
+            Query(SourcePutQuery::default()),
+            big,
+        )
+        .await
+        .map(|_| ())
+        .expect_err("too large");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(m) if m.contains("byte limit")),
+            "{refused:?}"
+        );
+        let shared = share_model(
+            user_of(admin),
+            State(state),
+            Path((ORG_NAMESPACE.to_owned(), "air".to_owned())),
+            Bytes::new(),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("an organization model");
+        assert!(
+            matches!(&shared, ApiError::BadRequest(m) if m.contains("organization model already")),
+            "{shared:?}"
+        );
+    }
+
+    fn proposal(spec: Value, version: &str, creating: bool) -> ModelProposal<'static> {
+        ModelProposal {
+            namespace: "hel",
+            name: "air",
+            envelope: crate::ops::testkit::envelope("DataModel", "air", "hel", spec),
+            source: "id: air\n",
+            checked: SourceDryRunResult {
+                severity: "none".into(),
+                changes: Vec::new(),
+                version: version.into(),
+                artifacts: Artifacts::default(),
+            },
+            next_val: json!({ "classes": { "Station": {} } }),
+            imports: BTreeMap::new(),
+            creating,
+            lane: Lane::Yellow,
+            title: "update DataModel air".into(),
+            body: "a test".into(),
+        }
+    }
+
+    /// A model Change whose manifest names no source, a version or a spec that does not read
+    /// or does not validate writes no file.
+    #[test]
+    fn a_model_change_that_does_not_read_writes_no_file() {
+        let source = "./air.linkml.yaml";
+        for (spec, version, says) in [
+            (json!({ "lifecycle": "draft" }), "1.0.0", "missing linkml"),
+            (json!({ "linkml": source }), "x", "invalid version"),
+            (
+                json!({ "linkml": source, "lifecycle": 5 }),
+                "1.0.0",
+                "invalid DataModel spec",
+            ),
+            (
+                json!({ "linkml": source, "lifecycle": "draft", "contextSpaceRef": "Not_A_Space" }),
+                "1.0.0",
+                "DataModel validation error",
+            ),
+        ] {
+            let refused = model_files(&proposal(spec, version, true)).expect_err(says);
+            assert!(
+                matches!(&refused, ApiError::BadRequest(m) if m.contains(says)),
+                "{refused:?}"
+            );
+        }
+    }
+
+    /// Without a forge no model Change is opened; a branch the forge refuses to make stops the
+    /// write before any file is committed.
+    #[tokio::test]
+    async fn a_model_change_needs_a_forge_that_makes_its_branch() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let spec = || json!({ "linkml": "./air.linkml.yaml", "lifecycle": "draft" });
+        let state = crate::ops::testkit::state();
+        let admin = crate::ops::testkit::admin(&state).identity;
+        let refused = propose_model(&state, &admin, proposal(spec(), "1.0.0", true))
+            .await
+            .expect_err("no forge");
+        assert!(refused.to_string().contains("git forge"), "{refused}");
+        let refused = propose_model_onto(&state, &admin, proposal(spec(), "1.0.0", true), "plan/x")
+            .await
+            .expect_err("no forge");
+        assert!(refused.to_string().contains("git forge"), "{refused}");
+
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("GET"))
+            .and(path(repo))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let base = server.uri().parse().expect("url");
+        let forge = crate::forge::ShakoClient::new(base, "o", "r", "t").expect("client");
+        let state = state.with_shako(std::sync::Arc::new(forge));
+        let failed =
+            propose_model_onto(&state, &admin, proposal(spec(), "1.0.0", false), "plan/x").await;
+        assert!(failed.is_err(), "{failed:?}");
+        let committed = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .any(|request| request.url.path().ends_with("Shako.CommitFiles"));
+        assert!(!committed, "a file was committed on a branch never made");
     }
 }
