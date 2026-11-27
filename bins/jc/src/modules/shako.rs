@@ -561,6 +561,32 @@ mod tests {
             .await
             .unwrap();
 
+        // An outbox the store cannot read is logged and polled again; the poller still stops.
+        let polled = build_state(&cfg(&owner), &setup).await.expect("serves");
+        sqlx::raw_sql("REVOKE SELECT ON shako.outbox FROM jc_shako_app, shako_app")
+            .execute(&in_db)
+            .await
+            .unwrap();
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        poll_outbox(polled, Duration::from_millis(5), shutdown.clone(), &tasks);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !std::fs::read_to_string(log.path())
+                .unwrap()
+                .contains("the outbox was not sent")
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the refused outbox is logged");
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+        sqlx::raw_sql("GRANT SELECT ON shako.outbox TO shako_app")
+            .execute(&in_db)
+            .await
+            .unwrap();
+
         // A request login that passes row level security by refuses the start.
         sqlx::raw_sql("ALTER ROLE jc_shako_app BYPASSRLS")
             .execute(&server)

@@ -336,6 +336,163 @@ async fn a_test_e_mail_the_server_refuses_says_what_to_check() {
     assert!(!result.to_string().contains("smtp-word-7899"));
 }
 
+/// An SMTP server over implicit TLS on a loopback port whose certificate a root of its own
+/// signs: answers the port, that root as DER, and the message text it took.
+async fn tls_smtp() -> (u16, Vec<u8>, Arc<std::sync::Mutex<String>>) {
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
+    use tokio_rustls::rustls;
+    let ca_key = rcgen::KeyPair::generate().unwrap();
+    let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+    ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    let root = ca.self_signed(&ca_key).unwrap().der().to_vec();
+    let issuer = rcgen::Issuer::new(ca, ca_key);
+    let key = rcgen::KeyPair::generate().unwrap();
+    let leaf = rcgen::CertificateParams::new(vec!["127.0.0.1".to_owned()])
+        .unwrap()
+        .signed_by(&key, &issuer)
+        .unwrap();
+    let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .with_no_client_auth()
+    .with_single_cert(
+        vec![leaf.der().clone()],
+        rustls::pki_types::PrivateKeyDer::try_from(key.serialize_der()).unwrap(),
+    )
+    .unwrap();
+    let acceptor = tokio_rustls::TlsAcceptor::from(Arc::new(config));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let taken = Arc::new(std::sync::Mutex::new(String::new()));
+    let text = taken.clone();
+    tokio::spawn(async move {
+        let (tcp, _) = listener.accept().await.unwrap();
+        let Ok(tls) = acceptor.accept(tcp).await else {
+            return;
+        };
+        let (read, mut write) = tokio::io::split(tls);
+        let mut lines = BufReader::new(read).lines();
+        write.write_all(b"220 mail.test ESMTP\r\n").await.unwrap();
+        // TLS holds what is written until a flush.
+        write.flush().await.unwrap();
+        let mut data = false;
+        while let Ok(Some(line)) = lines.next_line().await {
+            let answer: &[u8] = if data {
+                if line == "." {
+                    data = false;
+                    b"250 queued\r\n"
+                } else {
+                    let mut held = text.lock().unwrap();
+                    held.push_str(&line);
+                    held.push('\n');
+                    continue;
+                }
+            } else {
+                match line.get(..4).map(str::to_ascii_uppercase).as_deref() {
+                    Some("DATA") => {
+                        data = true;
+                        b"354 end with a dot\r\n"
+                    }
+                    Some("QUIT") => {
+                        let _ = write.write_all(b"221 bye\r\n").await;
+                        let _ = write.flush().await;
+                        return;
+                    }
+                    _ => b"250 ok\r\n",
+                }
+            };
+            write.write_all(answer).await.unwrap();
+            write.flush().await.unwrap();
+        }
+    });
+    (port, root, taken)
+}
+
+/// A test e-mail an SMTP server over TLS takes: the answer says it was sent, the server got
+/// the message to the address asked for, and the audit names the outcome.
+#[tokio::test]
+async fn a_test_e_mail_the_server_takes_is_sent() {
+    let (port, root, taken) = tls_smtp().await;
+    let f = Fixture::with_guard(OutboundGuard::new(kaisatsu_oidc::OutboundPolicy {
+        test_loopback: true,
+        test_smtp_roots: vec![root],
+        ..Default::default()
+    }))
+    .await;
+    let mut realm = f.store.get_realm("jc").await.unwrap().unwrap();
+    realm.smtp_server = Some(SmtpServerConfig {
+        host: "127.0.0.1".into(),
+        port: port.to_string(),
+        from: "noreply@example.org".into(),
+        ssl: "true".into(),
+        auth: "false".into(),
+        ..SmtpServerConfig::default()
+    });
+    f.store.upsert_realm(realm).await.unwrap();
+    let admin = f
+        .token(
+            "admin",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let (status, result) = f
+        .call(
+            Method::POST,
+            "/test",
+            &admin,
+            Some(json!({ "to": "ops@example.org" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result, json!({ "sent": true }), "{result}");
+    let text = taken.lock().unwrap().clone();
+    assert!(text.contains("To: ops@example.org"), "{text}");
+    assert!(
+        text.contains("Test e-mail from the sign-in service"),
+        "{text}"
+    );
+}
+
+/// Without the server's root among the trusted ones the TLS handshake fails: nothing is sent.
+#[tokio::test]
+async fn a_test_e_mail_to_a_server_with_an_untrusted_certificate_is_not_sent() {
+    let (port, _root, taken) = tls_smtp().await;
+    let f = Fixture::with_guard(OutboundGuard::new(kaisatsu_oidc::OutboundPolicy {
+        test_loopback: true,
+        ..Default::default()
+    }))
+    .await;
+    let mut realm = f.store.get_realm("jc").await.unwrap().unwrap();
+    realm.smtp_server = Some(SmtpServerConfig {
+        host: "127.0.0.1".into(),
+        port: port.to_string(),
+        from: "noreply@example.org".into(),
+        ssl: "true".into(),
+        auth: "false".into(),
+        ..SmtpServerConfig::default()
+    });
+    f.store.upsert_realm(realm).await.unwrap();
+    let admin = f
+        .token(
+            "admin",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let (status, result) = f
+        .call(
+            Method::POST,
+            "/test",
+            &admin,
+            Some(json!({ "to": "ops@example.org" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(result["sent"], json!(false), "{result}");
+    assert!(taken.lock().unwrap().is_empty());
+}
+
 #[tokio::test]
 async fn a_test_e_mail_never_reaches_a_private_address() {
     let f = Fixture::new().await;

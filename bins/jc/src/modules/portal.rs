@@ -193,12 +193,7 @@ pub async fn build(
     if let Some(reach) = follow_realms {
         let (portal, scheme) = (state.clone(), mount.scheme.clone());
         super::sign_in::follow("portal", move |set| {
-            match portal
-                .replace_organization_realms(&organization_realms(set, &scheme), Some(reach))
-            {
-                Ok(held) => tracing::info!(held, "portal: Organization realms replaced"),
-                Err(e) => tracing::error!(error = %e, "portal: Organization realms kept"),
-            }
+            take_realms(&portal, set, &scheme, reach);
         });
     }
     if let (Some(pool), Some(hosts)) = (&state.db, registry.hosts) {
@@ -223,6 +218,20 @@ pub async fn build(
         .await
         .map_err(|e| err(format!("build listener: {e}")))?;
     Ok((server::app(state), internal))
+}
+
+/// Hands the registry's sign-in set to the Portal as its Organization realms (T-7180); a set
+/// the Portal refuses keeps the realms it holds, and the log says why.
+fn take_realms(
+    portal: &AppState,
+    set: &[super::sign_in::SignIn],
+    scheme: &str,
+    reach: std::net::SocketAddr,
+) {
+    match portal.replace_organization_realms(&organization_realms(set, scheme), Some(reach)) {
+        Ok(held) => tracing::info!(held, "portal: Organization realms replaced"),
+        Err(e) => tracing::error!(error = %e, "portal: Organization realms kept"),
+    }
 }
 
 /// The host registry as the Portal's build gets it (T-7129 §1): the jc.toml Organizations and
@@ -289,20 +298,17 @@ async fn watch_registry(pool: sqlx::PgPool, run: Run, shutdown: CancellationToke
 /// A listener on `organization_hosts`; `None` (logged) when the database refuses one, so the
 /// timed rebuild carries on alone.
 async fn listen_registry(pool: &sqlx::PgPool) -> Option<sqlx::postgres::PgListener> {
-    let mut listener = match sqlx::postgres::PgListener::connect_with(pool).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
-            return None;
-        }
+    let listening = async {
+        let mut listener = sqlx::postgres::PgListener::connect_with(pool).await?;
+        listener.listen("organization_hosts").await?;
+        Ok::<_, sqlx::Error>(listener)
     };
-    match listener.listen("organization_hosts").await {
-        Ok(()) => Some(listener),
-        Err(e) => {
+    listening
+        .await
+        .inspect_err(|e| {
             tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
-            None
-        }
-    }
+        })
+        .ok()
 }
 
 /// Reads both registries, [`apply`]s them, and last hands the served sign-in hosts of the active
@@ -1548,6 +1554,24 @@ mod tests {
 
     /// A run-time Organization whose host makes no URL lists neither addresses nor a catalogue,
     /// and the others keep theirs.
+    /// A sign-in set the Portal refuses (here: no installation realm beside it) keeps the
+    /// realms it holds, and the log names the refusal.
+    #[test]
+    fn a_realm_set_the_portal_refuses_keeps_its_realms() {
+        let portal = AppState::new(Config::for_tests(), None);
+        let set = [super::super::sign_in::SignIn {
+            organization: "bbsk".into(),
+            host: "idm.bbsk.sk".into(),
+            portals: Vec::new(),
+        }];
+        let (file, guard) = crate::modules::capture_log();
+        take_realms(&portal, &set, "https", "127.0.0.1:1".parse().unwrap());
+        drop(guard);
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(log.contains("portal: Organization realms kept"), "{log}");
+        assert!(log.contains("JC_OIDC_ISSUER"), "{log}");
+    }
+
     #[test]
     fn a_run_time_organization_whose_host_makes_no_url_is_left_out() {
         let org = |name: &str, portal: &str| crate::config::OrganizationSection {

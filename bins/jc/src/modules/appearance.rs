@@ -302,6 +302,52 @@ mod tests {
         tasks.wait().await;
     }
 
+    /// With the Portal in this process the installation's approved look and each
+    /// Organization's own one in its mirror are what `follow` hands over.
+    #[tokio::test]
+    async fn the_portal_in_this_process_hands_over_the_installation_and_organization_looks() {
+        use std::sync::{Arc, Mutex};
+        let _ = super::super::PORTAL_STATE.set(joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        ));
+        let state = super::super::PORTAL_STATE.get().expect("the Portal state");
+        state.mirror.upsert(organization(serde_json::json!({
+            "instanceName": "Banskobystrický kraj",
+        })));
+        let look = OrganizationAppearance {
+            instance_name: Some("Mesto".into()),
+            ..OrganizationAppearance::default()
+        };
+        state.set_installation_look(look.clone());
+        assert_eq!(installation(), Some(look));
+        let seen = Arc::new(Mutex::new(Vec::<(String, Option<String>)>::new()));
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        // One round: the follower looks once, then sees the shutdown.
+        shutdown.cancel();
+        let held = Arc::clone(&seen);
+        follow(
+            BTreeMap::from([("bbsk".to_owned(), ()), ("zilina".to_owned(), ())]),
+            &shutdown,
+            &tasks,
+            move |name, (), look| {
+                held.lock()
+                    .unwrap()
+                    .push((name, look.and_then(|l| l.instance_name)));
+                async {}
+            },
+        );
+        tasks.close();
+        tasks.wait().await;
+        assert_eq!(
+            *seen.lock().unwrap(),
+            [
+                ("bbsk".to_owned(), Some("Banskobystrický kraj".to_owned())),
+                ("zilina".to_owned(), None),
+            ]
+        );
+    }
+
     /// A title is one string, or the page's language of a map, else English, else any; a
     /// missing title or one of another type is none.
     #[cfg(feature = "dataroom")]

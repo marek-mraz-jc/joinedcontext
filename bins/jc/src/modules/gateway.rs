@@ -1483,6 +1483,120 @@ mod tests {
         }
     }
 
+    /// T-6783 with the Portal in this process: a same-origin read under its session carries
+    /// the person's token for that one Endpoint to the gateway; a cookie that names no session,
+    /// and a session the Portal holds no token for and cannot exchange, stay anonymous.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn a_portal_session_hands_its_endpoint_token_to_the_gateway() {
+        use axum::http::header;
+        use axum::response::IntoResponse as _;
+        use joinedcontext_portal::auth::session::{self, Identity, Session};
+        use tower::ServiceExt as _;
+        let _ = crate::modules::PORTAL_STATE.set(joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        ));
+        let state = crate::modules::PORTAL_STATE
+            .get()
+            .expect("the Portal state");
+        let now = session::now_unix();
+        let session = Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-pia".into(),
+                username: "pia".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec!["helsinki-viewers".into()],
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: "id-token".into(),
+            access_expires_at: now + 300,
+            refresh_token: Some("refresh".into()),
+        };
+        state.keep_session_claims(&session);
+        state.keep_access_token(&session, "kept-person-access-7311".into());
+        state.keep_exchanged(
+            &session,
+            "helsinki-bikes",
+            "exchanged-for-helsinki-bikes-2208".into(),
+            now + 600,
+        );
+        let jar = session::store(
+            axum_extra::extract::cookie::PrivateCookieJar::new(state.config.cookie_key.clone()),
+            &session,
+        )
+        .expect("the session cookie");
+        let cookies: Vec<String> = (jar, axum::http::StatusCode::OK)
+            .into_response()
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok()?.split(';').next().map(str::to_owned))
+            .collect();
+        assert!(!cookies.is_empty(), "the session is a cookie");
+        let app = Router::new()
+            .fallback(|req: Request| async move {
+                req.headers()
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("anonymous")
+                    .to_owned()
+            })
+            .layer(axum::middleware::from_fn(session_reads));
+        let read = |path: &str, cookie: String| {
+            let app = app.clone();
+            let req = axum::http::Request::get(path)
+                .header("sec-fetch-site", "same-origin")
+                .header(header::COOKIE, cookie)
+                .body(axum::body::Body::empty())
+                .unwrap();
+            async move {
+                let answer = app.oneshot(req).await.unwrap();
+                let body = http_body_util::BodyExt::collect(answer.into_body())
+                    .await
+                    .unwrap()
+                    .to_bytes();
+                String::from_utf8(body.to_vec()).unwrap()
+            }
+        };
+        // A kept token that is no header value is never sent.
+        state.keep_exchanged(&session, "broken-token", "a\nb".into(), now + 600);
+        let (file, guard) = crate::modules::capture_log();
+        assert_eq!(
+            read("/api/endpoint/broken-token", cookies.join("; ")).await,
+            "anonymous"
+        );
+        assert_eq!(
+            read("/api/endpoint/helsinki-bikes/schema", cookies.join("; ")).await,
+            "Bearer exchanged-for-helsinki-bikes-2208"
+        );
+        assert_eq!(
+            read("/api/endpoint/helsinki-bikes", "__Host-jc_session=s".into()).await,
+            "anonymous",
+            "a cookie that names no session"
+        );
+        assert_eq!(
+            read("/api/endpoint/closedslug", cookies.join("; ")).await,
+            "anonymous",
+            "no token kept and no realm to exchange at"
+        );
+        drop(guard);
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(
+            log.contains("gateway: no Endpoint token for the Portal session"),
+            "{log}"
+        );
+        assert!(!log.contains("kept-person-access-7311"), "{log}");
+        assert!(!log.contains("exchanged-for-helsinki-bikes-2208"), "{log}");
+    }
+
     /// RFC 9728 per host (T-6991 §5): each API host links itself, a shared `auto` API host the
     /// Organization's path on it, every other address the Organization's API base; a client's
     /// own link base never survives.
@@ -1892,13 +2006,43 @@ mod tests {
             door: None,
             portal_internal: None,
         };
-        let e = build(ctx, &cfg.organizations, true, mount, None, portal, None)
+        let e = build(
+            ctx,
+            &cfg.organizations,
+            true,
+            mount.clone(),
+            None,
+            portal,
+            None,
+        )
+        .await
+        .expect_err("no broker without the hop")
+        .to_string();
+        assert!(e.contains("JC_GATEWAY_BROKER_URL is not set"), "{e}");
+        let refuses_every_token = "gateway: no realm, so every token is refused";
+        assert!(
+            !std::fs::read_to_string(file.path())
+                .unwrap()
+                .contains(refuses_every_token),
+            "the Portal's listener is known: the realm is filled"
+        );
+        // Beside kaisatsu without the Portal's internal listener jc fills no realm, and says
+        // that every token is refused.
+        let ctx = crate::modules::BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let e = build(ctx, &cfg.organizations, true, mount, None, None, None)
             .await
             .expect_err("no broker without the hop")
             .to_string();
         assert!(e.contains("JC_GATEWAY_BROKER_URL is not set"), "{e}");
         drop(guard);
         let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(log.contains(refuses_every_token), "{log}");
         assert!(filled(&log), "{log}");
         #[cfg(feature = "portal")]
         assert!(log.contains("gateway: Organization realms kept"), "{log}");
