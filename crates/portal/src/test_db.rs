@@ -4,12 +4,11 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use sqlx::postgres::PgPoolOptions;
 use sqlx::{AssertSqlSafe, PgPool};
 
 /// A pool whose every acquire fails at once: the database is down.
 pub(crate) fn dead_pool() -> PgPool {
-    PgPoolOptions::new()
+    jc_pool::options::<sqlx::Postgres>()
         .acquire_timeout(Duration::from_millis(50))
         .connect_lazy("postgres://nobody@127.0.0.1:1/none")
         .expect("a lazy pool")
@@ -29,7 +28,10 @@ pub(crate) async fn scratch() -> Option<Scratch> {
     let url = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
         .ok()
         .filter(|url| !url.trim().is_empty())?;
-    let admin = PgPool::connect(&url).await.expect("connect");
+    let admin = jc_pool::options::<sqlx::Postgres>()
+        .connect(&url)
+        .await
+        .expect("connect");
     let name = format!(
         "jc_fault_{}_{}",
         std::process::id(),
