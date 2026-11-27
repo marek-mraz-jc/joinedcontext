@@ -227,6 +227,9 @@ pub(crate) mod encode {
     use super::*;
     use crate::wire::Enc;
 
+    /// A key written as null (length -1): a record a producer sent without a key.
+    pub const NO_KEY: &str = "\0";
+
     pub fn batch(
         base_offset: i64,
         codec: i16,
@@ -237,8 +240,12 @@ pub(crate) mod encode {
         for (i, (k, v)) in recs.iter().enumerate() {
             let mut r = Enc::default();
             r.i8(0).varint(i as i64).varint(i as i64);
-            r.varint(k.len() as i64);
-            r.0.extend_from_slice(k.as_bytes());
+            if *k == NO_KEY {
+                r.varint(-1);
+            } else {
+                r.varint(k.len() as i64);
+                r.0.extend_from_slice(k.as_bytes());
+            }
             r.varint(v.len() as i64);
             r.0.extend_from_slice(v.as_bytes());
             r.varint(1).varint(1);

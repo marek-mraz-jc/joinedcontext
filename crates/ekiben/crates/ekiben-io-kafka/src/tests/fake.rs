@@ -44,7 +44,8 @@ pub type Hook = Box<dyn FnMut(i16, &[u8]) -> Option<Reply> + Send>;
 pub struct State {
     pub brokers: Vec<(i32, String, i32)>,
     pub topics: Vec<Topic>,
-    /// (topic, partition) -> the values of its records, offset = index.
+    /// (topic, partition) -> the values of its records, offset = index; a value
+    /// `nokey:<v>` is the record `<v>` sent without a key.
     pub log: HashMap<(String, i32), Vec<String>>,
     /// The next answers by API key, ahead of the model's.
     pub script: HashMap<i16, VecDeque<Reply>>,
@@ -236,7 +237,10 @@ fn model(s: &mut State, api: i16, mut d: Dec) -> Option<Vec<u8>> {
                     let rest: Vec<(&str, &str)> = log
                         .iter()
                         .skip(usize::try_from(*from).unwrap_or(usize::MAX))
-                        .map(|v| ("k", v.as_str()))
+                        .map(|v| match v.strip_prefix("nokey:") {
+                            Some(v) => (crate::records::encode::NO_KEY, v),
+                            None => ("k", v.as_str()),
+                        })
                         .collect();
                     if rest.is_empty() {
                         e.bytes(&[]);

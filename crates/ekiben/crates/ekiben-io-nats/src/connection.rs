@@ -665,14 +665,8 @@ mod tests {
 
     #[test]
     fn tls_client_certificates_load_from_inline_pem_or_refuse_clearly() {
-        let pair = self_signed();
-        let skip = if pair.is_none() {
-            "SKIP (no openssl) "
-        } else {
-            ""
-        };
-        eprintln!("{skip}tls_client_certificates");
-        let Some((cert, key)) = pair else { return };
+        // openssl is in the image and on the CI runners: a missing one fails the test.
+        let (cert, key) = self_signed().expect("openssl makes a test certificate");
         let client = |c: &str, k: &str| {
             tls(serde_json::json!({"enabled": true, "root_cas": cert, "client_certs": [{"cert": c, "key": k}]}))
                 .unwrap()
