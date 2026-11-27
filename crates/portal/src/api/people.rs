@@ -2093,7 +2093,10 @@ mod tests {
     #[test]
     fn a_failed_removal_store_is_answered_by_its_kind() {
         let refused = db_error(sqlx::Error::PoolTimedOut);
-        assert!(!refused.to_string().contains("pool timed out"), "{refused:?}");
+        assert!(
+            !refused.to_string().contains("pool timed out"),
+            "{refused:?}"
+        );
     }
 
     #[test]

@@ -1465,7 +1465,10 @@ mod tests {
     fn a_poisoned_rate_window_still_counts() {
         let window = std::sync::OnceLock::new();
         let now = Instant::now();
-        assert_eq!(super::counted(&window, "jana", now, Duration::from_secs(60)), 1);
+        assert_eq!(
+            super::counted(&window, "jana", now, Duration::from_secs(60)),
+            1
+        );
         let held = &window;
         std::thread::scope(|scope| {
             let _ = scope
@@ -1475,7 +1478,10 @@ mod tests {
                 })
                 .join();
         });
-        assert_eq!(super::counted(&window, "jana", now, Duration::from_secs(60)), 2);
+        assert_eq!(
+            super::counted(&window, "jana", now, Duration::from_secs(60)),
+            2
+        );
     }
 
     /// F-R2POR2-008 (T-6226): who may not write to the project's knowledge sources is refused

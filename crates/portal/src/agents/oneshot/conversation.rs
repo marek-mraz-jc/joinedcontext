@@ -2692,7 +2692,10 @@ mod tests {
         let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
         let mut conversation = Vec::new();
         driver
-            .turn(&mut conversation, "keep the bike count updated daily".into())
+            .turn(
+                &mut conversation,
+                "keep the bike count updated daily".into(),
+            )
             .await;
         assert_eq!(conversation[0].1, "The pipeline is drafted.");
         let sent = sent(&model).await;
@@ -2762,7 +2765,8 @@ mod tests {
     #[tokio::test]
     async fn a_hand_over_that_never_names_a_path_ends_the_turn() {
         let model = wiremock::MockServer::start().await;
-        let nowhere = fenced(json!({ "tool": "jc_switch_path", "arguments": { "path": "nowhere" } }));
+        let nowhere =
+            fenced(json!({ "tool": "jc_switch_path", "arguments": { "path": "nowhere" } }));
         scripted(&model, &[&nowhere]).await;
         let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
         let mut conversation = Vec::new();
@@ -2785,7 +2789,9 @@ mod tests {
         scripted(&model, &[&route]).await;
         let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
         let mut conversation = Vec::new();
-        driver.turn(&mut conversation, "build me an app".into()).await;
+        driver
+            .turn(&mut conversation, "build me an app".into())
+            .await;
         assert_eq!(
             conversation[0].1,
             "You can start that work from the Assistant page."

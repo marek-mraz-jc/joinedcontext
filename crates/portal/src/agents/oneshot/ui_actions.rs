@@ -715,7 +715,8 @@ mod tests {
     /// has its home and names in the project.
     #[test]
     fn a_self_naming_schema_ends_and_an_unknown_kind_lives_in_the_project() {
-        let looping = json!({ "$ref": "#", "properties": { "steps": { "items": { "type": "object" } } } });
+        let looping =
+            json!({ "$ref": "#", "properties": { "steps": { "items": { "type": "object" } } } });
         assert!(has_field(&looping, "steps.0"));
         assert!(!has_field(&looping, "steps.x"));
         let broken = refused_fields(&json!({ "type": 12 }), &json!({}));

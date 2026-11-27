@@ -1047,7 +1047,10 @@ mod tests {
         let project = "poisoned-running-list";
         let slot = Slot::take(project, "poisoned-1", sender.clone()).expect("a slot");
         let busy = Slot::take(project, "poisoned-2", sender.clone());
-        assert!(matches!(busy, Err(ApiError::Conflict(_))), "one test a project");
+        assert!(
+            matches!(busy, Err(ApiError::Conflict(_))),
+            "one test a project"
+        );
         drop(slot);
         let again = Slot::take(project, "poisoned-3", sender).expect("the slot came back");
         drop(again);

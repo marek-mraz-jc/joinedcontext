@@ -3950,7 +3950,9 @@ mod tests {
         )
         .expect_err("50 is over the operator's 20");
         let message = refused.to_string();
-        let message = message.strip_prefix("conflict: ").expect("a conflict at approval");
+        let message = message
+            .strip_prefix("conflict: ")
+            .expect("a conflict at approval");
         for part in [
             "spec.projects.quota.contextSpaces",
             "50",
@@ -4131,7 +4133,9 @@ mod tests {
         state.mirror.upsert(organization("refused"));
         let refused = check(&app("bikes", "public")).expect_err("a new public App");
         let message = refused.to_string();
-        let message = message.strip_prefix("bad request: ").expect("a bad request at the door");
+        let message = message
+            .strip_prefix("bad request: ")
+            .expect("a bad request at the door");
         for part in [
             "App 'bikes'",
             "spec.policies.apps.public",
@@ -4846,7 +4850,10 @@ mod tests {
         );
         let patch = parse_patch_to_value(&typed("application/apply-patch+yaml"), b"spec: [")
             .expect_err("broken yaml patch");
-        assert!(patch.to_string().contains("invalid yaml patch"), "{patch:?}");
+        assert!(
+            patch.to_string().contains("invalid yaml patch"),
+            "{patch:?}"
+        );
     }
 
     /// A create whose path holds a file no manifest names says "a manifest" holds it.

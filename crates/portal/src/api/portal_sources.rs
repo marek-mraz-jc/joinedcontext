@@ -523,7 +523,13 @@ mod tests {
         {
             let mut map = TEST_BUCKETS.lock().unwrap_or_else(|e| e.into_inner());
             for n in map.len()..MAX_BUCKETS {
-                map.insert(format!("idle-{n}"), Bucket { tokens: 0.0, at: idle });
+                map.insert(
+                    format!("idle-{n}"),
+                    Bucket {
+                        tokens: 0.0,
+                        at: idle,
+                    },
+                );
             }
         }
         let _ = std::thread::spawn(|| {

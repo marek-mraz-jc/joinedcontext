@@ -969,7 +969,10 @@ mod tests {
     fn each_member_at_fault_is_named() {
         assert!(validate(&spec(), &body("cam-west", "cameras/x", "{}")).is_ok());
         let fault = |b: TestPublish| {
-            let errors = validate(&spec(), &b).expect_err("a 422").field_errors().to_vec();
+            let errors = validate(&spec(), &b)
+                .expect_err("a 422")
+                .field_errors()
+                .to_vec();
             assert!(!errors.is_empty(), "a 422 names its fields");
             errors
         };

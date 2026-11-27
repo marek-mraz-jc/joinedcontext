@@ -64,6 +64,9 @@ mod tests {
     #[test]
     fn counts_not_stored_ask_the_gateway_again() {
         let refused = super::not_stored(sqlx::Error::PoolTimedOut);
-        assert!(refused.to_string().contains("sends them again"), "{refused:?}");
+        assert!(
+            refused.to_string().contains("sends them again"),
+            "{refused:?}"
+        );
     }
 }

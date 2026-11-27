@@ -2899,7 +2899,10 @@ mod tests {
         let linked = super::with_links(&state, run.clone());
         assert_eq!(linked.change_id.as_deref(), Some("chg-00000007"));
         let source = linked.source_url.expect("a source link");
-        assert!(source.contains("%2Fsrc%2Fbranch%2Fagent%2Fr-1%2Fprojects%2Fhelsinki"), "{source}");
+        assert!(
+            source.contains("%2Fsrc%2Fbranch%2Fagent%2Fr-1%2Fprojects%2Fhelsinki"),
+            "{source}"
+        );
         run.branch = String::new();
         let unbranched = super::with_links(&state, run);
         assert!(unbranched.source_url.is_none());
