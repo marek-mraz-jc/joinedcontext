@@ -334,9 +334,12 @@ fn guide(endpoint: &Endpoint, base: &str, headers: &HeaderMap) -> Response<Body>
     let answer = response.headers_mut();
     answer.insert(UPGRADE, HeaderValue::from_static("websocket"));
     answer.insert(CONNECTION, HeaderValue::from_static("Upgrade"));
-    if let Ok(link) = HeaderValue::from_str(&format!("<{help}>; rel=\"help\"")) {
-        answer.insert(LINK, link);
-    }
+    // The guide's address is the public base and a literal path, so it is a header value.
+    HeaderValue::from_str(&format!("<{help}>; rel=\"help\""))
+        .into_iter()
+        .for_each(|link| {
+            answer.insert(LINK, link);
+        });
     response
 }
 
@@ -468,10 +471,13 @@ fn bearer_from_protocol(headers: &mut HeaderMap) -> Result<(), Box<Response<Body
     };
     headers.insert(AUTHORIZATION, header);
     headers.remove(SEC_WEBSOCKET_PROTOCOL);
-    if let Ok(rest) = HeaderValue::from_str(&others.join(", ")) {
-        if !others.is_empty() {
-            headers.insert(SEC_WEBSOCKET_PROTOCOL, rest);
-        }
+    if !others.is_empty() {
+        // The entries came out of header values, so the list they make is one too.
+        HeaderValue::from_str(&others.join(", "))
+            .into_iter()
+            .for_each(|rest| {
+                headers.insert(SEC_WEBSOCKET_PROTOCOL, rest);
+            });
     }
     Ok(())
 }
@@ -542,6 +548,88 @@ mod tests {
         );
         assert!(bearer_from_protocol(&mut none).is_ok());
         assert!(!none.contains_key(AUTHORIZATION));
+    }
+
+    /// A token alone in the subprotocol list leaves no subprotocol entry behind, and one beside
+    /// others leaves only the others.
+    #[test]
+    fn a_token_entry_alone_leaves_no_subprotocol_and_beside_others_leaves_them() {
+        let mut alone = HeaderMap::new();
+        alone.insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("bearer.abc"),
+        );
+        assert!(bearer_from_protocol(&mut alone).is_ok());
+        assert_eq!(alone[AUTHORIZATION], "Bearer abc");
+        assert!(!alone.contains_key(SEC_WEBSOCKET_PROTOCOL));
+        let mut beside = HeaderMap::new();
+        beside.insert(
+            SEC_WEBSOCKET_PROTOCOL,
+            HeaderValue::from_static("a, bearer.abc, b"),
+        );
+        assert!(bearer_from_protocol(&mut beside).is_ok());
+        assert_eq!(beside[SEC_WEBSOCKET_PROTOCOL], "a, b");
+    }
+
+    /// The type of an example subscription is the first type a policy names, else the first
+    /// class of a model, else a placeholder.
+    #[test]
+    fn the_example_type_falls_back_to_a_model_class_and_then_a_placeholder() {
+        let mut endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        assert_eq!(example_type(&endpoint), "Type");
+        endpoint.models = vec![crate::resolver::Model {
+            name: "air".to_owned(),
+            version: "1.0.0".to_owned(),
+            major: 1,
+            classes: [
+                "".to_owned(),
+                "*".to_owned(),
+                "AirQualityObserved".to_owned(),
+            ]
+            .into_iter()
+            .collect(),
+            json_schema: None,
+            context: None,
+        }];
+        assert_eq!(example_type(&endpoint), "AirQualityObserved");
+    }
+
+    /// A request that is no upgrade a server can take, with the bearer twice or without the
+    /// connection the protocol needs, is refused before anything holds a place.
+    #[tokio::test]
+    async fn a_malformed_upgrade_is_refused_before_it_holds_a_place() {
+        use tower::ServiceExt;
+        let endpoint = (*crate::fanout::hub::tests_support::endpoint()).clone();
+        let gateway = Arc::new(
+            Gateway::new(
+                crate::proxy::Broker::new("http://127.0.0.1:9"),
+                Box::new(crate::pdp::PolicyPdp),
+                "city.example",
+            )
+            .serve([endpoint]),
+        );
+        let twice = Request::builder()
+            .uri("/api/endpoint/s/ws")
+            .header(SEC_WEBSOCKET_PROTOCOL, "bearer.a, bearer.b")
+            .body(Body::empty())
+            .expect("a request");
+        let refused = crate::app::router(Arc::clone(&gateway))
+            .oneshot(twice)
+            .await
+            .expect("the gateway answers");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+
+        let half = Request::builder()
+            .uri("/api/endpoint/s/ws")
+            .header(UPGRADE, "websocket")
+            .body(Body::empty())
+            .expect("a request");
+        let refused = crate::app::router(Arc::clone(&gateway))
+            .oneshot(half)
+            .await
+            .expect("the gateway answers");
+        assert!(refused.status().is_client_error(), "{}", refused.status());
+        assert_eq!(gateway.ws_open.0.lock().expect("the count").len(), 0);
     }
 
     #[test]

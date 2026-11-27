@@ -40,11 +40,12 @@ pub(crate) async fn schema_index(
         for major in majors {
             let link =
                 format!("</api/endpoint/{slug}/schema/v{major}/mappings/>; rel=\"{MAPPINGS_REL}\"");
-            if let Ok(value) = HeaderValue::from_str(&link) {
+            // The slug is a view id, so a link built of it is always a header value.
+            HeaderValue::from_str(&link).into_iter().for_each(|value| {
                 response
                     .headers_mut()
                     .append(axum::http::header::LINK, value);
-            }
+            });
         }
     }
     response
@@ -267,9 +268,10 @@ pub(crate) fn revalidated_text(
         }
     };
     let headers = response.headers_mut();
-    if let Ok(value) = HeaderValue::from_str(&etag) {
+    // The digest is hex between quotes, so it always forms a header value.
+    HeaderValue::from_str(&etag).into_iter().for_each(|value| {
         headers.insert(axum::http::header::ETAG, value);
-    }
+    });
     headers.insert(
         axum::http::header::CACHE_CONTROL,
         HeaderValue::from_static("no-cache"),
@@ -307,4 +309,188 @@ pub(crate) fn routes() -> Router<Arc<Gateway>> {
             "/api/endpoint/{slug}/schema/{version}/{artifact}",
             get(schema_artifact),
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fanout::hub::tests_support::endpoint;
+    use crate::pdp::PolicyPdp;
+    use crate::proxy::Broker;
+
+    /// A broker that answers every read with `status` and `body`.
+    async fn broker(status: StatusCode, body: &'static str) -> String {
+        let app = Router::new().fallback(move || async move { (status, body) });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let port = listener.local_addr().expect("an address").port();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+        format!("http://127.0.0.1:{port}")
+    }
+
+    /// The URL of a port nothing listens on.
+    async fn closed() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a free port");
+        let port = listener.local_addr().expect("an address").port();
+        drop(listener);
+        format!("http://127.0.0.1:{port}")
+    }
+
+    fn gateway(broker: &str) -> Gateway {
+        Gateway::new(Broker::new(broker), Box::new(PolicyPdp), "city.example")
+    }
+
+    fn schema_request(path: &str) -> Request {
+        Request::builder()
+            .uri(path)
+            .body(Body::empty())
+            .expect("a request")
+    }
+
+    #[test]
+    fn a_media_type_that_is_no_header_value_is_a_500_and_a_match_is_a_304() {
+        let refused = revalidated_text(b"{}".to_vec(), "bad\nmedia", &HeaderMap::new());
+        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(refused.headers().get(axum::http::header::ETAG).is_none());
+        let served = revalidated_text(b"{}".to_vec(), "application/json", &HeaderMap::new());
+        assert_eq!(served.status(), StatusCode::OK);
+        let etag = served.headers()[axum::http::header::ETAG].clone();
+        let mut headers = HeaderMap::new();
+        headers.insert(axum::http::header::IF_NONE_MATCH, etag);
+        let again = revalidated_text(b"{}".to_vec(), "application/json", &headers);
+        assert_eq!(again.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(again.headers()["cache-control"], "no-cache");
+    }
+
+    #[tokio::test]
+    async fn a_view_document_is_none_without_a_view_and_503_without_a_tenant() {
+        let gateway = gateway(&broker(StatusCode::OK, "{}").await);
+        let subject = Subject::default();
+        let tenanted = endpoint();
+        let too_long = "v".repeat(64);
+        assert!(view_document(
+            &gateway,
+            &tenanted,
+            &too_long,
+            &subject,
+            "schema/index.json"
+        )
+        .await
+        .is_none());
+        assert!(
+            view_document(&gateway, &tenanted, "", &subject, "schema/index.json")
+                .await
+                .is_none()
+        );
+        let mut untenanted = (*endpoint()).clone();
+        untenanted.tenant = None;
+        let answer = view_document(&gateway, &untenanted, "s", &subject, "schema/index.json").await;
+        assert_eq!(answer, Some(Err(StatusCode::SERVICE_UNAVAILABLE)));
+        let answer = view_document(&gateway, &tenanted, "s", &subject, "schema/index.json").await;
+        assert_eq!(answer, Some(Ok(b"{}".to_vec())));
+    }
+
+    #[tokio::test]
+    async fn a_view_document_names_a_broker_that_is_down_or_refuses() {
+        let subject = Subject::default();
+        let down = gateway(&closed().await);
+        let answer = view_document(&down, &endpoint(), "s", &subject, "schema/index.json").await;
+        assert_eq!(answer, Some(Err(StatusCode::BAD_GATEWAY)));
+        let refusing = gateway(&broker(StatusCode::FORBIDDEN, "no").await);
+        let answer =
+            view_document(&refusing, &endpoint(), "s", &subject, "schema/index.json").await;
+        assert_eq!(answer, Some(Err(StatusCode::FORBIDDEN)));
+    }
+
+    /// No view, a broker that refuses and a body that is no JSON each give a catalogue of no
+    /// model, never digests of bytes nobody can fetch (EP-68).
+    #[tokio::test]
+    async fn an_index_without_a_view_or_a_reading_broker_lists_no_model() {
+        let subject = Subject::default();
+        let empty = serde_json::json!({ "endpoint": "s", "models": [] });
+        let ok = gateway(&broker(StatusCode::OK, "{\"endpoint\":\"s\",\"models\":[1]}").await);
+        let listed = index_for(&ok, &endpoint(), "s", &subject).await;
+        assert_eq!(listed["models"], serde_json::json!([1]));
+        assert_eq!(
+            index_for(&ok, &endpoint(), &"v".repeat(64), &subject).await,
+            empty
+        );
+        let refusing = gateway(&broker(StatusCode::BAD_GATEWAY, "x").await);
+        assert_eq!(
+            index_for(&refusing, &endpoint(), "s", &subject).await,
+            empty
+        );
+        let garbled = gateway(&broker(StatusCode::OK, "not json").await);
+        assert_eq!(index_for(&garbled, &endpoint(), "s", &subject).await, empty);
+    }
+
+    #[tokio::test]
+    async fn a_schema_request_outside_the_endpoint_or_without_a_tenant_is_refused() {
+        let subject = Subject::default();
+        let gateway = gateway(&broker(StatusCode::OK, "{}").await);
+        let outside = through_view(
+            &gateway,
+            &endpoint(),
+            &subject,
+            "s",
+            schema_request("/api/endpoint/other/schema/index.json"),
+        )
+        .await;
+        assert_eq!(outside.status(), StatusCode::NOT_FOUND);
+        let glued = through_view(
+            &gateway,
+            &endpoint(),
+            &subject,
+            "s",
+            schema_request("/api/endpoint/s/schemas/index.json"),
+        )
+        .await;
+        assert_eq!(glued.status(), StatusCode::NOT_FOUND);
+        let mut untenanted = (*endpoint()).clone();
+        untenanted.tenant = None;
+        let unpinned = through_view(
+            &gateway,
+            &untenanted,
+            &subject,
+            "s",
+            schema_request("/api/endpoint/s/schema/index.json"),
+        )
+        .await;
+        assert_eq!(unpinned.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let unviewed = through_view(
+            &gateway,
+            &endpoint(),
+            &subject,
+            &"v".repeat(64),
+            schema_request("/api/endpoint/s/schema/index.json"),
+        )
+        .await;
+        assert_eq!(unviewed.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn a_class_the_broker_does_not_know_is_the_gateways_own_404() {
+        let gateway = gateway(&broker(StatusCode::NOT_FOUND, "the broker's wording").await);
+        let answer = through_view(
+            &gateway,
+            &endpoint(),
+            &Subject::default(),
+            "s",
+            schema_request("/api/endpoint/s/schema/v1/Hidden.json"),
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(answer.into_body(), 1 << 16)
+            .await
+            .expect("a body");
+        assert!(
+            !String::from_utf8_lossy(&body).contains("the broker's wording"),
+            "the broker's wording must not reach the caller"
+        );
+    }
 }

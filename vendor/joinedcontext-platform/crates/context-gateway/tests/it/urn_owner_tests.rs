@@ -242,6 +242,39 @@ async fn an_odata_create_naming_a_foreign_owner_is_refused() {
     assert!(asked.is_empty(), "the broker was asked: {asked:?}");
 }
 
+/// An OData create naming the owner's own id passes the owner check, and in the `warn` window one
+/// naming another owner is written and counted, not refused.
+#[tokio::test]
+async fn an_odata_create_of_the_owner_or_in_the_warn_window_is_written() {
+    let mut odata = endpoint(PROJECT, "public");
+    odata.representations.push(Representation::Odata);
+    let (status, problem, asked) = send(
+        &FOUR,
+        odata.clone(),
+        "odata:/Device",
+        json!({"id": "urn:ngsi-ld:Device:sk_bbsk:bbsk-otvorene-data:lamp-1", "status": "on"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{problem}");
+    assert_eq!(asked, ["POST /x/views/bbsk-kpi/odata/v4/Device"]);
+
+    let open = Deployment {
+        check: UrnOwnerPrefix::Warn {
+            until: std::time::SystemTime::now() + std::time::Duration::from_secs(3600),
+        },
+        ..FOUR
+    };
+    let (status, problem, asked) = send(
+        &open,
+        odata,
+        "odata:/Device",
+        json!({"id": "urn:ngsi-ld:Device:fi_hel:praha:1", "status": "on"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{problem}");
+    assert_eq!(asked.len(), 1, "{asked:?}");
+}
+
 /// The owner's own id passes, and so does its domain, the form minted before the id existed.
 #[tokio::test]
 async fn the_owners_id_and_its_domain_pass() {

@@ -115,13 +115,12 @@ pub fn document(endpoint: &Endpoint, visible: &Visible, languages: &[String]) ->
         .filter(|model| Some(model.major) == newest)
         .collect();
     let mut redacted = Vec::new();
-    let mut schemas = match schema::json_schema(&models, visible, &mut redacted)
+    // `json_schema` always carries a `$defs` object.
+    let mut schemas: Map<String, Value> = schema::json_schema(&models, visible, &mut redacted)
         .get_mut("$defs")
-        .map(Value::take)
-    {
-        Some(Value::Object(defs)) => defs,
-        _ => Map::new(),
-    };
+        .and_then(Value::as_object_mut)
+        .map(std::mem::take)
+        .unwrap_or_default();
     for definition in schemas.values_mut() {
         rehome(definition);
     }

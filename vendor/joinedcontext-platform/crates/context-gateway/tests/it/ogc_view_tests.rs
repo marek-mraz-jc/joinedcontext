@@ -416,6 +416,150 @@ async fn a_head_answers_the_length_of_its_get() {
     assert!(hops_of(&hops).iter().all(|hop| hop.method == Method::GET));
 }
 
+/// A broker answering every request with `answer` (a status, headers and a body).
+async fn answering(
+    status: StatusCode,
+    headers: &'static [(&'static str, &'static str)],
+    body: Vec<u8>,
+) -> String {
+    let body = Arc::new(body);
+    let app = Router::new().fallback(move || {
+        let body = Arc::clone(&body);
+        async move {
+            let mut response = (status, body.to_vec()).into_response();
+            for (name, value) in headers {
+                response
+                    .headers_mut()
+                    .insert(*name, value.parse().expect("a header value"));
+            }
+            response
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let url = format!("http://{}", listener.local_addr().expect("an address"));
+    tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    url
+}
+
+fn items() -> String {
+    format!("/api/endpoint/{SLUG}/ogc/features/collections/Car/items")
+}
+
+/// An Endpoint whose project names no Organization has no tenant: its reads are 503 with the
+/// remedy, and the broker is not asked.
+#[tokio::test]
+async fn an_endpoint_without_a_tenant_is_503_and_a_broker_that_is_down_is_502() {
+    let (upstream, hops) = broker(StatusCode::OK, &[]).await;
+    let untenanted = Endpoint {
+        tenant: None,
+        ..endpoint()
+    };
+    let (status, _, body) = call(&upstream, untenanted, get(&items())).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.contains("organizationRef"), "{body}");
+    assert!(hops_of(&hops).is_empty());
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a free port");
+    let closed = format!("http://{}", listener.local_addr().expect("an address"));
+    drop(listener);
+    let (status, _, body) = call(&closed, endpoint(), get(&items())).await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
+    assert!(body.contains("upstream-unavailable"), "{body}");
+}
+
+/// One page past the 8 MiB the gateway holds, asked for with no `limit` to halve, is a 502 of
+/// the gateway's own; the page itself never reaches the caller.
+#[tokio::test]
+async fn a_page_past_the_hold_with_no_limit_to_halve_is_502() {
+    let page = format!(
+        r#"{{"type":"FeatureCollection","features":[],"pad":"{}"}}"#,
+        "x".repeat(9 * 1024 * 1024)
+    );
+    let upstream = answering(
+        StatusCode::OK,
+        &[("content-type", "application/json")],
+        page.into_bytes(),
+    )
+    .await;
+    let (status, _, body) = call(&upstream, endpoint(), get(&items())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_GATEWAY,
+        "{}",
+        &body[..body.len().min(300)]
+    );
+    assert!(!body.contains("xxxxxxxx"), "the page reached the caller");
+}
+
+/// The other half of OData: a broker that answers a problem it cannot write as JSON passes with
+/// its status, and the three surfaces that need a view of the Endpoint's own say so when it has
+/// none (a view of another model), reads and OData writes alike.
+#[tokio::test]
+async fn an_unreadable_broker_problem_passes_and_a_mapped_endpoint_names_the_missing_view() {
+    let upstream = answering(
+        StatusCode::BAD_REQUEST,
+        &[("content-type", "application/problem+json")],
+        b"not json at all".to_vec(),
+    )
+    .await;
+    let odata = Endpoint {
+        representations: vec![Representation::Odata],
+        ..endpoint()
+    };
+    let (status, _, body) = call(
+        &upstream,
+        odata,
+        get(&format!("/api/endpoint/{SLUG}/odata/v4/Car")),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body, "not json at all");
+
+    let (upstream, hops) = broker(StatusCode::OK, &[]).await;
+    let mapping = ViewMapping::parse(&json!({
+        "version": 2,
+        "sourceClass": "Senzor",
+        "targetClass": "Car",
+        "slots": [{ "target": "speed", "source": "rychlost", "kind": "rename", "filterable": true }]
+    }))
+    .expect("the IR parses");
+    let mapped = || Endpoint {
+        representations: vec![
+            Representation::Odata,
+            Representation::Ical,
+            Representation::Feed,
+        ],
+        view_mapping: Some(Arc::new(mapping.clone())),
+        ..endpoint()
+    };
+    for (method, path, code) in [
+        (Method::GET, "odata/v4/Car", "odata-view-unavailable"),
+        (Method::POST, "odata/v4/Car", "odata-view-unavailable"),
+        (Method::GET, "feeds/events.ics", "ical-view-unavailable"),
+        (Method::GET, "feeds/events.rss", "feed-view-unavailable"),
+    ] {
+        let (status, _, body) = call(
+            &upstream,
+            mapped(),
+            request(method.clone(), &format!("/api/endpoint/{SLUG}/{path}")),
+        )
+        .await;
+        assert_eq!(
+            status,
+            StatusCode::NOT_IMPLEMENTED,
+            "{method} {path}: {body}"
+        );
+        assert!(body.contains(code), "{method} {path}: {body}");
+    }
+    assert!(hops_of(&hops).is_empty(), "the broker was asked");
+}
+
 /// T-5891: the gateway holds a page whole to move its links, so an OGC page past `MAX_BODY` is
 /// asked again with half the `limit` until it fits (a server may answer fewer than `limit`); the
 /// broker's `next` link carries the rest. The page stays as large as fits: the ETS follows four
