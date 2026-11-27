@@ -161,15 +161,7 @@ impl<'de> serde::de::Visitor<'de> for Node<'_> {
         self.leaf(Value::String(v.to_owned()))
     }
 
-    fn visit_string<E: serde::de::Error>(self, v: String) -> Result<Value, E> {
-        self.leaf(Value::String(v))
-    }
-
     fn visit_unit<E: serde::de::Error>(self) -> Result<Value, E> {
-        self.leaf(Value::Null)
-    }
-
-    fn visit_none<E: serde::de::Error>(self) -> Result<Value, E> {
         self.leaf(Value::Null)
     }
 
@@ -1445,6 +1437,9 @@ mod tests {
         };
         let e = parse_yaml("a: [1, 2", limits, &mut used).unwrap_err();
         assert!(e.contains("did not find expected"), "{e}");
+        // A tagged node is no LinkML document node.
+        let e = parse_yaml("a: !custom x", limits, &mut used).unwrap_err();
+        assert!(e.contains("a LinkML document"), "{e}");
         let v = parse_yaml(
             "1: one\ntrue: yes\n~: none\nf: 1.5\nbig: 18446744073709551615\nneg: -3\n",
             limits,
@@ -1472,7 +1467,7 @@ mod tests {
                 max_elements: 10_000,
             },
         };
-        View::load(source, &imports).unwrap_or_else(|e| panic!("{e}: {source}"))
+        View::load(source, &imports).expect(source)
     }
 
     const BOUNDED: &str = "\
@@ -1509,6 +1504,46 @@ slots:
   derived:
     is_a: note
 ";
+
+    /// A bound that is no number leaves the inherited one, and an ancestor reached twice (a
+    /// diamond of is_a and a mixin) is listed once.
+    #[test]
+    fn a_text_bound_is_ignored_and_a_diamond_ancestor_is_listed_once() {
+        let v = view(
+            "\
+id: https://x.example/d
+name: d
+default_prefix: d
+prefixes:
+  d: https://x.example/d/
+classes:
+  Base:
+    slots: [level]
+  Left:
+    is_a: Base
+  Right:
+    is_a: Base
+  Both:
+    is_a: Left
+    mixins: [Right]
+    slot_usage:
+      level:
+        maximum_value: ten
+slots:
+  level:
+    range: integer
+    maximum_value: 10
+",
+        );
+        let level = v.induced_slot("level", Some("Both")).unwrap_or_default();
+        assert_eq!(level["maximum_value"], 10);
+        let ancestors = v.class_ancestors("Both").unwrap();
+        assert_eq!(
+            ancestors.iter().filter(|a| *a == "Base").count(),
+            1,
+            "{ancestors:?}"
+        );
+    }
 
     #[test]
     fn a_slot_usage_only_narrows_a_bound_and_slots_are_found_on_attributes_too() {

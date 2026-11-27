@@ -351,13 +351,10 @@ impl BoundedMap {
         if self.map.insert(k.clone(), v).is_none() {
             self.order.push_back(k);
         }
-        while self.map.len() > self.cap {
-            match self.order.pop_front() {
-                Some(old) => {
-                    self.map.remove(&old);
-                }
-                None => break,
-            }
+        // `order` holds each key of `map` once.
+        let excess = self.order.len().saturating_sub(self.cap);
+        for old in self.order.drain(..excess) {
+            self.map.remove(&old);
         }
     }
 
@@ -1134,5 +1131,108 @@ mod tests {
         assert_eq!(m.len(), 2);
         assert!(!m.contains("a"));
         assert_eq!(m.get("c").map(String::as_str), Some("1"));
+        let mut one = BoundedMap::new(0);
+        one.insert("a".into(), "1".into());
+        one.insert("b".into(), "1".into());
+        assert_eq!(
+            (one.len(), one.contains("b")),
+            (1, true),
+            "a cap of 0 keeps one"
+        );
+    }
+
+    #[test]
+    fn an_older_page_settling_late_keeps_the_newer_commit() {
+        let t = |s: &str| parse_rfc3339(s).expect("t");
+        let mut w = Watermark::default();
+        let a = w.open(Some(t("2026-01-05T00:00:00Z")));
+        w.settle(a, true);
+        let b = w.open(Some(t("2026-01-04T00:00:00Z")));
+        w.settle(b, true);
+        assert_eq!(w.committed, Some(t("2026-01-05T00:00:00Z")));
+        w.settle(99, true);
+        assert_eq!(
+            w.committed,
+            Some(t("2026-01-05T00:00:00Z")),
+            "an unknown page"
+        );
+    }
+
+    #[test]
+    fn newest_observed_keeps_the_newest_whatever_the_order() {
+        let items = [Value::from_json_value(serde_json::json!({"speed": [
+            {"value": 2, "observedAt": "2026-01-02T00:00:00Z"},
+            {"value": 1, "observedAt": "2026-01-01T00:00:00Z"},
+            {"value": 0, "observedAt": "not a time"}
+        ]}))];
+        let n = newest_observed(&items).expect("found");
+        assert_eq!(
+            format_rfc3339(n, SecondsFormat::Secs, true),
+            "2026-01-02T00:00:00Z"
+        );
+    }
+
+    #[test]
+    fn an_entity_without_a_string_id_or_modified_at_is_hashed() {
+        let j = |v| Value::from_json_value(v);
+        assert_eq!(entity_id(&j(serde_json::json!("urn:a"))), None);
+        assert_eq!(entity_id(&j(serde_json::json!({"id": 7}))), None);
+        assert_eq!(
+            entity_id(&j(serde_json::json!({"id": "urn:a"}))).as_deref(),
+            Some("urn:a")
+        );
+        let not_object = version_of(&j(serde_json::json!([1])));
+        assert!(not_object.starts_with("h:"), "{not_object}");
+        assert_ne!(not_object, version_of(&j(serde_json::json!([2]))));
+        assert_eq!(
+            version_of(&j(
+                serde_json::json!({"modifiedAt": "2026-01-01T00:00:00Z"})
+            )),
+            "m:2026-01-01T00:00:00Z"
+        );
+        assert!(version_of(&j(serde_json::json!({"modifiedAt": 1}))).starts_with("h:"));
+    }
+
+    /// A cache that counts what reaches it.
+    #[derive(Default)]
+    struct Counting(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl Cache for Counting {
+        async fn get(&self, key: &str) -> Result<Bytes, CoreError> {
+            Err(CoreError::KeyNotFound(key.to_string()))
+        }
+        async fn set(&self, _: &str, _: Bytes, _: Option<Duration>) -> Result<(), CoreError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        async fn add(&self, k: &str, v: Bytes, ttl: Option<Duration>) -> Result<(), CoreError> {
+            self.set(k, v, ttl).await
+        }
+        async fn delete(&self, _: &str) -> Result<(), CoreError> {
+            Ok(())
+        }
+    }
+
+    /// A commit outside a runtime cannot spawn the cache writes: it drops them, and the next
+    /// pass reads those entities as changed again.
+    #[test]
+    fn a_cache_commit_outside_a_runtime_writes_nothing() {
+        let cache = Arc::new(Counting::default());
+        let gate = Gate::Cache(cache.clone());
+        gate.commit(vec![("urn:a".into(), "m:1".into())]);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("rt");
+        rt.block_on(async {
+            assert_eq!(gate.seen("urn:a").await, None);
+            cache.add("k", Bytes::new(), None).await.expect("add");
+            cache.delete("k").await.expect("delete");
+        });
+        assert_eq!(
+            cache.0.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only the add"
+        );
     }
 }

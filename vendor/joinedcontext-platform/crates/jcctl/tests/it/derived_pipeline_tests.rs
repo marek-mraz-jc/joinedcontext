@@ -779,3 +779,67 @@ fn the_service_account_token_placeholder_never_becomes_a_literal_value_in_render
         "Bearer ${SERVICE_ACCOUNT_TOKEN}"
     );
 }
+
+/// A pipeline spec as the manifest states it, unvalidated: the renderer's own refusals are
+/// what these cases are about.
+fn unvalidated(spec: &str) -> PipelineSpec {
+    let yaml = format!(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Pipeline\nmetadata:\n  name: district-air-index\n  namespace: ovzdusie\nspec:\n  targetEndpoint: urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:ep-derived\n{spec}"
+    );
+    Pipeline::from_yaml(&yaml)
+        .expect("the pipeline manifest parses")
+        .spec
+}
+
+const WASM: &str = "    kind: wasm\n    module: ./compute\n    function: process\n";
+
+/// PL-26: a resident pipeline over a query fetches at its own period; a query without a type
+/// names none; a pipeline without compute adds no processor, and a processor step before the
+/// compute is not it.
+#[test]
+fn a_resident_query_an_untyped_query_and_no_compute() {
+    let resident = SCHEDULED
+        .replace(
+            "  class: scheduled\n  schedule: \"10 0 * * *\"\n",
+            "  class: resident\n  period: PT5M\n",
+        )
+        .replace("      type: AirQualityObserved\n", "");
+    let derived = render(&unvalidated(&resident), &context()).expect("renders");
+    let url = derived.processors[0]["http"]["url"].as_str().expect("url");
+    assert!(!url.contains("type="), "{url}");
+
+    let bare = SCHEDULED.replace(&format!("  compute:\n{WASM}"), "");
+    let derived = render(&unvalidated(&bare), &context()).expect("renders");
+    assert_eq!(derived.processors.len(), 1, "{:?}", derived.processors);
+
+    let second = "  class: scheduled\n  schedule: \"10 0 * * *\"\n  sources:\n    - endpointRef: { kind: Endpoint, name: air-quality-internal }\n      query:\n        type: AirQualityObserved\n  steps:\n    - processor: { log: {} }\n    - kind: bloblang\n      bloblang: \"root = this\"\n";
+    let derived = render(&unvalidated(second), &context()).expect("renders");
+    assert_eq!(derived.processors.len(), 2, "{:?}", derived.processors);
+}
+
+/// PL-104, PL-120: a script and a kpi step are another renderer's; a datacube step that does not
+/// render is refused; a pipeline name that makes no URN is refused naming it.
+#[test]
+fn script_kpi_a_broken_datacube_and_a_bad_name_are_refused() {
+    for (kind, owner) in [("script", "PL-120"), ("kpi", "PL-104")] {
+        let spec = SCHEDULED.replace(WASM, &format!("    kind: {kind}\n"));
+        let got = render(&unvalidated(&spec), &context());
+        assert!(
+            matches!(&got, Err(DerivedError::Elsewhere { reason, .. }) if reason.contains(owner)),
+            "{kind}: {got:?}"
+        );
+    }
+    let cube = SCHEDULED.replace(
+        WASM,
+        "    kind: datacube\n    datacube: { wholeArea: SK, datasetPage: \"x\", cubes: {} }\n",
+    );
+    let got = render(&unvalidated(&cube), &context());
+    assert!(matches!(got, Err(DerivedError::Step(_))), "{got:?}");
+
+    let named = DerivedContext {
+        pipeline: "Not A Name",
+        ..context()
+    };
+    let got = render(&pipeline(RESIDENT), &named);
+    assert!(matches!(got, Err(DerivedError::BadDigest(_))), "{got:?}");
+}

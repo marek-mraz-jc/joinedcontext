@@ -675,6 +675,51 @@ mod tests {
         assert!(page.contains("Doprava"), "the TRAN label in Slovak");
     }
 
+    /// A page in a language the title lacks takes the first title; an empty list is left out,
+    /// and a source not crawled yet and without sites is named by its name with a dash.
+    #[test]
+    fn a_sparse_context_is_titled_and_lists_only_what_it_has() {
+        let bare = Context {
+            categories: Vec::new(),
+            endpoints: Vec::new(),
+            sources: Vec::new(),
+            ..context()
+        };
+        let page = html(&bare, "en");
+        assert!(page.contains("Doprava &lt;v&gt; BB"), "{page}");
+        assert!(!page.contains("<table"), "{page}");
+        let uncrawled = Context {
+            sources: vec![Read {
+                name: "dokumenty".into(),
+                kind: SourceType::Website,
+                sites: Vec::new(),
+                pages: 0,
+                documents: 0,
+                crawled: None,
+            }],
+            ..bare
+        };
+        let page = html(&uncrawled, "sk");
+        assert!(page.contains("dokumenty"), "{page}");
+        assert!(page.contains("—"), "{page}");
+    }
+
+    /// Counts whose hold a panic poisoned are not run, and nothing panics.
+    #[tokio::test]
+    async fn a_poisoned_hold_counts_nothing() {
+        let held = Mutex::new(Held::default());
+        std::thread::scope(|s| {
+            let holder = s.spawn(|| {
+                let _held = held.lock();
+                std::panic::resume_unwind(Box::new("poisoned on purpose"));
+            });
+            assert!(holder.join().is_err(), "the holder panicked");
+        });
+        let gateway = url::Url::parse("http://localhost:9/").expect("a url");
+        count_due(&held, &reqwest::Client::new(), &gateway, &[], COUNT_FRESH).await;
+        assert!(held.is_poisoned());
+    }
+
     #[test]
     fn the_document_names_codes_with_labels_in_the_asked_language() {
         let document = context().json("en");

@@ -1137,6 +1137,146 @@ async fn a_project_that_has_the_account_keeps_it_and_drafts_no_second_one() {
 }
 
 /// The same call against a project that already holds the `pipelines` ServiceAccount.
+/// A project whose write Policy names its own account keeps that account: the completion drafts
+/// no second one and its grant names the same assignee.
+#[tokio::test]
+async fn a_project_whose_write_grant_names_its_account_keeps_that_account() {
+    let held = joinedcontext_portal::resource::ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Policy".to_owned(),
+        metadata: joinedcontext_portal::resource::ObjectMeta::new("loader-write", "helsinki"),
+        spec: json!({
+            "operations": ["upsertBatch"],
+            "assignee": { "kind": "serviceAccount", "id": "loader" },
+        }),
+        status: None,
+    };
+    let (status, body) = complete_holding(
+        vec![held],
+        json!({ "space": "city-bikes", "url": "https://example.invalid/free_bike_status.json" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let drafts = body["drafts"].as_array().expect("drafts");
+    assert!(
+        !drafts.iter().any(|d| d["kind"] == "ServiceAccount"),
+        "{body}"
+    );
+    let write = drafts
+        .iter()
+        .find(|d| d["manifest"]["spec"]["operations"][0] == "upsertBatch")
+        .expect("a write grant");
+    assert_eq!(
+        write["manifest"]["spec"]["assignee"],
+        json!({ "kind": "serviceAccount", "id": "loader" }),
+        "{write}"
+    );
+}
+
+/// Asked to propose while a draft's check is red, the completion opens nothing and names the
+/// check to run again, the draft and the field to fix; never the finding's own words.
+#[tokio::test]
+async fn a_proposal_with_a_red_draft_names_the_check_the_draft_and_its_field() {
+    let (status, body) = complete_holding(
+        Vec::new(),
+        json!({
+            "space": "city-bikes",
+            "url": "https://example.invalid/free_bike_status.json",
+            "propose": true,
+        }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    let text = body.to_string();
+    assert!(text.contains("verdict_required"), "{body}");
+    assert!(text.contains("propose_not_ready"), "{body}");
+    assert!(text.contains("(at url)"), "the field to fix: {body}");
+}
+
+/// The pipeline drafted for a space loads through the Endpoint that space already has, or the
+/// one the person brought; a space named by nobody takes the first file's stem.
+#[tokio::test]
+async fn a_pipeline_loads_through_the_endpoint_the_space_has_or_the_person_brought() {
+    let held = joinedcontext_portal::resource::ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Endpoint".to_owned(),
+        metadata: joinedcontext_portal::resource::ObjectMeta::new("bikes-door", "helsinki"),
+        spec: json!({ "contextSpaceRef": "city-bikes", "slug": "k7r2m4xq9vbn3tdw6hcy5pajfe" }),
+        status: None,
+    };
+    let (status, body) = complete_holding(
+        vec![held],
+        json!({ "space": "city-bikes", "url": "https://example.invalid/free_bike_status.json" }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(
+        draft(&body, "Pipeline").to_string().contains("bikes-door"),
+        "{body}"
+    );
+
+    let brought = format!(
+        "apiVersion: {API_VERSION}\nkind: Endpoint\nmetadata:\n  name: stops-door\nspec:\n  contextSpaceRef: stops\n  audience: project\n"
+    );
+    for (sample, space) in [("stops.json", "stops"), ("halts.geojson", "halts")] {
+        let (status, body) = complete_holding(
+            Vec::new(),
+            json!({ "files": [
+                { "name": sample, "content": "[{\"id\":\"1\",\"name\":\"Rautatientori\"}]" },
+                { "name": "endpoint.yaml", "content": brought },
+                { "name": "README.md", "content": "Data comes from https://example.invalid/stops.json" },
+            ] }),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{sample}: {body}");
+        assert_eq!(body["space"], space, "{body}");
+        assert!(
+            draft(&body, "Pipeline").to_string().contains("stops-door"),
+            "{body}"
+        );
+    }
+}
+
+/// [`complete_as_steward`] against a mirror that also holds `held`.
+async fn complete_holding(
+    held: Vec<joinedcontext_portal::resource::ResourceEnvelope>,
+    payload: Value,
+) -> (StatusCode, Value) {
+    let config = Config::for_tests();
+    let mirror = std::sync::Arc::new(Mirror::new());
+    with_organization(&mirror);
+    for envelope in held {
+        mirror.upsert(envelope);
+    }
+    let state = AppState::new(config.clone(), None).with_mirror(mirror);
+    let cookie = session_cookie(
+        &config,
+        "steward.user",
+        Some("steward@hel.fi"),
+        vec!["portal-approver"],
+        vec![],
+    );
+    let resp = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/helsinki/ops/jc_space_complete")
+                .header(header::COOKIE, cookie)
+                .echo_csrf()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
 async fn complete_with_account(payload: Value) -> (StatusCode, Value) {
     let config = Config::for_tests();
     let mirror = std::sync::Arc::new(Mirror::new());

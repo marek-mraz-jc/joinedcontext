@@ -491,3 +491,161 @@ async fn the_reads_answer_in_the_shapes_the_pages_draw() {
         rows.items
     );
 }
+
+/// The reads' other shapes: one path's history, a page with more behind it, a root commit's
+/// whole tree as added files, a commit or a pull request the forge does not hold, closed and
+/// every pull request, packages in the settings, and a folder or a file the tree does not hold.
+#[tokio::test]
+async fn the_reads_page_walk_a_root_commit_and_name_what_is_not_there() {
+    let (server, state) = world().await;
+    let first = |at: String, name: &'static str, value: &'static str, answer: Value| {
+        let server = &server;
+        async move {
+            Mock::given(method("GET"))
+                .and(path(at))
+                .and(query_param(name, value))
+                .respond_with(ResponseTemplate::new(200).set_body_json(answer))
+                .with_priority(1)
+                .mount(server)
+                .await;
+        }
+    };
+    first(
+        format!("/odata/Repositories('{CONFIG_ID}')/History"),
+        "Ref",
+        ROOT,
+        json!({ "value": [{ "Sha": ROOT, "Message": "Initial", "Author": "Alice",
+                            "Date": "2026-11-01T10:00:00Z", "Parents": [] }] }),
+    )
+    .await;
+    first(
+        format!("/odata/Repositories('{CONFIG_ID}')/History"),
+        "Ref",
+        PARENT,
+        json!({ "value": [] }),
+    )
+    .await;
+    first(
+        format!("/odata/Repositories('{CONFIG_ID}')/Tree"),
+        "Ref",
+        ROOT,
+        json!({ "Sha": ROOT, "Tree": [
+            { "Path": "README.md", "Mode": "100644", "Type": "blob", "Size": XSS.len(), "Sha": "r" },
+            { "Path": "src", "Mode": "040000", "Type": "tree", "Size": 0, "Sha": SRC },
+        ] }),
+    )
+    .await;
+    first(
+        "/odata/Commits".into(),
+        "$orderby",
+        "Position",
+        json!({ "value": [{ "Sha": HEAD, "Message": "Change b", "Author": "Alice",
+                            "Date": "2026-11-08T10:00:00Z" }], "@odata.count": 5 }),
+    )
+    .await;
+    first(
+        "/odata/PullRequests".into(),
+        "$orderby",
+        "Number desc",
+        json!({ "value": [], "@odata.count": 5 }),
+    )
+    .await;
+    first(
+        "/odata/PackageVersions".into(),
+        "$top",
+        "100",
+        json!({ "value": [{ "Type": "container", "Name": "ovzdusie-config", "Version": "1.0.0",
+                            "Digest": "sha256:ab", "Size": 10, "CreatedAt": "2026-11-08T10:00:00Z" }] }),
+    )
+    .await;
+    let r = "ovzdusie-config";
+    let call = |name: &'static str, input: Value| {
+        let state = state.clone();
+        async move { doors::call(name, &session(steward()), &state, input).await }
+    };
+
+    let history = call(
+        "jc_repository_commits",
+        json!({ "repository": r, "path": "src" }),
+    )
+    .await;
+    assert_eq!(history.status, StatusCode::OK, "{}", history.text());
+    assert_eq!(history.body["ref"], "main");
+    let paged = call(
+        "jc_repository_commits",
+        json!({ "repository": r, "limit": 1 }),
+    )
+    .await;
+    assert_eq!(paged.body["nextCursor"], 1, "{}", paged.text());
+    assert_eq!(paged.body["total"], 5);
+
+    let root = call(
+        "jc_repository_commit",
+        json!({ "repository": r, "sha": ROOT }),
+    )
+    .await;
+    assert_eq!(root.status, StatusCode::OK, "{}", root.text());
+    let files = root.body["files"].as_array().expect("files");
+    assert!(
+        files.iter().all(|f| f["status"] == "added") && files.len() == 1,
+        "{}",
+        root.text()
+    );
+    let gone = call(
+        "jc_repository_commit",
+        json!({ "repository": r, "sha": PARENT }),
+    )
+    .await;
+    assert_eq!(gone.status, StatusCode::NOT_FOUND, "{}", gone.text());
+    assert!(gone
+        .text()
+        .contains(&format!("commit '{PARENT}' not found")));
+
+    for state in ["closed", "all"] {
+        let pulls = call(
+            "jc_repository_pulls",
+            json!({ "repository": r, "state": state, "limit": 1 }),
+        )
+        .await;
+        assert_eq!(pulls.body["nextCursor"], 1, "{state}: {}", pulls.text());
+    }
+    let no_pull = call(
+        "jc_repository_pull",
+        json!({ "repository": r, "number": 9 }),
+    )
+    .await;
+    assert_eq!(no_pull.status, StatusCode::NOT_FOUND, "{}", no_pull.text());
+    assert!(no_pull
+        .text()
+        .contains("pull request 9 not found in 'ovzdusie-config'"));
+
+    let settings = call("jc_repository_settings", json!({ "repository": r })).await;
+    assert_eq!(
+        settings.body["packages"][0]["version"],
+        "1.0.0",
+        "{}",
+        settings.text()
+    );
+    assert_eq!(settings.body["packages"][0]["signed"], false);
+
+    let folder = call(
+        "jc_repository_tree",
+        json!({ "repository": r, "path": "nope" }),
+    )
+    .await;
+    assert_eq!(folder.status, StatusCode::NOT_FOUND, "{}", folder.text());
+    assert!(folder.text().contains("folder 'nope' not found"));
+    let file = call(
+        "jc_repository_file",
+        json!({ "repository": r, "path": "src/missing.txt" }),
+    )
+    .await;
+    assert_eq!(file.status, StatusCode::NOT_FOUND, "{}", file.text());
+    let nameless = call("jc_repository_file", json!({ "repository": r, "path": "" })).await;
+    assert_eq!(
+        nameless.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        nameless.text()
+    );
+}

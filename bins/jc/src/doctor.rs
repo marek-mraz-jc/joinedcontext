@@ -1505,6 +1505,16 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
     }
 
     #[test]
+    fn a_kubectl_answer_that_is_no_json_or_no_list_is_refused() {
+        assert!(parse_certificates(b"<html>").is_err());
+        assert_eq!(
+            parse_certificates(br#"{"kind": "Status"}"#).unwrap_err(),
+            "kubectl: no items"
+        );
+        assert!(parse_certificates(br#"{"items": []}"#).unwrap().is_empty());
+    }
+
+    #[test]
     fn certificates_from_kubectl_report_ready_and_missing() {
         let json = br#"{"items":[
             {"metadata":{"namespace":"jc-prod","name":"jc-org-bbsk-api-bbsk-sk"},"spec":{"dnsNames":["api.bbsk.sk"]},

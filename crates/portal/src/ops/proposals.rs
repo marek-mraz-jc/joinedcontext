@@ -1122,6 +1122,28 @@ mod tests {
         );
     }
 
+    /// An Endpoint proposal that carries its manifest goes the manifest's way: the kind judges
+    /// the manifest before anything is opened, and a refusal names the field.
+    #[tokio::test]
+    async fn an_endpoint_proposal_with_a_manifest_goes_through_the_manifest_check() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = super::super::testkit::admin(&state);
+        let op = crate::ops::find("jc_endpoint_propose").expect("registered");
+        let input = json!({ "manifest": {
+            "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+            "metadata": { "name": "counters", "namespace": "p" },
+            "spec": { "contextSpaceRef": "bikes", "audience": "everyone" }
+        } });
+        (op.validate)(&input).expect("a manifest is a valid input");
+        let refused = (op.run)(&caller, &state, "p", input)
+            .await
+            .expect_err("an audience the kind does not know");
+        assert!(
+            matches!(&refused, OpError::Api(ApiError::BadRequest(why)) if why.contains("spec.audience")),
+            "{refused:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_proposal_from_an_unreadable_draft_is_not_found() {
         let state = AppState::new(crate::config::Config::for_tests(), None);

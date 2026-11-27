@@ -1342,11 +1342,11 @@ mod tests {
             Literal::Bool(true),
             Literal::Decimal("1.5".into()),
         ] {
-            let Err(Refusal(status, _, text)) = key_value(&literal) else {
-                panic!("{literal:?} is no key");
-            };
-            assert_eq!(status, StatusCode::BAD_REQUEST);
-            assert!(text.contains("('air-counters')"), "{text}");
+            let refused = key_value(&literal);
+            assert!(
+                matches!(&refused, Err(Refusal(status, _, text)) if *status == StatusCode::BAD_REQUEST && text.contains("('air-counters')")),
+                "{literal:?} is no key"
+            );
         }
     }
 

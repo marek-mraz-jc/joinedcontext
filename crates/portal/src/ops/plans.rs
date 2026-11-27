@@ -2108,6 +2108,129 @@ mod tests {
         }
     }
 
+    /// Each op is refused at the member that breaks it: a create over an object that exists, a
+    /// replace, patch or delete of one that does not, a delete carrying a body, an op carrying
+    /// the other body, and a manifest naming another kind, name or namespace. A delete without a
+    /// body removes; a patch merges into the object without its status.
+    #[test]
+    fn each_op_is_refused_at_the_member_that_breaks_it() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: crate::resource::ObjectMeta::new("held", "doprava"),
+            spec: json!({ "contextSpaceRef": "parking", "audience": "public" }),
+            status: None,
+        });
+        let checked = |change: &ChangeInput| manifest_of(&state, "/changes/0", "doprava", change);
+        let refused = |change: ChangeInput| checked(&change).expect_err("refused").to_string();
+        let with = |op: Op, name: &str| {
+            let mut change = create("Endpoint", name);
+            change.op = op;
+            change
+        };
+        let bare = |op: Op, name: &str| {
+            let mut change = with(op, name);
+            change.manifest = None;
+            change
+        };
+        let gone = "invalid input at /changes/0/name: Endpoint 'gone' does not exist in project \
+                    doprava: use op create";
+        assert_eq!(
+            refused(with(Op::Create, "held")),
+            "invalid input at /changes/0/op: Endpoint 'held' exists already: use op replace or patch"
+        );
+        assert_eq!(refused(with(Op::Replace, "gone")), gone);
+        let mut patch = bare(Op::Patch, "gone");
+        patch.patch = Some(json!({ "spec": {} }));
+        assert_eq!(refused(patch), gone);
+        assert_eq!(refused(bare(Op::Delete, "gone")), gone);
+        assert_eq!(
+            refused(with(Op::Delete, "held")),
+            "invalid input at /changes/0: op delete takes neither manifest nor patch"
+        );
+        assert_eq!(checked(&bare(Op::Delete, "held")).expect("a removal"), None);
+        let mut both = with(Op::Replace, "held");
+        both.patch = Some(json!({}));
+        assert_eq!(
+            refused(both),
+            "invalid input at /changes/0/manifest: op replace takes manifest alone"
+        );
+        let mut kind = with(Op::Create, "new");
+        kind.manifest = Some(json!({ "kind": "Pipeline", "metadata": { "name": "new" } }));
+        assert_eq!(
+            refused(kind),
+            "invalid input at /changes/0/manifest/kind: the manifest's kind must be the \
+             change's, 'Endpoint'"
+        );
+        let mut name = with(Op::Create, "new");
+        name.manifest = Some(json!({ "kind": "Endpoint", "metadata": { "name": "other" } }));
+        assert_eq!(
+            refused(name),
+            "invalid input at /changes/0/manifest/metadata/name: the manifest's metadata/name \
+             must be the change's, 'new'"
+        );
+        let mut elsewhere = with(Op::Create, "new");
+        elsewhere.manifest = Some(
+            json!({ "kind": "Endpoint", "metadata": { "name": "new", "namespace": "kosice" } }),
+        );
+        assert_eq!(
+            refused(elsewhere),
+            "invalid input at /changes/0/manifest/metadata/namespace: Endpoint lives in \
+             namespace 'doprava', not 'kosice': set metadata.namespace to 'doprava' or leave it out"
+        );
+        let mut merge = bare(Op::Patch, "held");
+        merge.patch = Some(json!({ "spec": { "audience": "organization" } }));
+        let merged = checked(&merge).expect("a patch").expect("a manifest");
+        assert_eq!(merged["spec"]["audience"], "organization");
+        assert_eq!(merged["spec"]["contextSpaceRef"], "parking");
+        assert!(merged.get("status").is_none(), "{merged}");
+    }
+
+    /// A plan naming one object twice is refused at the second change; a model's source on a
+    /// delete of a model that exists is refused at the source.
+    #[tokio::test]
+    async fn a_plan_naming_an_object_twice_or_a_source_on_a_removal_is_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let input = PlanInput {
+            changes: vec![create("Endpoint", "twice"), create("Endpoint", "twice")],
+            workspace: None,
+        };
+        let why = plan(&caller(None), &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert_eq!(
+            why,
+            "invalid input at /changes/1: Endpoint 'twice' is in this plan twice"
+        );
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.into(),
+            kind: "DataModel".into(),
+            metadata: crate::resource::ObjectMeta::new("bike-counter", "doprava"),
+            spec: json!({ "contextSpaceRef": "parking", "linkml": "./bike.linkml.yaml" }),
+            status: None,
+        });
+        let removal = ChangeInput {
+            op: Op::Delete,
+            kind: "DataModel".into(),
+            name: "bike-counter".into(),
+            manifest: None,
+            patch: None,
+            source: Some("classes: {}".into()),
+        };
+        let input = PlanInput {
+            changes: vec![removal],
+            workspace: None,
+        };
+        let why = plan(&caller(None), &state, "doprava", input)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert!(why.contains("/changes/0/source"), "{why}");
+        assert!(why.contains("op delete takes no source"), "{why}");
+    }
+
     /// T-6282: two or more creates of the project's own objects are checked and opened as one
     /// Change, a model with its LinkML file among them (JC2-10); a single change, a workspace or
     /// a removal is not.
@@ -2424,9 +2547,13 @@ mod tests {
             verbs: vec![ConnectorVerb::Read, ConnectorVerb::Create],
         }]);
         let through = caller(Some(connector.access()));
-        let denied = |answer: Result<Value, OpError>| match answer {
-            Err(OpError::Api(ApiError::Denied(why))) => why,
-            other => panic!("expected a refusal, got {other:?}"),
+        let denied = |answer: Result<Value, OpError>| {
+            let refusal = answer.expect_err("a refusal");
+            assert!(
+                matches!(refusal, OpError::Api(ApiError::Denied(_))),
+                "{refusal:?}"
+            );
+            refusal.to_string()
         };
         let plan_of = |change: ChangeInput| PlanInput {
             changes: vec![change],
@@ -2484,32 +2611,21 @@ mod tests {
     #[test]
     fn a_revert_is_refused_when_main_moved_or_outside_files_or_nothing_is_left() {
         let one = [create("Endpoint", "air")];
-        match revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one) {
-            Err(OpError::Api(ApiError::Conflict(why))) => {
-                assert!(
-                    why.starts_with("main changed projects/p/a.yaml since change 'c1'"),
-                    "{why}"
-                );
-                assert!(why.contains(PLAN), "{why}");
-            }
-            other => panic!("a 409, got {other:?}"),
-        }
-        match revertible("c1", &[], vec!["README.md".into()], &one) {
-            Err(OpError::Api(ApiError::Unprocessable { detail, errors })) => {
-                assert!(
-                    detail.contains("touched files a plan cannot write"),
-                    "{detail}"
-                );
-                assert_eq!(errors, ["README.md"]);
-            }
-            other => panic!("a 422, got {other:?}"),
-        }
-        match revertible("c1", &[], Vec::new(), &[]) {
-            Err(OpError::Api(ApiError::Conflict(why))) => {
-                assert_eq!(why, "change 'c1' left nothing to revert")
-            }
-            other => panic!("a 409, got {other:?}"),
-        }
+        let answer = revertible("c1", &["projects/p/a.yaml".into()], Vec::new(), &one);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if why.starts_with("main changed projects/p/a.yaml since change 'c1'") && why.contains(PLAN)),
+            "{answer:?}"
+        );
+        let answer = revertible("c1", &[], vec!["README.md".into()], &one);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unprocessable { detail, errors })) if detail.contains("touched files a plan cannot write") && *errors == ["README.md"]),
+            "{answer:?}"
+        );
+        let answer = revertible("c1", &[], Vec::new(), &[]);
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if *why == "change 'c1' left nothing to revert"),
+            "{answer:?}"
+        );
         assert!(revertible("c1", &[], Vec::new(), &one).is_ok());
     }
 
@@ -2585,33 +2701,24 @@ mod tests {
     #[tokio::test]
     async fn a_change_that_is_not_a_merged_portal_change_is_refused() {
         for (row, status) in [(json!({}), 404), (json!({ "Head": "feature/x" }), 200)] {
-            match merged_of(row, status).await {
-                Err(OpError::Api(ApiError::NotFound(why))) => {
-                    assert_eq!(why, "change 'c7' not found in project 'doprava'")
-                }
-                other => panic!("a 404, got {other:?}"),
-            }
+            let answer = merged_of(row, status).await;
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::NotFound(why))) if *why == "change 'c7' not found in project 'doprava'"),
+                "{answer:?}"
+            );
         }
         for row in [json!({ "Merged": false }), json!({ "MergeBase": "" })] {
-            match merged_of(row, 200).await {
-                Err(OpError::Api(ApiError::Conflict(why))) => {
-                    assert!(
-                        why.contains("is not merged") && why.contains("reject it"),
-                        "{why}"
-                    )
-                }
-                other => panic!("a 409, got {other:?}"),
-            }
+            let answer = merged_of(row, 200).await;
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::Conflict(why))) if why.contains("is not merged") && why.contains("reject it")),
+                "{answer:?}"
+            );
         }
-        match merged_of(json!({}), 500).await {
-            Err(OpError::Api(ApiError::Unavailable(why))) => {
-                assert!(
-                    why.starts_with("The Git repository did not answer"),
-                    "{why}"
-                )
-            }
-            other => panic!("the forge's outage, got {other:?}"),
-        }
+        let answer = merged_of(json!({}), 500).await;
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unavailable(why))) if why.starts_with("The Git repository did not answer")),
+            "{answer:?}"
+        );
     }
 
     async fn empty_forge(open: Option<String>) -> wiremock::MockServer {
@@ -2768,13 +2875,15 @@ mod tests {
         assert!(bundled(&plan));
         let rows = opened_together(&state, &plan).await;
         let requests = server.received_requests().await.expect("requests");
-        let rows = rows.unwrap_or_else(|err| {
-            let seen: Vec<String> = requests
-                .iter()
-                .map(|r| format!("{} {}", r.method, r.url))
-                .collect();
-            panic!("the plan opens: {err}; forge saw {seen:#?}")
-        });
+        let seen: Vec<String> = requests
+            .iter()
+            .map(|r| format!("{} {}", r.method, r.url))
+            .collect();
+        assert!(
+            rows.is_ok(),
+            "the plan opens: {rows:?}; forge saw {seen:#?}"
+        );
+        let rows = rows.expect("checked above");
         assert_eq!(rows.len(), 1, "one Change: {rows:?}");
 
         let commits: Vec<Value> = requests
@@ -2824,6 +2933,54 @@ mod tests {
 
     /// CC-34 (JC2-10): a change already open on the model refuses the plan before a byte of it is
     /// written, and names the open change.
+    /// A plan whose second write the forge refuses opens nothing and says which item failed;
+    /// a branch the forge will not delete afterwards is logged, not a second error.
+    #[tokio::test]
+    async fn a_plan_the_forge_refuses_halfway_opens_nothing_and_names_the_item() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = empty_forge(None).await;
+        let repo = "/odata/Repositories(Owner='o',Name='r')";
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({ "Sha": "c0ffee" })))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.DeleteBranch")))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+        let state = on_forge(&server).await;
+        let why = opened_together(&state, &model_and_space())
+            .await
+            .expect_err("the second write is refused")
+            .to_string();
+        assert!(why.contains("ContextSpace mobility was refused"), "{why}");
+        assert!(why.contains("nothing of the plan was opened"), "{why}");
+        let requests = server.received_requests().await.expect("requests");
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.url.path().ends_with("/Shako.DeleteBranch")),
+            "the half-written branch is removed"
+        );
+        assert!(
+            !requests
+                .iter()
+                .any(|r| r.url.path().ends_with("/Shako.OpenPullRequest")),
+            "no Change opened"
+        );
+    }
+
     #[tokio::test]
     async fn a_bundled_plan_is_refused_while_the_model_has_an_open_change() {
         let own = crate::api::mutate::branch_name(

@@ -143,18 +143,13 @@ pub fn datasets<'a>(
                     }
                 }
             }
-            None => match instances.map(BTreeMap::len).unwrap_or_default() {
-                0 => match &catalogues.installation {
+            None => match instances.map(|all| (all.len(), all.iter().next())) {
+                None | Some((0, _)) => match &catalogues.installation {
                     Some(instance) => (INSTALLATION.to_owned(), instance.clone()),
                     // An installation without a catalogue publishes nothing, and says nothing.
                     None => continue,
                 },
-                1 => {
-                    let Some((name, instance)) = instances.and_then(|all| all.iter().next()) else {
-                        continue;
-                    };
-                    (name.clone(), instance.clone())
-                }
+                Some((1, Some((name, instance)))) => (name.clone(), instance.clone()),
                 _ => {
                     let names: Vec<&str> = instances
                         .into_iter()
@@ -421,6 +416,83 @@ mod tests {
             &catalogues(&[("bbsk", "ckan", "https://opendata.example.org")]),
         );
         assert_eq!(names(&planned), ["interne"]);
+    }
+
+    #[test]
+    fn an_instance_ref_of_another_project_or_one_not_declared_is_refused() {
+        let typed = |namespace: &str, name: &str| {
+            endpoint(
+                "public",
+                json!({}),
+                Some(json!({"ckan": {"instanceRef": {
+                    "kind": "CkanInstance", "name": name, "namespace": namespace,
+                }}})),
+            )
+        };
+        let known = catalogues(&[
+            ("bbsk", "ckan", "https://opendata.example.org"),
+            ("mesto", "ckan", "https://data.mesto.example"),
+        ]);
+        let theirs = typed("mesto", "ckan");
+        let (planned, unplanned) = plan(&[("bbsk", "skoly", &theirs)], &known);
+        assert!(planned.is_empty(), "{planned:?}");
+        assert!(
+            unplanned[0]
+                .reason
+                .contains("another project's CkanInstance"),
+            "{unplanned:?}"
+        );
+        let ours = typed("bbsk", "ckan");
+        let (planned, unplanned) = plan(&[("bbsk", "skoly", &ours)], &known);
+        assert_eq!(names(&planned), ["skoly"]);
+        assert!(unplanned.is_empty(), "{unplanned:?}");
+        let missing = typed("bbsk", "nikde");
+        let (planned, unplanned) = plan(&[("bbsk", "skoly", &missing)], &known);
+        assert!(planned.is_empty(), "{planned:?}");
+        assert!(
+            unplanned[0]
+                .reason
+                .contains("CkanInstance nikde, which project bbsk"),
+            "{unplanned:?}"
+        );
+    }
+
+    #[test]
+    fn a_ckan_instance_whose_spec_does_not_parse_is_no_catalogue() {
+        let manifest =
+            |kind: &str, name: &str, spec: serde_json::Value| -> crate::loader::RawManifest {
+                serde_json::from_value(json!({
+                    "apiVersion": jc_core::API_VERSION,
+                    "kind": kind,
+                    "metadata": {"name": name, "namespace": "bbsk"},
+                    "spec": spec,
+                }))
+                .expect("a manifest")
+            };
+        let door = manifest(
+            "Endpoint",
+            "skoly",
+            json!({
+                "contextSpaceRef": {"kind": "ContextSpace", "name": "schools"},
+                "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                "audience": "public",
+            }),
+        );
+        let good = manifest(
+            "CkanInstance",
+            "ckan",
+            serde_json::to_value(instance("https://opendata.example.org")).expect("a spec"),
+        );
+        let broken = manifest("CkanInstance", "ckan", json!({"url": 5}));
+        let repo = Repository::from_manifests(vec![door.clone(), good], None).expect("loads");
+        let (planned, _) = of_repository(&repo, None);
+        assert_eq!(names(&planned), ["skoly"]);
+        let repo = Repository::from_manifests(vec![door, broken], None).expect("loads");
+        let (planned, unplanned) = of_repository(&repo, None);
+        assert!(
+            planned.is_empty() && unplanned.is_empty(),
+            "{planned:?} {unplanned:?}"
+        );
     }
 
     #[test]

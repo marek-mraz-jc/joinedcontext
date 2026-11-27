@@ -247,3 +247,30 @@ fn end_expression(end: &End) -> String {
 fn literal(text: &str) -> String {
     serde_json::Value::String(text.to_owned()).to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `LifetimeMode::end` refuses such a name first; the step's own guard still keeps a
+    /// forged one out of the generated Bloblang.
+    #[test]
+    fn a_start_field_that_is_no_slot_name_never_reaches_the_step() {
+        let forged = End::From {
+            field: "a\" }\nroot = deleted()".to_owned(),
+            plus: 0,
+            not_after: None,
+        };
+        let err = start_line(&forged, "    ").expect_err("refused");
+        assert!(err.to_string().contains("not a slot name (PL-80)"), "{err}");
+        let slot = End::From {
+            field: "validTo".to_owned(),
+            plus: 0,
+            not_after: None,
+        };
+        assert!(start_line(&slot, "  ")
+            .expect("a slot")
+            .starts_with("  let start = this.validTo"));
+        assert_eq!(start_line(&End::Rolling(60), "  ").expect("no start"), "");
+    }
+}

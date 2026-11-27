@@ -207,12 +207,9 @@ fn add_months(ms: i64, months: i64) -> i64 {
 /// `ms` rounded down to the start of `unit` in UTC (weeks start on Monday), or up to its last
 /// millisecond; `None` for a unit date math does not know.
 fn round_to_unit(ms: i64, unit: char, round_up: bool) -> Option<i64> {
-    if !"yMwdhHms".contains(unit) {
-        return None;
-    }
     // Only the clamped edges of the years 0..=9999 lie outside jiff's range: they stay put.
     let Some(dt) = utc_datetime(ms) else {
-        return Some(ms);
+        return "yMwdhHms".contains(unit).then_some(ms);
     };
     let day = dt.date();
     let (start, step) = match unit {
@@ -1009,5 +1006,25 @@ pub fn format_picked(variable: Option<&daiya_model::VariableModel>, values: &[St
                 .collect::<Vec<_>>()
                 .join("|")
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Seconds move the time, a unit date math does not know is unreadable, at the edge of the
+    /// years too, and an unreadable saved end says it shows the range ending now.
+    #[test]
+    fn date_math_reads_seconds_refuses_unknown_units_and_a_bad_saved_end_is_noticed() {
+        assert_eq!(date_math(60_000, "-30s", false), Some(30_000));
+        assert_eq!(date_math(60_000, "/x", false), None);
+        assert_eq!(round_to_unit(MAX_TIME_MS, 'x', true), None);
+        assert_eq!(round_to_unit(MAX_TIME_MS, 'd', true), Some(MAX_TIME_MS));
+        let mut notices = Vec::new();
+        let before = TimeEdge::To.default_ms();
+        let ms = saved_time_ms(Some("yesterday-ish"), TimeEdge::To, &mut notices);
+        assert!(ms >= before, "now, not {ms}");
+        assert!(notices[0].contains("ending now"), "{notices:?}");
     }
 }

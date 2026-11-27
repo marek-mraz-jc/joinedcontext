@@ -212,13 +212,12 @@ impl BrokerUrl {
         let bad = |why: &str| CoreError::config(format!("{component}: url {shown:?} {why}"));
         let trimmed = raw.trim().trim_end_matches('/');
         let url = Url::parse(trimmed).map_err(|e| bad(&format!("is not a URL: {e}")))?;
-        if !matches!(url.scheme(), "http" | "https") {
+        // An http(s) URL always has a host: `Url::parse` refuses one without.
+        let web = matches!(url.scheme(), "http" | "https");
+        let Some(host) = url.host_str().filter(|_| web) else {
             return Err(bad("must use http or https"));
-        }
-        let host = url
-            .host_str()
-            .ok_or_else(|| bad("has no host"))?
-            .to_ascii_lowercase();
+        };
+        let host = host.to_ascii_lowercase();
         if !url.username().is_empty() || url.password().is_some() {
             return Err(bad(
                 "must not carry credentials: no static API keys, the token comes from oauth2",

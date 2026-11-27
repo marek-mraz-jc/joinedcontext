@@ -2767,6 +2767,22 @@ pub fn rest(
 mod tests {
     use super::*;
 
+    /// The table is built in const context; the constructor builds the same door at run time.
+    #[test]
+    fn a_door_holds_what_it_was_built_with() {
+        let built = door(
+            "PortalFiles",
+            Org,
+            Method::GET,
+            "/files",
+            &[PAGE],
+            PEOPLE_WRITE,
+        );
+        assert_eq!(built.name, "PortalFiles");
+        assert_eq!(built.path, "/files");
+        assert_eq!(built.parameters.len(), 1);
+    }
+
     #[test]
     fn no_door_is_a_registry_operation_and_each_path_member_is_a_parameter() {
         let mut names = std::collections::BTreeSet::new();

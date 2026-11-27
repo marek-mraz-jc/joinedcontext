@@ -601,3 +601,49 @@ fn pipeline_test_prints_the_harness_or_names_the_file() {
     )));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Without `JC_PORTAL_BIN` the Portal binary is looked up by its name; without `USER` an export
+/// names `jcctl` as who took it.
+#[test]
+fn the_portal_binary_and_the_exporter_have_defaults() {
+    let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["validate", "--as-portal", "--repo-dir", "r"])
+        .env_remove("JC_PORTAL_BIN")
+        .env("PATH", temp_dir("cli-no-portal"))
+        .output()
+        .expect("jcctl runs");
+    assert!(!out.status.success(), "{out:?}");
+
+    let repo = demo_repo("cli-export-no-user");
+    let out_dir = temp_dir("cli-export-no-user-out");
+    let export = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_jcctl"))
+            .args(args)
+            .env_remove("USER")
+            .output()
+            .expect("jcctl runs")
+    };
+    let out = export(&[
+        "export",
+        "--repo-dir",
+        path(&repo),
+        "--project",
+        "ovzdusie",
+        "--out-dir",
+        path(&out_dir),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let git_out = temp_dir("cli-git-export-no-user-out");
+    let out = export(&[
+        "export",
+        "--format",
+        "git",
+        "--repo-dir",
+        path(&repo.join("missing")),
+        "--project",
+        "ovzdusie",
+        "--out-dir",
+        path(&git_out),
+    ]);
+    assert!(!out.status.success(), "{out:?}");
+}

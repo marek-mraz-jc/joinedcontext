@@ -277,3 +277,34 @@ async fn a_copy_whose_preview_is_running_is_reaped_too_and_its_slot_freed() {
         "the node's slot is still held by a copy that no longer exists"
     );
 }
+
+/// A Portal with no forge cannot delete a branch, so it keeps every expired record for a pass
+/// that can; a store that cannot list the expired ones reaps nothing and stops there.
+#[tokio::test]
+async fn no_forge_or_no_listing_reaps_nothing_and_keeps_the_record() {
+    let state = AppState::new(joinedcontext_portal::config::Config::for_tests(), None);
+    state
+        .workspaces
+        .create(Opening {
+            name: "forgeless",
+            title: None,
+            project: PROJECT,
+            owner: "jana@hel.fi",
+            base_revision: "base1",
+            scope: Scope::Project {},
+            ttl_hours: 1,
+        })
+        .await
+        .expect("the workspace opens");
+    let later = TimestampTz::now() + jiff::SignedDuration::from_hours(2);
+    assert_eq!(reap_expired_at(&state, later).await, 0);
+    assert!(state.workspaces.get("forgeless").await.unwrap().is_some());
+
+    let unlisted = common::on_database(AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    ))
+    .await;
+    unlisted.db.as_ref().expect("a pool").close().await;
+    assert_eq!(reap_expired_at(&unlisted, later).await, 0);
+}

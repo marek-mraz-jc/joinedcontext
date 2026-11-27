@@ -71,6 +71,15 @@ spec: { audience: nobody }
     assert_eq!(all[0].1.name, derived(&repo(&[]))[0].1.name);
 }
 
+/// A Policy whose Endpoint the derivation did not record opens no door.
+#[test]
+fn a_policy_without_its_endpoint_grants_nothing() {
+    let mut all = derived(&repo(&[]));
+    assert!(!all[0].1.policies.is_empty());
+    all[0].1.endpoints.clear();
+    assert!(endpoint_grants(&all).is_empty());
+}
+
 #[test]
 fn a_target_in_another_project_grants_nothing_here() {
     let elsewhere = "apiVersion: joinedcontext.com/v1alpha2

@@ -2643,6 +2643,185 @@ mod tests {
             .await;
     }
 
+    /// The scripted model lane: the stub at `model` answers `turns` one after the other, one
+    /// completion per model call, and the last one for every call after it.
+    struct Script {
+        turns: Vec<String>,
+        next: std::sync::atomic::AtomicUsize,
+    }
+
+    impl wiremock::Respond for Script {
+        fn respond(&self, _: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let at = self.next.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            completion(&self.turns[at.min(self.turns.len() - 1)])
+        }
+    }
+
+    async fn scripted(model: &wiremock::MockServer, turns: &[&str]) {
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .respond_with(Script {
+                turns: turns.iter().map(|turn| (*turn).to_owned()).collect(),
+                next: std::sync::atomic::AtomicUsize::new(0),
+            })
+            .mount(model)
+            .await;
+    }
+
+    /// The bodies the model was sent, in order.
+    async fn sent(model: &wiremock::MockServer) -> Vec<String> {
+        model
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|request| String::from_utf8_lossy(&request.body).into_owned())
+            .collect()
+    }
+
+    fn fenced(call: Value) -> String {
+        format!("```json\n{call}\n```")
+    }
+
+    /// AG-76: a person who asks for an indicator kept updated gets a pipeline: one compute_kpi
+    /// goes back once with the reason, and the next answer is the person's.
+    #[tokio::test]
+    async fn a_single_number_for_a_kept_indicator_goes_back_for_a_pipeline() {
+        let model = wiremock::MockServer::start().await;
+        let kpi = fenced(json!({ "tool": "compute_kpi" }));
+        scripted(&model, &[&kpi, "The pipeline is drafted."]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(
+                &mut conversation,
+                "keep the bike count updated daily".into(),
+            )
+            .await;
+        assert_eq!(conversation[0].1, "The pipeline is drafted.");
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), 2);
+        assert!(sent[1].contains("asked for a pipeline"), "{}", sent[1]);
+    }
+
+    /// A compute_kpi, draft_kpi_pipeline or write_entities call that does not parse goes back
+    /// with its reason, and the answer after it is the person's.
+    #[tokio::test]
+    async fn a_broken_indicator_call_goes_back_with_its_reason() {
+        for tool in ["compute_kpi", "draft_kpi_pipeline", "write_entities"] {
+            let model = wiremock::MockServer::start().await;
+            let call = fenced(json!({ "tool": tool }));
+            scripted(&model, &[&call, "Which endpoint?"]).await;
+            let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+            let mut conversation = Vec::new();
+            driver
+                .turn(&mut conversation, "how many bikes are there".into())
+                .await;
+            assert_eq!(conversation[0].1, "Which endpoint?", "{tool}");
+            let sent = sent(&model).await;
+            assert_eq!(sent.len(), 2, "{tool}");
+            assert!(sent[1].contains("error:"), "{tool}: {}", sent[1]);
+        }
+    }
+
+    /// T-6533: a page with no page named goes back as a correction; a page opened after that
+    /// with no word on what was read goes back once more, and the model's words end the turn.
+    #[tokio::test]
+    async fn a_page_opened_without_a_word_after_a_correction_goes_back() {
+        let model = wiremock::MockServer::start().await;
+        let nameless = fenced(json!({ "tool": "jc_ui_navigate" }));
+        let models = fenced(json!({ "tool": "jc_ui_navigate", "page": "models" }));
+        scripted(&model, &[&nameless, &models, "The models page is open."]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "show me the models".into())
+            .await;
+        assert_eq!(conversation[0].1, "The models page is open.");
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), 3);
+        assert!(sent[1].contains("names no page"), "{}", sent[1]);
+    }
+
+    /// A described tool goes back as its description, and a run outside the schedule that names
+    /// no pipeline goes back as an error; the answer after them is the person's.
+    #[tokio::test]
+    async fn a_described_tool_and_an_unnamed_run_go_back_to_the_model() {
+        let model = wiremock::MockServer::start().await;
+        let describe = fenced(json!({ "tool": "describe_tool", "name": "grant_role" }));
+        let run = fenced(json!({ "tool": crate::connectors::RUN, "arguments": {} }));
+        scripted(&model, &[&describe, &run, "Name the pipeline to run."]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "run it now".into()).await;
+        assert_eq!(conversation[0].1, "Name the pipeline to run.");
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), 3);
+        assert!(sent[1].contains("describe_tool"), "{}", sent[1]);
+        assert!(sent[2].contains("error:"), "{}", sent[2]);
+    }
+
+    /// AG-88: a hand-over to a path that does not exist goes back with the paths there are, and
+    /// one that never settles ends the turn asking the person what they want.
+    #[tokio::test]
+    async fn a_hand_over_that_never_names_a_path_ends_the_turn() {
+        let model = wiremock::MockServer::start().await;
+        let nowhere =
+            fenced(json!({ "tool": "jc_switch_path", "arguments": { "path": "nowhere" } }));
+        scripted(&model, &[&nowhere]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "do something".into()).await;
+        assert!(
+            conversation[0].1.contains("could not settle on a path"),
+            "{conversation:?}"
+        );
+        let sent = sent(&model).await;
+        assert_eq!(sent.len(), data_query::MAX_DRAFTS);
+        assert!(sent[1].contains("'nowhere' is not a path"), "{}", sent[1]);
+    }
+
+    /// A start of work the model routes to a page opens that page and says where, even when
+    /// the model said nothing around the call.
+    #[tokio::test]
+    async fn a_route_to_a_page_opens_it_with_a_default_word() {
+        let model = wiremock::MockServer::start().await;
+        let route = fenced(json!({ "tool": "navigate", "route": "/projects/helsinki/assistant" }));
+        scripted(&model, &[&route]).await;
+        let (driver, state) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "build me an app".into())
+            .await;
+        assert_eq!(
+            conversation[0].1,
+            "You can start that work from the Assistant page."
+        );
+        let events = state
+            .agents
+            .events_since(&driver.run_id, 0)
+            .await
+            .expect("events");
+        assert!(
+            events.iter().any(|event| event.kind == "navigate"
+                && event.payload["route"] == "/projects/helsinki/assistant"),
+            "{events:?}"
+        );
+    }
+
+    /// A question to the person that asks nothing goes back with the reason.
+    #[tokio::test]
+    async fn an_empty_question_to_the_person_goes_back() {
+        let model = wiremock::MockServer::start().await;
+        let ask = fenced(json!({ "tool": "jc_ask", "question": " " }));
+        scripted(&model, &[&ask, "Say which space."]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver.turn(&mut conversation, "share it".into()).await;
+        assert_eq!(conversation[0].1, "Say which space.");
+        let sent = sent(&model).await;
+        assert!(sent[1].contains("jc_ask asks nothing"), "{}", sent[1]);
+    }
+
     /// The call of T-5962's S-27, as the model wrote it.
     const STRAY_BRACE: &str =
         "```json\n{ \"tool\": \"describe_tool\", \"name\": \"grant_role\" }\n}\n```";

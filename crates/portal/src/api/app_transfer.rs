@@ -470,3 +470,19 @@ async fn land(
 pub fn router() -> Router<AppState> {
     Router::new().route("/projects/{project}/apps/{name}/export", get(export_app))
 }
+
+#[cfg(test)]
+mod tests {
+    /// An App's export reads its manifest from the forge: with none configured, 503 naming it.
+    #[tokio::test]
+    async fn an_app_export_without_a_forge_is_unavailable() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let refused = super::manifest(&state, "helsinki", "bikes")
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, crate::error::ApiError::Unavailable(m) if m.contains("forge")),
+            "{refused:?}"
+        );
+    }
+}

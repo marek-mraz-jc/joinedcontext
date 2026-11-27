@@ -599,12 +599,11 @@ mod tests {
         o.serves("/udp/models.git/info/refs", 200, advertisement.into_bytes())
             .await;
         assert_eq!(o.revision(o.git("main", None)).await, Ok(SHA.to_owned()));
-        match o.revision(o.git("release", None)).await {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.ends_with("advertises no ref named `release`"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = o.revision(o.git("release", None)).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.ends_with("advertises no ref named `release`")),
+            "{answer:?}"
+        );
         assert_eq!(
             o.revision(o.git("abcdef0", None)).await,
             Ok("abcdef0".to_owned()),
@@ -656,12 +655,11 @@ mod tests {
             .await
             .expect("a zipped bundle");
         assert!(zip.join("roles/a.yaml").exists());
-        match o.revision(o.bundle("/gone.yaml")).await {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.ends_with("/gone.yaml answered 404"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = o.revision(o.bundle("/gone.yaml")).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.ends_with("/gone.yaml answered 404")),
+            "{answer:?}"
+        );
         for dir in [yaml, zip] {
             let _ = std::fs::remove_dir_all(dir);
         }
@@ -688,12 +686,11 @@ mod tests {
         )
         .await;
         let into = scratch("platform");
-        match o.checkout(o.platform(), "0a1b2c3d4e5f", &into).await {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.ends_with("did not answer with an archive"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = o.checkout(o.platform(), "0a1b2c3d4e5f", &into).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.ends_with("did not answer with an archive")),
+            "{answer:?}"
+        );
         let _ = std::fs::remove_dir_all(&into);
     }
 
@@ -706,15 +703,11 @@ mod tests {
             br#"{"items": []}"#.to_vec(),
         )
         .await;
-        match o.revision(o.platform()).await {
-            Err(RemoteError::Refused(why)) => {
-                assert!(
-                    why.contains("lists no revision, so project `doprava`"),
-                    "{why}"
-                )
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = o.revision(o.platform()).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.contains("lists no revision, so project `doprava`")),
+            "{answer:?}"
+        );
         let o = origin().await;
         o.serves(
             "/api/v1/projects/doprava/revisions",
@@ -722,12 +715,11 @@ mod tests {
             b"<html>".to_vec(),
         )
         .await;
-        match o.revision(o.platform()).await {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.contains("is not a revision list"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = o.revision(o.platform()).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.contains("is not a revision list")),
+            "{answer:?}"
+        );
         let o = origin().await;
         let archive = zipped(&[("spaces/air.yaml", "kind: ContextSpace\n")]);
         o.serves("/api/v1/projects/doprava/export", 200, archive)
@@ -750,10 +742,11 @@ mod tests {
             )
             .mount(&o.mock)
             .await;
-        match o.revision(o.bundle("/moved.yaml")).await {
-            Err(RemoteError::Refused(why)) => assert!(why.ends_with("answered 302"), "{why}"),
-            other => panic!("{other:?}"),
-        }
+        let answer = o.revision(o.bundle("/moved.yaml")).await;
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.ends_with("answered 302")),
+            "{answer:?}"
+        );
         let closed = crate::sync::tls_test::closed();
         let port = closed.local_addr().expect("address").port();
         let unreachable = SyncOrigin {
@@ -817,20 +810,18 @@ mod tests {
     #[test]
     fn an_archive_that_is_not_one_or_holds_too_much_is_refused() {
         let into = scratch("refused-archives");
-        match unpack(b"not a zip", &into, None, false) {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.starts_with("the archive did not open"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = unpack(b"not a zip", &into, None, false);
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.starts_with("the archive did not open")),
+            "{answer:?}"
+        );
         let names: Vec<String> = (0..=MAX_ENTRIES).map(|i| format!("{i}.yaml")).collect();
         let many: Vec<(&str, &str)> = names.iter().map(|n| (n.as_str(), "")).collect();
-        match unpack(&zipped(&many), &into, None, false) {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.contains("past the 10000 entry limit"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = unpack(&zipped(&many), &into, None, false);
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.contains("past the 10000 entry limit")),
+            "{answer:?}"
+        );
         let mut buffer = Vec::new();
         {
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
@@ -844,13 +835,11 @@ mod tests {
                 .expect("the body");
             zip.finish().expect("the archive");
         }
-        match unpack(&buffer, &into, None, false) {
-            Err(RemoteError::Refused(why)) => assert!(
-                why == format!("models/huge.yaml is larger than the {MAX_ENTRY} bytes one file of a source may have"),
-                "{why}"
-            ),
-            other => panic!("{other:?}"),
-        }
+        let answer = unpack(&buffer, &into, None, false);
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if *why == format!("models/huge.yaml is larger than the {MAX_ENTRY} bytes one file of a source may have")),
+            "{answer:?}"
+        );
         let only_dirs = {
             let mut buffer = Vec::new();
             let mut zip = zip::ZipWriter::new(std::io::Cursor::new(&mut buffer));
@@ -875,40 +864,37 @@ mod tests {
     #[test]
     fn one_file_that_climbs_reads_badly_or_grows_past_its_ceiling_is_refused() {
         let into = scratch("entries");
-        match write_entry(
+        let answer = write_entry(
             &into,
             Path::new("../x.yaml"),
             &mut "x".as_bytes(),
             MAX_CHECKOUT,
-        ) {
-            Err(RemoteError::Refused(why)) => {
-                assert!(why.contains("does not stay inside"), "{why}")
-            }
-            other => panic!("{other:?}"),
-        }
-        match write_entry(&into, Path::new("a.yaml"), &mut Broken, MAX_CHECKOUT) {
-            Err(RemoteError::Unavailable(why)) => assert_eq!(why, "a.yaml: the disk went away"),
-            other => panic!("{other:?}"),
-        }
+        );
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.contains("does not stay inside")),
+            "{answer:?}"
+        );
+        let answer = write_entry(&into, Path::new("a.yaml"), &mut Broken, MAX_CHECKOUT);
+        assert!(
+            matches!(&answer, Err(RemoteError::Unavailable(why)) if *why == "a.yaml: the disk went away"),
+            "{answer:?}"
+        );
         let mut huge = std::io::repeat(b' ').take(MAX_ENTRY + 1);
-        match write_entry(&into, Path::new("a.yaml"), &mut huge, MAX_CHECKOUT) {
-            Err(RemoteError::Refused(why)) => assert_eq!(
-                why,
-                format!("a.yaml unpacks to more than the {MAX_ENTRY} bytes one file of a source may have")
-            ),
-            other => panic!("{other:?}"),
-        }
+        let answer = write_entry(&into, Path::new("a.yaml"), &mut huge, MAX_CHECKOUT);
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if *why == format!("a.yaml unpacks to more than the {MAX_ENTRY} bytes one file of a source may have")),
+            "{answer:?}"
+        );
         assert_eq!(
             write_entry(&into, Path::new("b.yaml"), &mut "four".as_bytes(), 10),
             Ok(6),
             "the budget left is what the file did not take"
         );
-        match bounded(Broken, 10, "https://x.example/b") {
-            Err(RemoteError::Unavailable(why)) => {
-                assert_eq!(why, "https://x.example/b: the disk went away")
-            }
-            other => panic!("{other:?}"),
-        }
+        let answer = bounded(Broken, 10, "https://x.example/b");
+        assert!(
+            matches!(&answer, Err(RemoteError::Unavailable(why)) if *why == "https://x.example/b: the disk went away"),
+            "{answer:?}"
+        );
         // A parent that is a file cannot hold a directory, and a directory is no file to write.
         assert!(matches!(
             write(&into.join("b.yaml").join("c.yaml"), b"x"),

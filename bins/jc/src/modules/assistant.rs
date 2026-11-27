@@ -1202,8 +1202,10 @@ mod tests {
             format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
             format!("DROP ROLE IF EXISTS {app}"),
             format!("DROP ROLE IF EXISTS {owner}"),
+            format!("DROP ROLE IF EXISTS {app}_other"),
             format!("CREATE ROLE {owner} LOGIN PASSWORD '{password}'"),
             format!("CREATE ROLE {app} LOGIN NOBYPASSRLS PASSWORD '{password}'"),
+            format!("CREATE ROLE {app}_other NOLOGIN NOBYPASSRLS"),
             format!("CREATE DATABASE {db} OWNER {owner}"),
         ] {
             sqlx::query(sqlx::AssertSqlSafe(sql))
@@ -1239,6 +1241,40 @@ mod tests {
             maintenance_url: None,
             maintenance_password_file: None,
         };
+        // Each step that fails is named: an owner that cannot log in, a request login that does
+        // not exist (the grant), one that may not log in (the request pool).
+        let mut no_owner = section(&app);
+        no_owner.migrate_url = Some(at(&format!("{owner}_absent")));
+        let err = migrate_and_connect(&no_owner).await.unwrap_err();
+        assert!(
+            err.starts_with(&format!(
+                "the assistant's database is not reachable as {owner}_absent:"
+            )),
+            "{err}"
+        );
+        // In a database whose public schema it may not create in, the owner's migrations fail.
+        let mut not_its_own = section(&app);
+        not_its_own.migrate_url = Some(at(&owner).replace(&format!("/{db}"), "/postgres"));
+        let err = migrate_and_connect(&not_its_own).await.unwrap_err();
+        assert!(
+            err.starts_with("the assistant's migrations did not run:"),
+            "{err}"
+        );
+        let err = migrate_and_connect(&section(&format!("{app}_absent")))
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with("the assistant's request login grant:"),
+            "{err}"
+        );
+        let err = migrate_and_connect(&section(&format!("{app}_other")))
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with("the assistant's database is not reachable:"),
+            "{err}"
+        );
+        assert!(!err.contains(&password), "{err}");
         let pool = migrate_and_connect(&section(&app)).await.unwrap();
 
         let owner_pool = sqlx::PgPool::connect_with(section(&owner).app_options().unwrap())
@@ -1300,6 +1336,7 @@ mod tests {
         for sql in [
             format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)"),
             format!("DROP ROLE IF EXISTS {app}"),
+            format!("DROP ROLE IF EXISTS {app}_other"),
             format!("DROP ROLE IF EXISTS {owner}"),
         ] {
             sqlx::query(sqlx::AssertSqlSafe(sql))

@@ -242,6 +242,77 @@ async fn a_sample_is_the_sources_first_records_with_their_fields() {
     assert!(!text.contains("secretRef"));
 }
 
+/// A space completed from a feed URL takes its model from the records the runner fetched (MF-39,
+/// AG-79), and a model service that cannot infer one is a finding at `linkml`, not a failure.
+#[tokio::test]
+async fn a_space_completed_from_a_url_infers_its_model_from_the_probed_records() {
+    let runner = runner().await;
+    let model_tools = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex("^/infer-schema$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "linkml": "id: https://example.com/stops\nclasses:\n  BusStop:\n    is_a: Entity\n"
+        })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&model_tools)
+        .await;
+    Mock::given(method("POST"))
+        .and(path_regex("^/infer-schema$"))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&model_tools)
+        .await;
+    let mut config = config(Some(&runner));
+    config.model_tools_url = Some(model_tools.uri());
+    let state = AppState::new(config, None).with_mirror(mirror("feed"));
+    state.mirror.upsert(envelope(
+        "Role",
+        "space-author",
+        ORG_NAMESPACE,
+        json!({ "rules": [{ "kinds": ["ContextSpace", "DataModel", "DataSource", "Pipeline", "Endpoint", "Policy", "Dashboard", "ServiceAccount"], "verbs": ["propose", "read"] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "ada-space-author",
+        ORG_NAMESPACE,
+        json!({
+            "subjects": [{ "user": "ada@hel.fi" }],
+            "role": "space-author",
+            "scope": { "project": "feed" },
+        }),
+    ));
+    let ada = person("ada");
+    let feed = json!({ "data": { "stops": [{ "id": "1", "name": "Rautatientori" }] } });
+    let probed = [json!({ "input": feed.to_string(), "output": feed, "error": null })];
+    let uri = op("feed", "jc_space_complete");
+    let body = json!({ "space": "stops", "typeName": "BusStop", "url": "https://feeds.example/stops.json" });
+
+    let (inferred, _) = tokio::join!(
+        send(&state, ada.clone(), "POST", &uri, Some(body.clone())),
+        play_runner(&runner, &state, 0, &probed),
+    );
+    assert_eq!(inferred.status, StatusCode::OK, "{}", inferred.text);
+    assert!(inferred.text.contains("BusStop"), "{}", inferred.text);
+    assert!(
+        !inferred.text.contains("\"path\":\"linkml\""),
+        "{}",
+        inferred.text
+    );
+
+    let (refused, _) = tokio::join!(
+        send(&state, ada, "POST", &uri, Some(body)),
+        // A completion sends the runner three harnesses, its probe first: this completion's
+        // probe is the fourth harness the runner sees.
+        play_runner(&runner, &state, 3, &probed),
+    );
+    assert_eq!(refused.status, StatusCode::OK, "{}", refused.text);
+    assert!(
+        refused.text.contains("\"path\":\"linkml\""),
+        "{}",
+        refused.text
+    );
+}
+
 #[tokio::test]
 async fn a_source_with_a_credential_a_stream_or_no_name_says_what_to_give_instead() {
     let state = state("refusals", None);

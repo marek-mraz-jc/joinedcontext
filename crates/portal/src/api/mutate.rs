@@ -3645,9 +3645,11 @@ mod tests {
     #[test]
     fn a_bundle_is_a_checks_list_of_at_most_twenty_manifests() {
         assert!(take_bundle(&mut json!({}), false).expect("none").is_empty());
-        let refused = |mut body: Value, dry_run: bool| match take_bundle(&mut body, dry_run) {
-            Err(ApiError::Unprocessable { errors, .. }) => errors.join(" "),
-            other => format!("not refused: {other:?}"),
+        let refused = |mut body: Value, dry_run: bool| {
+            take_bundle(&mut body, dry_run)
+                .expect_err("refused")
+                .field_errors()
+                .join(" ")
         };
         assert!(refused(json!({ "bundle": [] }), false).contains("dryRun=All"));
         assert!(refused(json!({ "bundle": {} }), true).contains("at most 20"));
@@ -3671,11 +3673,10 @@ mod tests {
         stored.insert("sv", "Luft").expect("sv");
         let mut sent = Some(Text::Plain("Ilmanlaatu".into()));
         keep_languages(&mut sent, Some(&Text::Localized(stored)));
-        let Some(Text::Localized(kept)) = sent else {
-            panic!("a map: {sent:?}");
-        };
-        assert_eq!(kept.get("fi"), Some("Ilmanlaatu"));
-        assert_eq!(kept.get("sv"), Some("Luft"));
+        assert!(
+            matches!(&sent, Some(Text::Localized(kept)) if kept.get("fi") == Some("Ilmanlaatu") && kept.get("sv") == Some("Luft")),
+            "a map: {sent:?}"
+        );
         let mut sent = Some(Text::Plain("Air".into()));
         keep_languages(&mut sent, Some(&Text::Localized(MultiLanguageMap::new())));
         assert_eq!(sent, Some(Text::Plain("Air".into())));
@@ -3696,9 +3697,10 @@ mod tests {
     #[test]
     fn files_beside_a_manifest_stay_in_its_folder_and_bounds() {
         let at = "projects/helsinki/models/x/air.yaml";
-        let refused = |files: Value| match sidecars(Some(files), at, "air") {
-            Err(ApiError::BadRequest(why)) => why,
-            other => format!("not refused: {other:?}"),
+        let refused = |files: Value| {
+            let why = sidecars(Some(files), at, "air").expect_err("refused");
+            assert!(matches!(why, ApiError::BadRequest(_)), "{why:?}");
+            why.to_string()
         };
         assert_eq!(sidecars(None, at, "air").expect("no files"), Vec::new());
         assert_eq!(
@@ -3947,9 +3949,10 @@ mod tests {
             ApiError::Conflict,
         )
         .expect_err("50 is over the operator's 20");
-        let ApiError::Conflict(message) = refused else {
-            panic!("a conflict at approval: {refused:?}");
-        };
+        let message = refused.to_string();
+        let message = message
+            .strip_prefix("conflict: ")
+            .expect("a conflict at approval");
         for part in [
             "spec.projects.quota.contextSpaces",
             "50",
@@ -4006,9 +4009,8 @@ mod tests {
             ApiError::BadRequest,
         )
         .expect_err("101 is over the built-in ceiling of 100");
-        let ApiError::BadRequest(message) = refused else {
-            panic!("a form error: {refused:?}");
-        };
+        let message = refused.to_string();
+        let message = message.strip_prefix("bad request: ").expect("a form error");
         for part in ["spec.quotas.apps", "101", "100", "jc.toml [portal.limits]"] {
             assert!(message.contains(part), "{part}: {message}");
         }
@@ -4130,9 +4132,10 @@ mod tests {
 
         state.mirror.upsert(organization("refused"));
         let refused = check(&app("bikes", "public")).expect_err("a new public App");
-        let ApiError::BadRequest(message) = refused else {
-            panic!("a bad request at the door: {refused:?}");
-        };
+        let message = refused.to_string();
+        let message = message
+            .strip_prefix("bad request: ")
+            .expect("a bad request at the door");
         for part in [
             "App 'bikes'",
             "spec.policies.apps.public",
@@ -4628,10 +4631,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err {
-            ApiError::BadRequest(msg) => assert!(msg.contains("apiVersion")),
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::BadRequest(msg) if msg.contains("apiVersion")),
+            "{err:?}"
+        );
 
         let bad_kind = json!({
             "apiVersion": resource::API_VERSION,
@@ -4683,10 +4686,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err {
-            ApiError::BadRequest(msg) => assert!(msg.contains("foreign-project")),
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::BadRequest(msg) if msg.contains("foreign-project")),
+            "{err:?}"
+        );
 
         let absent_ns = json!({
             "apiVersion": resource::API_VERSION,
@@ -4735,10 +4738,10 @@ mod tests {
         )
         .await
         .unwrap_err();
-        match err {
-            ApiError::BadRequest(msg) => assert!(msg.contains("status")),
-            other => panic!("expected BadRequest, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::BadRequest(msg) if msg.contains("status")),
+            "{err:?}"
+        );
 
         let with_secret = json!({
             "apiVersion": resource::API_VERSION,
@@ -4825,6 +4828,46 @@ mod tests {
         }
     }
 
+    /// A create or replace body is JSON by default and YAML when it says so; a broken body of
+    /// either is a 400 naming the format, any other type a 415; an invalid YAML patch is a 400.
+    #[test]
+    fn parse_body_content_types() {
+        let typed = |mime: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::CONTENT_TYPE, mime.parse().expect("header"));
+            headers
+        };
+        let json = parse_body_to_value(&HeaderMap::new(), b"{").expect_err("broken json");
+        assert!(json.to_string().contains("invalid json body"), "{json:?}");
+        let yaml = parse_body_to_value(&typed("application/yaml"), b"kind: [").expect_err("yaml");
+        assert!(yaml.to_string().contains("invalid yaml body"), "{yaml:?}");
+        let fine = parse_body_to_value(&typed("text/yaml; charset=utf-8"), b"kind: Endpoint\n");
+        assert_eq!(fine.expect("yaml"), json!({ "kind": "Endpoint" }));
+        let other = parse_body_to_value(&typed("text/plain"), b"x").expect_err("415");
+        assert!(
+            matches!(&other, ApiError::UnsupportedMediaType(m) if m.contains("'text/plain'")),
+            "{other:?}"
+        );
+        let patch = parse_patch_to_value(&typed("application/apply-patch+yaml"), b"spec: [")
+            .expect_err("broken yaml patch");
+        assert!(
+            patch.to_string().contains("invalid yaml patch"),
+            "{patch:?}"
+        );
+    }
+
+    /// A create whose path holds a file no manifest names says "a manifest" holds it.
+    #[test]
+    fn a_path_held_by_no_named_manifest_says_a_manifest() {
+        let refused = path_taken("Endpoint", "", "air", "endpoints/air.yaml");
+        assert!(
+            refused
+                .to_string()
+                .contains("a manifest is already filed at endpoints/air.yaml"),
+            "{refused:?}"
+        );
+    }
+
     #[test]
     fn parse_patch_content_types() {
         let mut headers = HeaderMap::new();
@@ -4833,12 +4876,10 @@ mod tests {
             "application/json".parse().expect("header"),
         );
         let err = parse_patch_to_value(&headers, b"{}").unwrap_err();
-        match err {
-            ApiError::UnsupportedMediaType(msg) => {
-                assert!(msg.contains("application/merge-patch+json"))
-            }
-            other => panic!("expected UnsupportedMediaType, got {other:?}"),
-        }
+        assert!(
+            matches!(&err, ApiError::UnsupportedMediaType(msg) if msg.contains("application/merge-patch+json")),
+            "{err:?}"
+        );
 
         let mut headers_valid = HeaderMap::new();
         headers_valid.insert(
@@ -5011,10 +5052,9 @@ mod tests {
     }
 
     fn refusal(result: Result<(), ApiError>) -> Vec<String> {
-        match result {
-            Err(ApiError::Unprocessable { errors, .. }) => errors,
-            other => panic!("expected a 422, got {other:?}"),
-        }
+        let errors = result.expect_err("a 422").field_errors().to_vec();
+        assert!(!errors.is_empty(), "a 422 names its fields");
+        errors
     }
 
     /// EP-117, T-6435: a Policy reference that would bind nothing is refused naming the URN to
@@ -5137,12 +5177,11 @@ mod tests {
         let mut stranger = dummy_user().0.identity;
         stranger.groups = Vec::new();
         stranger.username = "stranger".into();
-        match check_names_policies(&state, &stranger, "ovzdusie", &named) {
-            Err(ApiError::Denied(detail)) => {
-                assert!(detail.starts_with("spec.policyRefs: "), "{detail}")
-            }
-            other => panic!("expected a 403, got {other:?}"),
-        }
+        let refused = check_names_policies(&state, &stranger, "ovzdusie", &named);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(detail)) if detail.starts_with("spec.policyRefs: ")),
+            "expected a 403, got {refused:?}"
+        );
     }
 
     /// T-6740 bounce: a URN the Portal writes (bound_today, an access-request grant) carries a
@@ -5298,10 +5337,11 @@ mod tests {
         let mut stranger = dummy_user().0.identity;
         stranger.groups = Vec::new();
         stranger.username = "stranger".into();
-        match check_names_policies(&state, &stranger, "ovzdusie", &endpoint) {
-            Err(ApiError::Denied(detail)) => assert!(detail.contains(URN), "{detail}"),
-            other => panic!("a refused Policy is read before it is bound, got {other:?}"),
-        }
+        let refused = check_names_policies(&state, &stranger, "ovzdusie", &endpoint);
+        assert!(
+            matches!(&refused, Err(ApiError::Denied(detail)) if detail.contains(URN)),
+            "a refused Policy is read before it is bound, got {refused:?}"
+        );
     }
 
     /// CHG-11 lite: a Policy's dry run names each Endpoint of its space it decides: B naming no
@@ -5924,9 +5964,7 @@ mod tests {
             payload,
         )
         .await;
-        let Err(err) = result else {
-            panic!("the dry run refuses the pipeline");
-        };
+        let err = result.expect_err("the dry run refuses the pipeline");
         let result = crate::api::dry_run::refused_check(&err, &serde_json::Value::Null)
             .expect("a refusal of the manifest is a red verdict");
         assert!(!result.valid);
@@ -5994,10 +6032,10 @@ mod tests {
             "enrich",
             pipeline("public-air", "upsert"),
         ));
-        let Err(ApiError::BadRequest(why)) = check("stations", pipeline("public-air", "replace"))
-        else {
-            panic!("a replace beside an upsert writer is refused");
-        };
+        let why = check("stations", pipeline("public-air", "replace"))
+            .expect_err("a replace beside an upsert writer is refused")
+            .to_string();
+        let why = why.strip_prefix("bad request: ").expect("a 400");
         assert!(
             why.contains("Pipeline stations")
                 && why.contains("Pipeline enrich")

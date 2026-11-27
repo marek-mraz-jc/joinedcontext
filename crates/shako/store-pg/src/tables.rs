@@ -306,6 +306,16 @@ mod tests {
     }
 
     #[test]
+    fn a_record_without_its_renamed_field_keeps_its_other_fields() {
+        for t in [&PUSH_MIRROR, &PROTECTION_RULE, &PACKAGE_VERSION] {
+            let row = to_row(t, json!({"ownerName": "x"})).expect("row");
+            assert_eq!(Value::Object(row), json!({"owner_name": "x"}), "{}", t.name);
+            let record = to_record(t, json!({"owner_name": "x"})).expect("record");
+            assert_eq!(record, json!({"ownerName": "x"}), "{}", t.name);
+        }
+    }
+
+    #[test]
     fn the_renamed_columns_round_trip_and_manifest_bytes_go_in_as_hex() {
         let mirror = to_row(&PUSH_MIRROR, json!({"remoteName": "up", "interval": "8h"}))
             .expect("mirror row");

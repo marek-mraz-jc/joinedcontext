@@ -85,9 +85,9 @@ impl LabelSelector {
                         "unclosed set parenthesis: {part}"
                     )));
                 }
-                let (before, inside) = part[..part.len() - 1].split_once('(').ok_or_else(|| {
-                    SelectorError::Malformed(format!("malformed set requirement: {part}"))
-                })?;
+                // `part` holds a '(' and ends with ')', so the '(' is before the last character
+                // and the split always finds it.
+                let (before, inside) = part[..part.len() - 1].split_once('(').unwrap_or_default();
                 let before = before.trim();
                 let values: Vec<String> = inside.split(',').map(|v| v.trim().to_string()).collect();
 

@@ -647,6 +647,22 @@ mod tests {
         AppState::new(crate::config::Config::for_tests(), None)
     }
 
+    /// A Portal with no forge proposes no rewrite of the ids, for the organization repository or
+    /// a project's: 503 naming the forge.
+    #[tokio::test]
+    async fn a_rewrite_without_a_forge_is_unavailable() {
+        let identity = caller(None, &["portal-approver"]).0.identity;
+        for repository in ["organization", "helsinki"] {
+            let refused = propose(&state(), &identity, repository, &[], 0)
+                .await
+                .expect_err("no forge");
+            assert!(
+                matches!(&refused, ApiError::Unavailable(m) if m.contains("forge")),
+                "{refused:?}"
+            );
+        }
+    }
+
     async fn names(caller: CurrentUser, ids: &str) -> Result<Json<PersonNames>, ApiError> {
         let query = NamesQuery {
             ids: ids.to_owned(),
@@ -667,21 +683,18 @@ mod tests {
     async fn names_refuse_an_id_that_is_no_keycloak_id_and_more_than_a_hundred() {
         let admin = || caller(None, &["portal-approver"]);
         let refused = names(admin(), &format!("{JANA}, jana@hel.fi")).await;
-        let Err(ApiError::Unprocessable { errors, .. }) = refused else {
-            panic!("{refused:?}");
-        };
         assert_eq!(
-            errors,
+            refused.expect_err("a 422").field_errors(),
             ["ids: 'jana@hel.fi' is not a Keycloak user id (a lower-case UUID)"]
         );
         let many: Vec<String> = (0..=MAX_IDS)
             .map(|n| format!("00000000-0000-4000-8000-{n:012x}"))
             .collect();
         let refused = names(admin(), &many.join(",")).await;
-        let Err(ApiError::Unprocessable { errors, .. }) = refused else {
-            panic!("{refused:?}");
-        };
-        assert_eq!(errors, ["ids: at most 100 at once"]);
+        assert_eq!(
+            refused.expect_err("a 422").field_errors(),
+            ["ids: at most 100 at once"]
+        );
         // Valid ids reach Keycloak, which these tests do not configure.
         let unavailable = names(admin(), JANA).await;
         assert!(

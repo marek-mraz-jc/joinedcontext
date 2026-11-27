@@ -2,7 +2,7 @@
 //! a read that fails or times out, a write the output refuses, a run over its CPU budget, a stop
 //! that outlives its timeout, and the inline resources, buffer and `secret_refs` a run builds.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -368,6 +368,49 @@ async fn inline_resources_buffer_and_secret_refs_are_built_for_the_run() {
     assert!(resources.get_cache(&org, "c").is_ok());
     assert!(resources.get_rate_limit(&org, "rl").is_ok());
     assert!(resources.get_output(&org, "out").is_ok());
+}
+
+/// A page over the encode-ahead size (8 MiB) is encoded by the writer, whole.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_page_over_eight_mib_is_written_whole() {
+    let r = rig(vec![Step::Batch(vec!["ab"])], false, Collect::default());
+    let c = conf(
+        "pipeline:\n  processors:\n    - mapping: 'root = content().string().repeat(4718593)'\n",
+    );
+    let s = run(&r, c, ResourceManager::new()).await;
+    assert!(s.success, "{:?}", s.error);
+    let written = r.out.written.lock().unwrap();
+    assert_eq!(written.len(), 1);
+    assert_eq!(written[0].len(), 2 * 4_718_593, "over 8 MiB");
+}
+
+/// A `secret_refs` name the organization lacks is read from the stream's own scope (the id's
+/// part before the first `.`), never from another scope's.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_secret_ref_falls_back_to_the_streams_scope() {
+    let resources = ResourceManager::new();
+    resources
+        .get_or_create_org(&OrgId::default())
+        .replace_scoped_secrets(HashMap::from([
+            (
+                "team".to_string(),
+                HashMap::from([("TEAM_KEY".to_string(), "t-1".to_string())]),
+            ),
+            (
+                "other".to_string(),
+                HashMap::from([("OTHER_KEY".to_string(), "o-1".to_string())]),
+            ),
+        ]));
+    let r = rig(vec![Step::Batch(vec!["a"])], false, Collect::default());
+    let c = conf(concat!(
+        "secret_refs: [TEAM_KEY, OTHER_KEY]\n",
+        "pipeline:\n  processors:\n    - mapping: 'root = env(\"TEAM_KEY\") + \"/\" + env(\"OTHER_KEY\").or(\"none\")'\n",
+    ));
+    let s = run_stream_once("team.job", c, r.reg.clone(), resources, None, false)
+        .await
+        .unwrap();
+    assert!(s.success, "{:?}", s.error);
+    assert_eq!(*r.out.written.lock().unwrap(), vec!["t-1/none"]);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

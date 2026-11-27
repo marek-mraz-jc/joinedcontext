@@ -21,6 +21,7 @@ use jc_core::i18n::Text;
 use jc_core::kinds::catalog_datasets::CatalogDataset;
 use jc_core::kinds::ckan::{CkanInstanceSpec, CkanPublication};
 use jc_core::kinds::policy::{Operation, OperationRef, PolicySpec, PrincipalKind};
+use jc_core::kinds::visualization::VisualizationData;
 use jc_core::kinds::{ContextSpaceSpec, EndpointSpec};
 use jc_manifest::catalogue::{self, Catalogues, Door, Unplanned};
 use serde_json::{json, Value};
@@ -828,38 +829,30 @@ pub fn publish_one(
         record,
         &settings,
     )?;
-    let views = match outcome {
-        Outcome::NotPublished => ckan::Views::default(),
-        _ => {
-            let mut automatic = models
-                .map(|m| ckan::series_charts(&m.schema, m.linkml.as_deref(), &target.history))
-                .unwrap_or_default();
-            // A slice charts its own types; the declared charts go on the list's first dataset
-            // (ADR-N-068 §2.3).
-            if let Some(slice) = &target.slice {
-                automatic.retain(|chart| match &chart.data {
-                    jc_core::kinds::visualization::VisualizationData::Temporal {
-                        entity_type,
-                        ..
-                    } => slice.types.contains(entity_type),
-                    _ => false,
-                });
-            }
-            ckan::publish_views_on(
-                api,
-                &target.manifest,
-                target.dataset_name(),
-                target.first_of_its_endpoint(),
-                &settings,
-                &automatic,
-            )?
-        }
-    };
+    // `publish_dataset` always publishes (it is never `NotPublished`), so the views follow.
+    let mut automatic = models
+        .map(|m| ckan::series_charts(&m.schema, m.linkml.as_deref(), &target.history))
+        .unwrap_or_default();
+    // A slice charts its own types; the declared charts go on the list's first dataset
+    // (ADR-N-068 §2.3).
+    if let Some(slice) = &target.slice {
+        automatic.retain(|chart| {
+            matches!(&chart.data, VisualizationData::Temporal { entity_type, .. } if slice.types.contains(entity_type))
+        });
+    }
+    let views = ckan::publish_views_on(
+        api,
+        &target.manifest,
+        target.dataset_name(),
+        target.first_of_its_endpoint(),
+        &settings,
+        &automatic,
+    )?;
     Ok(Line {
         endpoint: target.id.clone(),
         dataset: target.dataset_name().to_owned(),
         outcome,
-        no_linkml: outcome != Outcome::NotPublished && ckan::missing_linkml(record),
+        no_linkml: ckan::missing_linkml(record),
         views,
     })
 }
@@ -893,8 +886,11 @@ fn outcome_word(outcome: Outcome) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        example_of, example_type, guide_type, refusal, served_types, with_granted, with_types,
+        example_of, example_type, fetch, guide_type, refusal, served_types, with_granted,
+        with_types, Line, Outcome,
     };
+    use crate::loader::ResourceId;
+    use crate::publish::ckan::Views;
     use reqwest::StatusCode;
     use serde_json::json;
 
@@ -919,6 +915,59 @@ mod tests {
             "503 upstream timed out"
         );
         assert_eq!(refusal(StatusCode::FORBIDDEN, ""), "403 Forbidden");
+    }
+
+    /// A sink that refuses the piece of text holding `refused`, as a writer that fails does.
+    struct Refusing(&'static str);
+
+    impl std::fmt::Write for Refusing {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            if text.contains(self.0) {
+                Err(std::fmt::Error)
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// Each part of a line passes on the writer's failure rather than printing half a line.
+    #[test]
+    fn a_line_passes_on_a_failing_writer() {
+        use std::fmt::Write as _;
+        let line = Line {
+            endpoint: ResourceId::new("joinedcontext.com", "Endpoint", Some("p".to_owned()), "e"),
+            dataset: "d".to_owned(),
+            outcome: Outcome::Created,
+            no_linkml: true,
+            views: Views {
+                created: 1,
+                updated: 0,
+                deleted: 0,
+            },
+        };
+        for refused in [": dataset ", ", views ", "; the record"] {
+            assert!(write!(Refusing(refused), "{line}").is_err(), "{refused}");
+        }
+        assert!(write!(Refusing("nothing of it"), "{line}").is_ok());
+    }
+
+    /// A body cut short of its announced length is a gateway error, not a short record.
+    #[test]
+    fn a_body_cut_short_is_a_gateway_error() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+        let url = format!("http://{}/r", listener.local_addr().expect("bound"));
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut head = [0u8; 2048];
+                let _ = stream.read(&mut head);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\nshort",
+                );
+            }
+        });
+        let error = fetch(&url, "application/json").expect_err("a cut body");
+        assert!(error.to_string().contains("/r"), "{error}");
     }
 
     /// T-4802: the example names a type the Endpoint serves, never the model's first class.

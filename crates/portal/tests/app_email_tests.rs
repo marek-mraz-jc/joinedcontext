@@ -257,6 +257,42 @@ async fn a_send_to_me_hands_the_relay_one_message_with_its_unsubscribe_link() {
     assert!(data.contains("/mail/unsubscribe?p="), "{data}");
 }
 
+/// AP-168: "me" is the signed-in person's own address, so a token whose email is no address
+/// names no recipient: the send is refused at `me` and the relay hears nothing.
+#[tokio::test]
+async fn a_send_to_me_without_an_address_is_refused_at_me() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("noaddress");
+    let state = state(&url, db, &project, app(json!(["email"]), json!({}))).await;
+    let token = common::REALM.person_token_with(
+        &format!("app-{APP}"),
+        &format!("app-{APP}"),
+        "jana",
+        &[],
+        json!({ "email": "not an address" }),
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/apps/{APP}/api/services/email/send"))
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(to_me("Defect").to_string()))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state.clone())
+        .oneshot(request)
+        .await
+        .expect("a response");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("a body");
+    let body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+    assert_eq!(body["to"], "me", "{body}");
+    assert!(delivered(&inbox).is_empty());
+}
+
 /// AP-163, AP-164: the email service is on only where the organization, the project and the App
 /// all list it, and the refusal names the layer that did not.
 #[tokio::test]

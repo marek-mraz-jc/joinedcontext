@@ -98,15 +98,29 @@ async fn produce(cl: &mut Cluster, topic: &str, partition: i32, codec: i16, valu
     assert_eq!(codes, vec![vec![0]], "produced");
 }
 
+/// The broker of `KAFKA_TEST_BROKERS`, or `None` to skip.
+fn live() -> Option<String> {
+    let broker = std::env::var("KAFKA_TEST_BROKERS").ok();
+    let skip = if broker.is_none() { "SKIP " } else { "" };
+    eprintln!(
+        "{skip}{:?}: KAFKA_TEST_BROKERS",
+        std::thread::current().name()
+    );
+    broker
+}
+
 async fn next(input: &mut KafkaInput, c: &StreamContext) -> (Batch, AckResponder) {
+    let mut got = None;
     for _ in 0..60 {
         match input.read_batch(c).await {
-            Ok(b) => return b,
-            Err(CoreError::Timeout) => continue,
-            Err(e) => panic!("read: {e}"),
+            Ok(b) => {
+                got = Some(b);
+                break;
+            }
+            Err(e) => assert!(matches!(e, CoreError::Timeout), "read: {e}"),
         }
     }
-    panic!("no message in 60 reads");
+    got.expect("no message in 60 reads")
 }
 
 fn texts(b: &Batch) -> Vec<String> {
@@ -142,10 +156,7 @@ async fn read(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_group_consumes_replays_a_nack_and_resumes_from_its_commit() {
-    let Ok(broker) = std::env::var("KAFKA_TEST_BROKERS") else {
-        eprintln!("KAFKA_TEST_BROKERS unset: skipped");
-        return;
-    };
+    let Some(broker) = live() else { return };
     let c = org();
     let topic = format!(
         "ekiben-{}-{}",
@@ -221,10 +232,7 @@ async fn a_group_consumes_replays_a_nack_and_resumes_from_its_commit() {
 /// rejoins, and each member reads one partition.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_second_member_takes_half_the_partitions() {
-    let Ok(broker) = std::env::var("KAFKA_TEST_BROKERS") else {
-        eprintln!("KAFKA_TEST_BROKERS unset: skipped");
-        return;
-    };
+    let Some(broker) = live() else { return };
     let c = org();
     let topic = format!(
         "ekiben-{}-{}",
@@ -258,8 +266,7 @@ async fn a_second_member_takes_half_the_partitions() {
                         }
                         ack.ack();
                     }
-                    Err(CoreError::Timeout) => {}
-                    Err(e) => panic!("{name}: {e}"),
+                    Err(e) => assert!(matches!(e, CoreError::Timeout), "{name}: {e}"),
                 }
             }
         }));

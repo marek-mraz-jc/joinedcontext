@@ -215,6 +215,25 @@ async fn provider(status: u16, body: Vec<u8>) -> String {
     format!("http://{addr}/certs")
 }
 
+/// Promises 100 bytes at any path, sends one and closes: the body breaks off mid-read.
+async fn truncated() -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        loop {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                let mut buf = [0u8; 2048];
+                let _ = sock.read(&mut buf).await;
+                let _ = sock
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 100\r\n\r\n{")
+                    .await;
+            }
+        }
+    });
+    format!("http://{addr}/certs")
+}
+
 #[tokio::test]
 async fn a_provider_that_fails_or_answers_garbage_admits_nothing() {
     let signer = key("k1");
@@ -224,6 +243,7 @@ async fn a_provider_that_fails_or_answers_garbage_admits_nothing() {
         provider(500, b"{}".to_vec()).await,
         provider(200, b"not a jwks".to_vec()).await,
         provider(200, huge).await,
+        truncated().await,
         "http://127.0.0.1:1/certs".to_string(),
     ] {
         let base = ekiben(&url, &[RUNNER]).await;

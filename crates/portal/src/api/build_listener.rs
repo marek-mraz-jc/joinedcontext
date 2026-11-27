@@ -470,6 +470,13 @@ async fn publish(
 mod tests {
     use super::*;
 
+    /// A store that fails is answered as a 500 naming the build store, never as the database's own words.
+    #[test]
+    fn a_failed_build_store_is_internal() {
+        let refused = store(sqlx::Error::PoolTimedOut);
+        assert!(matches!(refused, ApiError::Internal(_)), "{refused:?}");
+    }
+
     #[test]
     fn only_the_three_artifacts_have_a_cap() {
         assert_eq!(cap("bundle"), Some(MAX_BUNDLE_BYTES));

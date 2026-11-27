@@ -1324,6 +1324,47 @@ mod tests {
         }
     }
 
+    /// A sample asks for exactly one of a DataSource and a sample, and a candidate for a
+    /// pipeline or a draft: each refusal names its member before anything is read.
+    #[tokio::test]
+    async fn a_sample_or_candidate_without_its_one_source_is_refused_at_the_member() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                client: None,
+                subject: "sub-jana".into(),
+                username: "jana".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            crate::ops::Via::Mcp,
+        );
+        for input in [
+            json!({}),
+            json!({ "dataSource": "bikes", "sample": { "text": "[]", "format": "json" } }),
+        ] {
+            let why = sample_source(&caller, &state, "doprava", input.clone())
+                .await
+                .expect_err("refused")
+                .to_string();
+            assert_eq!(
+                why, "invalid input at /dataSource: give exactly one of dataSource and sample",
+                "{input}"
+            );
+        }
+        let why = candidate(&caller, &state, "doprava", None, None)
+            .await
+            .expect_err("refused")
+            .to_string();
+        assert_eq!(
+            why,
+            "invalid input at /pipeline: either pipeline or draft is required"
+        );
+    }
+
     /// JC1-27: a typed sample address is refused at the member named, for a written loopback,
     /// private or cluster address; a dotted name that resolves to nothing is left to the runner.
     #[tokio::test]

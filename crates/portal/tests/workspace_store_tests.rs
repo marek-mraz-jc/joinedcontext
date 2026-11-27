@@ -243,3 +243,124 @@ async fn a_preview_start_keeps_its_author_and_salt_until_the_next_start() {
         store.delete(&name).await.unwrap();
     }
 }
+
+/// Every store, in memory and (when `JC_PORTAL_TEST_DATABASE_URL` is set) on PostgreSQL: a
+/// second store on the same database knows no names yet and finds each workspace by looking.
+async fn stores() -> Vec<(WorkspaceStore, WorkspaceStore)> {
+    let memory = WorkspaceStore::new(None, Default::default());
+    let mut stores = vec![(memory.clone(), memory)];
+    if let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    {
+        let pool = joinedcontext_portal::db::connect(&url)
+            .await
+            .expect("the test database answers and migrates");
+        let mirror = common::keyed_mirror(&pool, &["helsinki"]).await;
+        stores.push((
+            WorkspaceStore::new(Some(pool.clone()), mirror.clone()),
+            WorkspaceStore::new(Some(pool), mirror),
+        ));
+    }
+    stores
+}
+
+/// The registry's whole life on each store: a taken name is a conflict, a list holds the
+/// project's workspaces, every preview state is written and read back, a base revision moves,
+/// the reaper sees a workspace once its TTL has passed, and a name nobody holds is not found by
+/// any write.
+#[tokio::test]
+async fn a_workspace_moves_through_every_state_and_an_unknown_one_is_not_found() {
+    for (store, fresh) in stores().await {
+        let name = format!("s{}", &unique::unique()[7..]);
+        let made = store.create(opening(&name, "helsinki", 1)).await.unwrap();
+        assert!(matches!(
+            store.create(opening(&name, "helsinki", 1)).await,
+            Err(WorkspaceError::Conflict(taken)) if taken == name
+        ));
+        let listed = fresh.list("helsinki").await.unwrap();
+        assert!(listed.iter().any(|w| w == &made), "{listed:?}");
+        assert!(fresh.list("nowhere-at-all").await.unwrap().is_empty());
+
+        for state in [
+            PreviewState::Starting,
+            PreviewState::Running,
+            PreviewState::Stopped,
+            PreviewState::Error,
+            PreviewState::None,
+        ] {
+            fresh.set_preview_state(&name, state).await.unwrap();
+            assert_eq!(store.live(&name).await.unwrap().preview_state, state);
+        }
+        let moved = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+        store.set_base_revision(&name, moved).await.unwrap();
+        assert_eq!(
+            fresh.get(&name).await.unwrap().unwrap().base_revision,
+            moved
+        );
+
+        let later = TimestampTz::now() + jiff::SignedDuration::from_hours(2);
+        let gone = fresh.expired(later).await.unwrap();
+        assert!(gone.iter().any(|w| w.name == name), "{gone:?}");
+        let now = fresh.expired(TimestampTz::now()).await.unwrap();
+        assert!(!now.iter().any(|w| w.name == name), "{now:?}");
+
+        let nobody = "nobody-holds-this";
+        assert!(matches!(
+            store.set_preview_state(nobody, PreviewState::Running).await,
+            Err(WorkspaceError::NotFound(n)) if n == nobody
+        ));
+        assert!(matches!(
+            store.set_base_revision(nobody, moved).await,
+            Err(WorkspaceError::NotFound(n)) if n == nobody
+        ));
+        assert!(matches!(
+            fresh.live(nobody).await,
+            Err(WorkspaceError::NotFound(n)) if n == nobody
+        ));
+        assert_eq!(store.delete(&name).await.unwrap().name, name);
+        assert!(matches!(
+            fresh.delete(&name).await,
+            Err(WorkspaceError::NotFound(n)) if n == name
+        ));
+    }
+}
+
+/// A workspace of a project the database holds no key for is refused as unplaced, before
+/// anything is written (STO-07).
+#[tokio::test]
+async fn a_workspace_of_an_unkeyed_project_is_unplaced() {
+    for (store, _) in stores().await.into_iter().skip(1) {
+        let name = format!("u{}", &unique::unique()[7..]);
+        assert!(matches!(
+            store.create(opening(&name, "no-key-here", 1)).await,
+            Err(WorkspaceError::Unplaced(project)) if project == "no-key-here"
+        ));
+        assert_eq!(store.get(&name).await.unwrap(), None);
+    }
+}
+
+/// Each registry refusal answers as the API's problem of its kind, with the message a person
+/// reads: an unplaced project is not found, naming the step that places it.
+#[test]
+fn each_workspace_refusal_is_the_api_problem_of_its_kind() {
+    use joinedcontext_portal::error::ApiError;
+    let api = |err: WorkspaceError| ApiError::from(err);
+    assert!(
+        matches!(api(WorkspaceError::Invalid("bad".into())), ApiError::BadRequest(m) if m == "bad")
+    );
+    assert!(matches!(
+        api(WorkspaceError::Conflict("kpi".into())),
+        ApiError::Conflict(m) if m == "a workspace named 'kpi' already exists"
+    ));
+    assert!(matches!(
+        api(WorkspaceError::NotFound("kpi".into())),
+        ApiError::NotFound(m) if m == "no workspace named 'kpi'"
+    ));
+    assert!(matches!(api(WorkspaceError::Db("down".into())), ApiError::Internal(m) if m == "down"));
+    assert!(matches!(
+        api(WorkspaceError::Unplaced("doprava".into())),
+        ApiError::NotFound(m) if m.starts_with("the project doprava belongs to no active Organization")
+            && m.ends_with("on the Organizations page first")
+    ));
+}

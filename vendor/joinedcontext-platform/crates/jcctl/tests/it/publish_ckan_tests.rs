@@ -1487,3 +1487,190 @@ fn a_public_slice_of_an_ungranted_type_is_not_published() {
         unplanned[0].reason
     );
 }
+
+/// EP-62: a project App takes no dataset; an Endpoint or a CkanInstance whose spec does not read
+/// stops the walk naming it.
+#[test]
+fn an_app_is_no_dataset_and_a_broken_spec_stops_the_walk() {
+    let dir = repo("walk-broken-specs");
+    common::write(
+        &dir,
+        "projects/ovzdusie/apps/air-today/app.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: App\nmetadata:\n  name: air-today\n  namespace: ovzdusie\nspec:\n  kind: ui-rust\n  source:\n    path: apps/air-today\n  build: {}\n  visibility: internal\n",
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    assert_eq!(targets(&loaded, "ovzdusie").map(|t| t.len()).ok(), Some(3));
+
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        &INSTANCE.replace(
+            "organizationDefault: mesto-banska-bystrica\n",
+            "organizationDefault: 7\n  surplus: true\n",
+        ),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let error = targets(&loaded, "ovzdusie").expect_err("a broken instance");
+    assert!(matches!(error, Error::Instance { .. }), "{error}");
+
+    common::write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/air-rows.yaml",
+        &endpoint("air-rows", "k4y7pq2mzt6vhx3nbwrs5cjd3f", "7", UNNAMED),
+    );
+    let loaded = Repository::load(&dir).expect("the repository loads");
+    let error = targets(&loaded, "ovzdusie").expect_err("a broken endpoint");
+    assert!(matches!(error, Error::Spec { .. }), "{error}");
+}
+
+/// A typed space reference finds the space with or without its namespace; a Policy the
+/// Endpoint names is bound, and a moving temporal grant without `information` grants every
+/// type; a slice keeps only the charts of its own types.
+#[test]
+fn a_typed_space_named_policies_and_a_slice_of_the_charts() {
+    for space_ref in [
+        "{ kind: ContextSpace, name: ovzdusie }",
+        "{ kind: ContextSpace, name: ovzdusie, namespace: ovzdusie }",
+    ] {
+        let dir = common::demo_repo("slice-charts");
+        common::write(&dir, "projects/ovzdusie/ckan/open-data.yaml", INSTANCE);
+        common::write(
+            &dir,
+            "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n  defaultLocale: sk\n",
+        );
+        common::write(
+            &dir,
+            common::ENDPOINT_PATH,
+            &endpoint(
+                "public-air",
+                "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                "[ngsi-ld, csv]",
+                &format!("  policyRefs: [\"urn:ngsi-ld:Policy:history\"]\n{SLICES}"),
+            )
+            .replace(
+                "contextSpaceRef: ovzdusie",
+                &format!("contextSpaceRef: {space_ref}"),
+            ),
+        );
+        common::write(
+            &dir,
+            "projects/ovzdusie/spaces/ovzdusie/policies/history.yaml",
+            &policy(
+                "history",
+                "[queryTemporal]",
+                "  temporalQ: timerel=after;timeAt=P-1D\n",
+            ),
+        );
+        let loaded = Repository::load(&dir).expect("the repository loads");
+        let found = targets(&loaded, "ovzdusie").expect("the walk");
+        assert_eq!(found[0].language.as_deref(), Some("sk"), "{space_ref}");
+        let schema = json!({ "definitions": {
+            "AirQualityObserved": { "properties": {
+                "dateObserved": { "format": "date-time" },
+                "pm10": { "type": "number", "x-ngsi-ld-kind": "Property" }
+            }},
+            "WeatherObserved": { "properties": {
+                "dateObserved": { "format": "date-time" },
+                "temperature": { "type": "number", "x-ngsi-ld-kind": "Property" }
+            }}
+        }});
+        let grants = &found[0].history.grants;
+        assert!(grants.iter().any(|g| g.types.is_empty()), "{grants:?}");
+        let models = jcctl::commands::publish_ckan::Models {
+            schema,
+            linkml: None,
+        };
+        let mut api = InMemoryCkan::new().with_organization("mesto-banska-bystrica");
+        let line = publish_one(
+            &mut api,
+            &found[0],
+            &record("air"),
+            Some(&models),
+            &settings(),
+        )
+        .expect("published");
+        assert_eq!(line.views.created, 1, "{line}");
+    }
+}
+
+/// CC-06: a reference without its own variable reads the repository; a key file named by the
+/// environment is used; secrets that do not open are refused naming the instance.
+#[test]
+fn a_reference_without_a_variable_and_secrets_that_do_not_open() {
+    let (dir, key_file) = sealed_repo(
+        "token-no-variable",
+        "CKAN_JCCTL_UNUSED",
+        &[("ckan-open-data", Node::Keys(&[("apiToken", SEALED_TOKEN)]))],
+    );
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        &INSTANCE.replace(", envVar: CKAN_OPEN_DATA_TOKEN", ""),
+    );
+    let instance = instance_of(&dir);
+    let source = TokenSource {
+        env: None,
+        age_key_file: Some(&key_file),
+    };
+    let value = token(&instance, &dir, source).expect("the repository");
+    assert_eq!(value.expose(), SEALED_TOKEN);
+    common::write(
+        &dir,
+        "secrets/broken.enc.yaml",
+        "sops: [not, a, sops, file]\n",
+    );
+    let error = token(&instance, &dir, source).expect_err("a broken secret");
+    assert!(matches!(error, Error::Token { .. }), "{error}");
+}
+
+/// EP-67: the age key file can come from the environment; one that is not there is named.
+#[test]
+fn the_age_key_file_from_the_environment_is_read() {
+    let dir = repo("token-age-env");
+    common::write(
+        &dir,
+        "projects/ovzdusie/ckan/open-data.yaml",
+        &INSTANCE.replace(", envVar: CKAN_OPEN_DATA_TOKEN", ""),
+    );
+    // Published only from the reviewed main (P-14): a clean commit that `origin/main` names.
+    for args in [
+        &["init", "-q", "-b", "main"][..],
+        &["add", "-A"],
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.org",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ] {
+        let ok = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(args)
+            .status()
+            .is_ok_and(|status| status.success());
+        assert!(ok, "git {args:?}");
+    }
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args([
+            "publish",
+            "ckan",
+            "--repo-dir",
+            dir.to_str().expect("utf-8"),
+            "--project",
+            "ovzdusie",
+            "--host",
+            "data.example.org",
+        ])
+        .env(AGE_KEY_FILE_ENV, dir.join("no-such-key.txt"))
+        .output()
+        .expect("jcctl runs");
+    assert!(!out.status.success());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("api token of CkanInstance"), "{said}");
+}

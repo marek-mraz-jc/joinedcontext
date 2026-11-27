@@ -283,12 +283,11 @@ pub fn write(repo_dir: &Path, mirror: &Mirror) -> Result<usize, MirrorError> {
 
 fn put(repo_dir: &Path, relative: &Path, body: &[u8]) -> Result<(), MirrorError> {
     let path = repo_dir.join(relative);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|source| MirrorError::Io {
-            path: parent.to_path_buf(),
-            source,
-        })?;
-    }
+    let parent = path.parent().unwrap_or(repo_dir);
+    std::fs::create_dir_all(parent).map_err(|source| MirrorError::Io {
+        path: parent.to_path_buf(),
+        source,
+    })?;
     std::fs::write(&path, body).map_err(|source| MirrorError::Io {
         path: relative.to_path_buf(),
         source,

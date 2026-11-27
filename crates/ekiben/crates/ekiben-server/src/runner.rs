@@ -692,15 +692,9 @@ impl WorkerPool {
 
 fn read_peak_rss_bytes() -> Option<u64> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
-    for line in status.lines() {
-        if let Some(rest) = line
-            .strip_prefix("VmHWM:")
-            .or_else(|| line.strip_prefix("VmRSS:"))
-        {
-            let kb_str = rest.split_whitespace().next()?;
-            let kb: u64 = kb_str.parse().ok()?;
-            return Some(kb * 1024);
-        }
-    }
-    None
+    let rest = status
+        .lines()
+        .find_map(|line| line.strip_prefix("VmHWM:").or(line.strip_prefix("VmRSS:")))?;
+    let kb: u64 = rest.split_whitespace().next()?.parse().ok()?;
+    Some(kb * 1024)
 }

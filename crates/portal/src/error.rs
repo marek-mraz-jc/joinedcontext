@@ -807,10 +807,11 @@ mod tests {
 
     // Inside the tests module: the slug scan reads each file up to its first `#[cfg(test)]`.
     impl super::ApiError {
-        /// The field errors of a `422`, none for any other answer: what a test names.
+        /// The field errors of a `422` or a field-by-field `400`, none for any other answer: what a
+        /// test names.
         pub(crate) fn field_errors(&self) -> &[String] {
             match self {
-                Self::Unprocessable { errors, .. } => errors,
+                Self::Unprocessable { errors, .. } | Self::Invalid { errors, .. } => errors,
                 _ => &[],
             }
         }

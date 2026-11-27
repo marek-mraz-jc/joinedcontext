@@ -587,70 +587,53 @@ mod tests {
             json!({ "written": [], "errors": [] })
         );
         let why = json!({ "detail": "speed is no number" });
-        match answer_of("bus", 400, &why, Action::Create, ids()) {
-            Err(OpError::Api(ApiError::BadRequest(m))) => {
-                assert_eq!(m, "Endpoint bus refused the entities: speed is no number")
-            }
-            other => panic!("a 400, got {other:?}"),
-        }
+        let answer = answer_of("bus", 400, &why, Action::Create, ids());
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::BadRequest(m))) if *m == "Endpoint bus refused the entities: speed is no number"),
+            "{answer:?}"
+        );
         for (status, action, operation) in [
             (401, Action::Merge, "mergeBatch"),
             (403, Action::Delete, "deleteBatch"),
             (403, Action::Create, "createBatch"),
             (403, Action::Upsert, "upsertBatch"),
         ] {
-            match answer_of(
+            let answer = answer_of(
                 "bus",
                 status,
                 &json!({ "title": "Forbidden" }),
                 action,
                 ids(),
-            ) {
-                Err(OpError::Api(ApiError::Denied(m))) => {
-                    assert!(
-                        m.starts_with(
+            );
+            assert!(
+                matches!(&answer, Err(OpError::Api(ApiError::Denied(m))) if m.starts_with(
                             "Endpoint bus's Policy does not let you write this: Forbidden;"
-                        ),
-                        "{m}"
-                    );
-                    assert!(
-                        m.contains(&format!("grants the operation {operation} ")),
-                        "{m}"
-                    );
-                }
-                other => panic!("a 403, got {other:?}"),
-            }
+                        ) && m.contains(&format!("grants the operation {operation} "))),
+                "{answer:?}"
+            );
         }
-        match answer_of("bus", 404, &Value::Null, Action::Create, ids()) {
-            Err(OpError::Api(ApiError::NotFound(m))) => assert_eq!(
-                m,
-                "the gateway does not serve writes on Endpoint bus: no reason given"
-            ),
-            other => panic!("a 404, got {other:?}"),
-        }
-        match answer_of(
+        let answer = answer_of("bus", 404, &Value::Null, Action::Create, ids());
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::NotFound(m))) if *m == "the gateway does not serve writes on Endpoint bus: no reason given"),
+            "{answer:?}"
+        );
+        let answer = answer_of(
             "bus",
             409,
             &json!({ "detail": "exists" }),
             Action::Create,
             ids(),
-        ) {
-            Err(OpError::Api(ApiError::Conflict(m))) => assert_eq!(
-                m,
-                "Endpoint bus: exists; upsert writes an entity that exists"
-            ),
-            other => panic!("a 409, got {other:?}"),
-        }
-        match answer_of("bus", 502, &Value::Null, Action::Create, ids()) {
-            Err(OpError::Api(ApiError::Unavailable(m))) => {
-                assert!(
-                    m.starts_with(
-                        "the gateway answered 502 for Endpoint bus; nothing is known written"
-                    ),
-                    "{m}"
-                )
-            }
-            other => panic!("a 503, got {other:?}"),
-        }
+        );
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Conflict(m))) if *m == "Endpoint bus: exists; upsert writes an entity that exists"),
+            "{answer:?}"
+        );
+        let answer = answer_of("bus", 502, &Value::Null, Action::Create, ids());
+        assert!(
+            matches!(&answer, Err(OpError::Api(ApiError::Unavailable(m))) if m.starts_with(
+                "the gateway answered 502 for Endpoint bus; nothing is known written"
+            )),
+            "{answer:?}"
+        );
     }
 }
