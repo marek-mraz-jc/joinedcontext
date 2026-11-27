@@ -806,6 +806,98 @@ async fn an_invalid_prefix_or_a_bad_module_setting_refuses_to_start() {
     );
 }
 
+/// The data plane of a role split (T-7226): the gateway without the Portal, configured by
+/// `[gateway]`, reads kaisatsu's keys at its internal address and starts while the Portal it
+/// reaches for revocations does not answer yet; it serves its Endpoint list.
+#[tokio::test]
+async fn the_gateway_starts_as_a_data_plane_without_the_portal() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let secret = fx.kek.with_file_name("gateway-client-secret");
+    std::fs::write(&secret, "gateway-client-secret-for-tests-7898\n").unwrap();
+    let oauth_key = fx.kek.with_file_name("gateway-oauth-key");
+    std::fs::write(&oauth_key, format!("{}\n", "7898".repeat(16))).unwrap();
+    let file = FileConfig {
+        gateway: Some(jc::config::GatewaySection {
+            portal_internal: "http://127.0.0.1:1".into(),
+            kaisatsu: "http://idm.city.test".into(),
+            kaisatsu_internal: Some("http://127.0.0.1:1".into()),
+            client_secret_file: Some(secret),
+            oauth_key_file: Some(oauth_key),
+        }),
+        ..FileConfig::default()
+    };
+    let mut cfg = Config::merge(
+        Cli {
+            role: Some("gateway,antares".into()),
+            listen: Some("127.0.0.1:0".parse().unwrap()),
+            admin_listen: Some("127.0.0.1:0".parse().unwrap()),
+            admin_token_file: Some(fx.admin_token.clone()),
+            base_host: Some("city.test".into()),
+            scheme: Some("http".into()),
+            antares_admin_token_file: Some(fx.antares_token.clone()),
+            ..Cli::default()
+        },
+        file,
+    )
+    .expect("a data-plane config");
+    cfg.mode = MountMode::Slug;
+    cfg.state_dir = fx._dir.path().join("state");
+    cfg.portal_siblings = false;
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("the data plane starts");
+    let addr = running.addr;
+    let answer = reqwest::get(format!("http://{addr}/api/endpoints"))
+        .await
+        .expect("the gateway answers");
+    assert!(
+        answer.status().is_success() || answer.status().is_client_error(),
+        "{}",
+        answer.status()
+    );
+    running.stop().await.expect("stop");
+}
+
+/// `[antares.database]` names PostgreSQL: a store the environment sets to anything else is
+/// refused before any connection, and `ANTARES_METRICS_PORT`, which opens no listener inside jc,
+/// is dropped with a warning while jc starts.
+#[tokio::test]
+async fn antares_refuses_a_database_beside_another_store_and_drops_its_metrics_port() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    let password = fx.kek.with_file_name("antares-db-password");
+    std::fs::write(&password, "not-used\n").unwrap();
+    cfg.antares.database = Some(jc::pg::DatabaseSection {
+        url: "postgres://antares_app@127.0.0.1:1/antares".into(),
+        password_file: password,
+        max_connections: None,
+        migrate_url: None,
+        migrate_password_file: None,
+        maintenance_url: None,
+        maintenance_password_file: None,
+    });
+    // SAFETY of the test: env access is serialized by the lock above; removed before unlocking.
+    unsafe { std::env::set_var("ANTARES_STORE", "file") };
+    let result = jc::start(&cfg, CancellationToken::new()).await;
+    unsafe { std::env::remove_var("ANTARES_STORE") };
+    let err = result.err().expect("refused");
+    assert!(err.to_string().contains("ANTARES_STORE=file"), "{err}");
+
+    let cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    unsafe { std::env::set_var("ANTARES_METRICS_PORT", "19898") };
+    let result = jc::start(&cfg, CancellationToken::new()).await;
+    unsafe { std::env::remove_var("ANTARES_METRICS_PORT") };
+    let running = result.expect("starts without the metrics listener");
+    running.portal_ready().await;
+    running.stop().await.expect("stop");
+    assert!(
+        std::net::TcpStream::connect(("127.0.0.1", 19898)).is_err(),
+        "no metrics listener inside jc"
+    );
+}
+
 #[tokio::test]
 async fn a_bad_antares_environment_refuses_to_start() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;
