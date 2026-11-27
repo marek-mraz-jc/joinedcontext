@@ -906,6 +906,62 @@ async fn reading_present_signing_keys_takes_no_realm_key_lock() {
     db.drop_db().await;
 }
 
+/// A client document stored without its realm reads back in the realm it was asked in; a
+/// group page of size 0 answers the count alone, and a group document that does not parse is a
+/// storage error, never a silently shorter page.
+#[tokio::test]
+async fn stored_documents_read_back_whole_or_refused() {
+    let Some(db) = common::test_db("stored_documents_read_back_whole_or_refused").await else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    seed(&store).await;
+    store
+        .upsert_group(GroupRepresentation {
+            id: "g-1".into(),
+            realm_id: "dev".into(),
+            name: "g-1".into(),
+            path: "/g-1".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("group");
+    let admin = db.superuser_pool().await;
+    sqlx::raw_sql(AssertSqlSafe(
+        "UPDATE kaisatsu.applications SET doc = doc - 'realmId' WHERE id = 'client-helsinki'",
+    ))
+    .execute(&admin)
+    .await
+    .expect("drop realmId");
+    let client = store
+        .get_client_by_uuid("dev", None, "client-helsinki")
+        .await
+        .expect("read")
+        .expect("found");
+    assert_eq!(client.realm_id, "dev");
+    let counted = store
+        .find_groups("dev", None, &[], 0, 0)
+        .await
+        .expect("count");
+    assert!(
+        counted.items.is_empty() && counted.total >= 1,
+        "{}",
+        counted.total
+    );
+    sqlx::raw_sql(AssertSqlSafe(
+        "UPDATE kaisatsu.groups SET doc = doc || '{\"subGroups\": 5}'::jsonb WHERE id = 'g-1'",
+    ))
+    .execute(&admin)
+    .await
+    .expect("break the group");
+    let e = store
+        .find_groups("dev", None, &[], 0, 10)
+        .await
+        .unwrap_err();
+    assert!(matches!(e, KaisatsuError::Storage(_)), "{e}");
+    db.drop_db().await;
+}
+
 /// The change listener stops once its connection is gone and no new one is admitted: the
 /// reconnect pause runs, then the task ends instead of spinning.
 #[tokio::test]

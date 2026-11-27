@@ -51,6 +51,13 @@ async fn named_path_without_membership() {
 }
 
 #[tokio::test]
+async fn absent_grants_remove_cleanly() {
+    let store = Arc::new(MemoryStore::default());
+    realm(store.as_ref()).await;
+    cascade_cases::absent_grants_remove_cleanly(store.as_ref()).await;
+}
+
+#[tokio::test]
 async fn deleted_client_role() {
     let store = Arc::new(MemoryStore::default());
     realm(store.as_ref()).await;

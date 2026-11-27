@@ -960,6 +960,40 @@ mod tests {
             assert!(e.contains("permission denied"), "{e}");
             assert!(!e.contains("pw-"), "{e}");
         }
+        // With the request login's grants (as jc's start gives them) and both realms in the
+        // store, the whole command runs and prints its report.
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "GRANT kaisatsu_app TO {db}_app"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let cli = crate::config::Cli::try_parse_from([
+            std::ffi::OsString::from("jc"),
+            "--config".into(),
+            path.clone().into_os_string(),
+        ])
+        .unwrap();
+        let cfg = crate::config::Config::resolve(cli).unwrap();
+        let kek = kaisatsu_crypto::Kek::from_raw_bytes(&[b'k'; 32]).unwrap();
+        let store = crate::modules::kaisatsu::open_kaisatsu_store(&cfg.kaisatsu, kek)
+            .await
+            .unwrap();
+        for realm in [cfg.realm.as_str(), "alpha"] {
+            store
+                .upsert_realm(kaisatsu_core::RealmConfig {
+                    id: realm.into(),
+                    realm: realm.into(),
+                    ..kaisatsu_core::RealmConfig::default()
+                })
+                .await
+                .unwrap();
+        }
+        let argv = vec!["--config".to_owned(), path.display().to_string()];
+        let code = tokio::task::spawn_blocking(move || command(&argv))
+            .await
+            .unwrap();
+        assert_eq!(code, 0);
     }
 
     #[test]

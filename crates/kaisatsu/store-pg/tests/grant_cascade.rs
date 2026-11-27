@@ -37,6 +37,7 @@ postgres_store!(
     stale_profile_write,
     named_path_without_membership,
     deleted_client_role,
+    absent_grants_remove_cleanly,
     documents_lose_what_is_deleted,
     renamed_client,
     deleted_service_account,

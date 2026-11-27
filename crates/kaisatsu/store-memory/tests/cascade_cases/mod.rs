@@ -245,6 +245,35 @@ pub async fn deleted_client_role(store: &dyn Store) {
     );
 }
 
+/// Removing what was never there changes nothing: a client role of a client that is gone, a
+/// group's mapping (no person document to edit), a person's mapping of a client they hold no
+/// role of.
+pub async fn absent_grants_remove_cleanly(store: &dyn Store) {
+    person(store, "ab").await;
+    client(store, "ab-uuid", "ab-app").await;
+    role(store, None, "ab-role").await;
+    grant(store, "user", "ab", None, "ab-role").await;
+    store
+        .delete_role(R, Some("gone-uuid"), "editor")
+        .await
+        .expect("a gone client's role deletes as nothing");
+    store
+        .remove_role_mapping(R, "group", "no-group", None, "ab-role")
+        .await
+        .expect("a group mapping that is not there");
+    store
+        .remove_role_mapping(R, "user", "ab", Some("ab-uuid"), "editor")
+        .await
+        .expect("a client role the person never held");
+    let ab = get(store, "ab").await;
+    assert_eq!(ab.realm_roles, ["ab-role"]);
+    assert!(
+        !ab.client_roles.contains_key("ab-app"),
+        "{:?}",
+        ab.client_roles
+    );
+}
+
 pub async fn documents_lose_what_is_deleted(store: &dyn Store) {
     client(store, "doc-uuid", "doc-app").await;
     role(store, Some("doc-uuid"), "editor").await;
