@@ -344,6 +344,9 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
             "1",
             "--second-factor",
             "required",
+            // A branding file that does not read leaves the pages plain; sign-in still starts.
+            "--branding-file",
+            "/nonexistent/branding.yaml",
         ])
         .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
         .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
@@ -402,6 +405,11 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
     // `--import-watch 0` watches nothing: a file written while it runs stays unapplied.
     let quiet = TempDir::new();
     quiet.file("realm.yaml", REALM_YAML);
+    let branding = TempDir::new();
+    let brand = branding.file(
+        "branding.yaml",
+        "instanceName: Quiet City\norganisation: Quiet City\n",
+    );
     let mut child = Command::new(BIN)
         .args([
             "serve",
@@ -415,6 +423,8 @@ fn serve_in_memory_watches_its_import_dir_and_stops_on_sigint() {
             p(&quiet.0),
             "--import-watch",
             "0",
+            "--branding-file",
+            p(&brand),
         ])
         .env("KAISATSU_CLI_TEST_CLIENT_SECRET", "cli-secret-123")
         .env("KAISATSU_CLI_TEST_ALICE_PASSWORD", "AlicePass123!Valid")
