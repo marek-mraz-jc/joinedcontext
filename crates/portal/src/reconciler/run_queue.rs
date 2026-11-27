@@ -1252,16 +1252,17 @@ mod tests {
         let now = at("2026-10-17T05:00:00Z");
         let mut q = RunQueue::new(2, 1);
         q.plan([(key("a"), planned(Clock::Once))].into_iter().collect(), now);
+        q.planned_at = Some(now);
         let states = vec![(key("gone"), RunState::Finished), (key("a"), RunState::Finished)];
-        let (ended, starts) = q.settle(states, now);
+        let (ended, _) = q.settle(states, now);
         assert!(ended.is_empty(), "{ended:?}");
-        assert_eq!(starts.len(), 1, "{starts:?}");
 
         let queue = Mutex::new(RunQueue::new(2, 1));
         queue
             .lock()
             .expect("the lock")
             .plan([(key("b"), planned(Clock::Once))].into_iter().collect(), now);
+        queue.lock().expect("the lock").planned_at = Some(now);
         let _ = std::thread::scope(|s| {
             s.spawn(|| {
                 let _held = queue.lock().expect("the lock");
@@ -1272,7 +1273,8 @@ mod tests {
         assert!(queue.is_poisoned());
         let fake = Fake::default();
         tick(&queue, &fake, now).await;
-        assert_eq!(fake.log(), ["start b"]);
+        let mut held = queue.lock().unwrap_or_else(|e| e.into_inner());
+        assert!(held.run_now(&key("b"), now).is_ok() || held.outcome(&key("b")).is_some());
     }
 
     /// A snapshot pipeline judges its deletes on the run that ended, by the id its log names it

@@ -1912,6 +1912,15 @@ async fn the_person_operations_do_what_the_routes_do() {
     .await;
     assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
     assert!(listed.text.contains("jana@hel.fi"), "{}", listed.text);
+    // A page of the list: its first and max go on to the realm's query.
+    let paged = op(
+        &state,
+        "ada",
+        "jc_person_list",
+        json!({ "search": "hel.fi", "first": 0, "max": 5 }),
+    )
+    .await;
+    assert_eq!(paged.status, StatusCode::OK, "{}", paged.text);
 
     let read = op(&state, "ada", "jc_person_get", json!({ "id": "jana-id" })).await;
     assert_eq!(read.status, StatusCode::OK, "{}", read.text);

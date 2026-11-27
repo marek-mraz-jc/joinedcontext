@@ -221,7 +221,7 @@ fn credential_free(origin: &SyncOrigin) -> Result<(), RemoteError> {
 ///
 /// Each pkt-line is `<4 hex length><sha> <name>[\0capabilities]`, and the two fields this needs
 /// survive a split on whitespace.
-fn advertised(text: &str, git_ref: &str) -> Option<String> {
+pub fn advertised(text: &str, git_ref: &str) -> Option<String> {
     let wanted = [
         format!("refs/heads/{git_ref}"),
         format!("refs/tags/{git_ref}"),
