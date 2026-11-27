@@ -23,6 +23,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_guard(OutboundGuard::default()).await
+    }
+
+    async fn with_guard(guard: OutboundGuard) -> Self {
         let kek = Kek::generate_for_tests();
         let store = Arc::new(MemoryStore::new(kek.clone()));
         store
@@ -36,7 +40,7 @@ impl Fixture {
         let oidc = OidcState {
             store: store.clone(),
             kek: kek.clone(),
-            guard: OutboundGuard::default(),
+            guard,
             default_mount: Mount::default(),
             second_factor: Default::default(),
         };
@@ -281,6 +285,55 @@ async fn only_manage_smtp_or_a_realm_applier_reads_and_sets_it() {
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(problem.to_string().contains("host"), "{problem}");
+}
+
+/// An SMTP server that answers but refuses the session: the test reports the server did not
+/// take the e-mail and names what to check, never the password.
+#[tokio::test]
+async fn a_test_e_mail_the_server_refuses_says_what_to_check() {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        use std::io::Write as _;
+        if let Ok((mut conn, _)) = listener.accept() {
+            let _ = conn.write_all(b"554 5.3.2 no service here\r\n");
+        }
+    });
+    let f = Fixture::with_guard(OutboundGuard::new(kaisatsu_oidc::OutboundPolicy {
+        test_loopback: true,
+        ..Default::default()
+    }))
+    .await;
+    let mut realm = f.store.get_realm("jc").await.unwrap().unwrap();
+    realm.smtp_server = Some(SmtpServerConfig {
+        host: "127.0.0.1".into(),
+        port: port.to_string(),
+        from: "noreply@example.org".into(),
+        auth: "true".into(),
+        user: "mailer".into(),
+        password: "smtp-word-7899".into(),
+        ..SmtpServerConfig::default()
+    });
+    f.store.upsert_realm(realm).await.unwrap();
+    let admin = f
+        .token(
+            "admin",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let (status, result) = f
+        .call(
+            Method::POST,
+            "/test",
+            &admin,
+            Some(json!({ "to": "ops@example.org" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["sent"], json!(false), "{result}");
+    let reason = result["reason"].as_str().unwrap();
+    assert!(reason.contains("did not take the e-mail"), "{result}");
+    assert!(!result.to_string().contains("smtp-word-7899"));
 }
 
 #[tokio::test]

@@ -30,6 +30,10 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_authorizer(Arc::new(LocalAuthorizer)).await
+    }
+
+    async fn with_authorizer(authorizer: Arc<dyn Authorizer>) -> Self {
         let kek = Kek::generate_for_tests();
         let store = Arc::new(MemoryStore::new(kek.clone()));
         for realm in ["dev", "master"] {
@@ -119,7 +123,7 @@ impl Fixture {
             default_mount: Mount::default(),
             second_factor: Default::default(),
         };
-        let state = AdminState::new(oidc, Arc::new(LocalAuthorizer));
+        let state = AdminState::new(oidc, authorizer);
         let app = admin_router(state.clone())
             .merge(scim_router(state.clone()))
             .merge(odata_router(state));
@@ -1397,6 +1401,137 @@ async fn joining_a_group_with_realm_wide_roles_needs_a_user_manager() {
         )
         .await;
     assert_eq!(st, StatusCode::NO_CONTENT);
+}
+
+/// A group whose parents loop back to it ends the ancestor walk instead of spinning, and a
+/// group holding a mapping of an admin client (`realm-management`) is refused like a realm role.
+#[tokio::test]
+async fn the_group_join_check_ends_on_a_parent_loop_and_refuses_an_admin_client_mapping() {
+    let f = Fixture::new().await;
+    for (id, parent) in [
+        ("g-loop-a", "g-loop-b"),
+        ("g-loop-b", "g-loop-a"),
+        ("g-rm", ""),
+    ] {
+        f.store
+            .upsert_group(GroupRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                name: id.into(),
+                path: format!("/helsinki/{id}"),
+                parent_id: (!parent.is_empty()).then(|| parent.to_owned()),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+    }
+    f.store
+        .add_role_mapping(RoleMappingRecord {
+            id: "m-rm".into(),
+            realm_id: "dev".into(),
+            org_id: None,
+            principal_kind: "group".into(),
+            principal_id: "g-rm".into(),
+            role_id: "view-users".into(),
+            role_name: "view-users".into(),
+            client_uuid: Some("uuid-rm".into()),
+        })
+        .await
+        .unwrap();
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    let join = |group: &'static str| format!("/admin/realms/dev/users/hel-person/groups/{group}");
+    assert_eq!(
+        f.send(Method::PUT, &join("g-loop-a"), &t, None).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        f.send(Method::PUT, &join("g-rm"), &t, None).await,
+        StatusCode::FORBIDDEN
+    );
+    let held: Vec<String> = f
+        .store
+        .list_user_groups("dev", "hel-person")
+        .await
+        .unwrap()
+        .into_iter()
+        .map(|g| g.id)
+        .collect();
+    assert_eq!(held, ["g-loop-a"]);
+}
+
+/// A policy point that allows everything.
+struct AllowAll;
+
+impl Authorizer for AllowAll {
+    fn check(&self, _: &RequestCtx, _: Action, _: &ObjectTarget) -> Decision {
+        Decision::allow("test: allow all")
+    }
+}
+
+/// The Consents set is no person's own read under the local rules; where the policy point
+/// lets a person reach their own consent, its revocation is decided as self-service.
+#[tokio::test]
+async fn a_person_revokes_their_own_consent_as_self_service() {
+    let f = Fixture::with_authorizer(Arc::new(AllowAll)).await;
+    f.store
+        .upsert_consent(ConsentRecord {
+            id: "consent-own".into(),
+            realm_id: "dev".into(),
+            org_id: Some("helsinki".into()),
+            user_id: "hel-person".into(),
+            client_id: "hel-app".into(),
+            granted_client_scopes: vec!["profile".into()],
+            created_date: 0,
+            last_updated_date: 0,
+        })
+        .await
+        .unwrap();
+    let me = f.token("dev", "hel-person", json!({})).await;
+    let st = f
+        .send(
+            Method::POST,
+            "/api/v1/realms/dev/odata/Consents('consent-own')/Revoke",
+            &me,
+            Some(json!({})),
+        )
+        .await;
+    assert!(st.is_success(), "{st}");
+    assert!(
+        f.store
+            .list_consents("dev", "hel-person")
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// A realm export holds every client secret and person: even where the policy point allows a
+/// caller, only a realm administrator reads it, and anyone else sees no realm (404).
+#[tokio::test]
+async fn a_realm_export_needs_a_realm_admin_whatever_the_policy_point_allows() {
+    let f = Fixture::with_authorizer(Arc::new(AllowAll)).await;
+    let export = "/api/v1/realms/dev/odata/Realms('dev')/JoinedContext.Kaisatsu.Export()";
+    let t = f
+        .token("dev", "org-admin-hel", json!({ "jc_org": ["helsinki"] }))
+        .await;
+    assert_eq!(
+        f.send(Method::GET, export, &t, None).await,
+        StatusCode::NOT_FOUND
+    );
+    let admin = f
+        .token(
+            "dev",
+            "plain-1",
+            json!({ "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    assert_eq!(
+        f.send(Method::GET, export, &admin, None).await,
+        StatusCode::OK
+    );
 }
 
 #[tokio::test]
