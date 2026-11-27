@@ -592,4 +592,55 @@ classes:
         assert!(!needs_model(&plain));
         assert_eq!(of_model(&plain, "parking", source), Vec::new());
     }
+
+    /// A Policy of a space whose model the forge holds is judged against that model's file: a
+    /// name it lacks is one finding; a space naming no model, or a model the forge does not
+    /// answer, judges nothing.
+    #[tokio::test]
+    async fn a_policy_is_judged_against_its_spaces_published_model() {
+        use base64::Engine;
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let forge = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "DefaultBranch": "main", "Encoding": "base64", "Sha": "s1",
+                "Path": "parking/parking.linkml.yaml",
+                "Content": base64::engine::general_purpose::STANDARD.encode(MODEL),
+            })))
+            .mount(&forge)
+            .await;
+        let shako =
+            crate::forge::ShakoClient::new(forge.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = crate::ops::testkit::state().with_shako(std::sync::Arc::new(shako));
+        for (kind, name, spec) in [
+            (
+                "ContextSpace",
+                "street",
+                json!({ "dataModelRef": "parking" }),
+            ),
+            ("ContextSpace", "bare", json!({})),
+            (
+                "DataModel",
+                "parking",
+                json!({ "contextSpaceRef": "street", "linkml": "./parking.linkml.yaml" }),
+            ),
+        ] {
+            state
+                .mirror
+                .upsert(crate::ops::testkit::envelope(kind, name, "parking", spec));
+        }
+        let policy = |space: &str| {
+            json!({ "kind": "Policy", "spec": {
+                "contextSpaceRef": space,
+                "information": [{ "entities": [{ "type": "OnStreetParking" }], "propertyNames": ["typo"] }],
+            } })
+        };
+        let found = findings(&state, "parking", &policy("street")).await;
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(findings(&state, "parking", &policy("bare"))
+            .await
+            .is_empty());
+    }
 }

@@ -317,6 +317,26 @@ mod tests {
         assert_eq!(payloads, vec![r#"{"pm10":12}"#, "", ""]);
     }
 
+    /// A JSON payload holding none of the declared fields, and a source declaring a field
+    /// another source does not, leave that payload as it came.
+    #[test]
+    fn a_json_payload_without_a_declared_field_is_kept_whole() {
+        let mut captured = Captured {
+            broker: "sensors".to_owned(),
+            mode: "capture".to_owned(),
+            window: None,
+            messages_per_topic: None,
+            messages: vec![message(r#"{"pm10": 12}"#, "utf-8")],
+            truncated: false,
+        };
+        let personal = vec![
+            ("air".to_owned(), BTreeSet::from(["owner".to_owned()])),
+            ("noise".to_owned(), BTreeSet::new()),
+        ];
+        assert!(withhold(&mut captured, &personal).is_empty());
+        assert_eq!(captured.messages[0].payload, r#"{"pm10": 12}"#);
+    }
+
     #[test]
     fn a_broker_no_source_declares_keeps_every_payload_and_client_id_back() {
         let mut held = message(r#"{"pm10": 12}"#, "utf-8");

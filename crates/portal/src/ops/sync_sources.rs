@@ -239,3 +239,33 @@ pub fn operations() -> Vec<Operation> {
         },
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    /// PF-59: a caller no binding lets read SyncSources finds the kind not there, by the same
+    /// words for any name, and the status is never read for them.
+    #[tokio::test]
+    async fn a_status_for_a_caller_who_reads_no_sync_source_is_not_found() {
+        let state = crate::ops::testkit::state();
+        let nobody = crate::ops::testkit::caller(
+            crate::ops::testkit::person("nobody", &[]),
+            crate::ops::Via::Mcp,
+        );
+        let op = super::operations()
+            .into_iter()
+            .find(|op| op.name == "jc_syncsource_status")
+            .expect("registered");
+        for name in ["upstream", "no-such-source"] {
+            let err = (op.run)(&nobody, &state, "doprava", json!({ "name": name }))
+                .await
+                .expect_err("not readable");
+            assert!(
+                err.to_string()
+                    .contains("kind 'SyncSource' not found in project 'doprava'"),
+                "{name}: {err}"
+            );
+        }
+    }
+}
