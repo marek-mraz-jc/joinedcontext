@@ -660,10 +660,8 @@ impl SourceDesk for Desk {
     ) -> DeskFuture<'a, Vec<serde_json::Value>> {
         Box::pin(async move {
             let mut answer = self.op(portal, "harvest_run.list", source).await?;
-            Ok(match answer["runs"].take() {
-                serde_json::Value::Array(runs) => runs,
-                _ => Vec::new(),
-            })
+            // `harvest_run.list` answers `{"runs": [...]}`; anything else lists no run.
+            Ok(serde_json::from_value(answer["runs"].take()).unwrap_or_default())
         })
     }
 
@@ -1639,6 +1637,93 @@ mod desk_tests {
         let with = portal("default", loopback());
         apply(&w, &orgs, &mut done, served(&[("d", with.clone())])).await;
         assert!(done.is_empty(), "retried next round");
+    }
+
+    /// With the Portal in this process a round reads its mirror: a Portal manifest there is
+    /// written with its sources and one that does not read is left out.
+    #[tokio::test]
+    async fn a_round_writes_the_portals_the_mirror_of_this_processs_portal_holds() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = writer(Arc::new(MemoryStore::new()), dir.path());
+        let _ = crate::modules::PORTAL_STATE.set(joinedcontext_portal::state::AppState::new(
+            joinedcontext_portal::config::Config::for_tests(),
+            None,
+        ));
+        let state = crate::modules::PORTAL_STATE
+            .get()
+            .expect("the Portal state");
+        let envelope = |name: &str, spec: serde_json::Value| {
+            joinedcontext_portal::resource::ResourceEnvelope {
+                api_version: jc_core::API_VERSION.to_owned(),
+                kind: "Portal".to_owned(),
+                metadata: jc_core::ObjectMeta::new(
+                    name,
+                    joinedcontext_portal::permissions::ORG_NAMESPACE,
+                ),
+                spec,
+                status: None,
+            }
+        };
+        state.mirror.upsert(envelope(
+            "m",
+            serde_json::json!({ "organizationRef": "city", "path": "mobility", "sources": loopback() }),
+        ));
+        state
+            .mirror
+            .upsert(envelope("broken", serde_json::json!({ "path": 7 })));
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        // One round: the follower writes once, then sees the shutdown.
+        shutdown.cancel();
+        let (file, guard) = crate::modules::capture_log();
+        follow(w.clone(), city(), &shutdown, &tasks);
+        tasks.close();
+        tasks.wait().await;
+        drop(guard);
+        assert_eq!(sources(&w, "mobility").await, ["local"]);
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(log.contains("Portal refused; not served"), "{log}");
+    }
+
+    /// A run the store refuses to claim ends at once: the failure is logged and the source is
+    /// free for the next start; a source test answers its outcome word.
+    #[tokio::test]
+    async fn a_run_the_store_refuses_is_logged_and_frees_its_source() {
+        use crate::modules::faulty_dataroom::FaultyDataroom;
+        let dir = tempfile::tempdir().unwrap();
+        let faults = Arc::new(FaultyDataroom::new(Arc::new(MemoryStore::new())));
+        let w = writer(faults.clone(), dir.path());
+        let orgs = city();
+        let mobility = portal("mobility", loopback());
+        apply(
+            &w,
+            &orgs,
+            &mut BTreeMap::new(),
+            served(&[("m", mobility.clone())]),
+        )
+        .await;
+        let desk = Desk {
+            writer: w,
+            orgs,
+            active: Arc::default(),
+        };
+        let tested = SourceDesk::test(&desk, &mobility, "local")
+            .await
+            .expect("a served source answers");
+        assert!(!tested.outcome.is_empty(), "{tested:?}");
+        faults.fail("claim_harvest_run");
+        let (file, guard) = crate::modules::capture_log();
+        desk.start(&mobility, "local").await.expect("started");
+        for _ in 0..100 {
+            if desk.active.lock().unwrap().is_empty() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        drop(guard);
+        assert!(desk.active.lock().unwrap().is_empty(), "the source is free");
+        let log = std::fs::read_to_string(file.path()).unwrap();
+        assert!(log.contains("portal source run failed"), "{log}");
+        assert!(log.contains("injected dataroom store failure"), "{log}");
     }
 
     #[tokio::test]

@@ -246,18 +246,21 @@ impl EmailSender {
     /// Sends `message` over SMTP with TLS (implicit TLS when `ssl`, otherwise STARTTLS) (W7).
     /// The error never carries the SMTP password or the server's reply text.
     pub async fn send(&self, message: lettre::Message) -> Result<()> {
-        self.send_via(message, None).await
+        self.send_via(message, None, &[]).await
     }
 
     /// [`Self::send`] to the address `pinned` (one the outbound guard judged, W12) instead of
-    /// the host's name: the TLS certificate is still checked against the host's name.
+    /// the host's name: the TLS certificate is still checked against the host's name. `roots`
+    /// are DER certificates trusted beside the public roots
+    /// ([`kaisatsu_oidc::OutboundPolicy::test_smtp_roots`], empty outside tests).
     pub async fn send_via(
         &self,
         message: lettre::Message,
         pinned: Option<std::net::SocketAddr>,
+        roots: &[Vec<u8>],
     ) -> Result<()> {
         use lettre::AsyncTransport as _;
-        use lettre::transport::smtp::client::{Tls, TlsParameters};
+        use lettre::transport::smtp::client::{Certificate, Tls, TlsParameters};
         type Transport = lettre::AsyncSmtpTransport<lettre::Tokio1Executor>;
         let smtp = self
             .smtp
@@ -266,7 +269,14 @@ impl EmailSender {
         let port = self.port()?;
         // rustls checks the name when it connects; building the parameters fails only for a TLS
         // version rustls lacks, and the minimum here is TLS 1.2.
-        let Ok(tls) = TlsParameters::new(smtp.host.trim().to_owned()) else {
+        let tls = roots
+            .iter()
+            .filter_map(|der| Certificate::from_der(der.clone()).ok())
+            .fold(
+                TlsParameters::builder(smtp.host.trim().to_owned()),
+                lettre::transport::smtp::client::TlsParametersBuilder::add_root_certificate,
+            );
+        let Ok(tls) = tls.build() else {
             return Err(KaisatsuError::BadRequest("invalid SMTP host".into()));
         };
         let target = match pinned {
@@ -411,7 +421,7 @@ mod tests {
                 .build_message("anna@example.org", "s", "b".into())
                 .unwrap()
         };
-        let err = unconfigured.send_via(msg(), None).await.unwrap_err();
+        let err = unconfigured.send_via(msg(), None, &[]).await.unwrap_err();
         assert!(err.to_string().contains("SMTP is not configured"), "{err}");
 
         // Port 1 on loopback: nothing listens and no unprivileged test can bind it, so the
@@ -424,7 +434,7 @@ mod tests {
                 ..cfg.clone()
             })
             .unwrap();
-            let err = pinned.send_via(msg(), pin).await.unwrap_err();
+            let err = pinned.send_via(msg(), pin, &[]).await.unwrap_err();
             assert!(
                 err.to_string().contains("SMTP delivery failed"),
                 "{ssl} {pin:?}: {err}"

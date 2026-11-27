@@ -32,6 +32,10 @@ uuid = { version = ">=1.28, <1.29.1", features = ["v4", "v7", "serde"] }
 
 [dev-dependencies]
 kaisatsu-store-memory = { path = "../store-memory" }
-tokio = { version = "1.54", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54", features = ["macros", "rt-multi-thread", "net", "io-util"] }
 http-body-util = "0.1"
 tower = { version = "0.5", features = ["util"] }
+# An SMTP server over TLS with a root of the test's own (smtp_routes.rs), as kaisatsu-server's
+# federated_jwt.rs serves its cluster JWKS.
+rcgen = { version = "0.14", default-features = false, features = ["pem", "ring"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

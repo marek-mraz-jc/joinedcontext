@@ -425,7 +425,9 @@ impl MailSender for StoredSmtpSender {
             let sender = EmailSender::from_stored(smtp)?;
             let addr = self.guard.resolve_socket(&host, sender.port()?).await?;
             let message = sender.build_message(to_address, subject, body.to_owned())?;
-            sender.send_via(message, Some(addr)).await
+            sender
+                .send_via(message, Some(addr), &self.guard.policy.test_smtp_roots)
+                .await
         })
     }
 }

@@ -145,6 +145,10 @@ pub struct OutboundPolicy {
     /// Tests only: a loopback address literal (`127.0.0.1`, `[::1]`) is reachable over `http`, so
     /// a test serves a local listener. Never set from configuration.
     pub test_loopback: bool,
+    /// Tests only: DER root certificates an SMTP server's certificate may chain to beside the
+    /// public roots, so a test serves SMTP over TLS on a local listener. Never set from
+    /// configuration.
+    pub test_smtp_roots: Vec<Vec<u8>>,
     /// Optional allow-list of public hosts for CIMD fetches (`claude.ai`, `vscode.dev`).
     pub allowed_hosts: Option<Vec<String>>,
     /// Test-only mock responses keyed by URL so unit/e2e tests can run offline.
@@ -158,6 +162,7 @@ impl Default for OutboundPolicy {
         Self {
             private_hosts: Vec::new(),
             test_loopback: false,
+            test_smtp_roots: Vec::new(),
             allowed_hosts: None,
             mock_responses: Arc::new(RwLock::new(HashMap::new())),
             cluster: ClusterCredentials::default(),

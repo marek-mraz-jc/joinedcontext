@@ -289,20 +289,17 @@ async fn watch_registry(pool: sqlx::PgPool, run: Run, shutdown: CancellationToke
 /// A listener on `organization_hosts`; `None` (logged) when the database refuses one, so the
 /// timed rebuild carries on alone.
 async fn listen_registry(pool: &sqlx::PgPool) -> Option<sqlx::postgres::PgListener> {
-    let mut listener = match sqlx::postgres::PgListener::connect_with(pool).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
-            return None;
-        }
+    let listening = async {
+        let mut listener = sqlx::postgres::PgListener::connect_with(pool).await?;
+        listener.listen("organization_hosts").await?;
+        Ok::<_, sqlx::Error>(listener)
     };
-    match listener.listen("organization_hosts").await {
-        Ok(()) => Some(listener),
-        Err(e) => {
+    listening
+        .await
+        .inspect_err(|e| {
             tracing::warn!(error = %e, "host registry: no notifications, rebuilding on the timer");
-            None
-        }
-    }
+        })
+        .ok()
 }
 
 /// Reads both registries, [`apply`]s them, and last hands the served sign-in hosts of the active
