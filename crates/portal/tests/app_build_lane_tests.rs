@@ -498,6 +498,52 @@ async fn a_build_the_workflow_did_not_make_is_refused_and_nothing_is_published()
     }
 }
 
+/// AP-101, AP-104: a run that uploaded no SBOM beside the bundle is refused naming it, and a
+/// forge that fails the artifact listing is a forge error; nothing is published or written
+/// (T-7921).
+#[tokio::test]
+async fn a_build_without_its_sbom_or_with_a_failing_forge_publishes_nothing() {
+    for (artifact, answer, code, says) in [
+        (
+            "sbom",
+            ResponseTemplate::new(200).set_body_json(json!({ "value": [] })),
+            StatusCode::BAD_REQUEST,
+            "holds no artifact sbom-",
+        ),
+        (
+            "bundle",
+            ResponseTemplate::new(500),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the forge could not check the build",
+        ),
+    ] {
+        let shako = forge().await;
+        built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{APP_REPO}/Artifacts")))
+            .and(query_param("$filter", format!("Name eq '{artifact}-{COMMIT}'")))
+            .respond_with(answer)
+            .with_priority(1)
+            .mount(&shako)
+            .await;
+        package_takes(&shako, 201).await;
+        let state = state_with(&shako);
+        let refused = as_lane(&state, app(Some(build()), None)).await;
+        assert_eq!(refused.status, code, "{artifact}: {}", refused.text);
+        assert!(refused.text.contains(says), "{artifact}: {}", refused.text);
+        assert!(published(&shako).await.is_empty(), "{artifact}: published");
+        assert!(committed(&shako).await.is_empty(), "{artifact}: written");
+    }
+    // A registry that fails the publication is the forge's error, not a conflict.
+    let shako = forge().await;
+    built_on_forge(&shako, COMMIT, BUNDLE, None).await;
+    package_takes(&shako, 500).await;
+    let state = state_with(&shako);
+    let refused = as_lane(&state, app(Some(build()), None)).await;
+    assert_eq!(refused.status, StatusCode::SERVICE_UNAVAILABLE, "{}", refused.text);
+    assert!(committed(&shako).await.is_empty(), "the build was written");
+}
+
 /// AP-101: the registry never replaces a file. The same bytes already there are the same build
 /// published again; other bytes under the same version are refused.
 #[tokio::test]

@@ -2069,6 +2069,7 @@ mod tests {
         Mock::given(method("GET"))
             .and(path_regex(format!("^/api/endpoint/{AIR}")))
             .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
             .mount(&server)
             .await;
         board(&state, "failing", vec![pm10_widget("air")]);

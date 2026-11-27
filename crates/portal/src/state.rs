@@ -2019,6 +2019,47 @@ mod tests {
         assert!(state.installation_look().is_none());
     }
 
+    /// A second holder of a key keeps its slot when the first lets go, and a logout mark store
+    /// another thread poisoned still answers a mark and a start (T-7921).
+    #[tokio::test]
+    async fn a_second_holder_keeps_its_slot_and_a_poisoned_mark_store_still_answers() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        let first = state.mcp_enter(&[("tool", 2)]).expect("a slot");
+        let _second = state.mcp_enter(&[("tool", 2)]).expect("a second slot");
+        drop(first);
+        let _third = state.mcp_enter(&[("tool", 2)]).expect("the slot let go");
+        assert!(state.mcp_enter(&[("tool", 2)]).is_err(), "two held is the cap");
+        poison(Arc::clone(&state.revocations));
+        state.revoke_subject("f:1:gone", now_unix()).await;
+        // The database part runs where JC_PORTAL_TEST_DATABASE_URL names a PostgreSQL.
+        if let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        {
+            crate::db::connect(&url).await.expect("migrated");
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(1)
+                .after_connect(|conn, _| {
+                    Box::pin(async move {
+                        sqlx::raw_sql(
+                            "CREATE TEMP TABLE operator_changes \
+                               (kind text, state text, decided_at timestamptz, payload jsonb)",
+                        )
+                        .execute(conn)
+                        .await
+                        .map(|_| ())
+                    })
+                })
+                .connect(&url)
+                .await
+                .expect("a pool");
+            state.db = Some(pool);
+            state.load_revocations().await;
+            state.load_installation_look().await;
+            assert!(state.installation_look().is_none(), "no approved look");
+        }
+    }
+
     /// T-7816: a database that does not answer costs a logout mark its persistence and a start
     /// its read-back, each with a log line, never the process.
     #[tokio::test]

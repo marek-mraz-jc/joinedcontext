@@ -2232,6 +2232,12 @@ mod tests {
             "invalid input at /changes/0/manifest/metadata/namespace: Endpoint lives in \
              namespace 'doprava', not 'kosice': set metadata.namespace to 'doprava' or leave it out"
         );
+        let mut carried = with(Op::Patch, "held");
+        carried.patch = Some(json!({}));
+        assert_eq!(
+            refused(carried),
+            "invalid input at /changes/0/patch: op patch takes patch alone"
+        );
         let mut merge = bare(Op::Patch, "held");
         merge.patch = Some(json!({ "spec": { "audience": "organization" } }));
         let merged = checked(&merge).expect("a patch").expect("a manifest");
@@ -2878,6 +2884,22 @@ mod tests {
             .expect("a verdict");
         assert_eq!(checked["valid"], true, "{checked}");
         assert_eq!(checked["verdict"]["ok"], true, "{checked}");
+    }
+
+    /// A revert asked by someone who does not read the project is the same 404 as a change
+    /// that is not there (T-7921).
+    #[tokio::test]
+    async fn a_revert_for_an_outsider_is_a_change_not_found() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let op = crate::ops::find("jc_change_revert_plan").expect("registered");
+        let refused = (op.run)(&caller(None), &state, "doprava", json!({ "id": "chg-00000035" }))
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&refused, OpError::Api(ApiError::NotFound(why))
+                if why == "change 'chg-00000035' not found in project 'doprava'"),
+            "{refused:?}"
+        );
     }
 
     fn steward() -> Caller {

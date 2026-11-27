@@ -468,6 +468,74 @@ async fn a_database_that_stops_answering_never_reaches_the_proxy() {
     assert!(sent(&proxy).await.is_empty());
 }
 
+/// A counter store that refuses a step is a server error where the model is not yet asked, and
+/// a settle it refuses after the answer leaves the answer standing and logs it.
+#[tokio::test]
+async fn a_refusing_counter_store_answers_at_the_step_it_refused() {
+    let project = project("ai-counter-refuses");
+    let proxy = proxy(&project, "Severity 3.", 200).await;
+    let Some(mut state) = state(&proxy, &project, json!(["ai"])).await else {
+        return;
+    };
+    let db = common::build_lane::fresh_db()
+        .await
+        .expect("JC_PORTAL_TEST_DATABASE_URL names the test database");
+    state.db = Some(db.clone());
+    common::keyed_project(&state, &db, &project, "helsinki").await;
+    let run = |statements: &'static [&'static str]| {
+        let db = db.clone();
+        async move {
+            for statement in statements {
+                sqlx::query(sqlx::AssertSqlSafe(*statement))
+                    .execute(&db)
+                    .await
+                    .expect("the test's own database takes it");
+            }
+        }
+    };
+    run(&[
+        "CREATE FUNCTION refused() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+        "CREATE FUNCTION skipped() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RETURN NULL; END $$",
+        "CREATE TRIGGER refused BEFORE UPDATE ON app_service_usage \
+         FOR EACH STATEMENT EXECUTE FUNCTION refused()",
+    ])
+    .await;
+    // The day is held by an insert; the settle's update is refused after the answer.
+    let (status, body, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    assert_eq!(body["text"], "Severity 3.", "{text}");
+    assert_eq!(sent(&proxy).await.len(), 1);
+
+    // An insert the store skips holds nothing: the day reads as spent.
+    run(&[
+        "DROP TRIGGER refused ON app_service_usage",
+        "DELETE FROM app_service_usage",
+        "CREATE TRIGGER skipped BEFORE INSERT ON app_service_usage \
+         FOR EACH ROW EXECUTE FUNCTION skipped()",
+    ])
+    .await;
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{text}");
+
+    // An insert the store refuses is a server error.
+    run(&[
+        "DROP TRIGGER skipped ON app_service_usage",
+        "CREATE TRIGGER refused BEFORE INSERT ON app_service_usage \
+         FOR EACH STATEMENT EXECUTE FUNCTION refused()",
+    ])
+    .await;
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+
+    // A counter that cannot be read is a server error.
+    run(&["DROP TABLE app_service_usage"]).await;
+    let (status, _, text) = complete(&state, ask()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+    assert_eq!(sent(&proxy).await.len(), 1, "no refused step asks the model");
+}
+
 /// T-3661: the day is reserved before the call, in the statement that checks it, so calls in
 /// flight together cannot each see the same day left and pass it together.
 #[tokio::test]
