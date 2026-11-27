@@ -40,6 +40,20 @@ fn pkcs8_pem(der: &[u8]) -> String {
     pem
 }
 
+/// The signing key for `alg` from a PKCS#8 DER document; every algorithm but ES256, RS256 and
+/// EdDSA (HS* above all, W10) is refused here as well as in `parse_alg`, as defence in depth.
+fn encoding_key(alg: Algorithm, pkcs8_der: &[u8]) -> Result<EncodingKey> {
+    match alg {
+        Algorithm::ES256 => Ok(EncodingKey::from_ec_der(pkcs8_der)),
+        // jsonwebtoken's aws-lc backend wants PKCS#1 DER; the stored key is PKCS#8, which its
+        // PEM reader unwraps, so hand it the PKCS#8 document as PEM.
+        Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(pkcs8_der).as_bytes())
+            .map_err(crate::crypto_err("stored RSA key is not PKCS#8")),
+        Algorithm::EdDSA => Ok(EncodingKey::from_ed_der(pkcs8_der)),
+        _ => Err(KaisatsuError::Crypto("forbidden algorithm".into())),
+    }
+}
+
 /// Signs `claims` with `key_record` after decrypting its PKCS#8 DER under `kek`.
 pub fn sign_jwt<T: Serialize>(
     key_record: &SigningKeyRecord,
@@ -50,16 +64,7 @@ pub fn sign_jwt<T: Serialize>(
     let alg = parse_alg(&key_record.algorithm)?;
     let aad = format!("{}:{}", key_record.realm_id, key_record.kid);
     let pkcs8_der = kek.decrypt(aad.as_bytes(), &key_record.encrypted_private_key)?;
-    let encoding_key = match alg {
-        Algorithm::ES256 => EncodingKey::from_ec_der(&pkcs8_der),
-        // jsonwebtoken's aws-lc backend wants PKCS#1 DER; the stored key is PKCS#8, which its
-        // PEM reader unwraps, so hand it the PKCS#8 document as PEM.
-        Algorithm::RS256 => EncodingKey::from_rsa_pem(pkcs8_pem(&pkcs8_der).as_bytes())
-            .map_err(crate::crypto_err("stored RSA key is not PKCS#8"))?,
-        Algorithm::EdDSA => EncodingKey::from_ed_der(&pkcs8_der),
-        // parse_alg admits only the three above: an uncoverable deny kept as defence in depth
-        _ => return Err(KaisatsuError::Crypto("forbidden algorithm".into())),
-    };
+    let encoding_key = encoding_key(alg, &pkcs8_der)?;
     let mut header = Header::new(alg);
     header.kid = Some(key_record.kid.clone());
     header.typ = typ.map(str::to_owned).or_else(|| Some("JWT".into()));
@@ -187,6 +192,34 @@ mod tests {
     use super::*;
     use crate::keys::KeyManager;
     use serde_json::json;
+
+    #[test]
+    fn encoding_key_refuses_every_algorithm_outside_the_three_allowed() {
+        for alg in [
+            Algorithm::HS256,
+            Algorithm::HS384,
+            Algorithm::HS512,
+            Algorithm::ES384,
+            Algorithm::RS384,
+            Algorithm::RS512,
+            Algorithm::PS256,
+        ] {
+            let err = encoding_key(alg, b"any key bytes")
+                .expect_err("a forbidden algorithm must be refused");
+            assert_eq!(
+                err.to_string(),
+                KaisatsuError::Crypto("forbidden algorithm".into()).to_string()
+            );
+        }
+        let err =
+            encoding_key(Algorithm::RS256, b"").expect_err("an empty RSA document is not PKCS#8");
+        assert!(
+            err.to_string().contains("stored RSA key is not PKCS#8"),
+            "{err}"
+        );
+        assert!(encoding_key(Algorithm::ES256, b"").is_ok());
+        assert!(encoding_key(Algorithm::EdDSA, b"").is_ok());
+    }
 
     #[test]
     fn signs_and_verifies_es256_rs256_and_eddsa_and_rejects_alg_confusion() {

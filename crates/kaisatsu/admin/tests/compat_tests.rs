@@ -812,6 +812,96 @@ async fn row_35_to_46_clients_secrets_mappers_and_scopes() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
+/// One request with the body read as text (`$metadata` is XML).
+async fn send_raw(
+    app: &axum::Router,
+    method: Method,
+    uri: &str,
+    token: &str,
+) -> (StatusCode, String) {
+    let req = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .body(Body::empty())
+        .unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A service on an operation set of its own: an unbound action is listed as an `ActionImport`
+/// and refused on GET, an operation without an executor answers 501, and a route whose
+/// operation the set leaves out is not supported.
+#[tokio::test]
+async fn a_registry_of_its_own_lists_imports_and_refuses_what_it_leaves_out() {
+    let (_, store, admin_token, _) = setup_app().await;
+    let full = OperationRegistry::new();
+    let mut ping = full.find("allowed").expect("allowed").clone();
+    ping.name = "ping";
+    ping.odata.kind = ODataKind::Action;
+    ping.odata.name = "Ping";
+    let mut revoke = full.find("consent_revoke").expect("consent_revoke").clone();
+    revoke.name = "consent_revoke_v0";
+    let oidc = OidcState {
+        store: store.clone(),
+        kek: store.kek().clone(),
+        guard: OutboundGuard::default(),
+        default_mount: Mount::default(),
+        second_factor: Default::default(),
+    };
+    let mut state = AdminState::new(oidc, Arc::new(LocalAuthorizer));
+    state.registry = Arc::new(OperationRegistry::from_operations(vec![ping, revoke]));
+    let app = admin_router(state.clone()).merge(odata_router(state));
+    let odata = "/api/v1/realms/dev/odata";
+
+    let (st, xml) = send_raw(
+        &app,
+        Method::GET,
+        &format!("{odata}/$metadata"),
+        &admin_token,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{xml}");
+    assert!(
+        xml.contains("<Action Name=\"Ping\" IsBound=\"false\">"),
+        "{xml}"
+    );
+    assert!(
+        xml.contains("<ActionImport Name=\"Ping\" Action=\""),
+        "{xml}"
+    );
+    assert!(!xml.contains("Name=\"Allowed\""), "{xml}");
+
+    let (st, body) = send_raw(&app, Method::GET, &format!("{odata}/Ping"), &admin_token).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.contains("Ping is an action; POST it"), "{body}");
+
+    let (st, body) = send_raw(
+        &app,
+        Method::POST,
+        &format!("{odata}/Consents('c-1')/Revoke"),
+        &admin_token,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert!(
+        body.contains("operation consent_revoke_v0 has no executor"),
+        "{body}"
+    );
+
+    let (st, body) = send_raw(
+        &app,
+        Method::GET,
+        "/api/v1/realms/dev/allowed?kind=Realm",
+        &admin_token,
+    )
+    .await;
+    assert_eq!(st, StatusCode::NOT_IMPLEMENTED, "{body}");
+    assert!(body.contains("unknown operation allowed"), "{body}");
+}
+
 #[tokio::test]
 async fn a_client_write_pinning_an_algorithm_the_realm_cannot_sign_is_refused() {
     let (app, store, admin_token, _) = setup_app().await;

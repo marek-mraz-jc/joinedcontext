@@ -747,6 +747,7 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
     assert_eq!(code(&out), 1, "{}", stderr(&out));
 
     // serve on PostgreSQL: discovery, a password grant and the persisted client secret.
+    let smtp_pw = dir.file("smtp-password", "smtp-word-for-tests\n");
     let import = TempDir::new();
     import.file("realm.yaml", REALM_YAML);
     let mut child = Command::new(BIN)
@@ -763,6 +764,12 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
                     "--import-dir",
                     p(&import.0),
                     "--sweep-interval-secs",
+                    "1",
+                    "--smtp-password-file",
+                    p(&smtp_pw),
+                    "--smtp-host",
+                    "smtp.invalid",
+                    "--outbox-interval-secs",
                     "1",
                 ][..],
                 &db[..],
@@ -818,6 +825,31 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
         None,
     );
     assert_eq!(st, 200, "{body}");
+    // The realm table gone under it: the sweeper and the outbox passes fail, log and go on.
+    let su = PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(env.base.clone().database(&env.name))
+        .await
+        .expect("superuser on test db");
+    sqlx::raw_sql("ALTER TABLE kaisatsu.realms RENAME TO realms_hidden")
+        .execute(&su)
+        .await
+        .expect("hide the realm table");
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    sqlx::raw_sql("ALTER TABLE kaisatsu.realms_hidden RENAME TO realms")
+        .execute(&su)
+        .await
+        .expect("restore the realm table");
+    let (st, body) = http(
+        &addr,
+        "GET",
+        "/realms/cli/.well-known/openid-configuration",
+        None,
+    );
+    assert_eq!(
+        st, 200,
+        "the server outlives failed background passes: {body}"
+    );
     // SIGTERM stops the server cleanly: exit 0 after "stopped".
     let term = Command::new("kill")
         .args(["-TERM", &child.id().to_string()])
@@ -830,11 +862,6 @@ async fn migrate_apply_and_serve_on_postgres_with_password_files() {
     assert!(rest.iter().any(|l| l == "kaisatsu: stopped"), "{rest:?}");
 
     // The client secret is stored encrypted, never in clear text.
-    let su = PgPoolOptions::new()
-        .max_connections(1)
-        .connect_with(env.base.clone().database(&env.name))
-        .await
-        .expect("superuser on test db");
     let clear: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM kaisatsu.applications WHERE doc::text LIKE '%cli-secret-123%'",
     )

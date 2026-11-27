@@ -1475,6 +1475,14 @@ mod tests {
         // A tagged node is no LinkML document node.
         let e = parse_yaml("a: !custom x", limits, &mut used).unwrap_err();
         assert!(e.contains("a LinkML document"), "{e}");
+        // An integer past 64 bits is no value of a LinkML document either.
+        let e = parse_yaml(
+            "big: 340282366920938463463374607431768211455\n",
+            limits,
+            &mut used,
+        )
+        .unwrap_err();
+        assert!(e.contains("expected a LinkML document"), "{e}");
         let v = parse_yaml(
             "1: one\ntrue: yes\n~: none\nf: 1.5\nbig: 18446744073709551615\nneg: -3\n",
             limits,

@@ -740,17 +740,16 @@ mod tests {
             }
             req.send()
         };
-        let mut accepted = 0;
-        for _ in 0..50 {
+        // Until the hook is routed: the first try waits nothing, each later one 100 ms.
+        let (mut accepted, mut tries) = (404, 0u64);
+        while accepted == 404 && tries < 50 {
+            tokio::time::sleep(std::time::Duration::from_millis(100 * tries.min(1))).await;
             accepted = send(Some("tok-1"), "{\"t\":21.5}")
                 .await
                 .unwrap()
                 .status()
                 .as_u16();
-            if accepted != 404 {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            tries += 1;
         }
         assert_eq!(accepted, 200);
         let missing = send(None, "{}").await.unwrap();
@@ -1025,6 +1024,8 @@ mod tests {
             .with_ansi(false)
             .finish();
         let out = tracing::subscriber::with_default(subscriber, f);
+        let mut sink = buf.clone();
+        std::io::Write::flush(&mut sink).unwrap();
         let log = String::from_utf8(buf.0.lock().unwrap().clone()).unwrap();
         (out, log)
     }

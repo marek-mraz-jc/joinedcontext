@@ -1103,6 +1103,67 @@ mod tests {
         .unwrap()
     }
 
+    /// Only a Portal manifest that reads and passes jc-core's check is served, and only an
+    /// Endpoint with its Context Space and slug is a row to list.
+    #[test]
+    fn a_portal_that_does_not_read_and_an_endpoint_without_its_slug_are_left_out() {
+        let mirror = Mirror::new();
+        let put = |kind: &str, name: &str, namespace: &str, spec: serde_json::Value| {
+            mirror.upsert(
+                serde_json::from_value(serde_json::json!({
+                    "apiVersion": "joinedcontext.com/v1alpha1",
+                    "kind": kind,
+                    "metadata": { "name": name, "namespace": namespace },
+                    "spec": spec,
+                }))
+                .unwrap(),
+            );
+        };
+        let org = joinedcontext_portal::permissions::ORG_NAMESPACE;
+        put(
+            "Portal",
+            "good",
+            org,
+            serde_json::json!({"organizationRef": "city", "path": "mobility"}),
+        );
+        put(
+            "Portal",
+            "bad",
+            org,
+            serde_json::json!({"organizationRef": "city", "bogus": 1}),
+        );
+        assert_eq!(
+            in_mirror(&mirror).keys().collect::<Vec<_>>(),
+            ["good"],
+            "a manifest that does not read is not served"
+        );
+        put(
+            "Endpoint",
+            "air",
+            "doprava",
+            serde_json::json!({"contextSpaceRef": "ovzdusie", "slug": "air-quality"}),
+        );
+        put(
+            "Endpoint",
+            "noslug",
+            "doprava",
+            serde_json::json!({"contextSpaceRef": "ovzdusie"}),
+        );
+        put(
+            "Endpoint",
+            "nospace",
+            "doprava",
+            serde_json::json!({"slug": "nospace"}),
+        );
+        let rows = endpoints_in(&mirror);
+        assert_eq!(
+            rows.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["air"],
+            "{rows:?}"
+        );
+        assert!(!rows[0].published);
+    }
+
     /// T-7520 C2: only an Organization the mirror holds and can read declares anything.
     #[test]
     fn a_catalogue_takes_the_publisher_its_organization_declares() {
@@ -1370,7 +1431,6 @@ mod desk_tests {
             .expect("the catalogue is served");
         let mut names: Vec<String> = answer["sources"]
             .as_array()
-            .or_else(|| answer.as_array())
             .into_iter()
             .flatten()
             .filter_map(|s| s["name"].as_str().map(str::to_owned))
@@ -1781,6 +1841,24 @@ mod desk_tests {
         )]);
         list_endpoints(&w, &orgs, &ghost, &endpoints, &mut listing).await;
         assert!(listing.contains("g"));
+        // Nothing to list: a portal without an endpoints source that no round listed, and one of
+        // an Organization jc does not serve.
+        let stranger: PortalSpec = serde_json::from_value(serde_json::json!({
+            "organizationRef": "elsewhere", "path": "other",
+            "sources": [{ "name": "own", "type": "endpoints" }],
+        }))
+        .unwrap();
+        let quiet = served(&[
+            ("m", portal("mobility", serde_json::json!([]))),
+            ("s", stranger.clone()),
+        ]);
+        let mut listing = BTreeSet::new();
+        list_endpoints(&w, &orgs, &quiet, &endpoints, &mut listing).await;
+        assert!(listing.is_empty(), "{listing:?}");
+        // A portal of an Organization jc does not serve leaves the round without a delete.
+        let mut done = served(&[("s", stranger)]);
+        apply(&w, &orgs, &mut done, BTreeMap::new()).await;
+        assert!(done.is_empty());
     }
 
     #[test]

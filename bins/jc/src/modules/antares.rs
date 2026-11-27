@@ -495,9 +495,7 @@ mod tests {
         let at = |login: &str| {
             let mut url = url::Url::parse(&admin).unwrap();
             url.set_username(login).unwrap();
-            if login != "postgres" {
-                url.set_password(Some("app-pw")).unwrap();
-            }
+            url.set_password(Some("app-pw")).unwrap();
             url.to_string()
         };
         let (owner, maint) = (at("jc_t7637_antares"), at("jc_t7637_antares_maint"));
@@ -543,6 +541,21 @@ mod tests {
             .unwrap()
             .to_string();
         assert!(e.contains("ANTARES_BUS=local double-fires"), "{e}");
+        // A setup that holds no admin token (no Antares in its roles) starts no broker.
+        let bare_dir = tempfile::tempdir().unwrap();
+        let bare = crate::setup::Setup::prepare(bare_dir.path(), &[], &none).unwrap();
+        let e = build(
+            &AntaresSection::default(),
+            &bare,
+            None,
+            None,
+            &CancellationToken::new(),
+        )
+        .await
+        .err()
+        .unwrap()
+        .to_string();
+        assert!(e.contains("no admin token"), "{e}");
     }
 
     /// dev's four write settings come as defaults beside the identity keys; the broker reads each

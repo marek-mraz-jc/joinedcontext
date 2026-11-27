@@ -1000,6 +1000,14 @@ mod tests {
         );
         assert!(text.contains("1 refused by a duplicate"), "{text}");
         assert!(text.ends_with("0 staying, 2 retired, 0 restored, 0 placed but kept enabled\n"));
+        // A writer that refuses the first realm's line stops the report there.
+        struct Refusing;
+        impl std::fmt::Write for Refusing {
+            fn write_str(&mut self, _: &str) -> std::fmt::Result {
+                Err(std::fmt::Error)
+            }
+        }
+        assert!(std::fmt::write(&mut Refusing, format_args!("{report}")).is_err());
     }
 
     #[tokio::test]

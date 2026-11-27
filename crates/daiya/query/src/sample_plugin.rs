@@ -177,9 +177,31 @@ mod tests {
     use super::*;
     use crate::guard::GuardConfig;
     use crate::wasm::WasmPluginHost;
-    use crate::{Datasource, MapSecretResolver, OutboundGuard};
+    use crate::{Datasource, DsError, MapSecretResolver, OutboundGuard};
     use daiya_model::{InstanceId, OrgId, Subject};
     use std::sync::Arc;
+
+    /// A value JSON cannot hold (a map keyed by a pair) is an error, not a panic, on both sides
+    /// of the plugin ABI; a plain value serialises.
+    #[test]
+    fn a_value_json_cannot_hold_is_an_error_across_the_plugin_abi() {
+        let keyed_by_pair = BTreeMap::from([((1, 2), 3)]);
+        let err = to_json(&keyed_by_pair).expect_err("a pair is no JSON key");
+        assert!(err.contains("key must be a string"), "{err}");
+        let err = crate::wasm::guest_json(&keyed_by_pair).expect_err("a pair is no JSON key");
+        assert!(
+            matches!(&err, DsError::Wasm(why) if why.contains("key must be a string")),
+            "{err:?}"
+        );
+        assert_eq!(
+            to_json(&BTreeMap::from([("a", 1)])).as_deref(),
+            Ok(r#"{"a":1}"#)
+        );
+        assert_eq!(
+            crate::wasm::guest_json(&Vec::<u8>::new()).ok().as_deref(),
+            Some("[]")
+        );
+    }
 
     #[tokio::test]
     async fn wasm_host_enforces_pinned_digest_and_limits() {

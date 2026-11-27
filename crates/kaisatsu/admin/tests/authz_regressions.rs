@@ -721,6 +721,100 @@ async fn roles_never_leak_across_realms_or_from_role_names() {
     assert_eq!(st, StatusCode::NO_CONTENT);
 }
 
+/// A `{realm}-realm` role a master person holds through a master group administers that realm
+/// as a direct grant does.
+#[tokio::test]
+async fn a_realm_grant_through_a_master_group_administers_the_realm() {
+    let f = Fixture::new().await;
+    f.store
+        .create_user(UserRepresentation {
+            id: "grp-ops".into(),
+            realm_id: "master".into(),
+            username: "grp-ops".into(),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    let t = f.token("master", "grp-ops", json!({ "acr": "mfa" })).await;
+    let put = async || {
+        f.send(Method::PUT, "/admin/realms/dev", &t, Some(realm_body()))
+            .await
+    };
+    assert_eq!(put().await, StatusCode::FORBIDDEN, "no grant yet");
+    let group = f
+        .store
+        .upsert_group(GroupRepresentation {
+            id: "g-dev-admins".into(),
+            realm_id: "master".into(),
+            name: "dev-admins".into(),
+            path: "/dev-admins".into(),
+            client_roles: std::collections::HashMap::from([(
+                "dev-realm".into(),
+                vec!["realm-admin".into()],
+            )]),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    f.store
+        .add_user_to_group("master", "grp-ops", &group.id)
+        .await
+        .unwrap();
+    assert_eq!(put().await, StatusCode::NO_CONTENT);
+}
+
+/// A person's Organizations are their own, the token's and every one they are a member of:
+/// a member of a second Organization reaches its people there with no `jc_org` claim.
+#[tokio::test]
+async fn a_membership_beyond_the_persons_own_organization_counts() {
+    let f = Fixture::new().await;
+    for (id, member_of) in [("dual", vec!["espoo"]), ("hel-only", Vec::new())] {
+        f.store
+            .create_user(UserRepresentation {
+                id: id.into(),
+                realm_id: "dev".into(),
+                org_id: Some("helsinki".into()),
+                username: id.into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        for org in member_of {
+            f.store
+                .upsert_membership(Membership {
+                    id: format!("m-{id}-{org}"),
+                    realm_id: "dev".into(),
+                    org_id: org.into(),
+                    person_id: id.into(),
+                    org_roles: vec!["org-admin".into()],
+                    created_at: jc_time::TimestampTz::now(),
+                })
+                .await
+                .unwrap();
+        }
+    }
+    let dual = f.token("dev", "dual", json!({})).await;
+    let st = f
+        .send(
+            Method::GET,
+            "/admin/realms/dev/users/esp-person",
+            &dual,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK);
+    let hel_only = f.token("dev", "hel-only", json!({})).await;
+    let st = f
+        .send(
+            Method::GET,
+            "/admin/realms/dev/users/esp-person",
+            &hel_only,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+}
+
 /// A grant on one realm name creates no realm under another: the body's id is ignored, the realm
 /// is keyed by its name (S3-28).
 #[tokio::test]

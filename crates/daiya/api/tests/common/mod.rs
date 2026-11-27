@@ -38,6 +38,9 @@ pub struct FlakyStore {
     /// false), as
     /// when the row went away in between.
     empty: Mutex<BTreeSet<&'static str>>,
+    /// Methods that refuse what they were asked (`CrError::BadRequest`), as the Postgres store
+    /// refuses a row query it cannot write as SQL.
+    refusing: Mutex<BTreeSet<&'static str>>,
 }
 
 impl FlakyStore {
@@ -52,7 +55,12 @@ impl FlakyStore {
     pub fn find_nothing(&self, method: &'static str) {
         self.empty.lock().insert(method);
     }
+    /// `method` answers `CrError::BadRequest` from now on.
+    pub fn refuse(&self, method: &'static str) {
+        self.refusing.lock().insert(method);
+    }
     pub fn heal(&self) {
+        self.refusing.lock().clear();
         self.failing.lock().clear();
         self.countdown.lock().clear();
         self.empty.lock().clear();
@@ -337,6 +345,9 @@ impl DaiyaStore for FlakyStore {
         org_id: OrgId,
         query: daiya_model::RowQuery,
     ) -> StoreFuture<'_, daiya_model::RowPage> {
+        if self.refusing.lock().contains("read_rows") {
+            return Box::pin(async { Err(CrError::BadRequest("no such row query".into())) });
+        }
         guarded!(self, "read_rows", self.inner.read_rows(org_id, query))
     }
     fn list_import_reports(&self, org_id: OrgId) -> StoreFuture<'_, Vec<ImportReportRecord>> {

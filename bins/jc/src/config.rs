@@ -1992,12 +1992,12 @@ fn pipeline_client_secrets(
         }
         return Ok(out);
     };
-    let entries = std::fs::read_dir(dir)
-        .map_err(|e| ConfigError::ClientSecrets(format!("{}: {}", dir.display(), e.kind())))?;
+    let unreadable =
+        |e: std::io::Error| ConfigError::ClientSecrets(format!("{}: {}", dir.display(), e.kind()));
+    let entries = std::fs::read_dir(dir).map_err(unreadable)?;
     let mut clients = BTreeMap::new();
     for entry in entries {
-        let entry = entry
-            .map_err(|e| ConfigError::ClientSecrets(format!("{}: {}", dir.display(), e.kind())))?;
+        let entry = entry.map_err(unreadable)?;
         let Ok(name) = entry.file_name().into_string() else {
             continue;
         };
@@ -3362,6 +3362,14 @@ path_prefix = "/api/endpoint"
             let err = orgs(&text).expect_err(field).to_string();
             assert!(err.contains(says), "{field}: {err}");
         }
+        // The sign-in host can not be a shared host of `auto` either.
+        let err = orgs(&auto("login_host = \"api.city.example\""))
+            .expect_err("login_host on a shared host")
+            .to_string();
+        assert!(
+            err.contains("login_host: host 'api.city.example' is the shared host"),
+            "{err}"
+        );
         let err = orgs(&auto("login_host = \"https://login\""))
             .unwrap_err()
             .to_string();

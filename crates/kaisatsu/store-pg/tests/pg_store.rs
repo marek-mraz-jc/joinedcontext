@@ -906,6 +906,50 @@ async fn reading_present_signing_keys_takes_no_realm_key_lock() {
     db.drop_db().await;
 }
 
+/// The change listener stops once its connection is gone and no new one is admitted: the
+/// reconnect pause runs, then the task ends instead of spinning.
+#[tokio::test]
+async fn the_change_listener_ends_when_the_database_admits_it_no_more() {
+    let Some(db) =
+        common::test_db("the_change_listener_ends_when_the_database_admits_it_no_more").await
+    else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    let start = store.reload_generation();
+    let listener = store.spawn_change_listener();
+    // The listener counts its own connect: wait for it, branch-free.
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        while store.reload_generation() == start {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the listener connected");
+    let admin = db.superuser_pool().await;
+    for q in [
+        format!(
+            "REVOKE CONNECT ON DATABASE {} FROM PUBLIC, kaisatsu_app",
+            db.name
+        ),
+        format!(
+            "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
+             WHERE datname = '{}' AND usename = 'kaisatsu_app'",
+            db.name
+        ),
+    ] {
+        sqlx::raw_sql(AssertSqlSafe(q))
+            .execute(&admin)
+            .await
+            .expect("refuse the app");
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(60), listener)
+        .await
+        .expect("the listener ends")
+        .expect("no panic");
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn sweeper_and_change_notifications() {
     let Some(db) = common::test_db("sweeper_and_change_notifications").await else {
