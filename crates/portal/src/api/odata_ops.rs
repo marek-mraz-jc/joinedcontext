@@ -352,7 +352,7 @@ pub(crate) fn json(offered: &[&'static Operation]) -> Vec<(&'static str, Value)>
 }
 
 /// A refusal before the operation runs: status, problem slug, sentence.
-pub(crate) type Refusal = (StatusCode, &'static str, String);
+pub type Refusal = (StatusCode, &'static str, String);
 
 fn bad(message: impl Into<String>) -> Refusal {
     (StatusCode::BAD_REQUEST, "invalid-request", message.into())
@@ -361,10 +361,7 @@ fn bad(message: impl Into<String>) -> Refusal {
 /// `name(a=1,b=@x)` split into the operation's name and its parameters, aliases resolved from
 /// `query` (`@x=...`). A literal is OData's (`'text'` with `''` for a quote, a number, `true`,
 /// `false`, `null`); an alias's value may also be JSON (`{"a":1}`, `["x"]`, `"text"`).
-pub(crate) fn function_call(
-    call: &str,
-    query: &str,
-) -> Result<(String, Map<String, Value>), Refusal> {
+pub fn function_call(call: &str, query: &str) -> Result<(String, Map<String, Value>), Refusal> {
     let call = odata_url::percent_decoded(call)
         .ok_or_else(|| bad("the function call is not valid percent-encoding"))?;
     let (name, args) = match call.split_once('(') {
@@ -542,6 +539,21 @@ mod tests {
         }
     }
 
+    /// Each literal kind a parameter takes: null, a negative and a decimal number, an escaped
+    /// quote; an infinite number is refused like any other word (T-7894).
+    #[test]
+    fn a_function_call_takes_every_literal_kind() {
+        let (_, params) = function_call("f(a=null,b=-3,c=1.5,d='''',e=true)", "").expect("taken");
+        assert_eq!(
+            Value::Object(params),
+            json!({ "a": null, "b": -3, "c": 1.5, "d": "'", "e": true })
+        );
+        for word in ["inf", "1e999", "x'"] {
+            let call = format!("f(a={word})");
+            assert!(function_call(&call, "").is_err(), "{call}");
+        }
+    }
+
     #[test]
     fn every_operation_of_the_registry_has_one_class() {
         let classes: Vec<&str> = ENTITY_READS
@@ -551,22 +563,25 @@ mod tests {
             .chain(&OTHER_ACTIONS)
             .copied()
             .collect();
-        let wrong: Vec<String> = ops::registry()
+        // (name, classes) of each operation in other than one class, and the classes' names
+        // the registry lacks.
+        let wrong: Vec<(&str, usize)> = ops::registry()
             .iter()
-            .filter_map(|op| {
-                let n = classes.iter().filter(|name| **name == op.name).count();
-                (n != 1).then(|| format!("{} ({n} classes)", op.name))
+            .map(|op| {
+                (
+                    op.name,
+                    classes.iter().filter(|name| **name == op.name).count(),
+                )
             })
-            .chain(
-                classes
-                    .iter()
-                    .filter(|name| ops::find(name).is_none())
-                    .map(|name| format!("{name} (not in the registry)")),
-            )
+            .filter(|(_, n)| *n != 1)
+            .collect();
+        let unregistered: Vec<&&str> = classes
+            .iter()
+            .filter(|name| ops::find(name).is_none())
             .collect();
         assert!(
-            wrong.is_empty(),
-            "API/13 §2b and the registry differ: {wrong:?}"
+            wrong.is_empty() && unregistered.is_empty(),
+            "API/13 §2b and the registry differ: {wrong:?}, not in the registry: {unregistered:?}"
         );
         // Every operation is reachable: a set answers it or it is a function or action here.
         let unreached: Vec<&str> = ops::registry()

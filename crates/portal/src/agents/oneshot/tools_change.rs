@@ -3544,6 +3544,30 @@ mod change_resource_tests {
             .await
             .iter()
             .all(|event| event["status"] == "failed"));
+        // An endpoint of the project: the edit reaches the change step, and the platform's
+        // check answers it with what to fix (here the Policy the space lacks; T-7894).
+        put(&state, "ContextSpace", "air", json!({}));
+        put(
+            &state,
+            "Endpoint",
+            "counters",
+            json!({ "contextSpaceRef": "air", "audience": "project-list", "allowedProjects": ["helsinki"], "slug": "abcdefghijklmnopqrstuvwxyz23", "enabledRepresentations": ["ngsi-ld"], "representations": {} }),
+        );
+        let retitled: crate::agents::share::EditEndpoint =
+            serde_json::from_value(json!({ "name": "counters", "requestsPerMinute": 60 }))
+                .expect("a call");
+        let prose = driver
+            .edit_endpoint(Ok(retitled), "")
+            .await
+            .expect("the run goes on");
+        assert!(
+            !prose.starts_with("The endpoint could not be changed"),
+            "{prose}"
+        );
+        assert!(
+            prose.contains("platform's check") && prose.contains("spec.policyRefs"),
+            "{prose}"
+        );
         driver.access = crate::agents::access::Access::default();
         let prose = driver
             .edit_endpoint(Ok(call), "")

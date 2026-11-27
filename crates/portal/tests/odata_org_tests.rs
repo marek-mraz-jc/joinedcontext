@@ -825,6 +825,118 @@ async fn each_refused_resource_shape_answers_its_status() {
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+/// Every refusal a read of each path shape can still meet after the URL parsed (T-7894): a
+/// `$filter` naming no property on each set and `$count`, `$expand` from a set that has no
+/// navigation, a nested or unknown `$expand`, and a key of the wrong type under a project.
+#[tokio::test]
+async fn each_read_refuses_what_its_path_cannot_answer() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    let cookie = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let root = cookies(&state.config, person("root", groups_of("root")), "hel").await;
+    let bad = StatusCode::BAD_REQUEST;
+    let mut wrong = Vec::new();
+    for (who, uri, want) in [
+        (
+            &cookie,
+            "/api/v1/projects/$count?$filter=nosuch%20eq%201",
+            bad,
+        ),
+        (&cookie, "/api/v1/projects?$filter=nosuch%20eq%201", bad),
+        (
+            &cookie,
+            "/api/v1/projects?$expand=spaces/name",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+        (&cookie, "/api/v1/projects?$expand=nosuch", bad),
+        (&cookie, "/api/v1/projects?$expand=spaces($expand=x)", bad),
+        (&cookie, "/api/v1/projects('helsinki')?$expand=nosuch", bad),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces?$expand=spaces",
+            bad,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces/$count?$filter=nosuch%20eq%201",
+            bad,
+        ),
+        (
+            &cookie,
+            "/api/v1/projects('helsinki')/spaces(1)",
+            StatusCode::NOT_FOUND,
+        ),
+        (&cookie, "/api/v1/projects(1)/spaces", bad),
+        (&cookie, "/api/v1/spaces?$expand=spaces", bad),
+        (
+            &cookie,
+            "/api/v1/spaces/$count?$filter=nosuch%20eq%201",
+            bad,
+        ),
+        (&cookie, "/api/v1/spaces?$filter=nosuch%20eq%201", bad),
+        (&cookie, "/api/v1/spaces(1)", bad),
+        (&root, "/api/v1/members?$expand=spaces", bad),
+        (&root, "/api/v1/members/$count?$filter=nosuch%20eq%201", bad),
+        (&root, "/api/v1/members?$filter=nosuch%20eq%201", bad),
+        (&root, "/api/v1/organizationRoles?$expand=spaces", bad),
+        (
+            &root,
+            "/api/v1/organizationRoles/$count?$filter=nosuch%20eq%201",
+            bad,
+        ),
+        (
+            &root,
+            "/api/v1/organizationRoles?$filter=nosuch%20eq%201",
+            bad,
+        ),
+        (&root, "/api/v1/organizationRoles('reader')", StatusCode::OK),
+        (
+            &root,
+            "/api/v1/organizationRoles('nobody')",
+            StatusCode::NOT_FOUND,
+        ),
+        (&cookie, "/api/v1/$all", StatusCode::NOT_IMPLEMENTED),
+        (
+            &cookie,
+            "/api/v1/$crossjoin(projects,spaces)",
+            StatusCode::NOT_IMPLEMENTED,
+        ),
+    ] {
+        let answer = send(&state, mode, who, uri, &[]).await;
+        if answer.status != want {
+            wrong.push(format!("{uri}: {} {}", answer.status, answer.text));
+        }
+    }
+    assert!(wrong.is_empty(), "{wrong:#?}");
+}
+
+/// A binding past its validity makes nobody a member, and a subject naming neither a user nor
+/// a group adds nobody (AUZ-02, T-7894).
+#[tokio::test]
+async fn members_leave_out_lapsed_bindings_and_empty_subjects() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "lapsed-hel",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "lapsed-user" }], "role": "reader",
+                "scope": { "organization": "hel" },
+                "validity": { "notAfter": "2020-01-01T00:00:00Z" } }),
+    ));
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "empty-hel",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{}], "role": "reader", "scope": { "organization": "hel" } }),
+    ));
+    let rows = odata(&state, Mode::Path("hel"), "root", "/api/v1/members").await;
+    assert_eq!(rows.status, StatusCode::OK, "{}", rows.text);
+    let users = names(&rows.json(), "user");
+    assert!(!users.is_empty(), "{}", rows.text);
+    assert!(!users.contains(&"lapsed-user".to_owned()), "{users:?}");
+    assert!(users.iter().all(|u| !u.is_empty()), "{users:?}");
+}
+
 /// The `portals` set (ODP-08): 401 to nobody, refused to a reader without a Portal rule, and
 /// an Organization's portal reader sees only that Organization's portals.
 /// The router placed the request in an Organization this Portal holds no host for (one the
@@ -2138,6 +2250,77 @@ async fn the_change_list_answers_its_detail_from_the_list() {
         thin,
         "a list row read its Change again"
     );
+}
+
+/// A page naming a member only `jc_change_get` reads (`files`) reads each Change again, so it
+/// holds at most 50 Changes: 51 open ones are refused with the `$top` to ask (T-7894).
+#[tokio::test]
+async fn a_page_of_change_files_holds_at_most_fifty() {
+    let shako = MockServer::start().await;
+    let repo = common::REPO;
+    let pulls: Vec<Value> = (1..=51)
+        .map(|n| {
+            json!({
+                "Number": n, "HtmlUrl": format!("https://shako.example/pulls/{n}"),
+                "State": "open", "Title": format!("create ContextSpace s{n}"),
+                "Head": format!("portal/create-contextspace-s{n}-{n:08x}"), "Base": "main",
+                "CreatedAt": "2026-09-06T09:14:22Z", "Author": "jana", "AuthorName": "Jana",
+                "AuthorEmail": "jana@hel.fi", "Mergeable": true, "Merged": false
+            })
+        })
+        .collect();
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": pulls })))
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(wiremock::matchers::path_regex(
+            r"/PullRequests\([0-9]+\)/Files$",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [
+            { "Filename": "projects/helsinki/spaces/mobility/space.yaml", "Status": "added" }
+        ] })))
+        .mount(&shako)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-1",
+            "Content": base64::engine::general_purpose::STANDARD.encode(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  \
+                 name: mobility\n  namespace: helsinki\nspec:\n  isSandbox: true\n",
+            )
+        })))
+        .mount(&shako)
+        .await;
+    let client = ShakoClient::new(
+        shako.uri().parse().expect("mock url"),
+        "test-owner",
+        "test-repo",
+        "token-xyz",
+    )
+    .expect("client");
+    let state = state().with_shako(Arc::new(client));
+    let mode = Mode::Host("hel");
+    let all = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes",
+    )
+    .await;
+    assert_eq!(all.status, StatusCode::OK, "{}", all.text);
+    assert!(names(&all.json(), "name").len() > 50, "{}", all.text);
+    let long = get(
+        &state,
+        mode,
+        "hel-only",
+        "/api/v1/projects('helsinki')/changes?$select=name,files",
+    )
+    .await;
+    assert_eq!(long.status, StatusCode::BAD_REQUEST, "{}", long.text);
+    assert!(long.text.contains("$top=50"), "{}", long.text);
 }
 
 /// The forge paths asked since the `before`th request.

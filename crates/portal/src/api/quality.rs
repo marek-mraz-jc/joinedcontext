@@ -325,5 +325,25 @@ mod tests {
             .expect("a space reader reads its score");
         assert!(owned.parts.iter().any(|part| part.fix.is_some()));
         assert_eq!(owned.score, public.score);
+
+        // The space's report (T-7894): its counts for a space reader who reads no Entity, the
+        // example ids left out; a stranger gets the 404 of an unknown space.
+        state
+            .mirror
+            .upsert(envelope("ContextSpace", "bikes", "oulu", json!({})));
+        let space = |email: &str| {
+            get_quality(
+                user(email),
+                State(state.clone()),
+                Path(("oulu".to_owned(), "bikes".to_owned())),
+            )
+        };
+        let Json(read) = space("owner@hel.fi").await.expect("a space reader");
+        assert_eq!(read["checked"], json!(10), "{read}");
+        assert_eq!(read["rules"][0]["examples"], json!([]), "{read}");
+        assert!(matches!(
+            space("stranger@hel.fi").await,
+            Err(ApiError::NotFound(_))
+        ));
     }
 }

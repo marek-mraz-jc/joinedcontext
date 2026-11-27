@@ -1377,6 +1377,24 @@ mod tests {
         assert!(pack.contains("a narrowed one with its `q` prop"), "{pack}");
     }
 
+    /// An application whose data needs write gets the form rule and the attributes its
+    /// endpoint's DataModel declares, `{}` when nothing declares them (T-7894).
+    #[tokio::test]
+    async fn a_writing_application_is_told_it_may_write_and_with_what() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let mut driver = Driver::for_tests(state, "helsinki");
+        driver.allows_write = true;
+        let pack = driver
+            .code_pack(&json!({}), &BTreeMap::new(), &[], "A form", None)
+            .await;
+        assert!(pack.contains("The application MAY write"), "{pack}");
+        assert!(
+            pack.contains("(JSON Schema properties):\n```json\n{}\n```"),
+            "{pack}"
+        );
+        assert!(!pack.contains("may NOT write"), "{pack}");
+    }
+
     /// T-3076: the first code call over the template carries the SDK, the components by their
     /// exports and the application's own files: within 26.5k tokens (~25.8k measured since the
     /// SDK's platform services, T-3583), where the whole template alone was ~50k. It is one call

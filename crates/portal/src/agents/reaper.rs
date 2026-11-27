@@ -163,7 +163,20 @@ mod tests {
     #[tokio::test]
     async fn a_store_that_cannot_list_reaps_nothing() {
         let mut state = AppState::new(Config::for_tests(), None);
+        // An Organization in the mirror, so listing asks the database for its key and fails
+        // there (an empty mirror lists nothing without asking it).
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Organization",
+            "hel",
+            crate::permissions::ORG_NAMESPACE,
+            serde_json::json!({ "installation": true }),
+        ));
         state.agents = Arc::new(AgentStore::new(Some(dead()), state.mirror.clone()));
+        assert!(state
+            .agents
+            .list_expired("2026-01-01T00:00:00Z")
+            .await
+            .is_err());
         assert_eq!(reap_expired(&state).await, 0);
         assert_eq!(end_closed_publications(&state).await, 0);
     }

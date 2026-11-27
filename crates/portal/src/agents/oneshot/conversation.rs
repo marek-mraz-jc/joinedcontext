@@ -2643,6 +2643,47 @@ mod tests {
             .await;
     }
 
+    /// A model that keeps searching past the calls one message may make ends the turn asking
+    /// for a narrower question, its searches all run once (T-7894).
+    #[tokio::test]
+    async fn searches_past_the_message_limit_end_the_turn() {
+        let model = wiremock::MockServer::start().await;
+        let searches: Vec<String> = (0..data_query::MAX_CALLS)
+            .map(|n| fenced(json!({ "tool": "search_catalog", "q": format!("bikes {n}") })))
+            .collect();
+        let searches = searches.join("\n");
+        scripted(&model, &[&searches]).await;
+        let (driver, _) = chatting_with(&model.uri(), std::time::Duration::from_secs(10));
+        let mut conversation = Vec::new();
+        driver
+            .turn(&mut conversation, "find every bike dataset".into())
+            .await;
+        assert!(
+            conversation[0].1.contains("ask a narrower question"),
+            "{}",
+            conversation[0].1
+        );
+        assert_eq!(sent(&model).await.len(), 2);
+    }
+
+    /// A tool line with nothing sent and nothing back is its name and status alone; a long
+    /// result is cut on a character boundary with an ellipsis; no tool name, no line (T-7894).
+    #[test]
+    fn a_tool_line_carries_only_what_the_call_had() {
+        assert_eq!(
+            tool_line(&json!({ "tool": "jc_schema_list", "input": null, "output": null })),
+            Some("[jc_schema_list ok]".to_owned())
+        );
+        let long = "é".repeat(TOOL_LINE + 5);
+        let line =
+            tool_line(&json!({ "tool": "t", "status": "failed", "error": long })).expect("a line");
+        assert!(line.starts_with("[t failed] -> "), "{line}");
+        assert!(line.ends_with('…'), "{line}");
+        assert_eq!(line.chars().filter(|c| *c == 'é').count(), TOOL_LINE);
+        assert_eq!(tool_line(&json!({ "status": "ok" })), None);
+        assert_eq!(one_line(&json!("a\nb")), "a b");
+    }
+
     /// The scripted model lane: the stub at `model` answers `turns` one after the other, one
     /// completion per model call, and the last one for every call after it.
     struct Script {
