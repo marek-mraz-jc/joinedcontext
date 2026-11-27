@@ -375,6 +375,8 @@ async fn tls_smtp() -> (u16, Vec<u8>, Arc<std::sync::Mutex<String>>) {
         let (read, mut write) = tokio::io::split(tls);
         let mut lines = BufReader::new(read).lines();
         write.write_all(b"220 mail.test ESMTP\r\n").await.unwrap();
+        // TLS holds what is written until a flush.
+        write.flush().await.unwrap();
         let mut data = false;
         while let Ok(Some(line)) = lines.next_line().await {
             let answer: &[u8] = if data {
@@ -395,12 +397,14 @@ async fn tls_smtp() -> (u16, Vec<u8>, Arc<std::sync::Mutex<String>>) {
                     }
                     Some("QUIT") => {
                         let _ = write.write_all(b"221 bye\r\n").await;
+                        let _ = write.flush().await;
                         return;
                     }
                     _ => b"250 ok\r\n",
                 }
             };
             write.write_all(answer).await.unwrap();
+            write.flush().await.unwrap();
         }
     });
     (port, root, taken)
@@ -423,6 +427,7 @@ async fn a_test_e_mail_the_server_takes_is_sent() {
         port: port.to_string(),
         from: "noreply@example.org".into(),
         ssl: "true".into(),
+        auth: "false".into(),
         ..SmtpServerConfig::default()
     });
     f.store.upsert_realm(realm).await.unwrap();
@@ -465,6 +470,7 @@ async fn a_test_e_mail_to_a_server_with_an_untrusted_certificate_is_not_sent() {
         port: port.to_string(),
         from: "noreply@example.org".into(),
         ssl: "true".into(),
+        auth: "false".into(),
         ..SmtpServerConfig::default()
     });
     f.store.upsert_realm(realm).await.unwrap();

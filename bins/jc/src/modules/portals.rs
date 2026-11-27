@@ -1666,7 +1666,9 @@ mod desk_tests {
         };
         state.mirror.upsert(envelope(
             "m",
-            serde_json::json!({ "organizationRef": "city", "path": "mobility", "sources": loopback() }),
+            serde_json::json!({ "organizationRef": "city", "path": "mobility", "sources": [
+                { "name": "a", "type": "dcat-ap", "url": "https://data.kosice.sk/a.ttl" },
+            ] }),
         ));
         state
             .mirror
@@ -1679,9 +1681,9 @@ mod desk_tests {
         tasks.close();
         tasks.wait().await;
         drop(guard);
-        assert_eq!(sources(&w, "mobility").await, ["local"]);
         let log = std::fs::read_to_string(file.path()).unwrap();
         assert!(log.contains("Portal refused; not served"), "{log}");
+        assert_eq!(sources(&w, "mobility").await, ["a"], "{log}");
     }
 
     /// A run the store refuses to claim ends at once: the failure is logged and the source is
