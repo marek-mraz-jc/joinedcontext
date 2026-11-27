@@ -1476,6 +1476,15 @@ mod desk_tests {
             Some("https://city.test/id/city")
         );
         // The default portal declares into the Organization's own catalogue.
+        dataroom_server::ensure_catalogue(
+            faults.as_ref(),
+            orgs[0].org_id,
+            orgs[0].catalogue_id,
+            "city",
+            "data.city.test",
+        )
+        .await
+        .expect("the own catalogue is made");
         let mut with_default = done.clone();
         with_default.insert("d".into(), portal("default", serde_json::json!([])));
         declare(&w, &both, &with_default, &declared).await;
