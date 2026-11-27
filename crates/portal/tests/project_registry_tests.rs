@@ -317,6 +317,17 @@ async fn who_may_repoint_and_what_is_refused() {
     );
     let unknown = repoint(&state, "vlasta", json!({ "ref": "v0.2.0", "secret": "x" })).await;
     assert!(unknown.status.is_client_error(), "{}", unknown.text);
+    // A value that is no scalar is no parameter value (CC-88).
+    refused(
+        &repoint(
+            &state,
+            "vlasta",
+            json!({ "parameters": { "audience": [1] } }),
+        )
+        .await,
+        StatusCode::BAD_REQUEST,
+        "CC-88",
+    );
     refused(
         &repoint(&state, "vlasta", json!({ "ref": "main" })).await,
         StatusCode::CONFLICT,
@@ -526,6 +537,62 @@ async fn the_entry_is_read_with_its_declarations_and_the_tags() {
     )
     .await;
     assert_eq!(stranger.status, StatusCode::NOT_FOUND, "{}", stranger.text);
+}
+
+/// CC-89: an entry of a repository outside the forge is read with no declarations and no tags,
+/// and repointed with no read of that repository: its ref is the checkouts' to fetch.
+#[tokio::test]
+async fn an_external_repository_is_read_and_repointed_without_reading_it() {
+    let (server, state) = world().await;
+    let external = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  \
+                    name: vzduch\n  namespace: org\nspec:\n  organizationRef: bb\n  \
+                    repository:\n    url: https://git.example/vzduch.git\n  ref: v1\n";
+    file(&server, REPO, "projects/vzduch.yaml", "main", external).await;
+    state.mirror.upsert(envelope(
+        "Project",
+        "vzduch",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "bb", "repository": { "url": "https://git.example/vzduch.git" }, "ref": "v1" }),
+    ));
+    let read = send(
+        &state,
+        person("vlasta"),
+        "GET",
+        "/api/v1/projects/vzduch/registry",
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let entry: Value = serde_json::from_str(&read.text).expect("entry");
+    assert_eq!(
+        entry["repository"],
+        json!({ "url": "https://git.example/vzduch.git" })
+    );
+    assert_eq!(entry["ref"], "v1");
+    assert_eq!(entry["declarations"], json!({}));
+    assert_eq!(entry["tags"], json!([]));
+
+    let answer = send(
+        &state,
+        person("vlasta"),
+        "PUT",
+        "/api/v1/projects/vzduch/registry",
+        Some(json!({ "ref": "v2" })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let written = common::committed_files(&server, REPO).await;
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert_eq!(written[0].0, "projects/vzduch.yaml");
+    assert!(written[0].1.contains("ref: v2"), "{}", written[0].1);
+    let elsewhere = server
+        .received_requests()
+        .await
+        .expect("requests")
+        .into_iter()
+        .filter(|r| r.url.path().contains("Name='vzduch'"))
+        .count();
+    assert_eq!(elsewhere, 0, "the external repository is not in the forge");
 }
 
 /// The organization's change list shows the repoint as the Project it changes, red, so an

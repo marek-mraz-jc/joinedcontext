@@ -177,6 +177,27 @@ async fn a_rag_only_assistant_previews_its_sources_and_exclude_wins() {
     );
 }
 
+/// MF-56: an `mcpServer` of another project the caller reads adds its members; `org/all`
+/// reads the organization's Endpoints though no manifest of that name is held.
+#[tokio::test]
+async fn a_named_mcp_server_adds_its_members_to_the_preview() {
+    let state = state();
+    state.mirror.upsert(common::envelope(
+        "McpServer",
+        "roads-mcp",
+        "bbsk",
+        json!({ "members": [{ "kind": "Endpoint", "name": "roads" }], "audience": "public" }),
+    ));
+    let served = preview(
+        &state,
+        deployment(json!({ "mcpServer": "bbsk/roads-mcp", "scope": { "projects": ["bbsk"] } })),
+    )
+    .await;
+    assert_eq!(slugs(&served), ["cccccccccccccccccccccccccc"]);
+    let all = preview(&state, deployment(json!({ "mcpServer": "org/all" }))).await;
+    assert!(slugs(&all).contains(&"aaaaaaaaaaaaaaaaaaaaaaaaaa"), "{all}");
+}
+
 /// The preview resolves what it can and names the manifest's own findings beside it.
 #[tokio::test]
 async fn an_unfinished_manifest_is_previewed_with_its_problems() {

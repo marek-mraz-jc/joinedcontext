@@ -265,9 +265,11 @@ pub async fn put_preferences(
     let stored = db::load_preferences(&mut tx, subject)
         .await
         .map_err(db_error)?;
-    if let Some(object) = value.as_object_mut() {
-        object.extend(crate::personal_connectors::held(stored.as_ref()));
-    }
+    // A struct serializes as an object, so this always runs.
+    value
+        .as_object_mut()
+        .into_iter()
+        .for_each(|object| object.extend(crate::personal_connectors::held(stored.as_ref())));
     db::save_preferences(&mut tx, subject, &value)
         .await
         .map_err(db_error)?;

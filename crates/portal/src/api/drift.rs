@@ -397,6 +397,84 @@ mod tests {
         );
     }
 
+    /// A revert the space took answers 204 even when the activity feed cannot keep its event.
+    #[tokio::test]
+    async fn a_revert_stands_when_the_activity_feed_is_down() {
+        use crate::auth::session::{Identity, Session};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let space = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/city/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .mount(&space)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/cs/air/ngsi-ld/v1/entityOperations/upsert"))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&space)
+            .await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let store = std::sync::Arc::new(crate::reconciler::drift::Store::default());
+        let mut found = std::collections::BTreeMap::new();
+        found.insert(
+            "helsinki".to_owned(),
+            crate::reconciler::drift::Found {
+                observed_at: "2026-09-18T09:12:03Z".parse().expect("an instant"),
+                entities: vec![crate::reconciler::drift::Drifted {
+                    space: "air".to_owned(),
+                    id: "urn:a".to_owned(),
+                    drift: crate::reconciler::drift::Kind::Missing,
+                    diff: Vec::new(),
+                    resolutions: vec!["revert"],
+                    source: "seed.json".to_owned(),
+                    declared: json!({ "id": "urn:a", "type": "T" }),
+                }],
+            },
+        );
+        store.replace_all(found);
+        state.drift = store;
+        state.drift_watch = Some(std::sync::Arc::new(crate::reconciler::drift::Watch::new(
+            space.uri(),
+            &format!("{}/realms/city", space.uri()),
+            "portal".to_owned(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        )));
+        state.activity = crate::activity::ActivityStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let admin = CurrentUser(Session {
+            identity: Identity {
+                client: None,
+                subject: "sub-ana".into(),
+                username: "ana".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: vec![state.config.bootstrap_admins.clone()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        let answer = revert_drift(
+            State(state.clone()),
+            admin,
+            Path(("helsinki".into(), "air".into(), "urn:a".into())),
+        )
+        .await
+        .map(|ok| ok.into_response().status());
+        assert_eq!(answer.expect("reverted"), StatusCode::NO_CONTENT);
+        space.verify().await;
+    }
+
     #[test]
     fn one_entity_has_one_adoption_branch() {
         assert_eq!(

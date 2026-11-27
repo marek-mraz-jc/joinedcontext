@@ -11,7 +11,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use common::{envelope, person, send, REPO};
 use joinedcontext_portal::permissions::ORG_NAMESPACE;
+use joinedcontext_portal::pipeline_validation::ModelSchema;
 use joinedcontext_portal::state::AppState;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 const AUDIT: &str = "/api/v1/projects/helsinki/spaces/transport/temporal-audit";
 const FILE: &str = r#"pipeline:
@@ -164,6 +167,52 @@ async fn a_forge_that_fails_names_the_pipeline_whose_rows_are_missing() {
     let body: Value = serde_json::from_str(&answer.text).expect("json");
     assert_eq!(body["unread"], json!(["vehicles"]));
     assert_eq!(body["rows"], json!([]));
+}
+
+/// A pipeline with no bento.yaml has no mapping to scan: no rows, and it is not unread.
+#[tokio::test]
+async fn a_pipeline_without_a_mapping_file_is_not_unread() {
+    let (state, _gitea) = world(ResponseTemplate::new(404)).await;
+    let answer = send(&state, person("jana"), "GET", AUDIT, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    assert_eq!(body["unread"], json!([]));
+    assert_eq!(body["rows"], json!([]));
+}
+
+/// The space's model gives a unit where the mapping writes none (its code, else its UCUM
+/// spelling); a pipeline the caller may not read is left out of the whole-space audit.
+#[tokio::test]
+async fn the_model_unit_fills_a_row_and_an_unreadable_pipeline_is_skipped() {
+    let (state, _gitea) = world(file_answer()).await;
+    state.model_schemas.replace(HashMap::from([(
+        ("helsinki".to_owned(), "transport".to_owned()),
+        Arc::new(ModelSchema::compile(
+            "vehicles",
+            "1.0.0",
+            &json!({ "definitions": { "Vehicle": { "properties": {
+                "speed": { "type": "number",
+                           "x-unit": { "exactMappings": ["ucefact:KMH"], "ucumCode": "km/h" } },
+                "mode": { "type": "string", "x-unit": { "ucumCode": "1" } },
+            }}}}),
+            &["Vehicle".to_owned()],
+            false,
+        )),
+    )]));
+    state.mirror.upsert(envelope(
+        "Pipeline",
+        "Not_A_Name",
+        "helsinki",
+        json!({ "class": "auto", "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:transport" }),
+    ));
+    let answer = send(&state, person("jana"), "GET", AUDIT, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    let pipelines: Vec<String> = rows(&body).into_iter().map(|r| r.0).collect();
+    assert_eq!(pipelines, ["vehicles", "vehicles"]);
+    assert_eq!(body["rows"][0]["attribute"], "mode");
+    assert_eq!(body["rows"][0]["unitCode"], json!(["model 1"]));
+    assert_eq!(body["rows"][1]["unitCode"], json!(["MTS"]));
 }
 
 #[tokio::test]

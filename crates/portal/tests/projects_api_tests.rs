@@ -628,7 +628,14 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
         "token-xyz",
     )
     .expect("client");
-    let state = AppState::new(config, None).with_shako(Arc::new(client));
+    let client = Arc::new(client);
+    let syncer = Arc::new(joinedcontext_portal::reconciler::Syncer::new(
+        Arc::clone(&client),
+        Arc::new(Mirror::new()),
+    ));
+    let state = AppState::new(config, None)
+        .with_shako(client)
+        .with_syncer(Arc::clone(&syncer));
     organization(&state, "anyone");
 
     let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
@@ -637,6 +644,17 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
     // instead of a change nobody will approve (PF-66, T-0870).
     let change: Value = serde_json::from_str(&body).expect("a change");
     assert_eq!(change["status"]["phase"], "Merged", "{body}");
+    // The merged project is synced at once, not at the next tick.
+    let mut synced = false;
+    for _ in 0..200 {
+        let status = syncer.status();
+        if status.last_sync.is_some() || status.last_error.is_some() {
+            synced = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    assert!(synced, "a sync ran after the merge");
 
     let merges: Vec<String> = shako
         .received_requests()
@@ -676,6 +694,32 @@ async fn anyone_on_a_strict_installation_waits_for_a_person() {
             .any(|r| r.url.path().ends_with("/Shako.Merge")),
         "strict waits for a person (PF-57)"
     );
+}
+
+/// PF-66: a change the forge does not take opens nothing: the failure is answered and no merge
+/// request is opened.
+#[tokio::test]
+async fn a_change_the_forge_does_not_take_opens_no_project() {
+    let shako = forge_with_no_open_projects().await;
+    Mock::given(http_method("POST"))
+        .and(url_path(format!("{REPO}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = common::state_on(&shako);
+    organization(&state, "anyone");
+
+    let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
+    assert!(status.is_server_error(), "{status}: {body}");
+    let opened = shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.url.path().ends_with("/Shako.OpenPullRequest"))
+        .count();
+    assert_eq!(opened, 0, "no merge request without its files");
 }
 
 /// PF-75: the project carries what it holds of each quota, so a person sees the limit before the
@@ -968,6 +1012,36 @@ async fn a_second_deletion_waits_for_the_open_one() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(body.contains("already proposed"), "{body}");
     assert!(removed(&shako).await.is_empty(), "nothing was written");
+}
+
+/// F-R2POR3-019: files the plan found but the tree no longer holds when the commit is made
+/// are not written; the deletion is still proposed for a person to approve.
+#[tokio::test]
+async fn files_gone_before_the_commit_are_not_written_and_the_deletion_is_proposed() {
+    let shako = forge_with_no_open_projects().await;
+    // The first listing, the plan's, holds the project; every later one is the empty tree of
+    // the fixture.
+    Mock::given(http_method("GET"))
+        .and(url_path(format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Truncated": false,
+            "Tree": TREE.iter().map(|path| json!({ "Path": path, "Type": "blob" })).collect::<Vec<_>>(),
+        })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&shako)
+        .await;
+    let state = common::state_on(&shako);
+    world_to_delete(&state);
+
+    let (status, body) = delete_project(&state, person("admin"), "banskabystrica").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    let change: Value = serde_json::from_str(&body).expect("a change");
+    assert_eq!(change["status"]["plan"]["delete"], 6, "{body}");
+    assert!(
+        removed(&shako).await.is_empty(),
+        "nothing was left to remove"
+    );
 }
 
 #[tokio::test]

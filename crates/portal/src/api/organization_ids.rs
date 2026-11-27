@@ -302,3 +302,117 @@ pub fn router() -> Router<AppState> {
         .route("/organization-ids", post(mint))
         .route("/organization-ids/challenge", post(request_challenge))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// DNS that answers every name with the strings published so far.
+    #[derive(Default)]
+    struct Published(Mutex<Vec<String>>);
+
+    impl TxtRecords for Published {
+        fn txt<'a>(
+            &'a self,
+            _: &'a str,
+        ) -> futures_util::future::BoxFuture<'a, Result<Vec<String>, Unanswered>> {
+            let found = self.0.lock().expect("dns").clone();
+            Box::pin(async move { Ok(found) })
+        }
+    }
+
+    fn operator_user(state: &AppState) -> CurrentUser {
+        let mut session = crate::auth::endpoint_token::tests::signed_in();
+        session.identity.groups = vec![state.config.bootstrap_admins.clone()];
+        session.identity.second_factor = true;
+        CurrentUser(session)
+    }
+
+    fn asked(domain: &str) -> Result<Json<MintRequest>, JsonRejection> {
+        Ok(Json(MintRequest {
+            domain: domain.to_owned(),
+        }))
+    }
+
+    async fn run(pool: &sqlx::PgPool, sql: &'static str) {
+        sqlx::query(sql).execute(pool).await.expect("test sql");
+    }
+
+    /// A store that fails a write or a read is a 500 naming the store; a row a write skipped is
+    /// a challenge not kept, and a pending row no mint stamps is minted by someone else.
+    #[tokio::test]
+    async fn a_store_that_fails_or_skips_a_row_is_answered_never_minted() {
+        let scratch = crate::test_db::scratch().await;
+        let dns = Arc::new(Published::default());
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(scratch.pool.clone())
+            .with_txt_records(dns.clone());
+        let user = || operator_user(&state);
+        let at = || State(state.clone());
+        let Json(challenge) = request_challenge(user(), at(), asked("alpha.example"))
+            .await
+            .expect("a challenge");
+        dns.0.lock().expect("dns").push(challenge.value);
+
+        scratch.refuse("organization_ids", "UPDATE").await;
+        let failed = mint(user(), at(), asked("alpha.example")).await;
+        assert!(
+            matches!(&failed, Err(ApiError::Internal(m)) if m.starts_with("organization ids:")),
+            "{:?}",
+            failed.err()
+        );
+        run(
+            &scratch.pool,
+            "DROP TRIGGER jc_refuse_organization_ids ON organization_ids",
+        )
+        .await;
+        run(
+            &scratch.pool,
+            "CREATE FUNCTION jc_skip_row() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RETURN NULL; END $$",
+        )
+        .await;
+        run(
+            &scratch.pool,
+            "CREATE TRIGGER jc_skip_update BEFORE UPDATE ON organization_ids \
+             FOR EACH ROW EXECUTE FUNCTION jc_skip_row()",
+        )
+        .await;
+        let raced = mint(user(), at(), asked("alpha.example")).await;
+        assert!(
+            matches!(&raced, Err(ApiError::Conflict(m)) if m.contains("minted already")),
+            "{:?}",
+            raced.err()
+        );
+
+        run(
+            &scratch.pool,
+            "CREATE TRIGGER jc_skip_insert BEFORE INSERT ON organization_ids \
+             FOR EACH ROW EXECUTE FUNCTION jc_skip_row()",
+        )
+        .await;
+        let lost = request_challenge(user(), at(), asked("beta.example")).await;
+        assert!(
+            matches!(&lost, Err(ApiError::Internal(m)) if m.contains("was not kept")),
+            "{:?}",
+            lost.err()
+        );
+        scratch.refuse("organization_ids", "INSERT").await;
+        let refused = request_challenge(user(), at(), asked("gamma.example")).await;
+        assert!(
+            matches!(&refused, Err(ApiError::Internal(m)) if m.starts_with("organization ids:")),
+            "{:?}",
+            refused.err()
+        );
+
+        scratch.drop_table("organization_ids").await;
+        let id = OrganizationId::from_domain("alpha.example").expect("an id");
+        let unread = stored(&scratch.pool, &id).await;
+        assert!(
+            matches!(&unread, Err(ApiError::Internal(m)) if m.starts_with("organization ids:")),
+            "{unread:?}"
+        );
+        scratch.remove().await;
+    }
+}

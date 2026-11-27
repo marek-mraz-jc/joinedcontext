@@ -24,6 +24,8 @@
 bin = [
   { name = "build_digest", path = "fuzz_targets/build_digest.rs", test = false, doc = false, bench = false },
   { name = "sync_ref_advertisement", path = "fuzz_targets/sync_ref_advertisement.rs", test = false, doc = false, bench = false },
+  { name = "change_ref", path = "fuzz_targets/change_ref.rs", test = false, doc = false, bench = false },
+  { name = "import_files_archive", path = "fuzz_targets/import_files_archive.rs", test = false, doc = false, bench = false },
   { name = "git_import_archive", path = "fuzz_targets/git_import_archive.rs", test = false, doc = false, bench = false },
   { name = "catalogue_query", path = "fuzz_targets/catalogue_query.rs", test = false, doc = false, bench = false },
   { name = "selector", path = "fuzz_targets/selector.rs", test = false, doc = false, bench = false },

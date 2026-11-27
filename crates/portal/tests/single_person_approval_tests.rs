@@ -387,6 +387,59 @@ async fn only_an_operator_marks_an_automation_login_and_people_count_without_it(
     );
 }
 
+/// T-7432: an installation whose operators' group holds the proposer alone has no second
+/// operator to ask, so the one operator's mark applies when it is asked for; a proposer who is
+/// not that operator waits for a second one.
+#[tokio::test]
+async fn the_one_operator_of_an_installation_marks_a_login_at_once() {
+    let mut state = AppState::new(Config::for_tests(), None).with_db(pool().await);
+    let org = run("lone-op");
+    let second = bot("mcp-lone-2");
+    let bot = bot("mcp-lone");
+    organization(&state, &org, &[OWNER, &bot.username]).await;
+    let lone = operator(&state, "op-lone");
+    let group = state.config.bootstrap_admins.clone();
+    let kc = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/realms/ops/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/ops/groups"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": "g-ops", "name": group, "path": format!("/{group}"), "subGroups": [] }
+        ])))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/ops/groups/g-ops/members"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            { "id": lone.subject, "username": "op-lone", "enabled": true },
+            { "id": "sub-op-gone", "username": "op-gone", "enabled": false }
+        ])))
+        .mount(&kc)
+        .await;
+    state.people = joinedcontext_portal::people::People::new(
+        &format!("{}/realms/ops", kc.uri()),
+        "portal".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+
+    let (status, applied) = mark(&state, lone, &org, &bot.username).await;
+    assert_eq!(status, StatusCode::CREATED, "{applied}");
+    assert_eq!(applied["state"], "applied", "{applied}");
+    assert_eq!(stored(&state, &bot.username).await, [org.as_str()]);
+
+    // Another proposer than the realm's one operator: the next mark waits for a second one.
+    organization(&state, &org, &[OWNER, &bot.username, &second.username]).await;
+    let (status, waiting) =
+        mark(&state, operator(&state, "op-other"), &org, &second.username).await;
+    assert_eq!(status, StatusCode::CREATED, "{waiting}");
+    assert_eq!(waiting["state"], "proposed", "{waiting}");
+}
+
 /// The Organizations where `login` is marked.
 async fn stored(state: &AppState, login: &str) -> Vec<String> {
     joinedcontext_portal::automation::marked(state, None)

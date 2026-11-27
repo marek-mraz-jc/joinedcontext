@@ -1336,6 +1336,30 @@ async fn self_service_actions_and_honest_not_implemented() {
             .iter()
             .any(|c| c.id == "pk-analyst")
     );
+    // A token naming no person owns no passkey: the steward's stays, answered as missing.
+    let nobody = api
+        .token(
+            "x",
+            json!({ "sub": null, "realm_access": { "roles": ["realm-admin"] } }),
+        )
+        .await;
+    let (st, _, _, raw) = api
+        .call(
+            Method::POST,
+            &format!("{BASE}/WebAuthnCredentials('pk-steward')/DeletePasskey"),
+            &nobody,
+            None,
+        )
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{raw}");
+    assert_eq!(
+        api.store
+            .list_webauthn_credentials("dev", STEWARD)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
     // Unknown operation on a set.
     let (st, _, err, _) = api
         .call(
@@ -1620,6 +1644,13 @@ async fn mcp_lists_only_permitted_tools_and_lists_match_odata() {
     };
     assert_eq!(ids(&listed), ids(&odata));
     assert_eq!(ids(&listed), vec![ANALYST.to_owned()]);
+    // Without a filter the list tool answers the whole set, as the OData set does.
+    let all = mcp_value(&api.mcp(&admin, "wk_person_list", json!({})).await);
+    let (_, _, every, _) = api
+        .call(Method::GET, &format!("{BASE}/People"), &admin, None)
+        .await;
+    assert_eq!(ids(&all), ids(&every));
+    assert!(ids(&all).contains(&ANALYST.to_owned()));
 
     // A member calling an admin tool gets the same slug OData answers.
     let refused = api.mcp(&member, "keys_rotate", json!({})).await;

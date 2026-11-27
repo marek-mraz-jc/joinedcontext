@@ -904,6 +904,87 @@ async fn a_repository_files_land_as_one_change_as_they_were_written() {
     );
 }
 
+/// A file `main` already holds as uploaded is unchanged and written nowhere; a file beside a
+/// manifest is no manifest; an upload of nothing new is a 400 after its dry run; a file that
+/// does not parse, a manifest of another project and a Portal with no forge are refused.
+#[tokio::test]
+async fn a_files_import_of_what_main_holds_changes_nothing() {
+    use wiremock::matchers::query_param;
+    let (server, state, cookie) = files_world(&["portal-approver"], vec![]).await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='bb',Name='org')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(query_param(
+            "@p",
+            format!("'projects/{PROJECT}/{FILES_PIPELINE_PATH}'"),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-pipeline",
+            "Content": base64::Engine::encode(
+                &base64::engine::general_purpose::STANDARD,
+                FILES_PIPELINE,
+            ),
+        })))
+        .mount(&server)
+        .await;
+    let uri = format!("/api/v1/projects/{PROJECT}/import?format=files");
+    let dry = format!("{uri}&dryRun=All");
+
+    let (content_type, body) = multipart(
+        &archive(&[
+            (FILES_PIPELINE_PATH, FILES_PIPELINE),
+            ("pipelines/aq/bento.yaml", BENTO),
+        ]),
+        &[],
+    );
+    let (status, report) = send(state.clone(), &cookie, &content_type, body, &dry).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(
+        report["unchanged"],
+        json!([format!("projects/{PROJECT}/{FILES_PIPELINE_PATH}")])
+    );
+    assert_eq!(
+        report["created"],
+        json!([format!("projects/{PROJECT}/pipelines/aq/bento.yaml")])
+    );
+
+    let (content_type, body) = multipart(&archive(&[(FILES_PIPELINE_PATH, FILES_PIPELINE)]), &[]);
+    let (status, report) = send(state.clone(), &cookie, &content_type, body.clone(), &dry).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    let (status, problem) = send(state.clone(), &cookie, &content_type, body, &uri).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
+    assert!(
+        problem.to_string().contains("nothing to change"),
+        "{problem}"
+    );
+    assert!(written(&server).await.is_empty());
+
+    let elsewhere = FILES_PIPELINE.replace("namespace: banskabystrica", "namespace: helsinki");
+    for (files, says) in [
+        (
+            vec![("spaces/ovzdusie/broken.yaml", "kind: [")],
+            "did not parse",
+        ),
+        (
+            vec![(FILES_PIPELINE_PATH, elsewhere.as_str())],
+            "is not a resource of project",
+        ),
+    ] {
+        let (content_type, body) = multipart(&archive(&files), &[]);
+        let (status, problem) = send(state.clone(), &cookie, &content_type, body, &dry).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{says}: {problem}");
+        assert!(problem.to_string().contains(says), "{says}: {problem}");
+    }
+
+    let mut bare = state;
+    bare.shako = None;
+    let (content_type, body) = multipart(&archive(&[(FILES_PIPELINE_PATH, FILES_PIPELINE)]), &[]);
+    let (status, problem) = send(bare, &cookie, &content_type, body, &dry).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(problem.to_string().contains("git forge"), "{problem}");
+}
+
 /// T-7458: the files door answers the same 409 for a project with no Organization (barcelona's
 /// door move on jc-prod got 200, then 409 verdict_absent with no reason).
 #[tokio::test]

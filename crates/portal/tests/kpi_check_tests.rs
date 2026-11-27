@@ -587,6 +587,92 @@ async fn a_stepless_draft_and_a_foreign_endpoint_are_each_refused() {
     assert_eq!(previews(&rig.broker).await, 0);
 }
 
+/// PL-102: a source of no entity type is refused at its field before any step is judged.
+#[tokio::test]
+async fn a_source_of_no_type_is_refused_at_its_field() {
+    let rig = rig().await;
+    let mut body = draft("sum(parking.occupied) / count(stops)", "stops");
+    body["pipeline"]["spec"]["steps"] = json!([{ "kind": "bloblang", "bloblang": "root = this" }]);
+    body["pipeline"]["spec"]["sources"][1]["query"] = json!({ "attrs": ["district"] });
+    let answer = checked(&rig, body).await;
+    assert_eq!(
+        answer["problems"][0]["field"], "spec.sources.query.type",
+        "{answer}"
+    );
+    assert_eq!(answer["sources"], json!([]), "{answer}");
+    assert_eq!(previews(&rig.broker).await, 0);
+}
+
+/// PL-105: a person outside the Endpoint's audience reads no page, and no history is asked for
+/// a `prev` term once a page is refused.
+#[tokio::test]
+async fn a_person_the_endpoint_does_not_admit_previews_no_value() {
+    let gateway = MockServer::start().await;
+    let mut config = Config::for_tests();
+    config.gateway_url = Some(gateway.uri());
+    let rig = rig_on(config).await;
+    let answer = send(
+        &rig.state,
+        person("jana"),
+        "POST",
+        ROUTE,
+        Some(change(
+            "sum(parking.occupied) - prev(sum(parking.occupied), P7D)",
+        )),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("JSON");
+    assert_eq!(body["problems"], json!([]), "{body}");
+    assert_eq!(body["preview"]["values"], json!([]), "{body}");
+    let problem = body["preview"]["problem"].as_str().expect("a problem");
+    assert!(
+        problem.starts_with("input parking:") && problem.contains("does not admit you"),
+        "{problem}"
+    );
+    assert_eq!(
+        gateway.received_requests().await.unwrap_or_default().len(),
+        0
+    );
+}
+
+/// PL-104: a broker that refuses a page gives no value, with its own words when it has some.
+#[tokio::test]
+async fn a_broker_refusing_a_page_gives_no_value() {
+    let rig = rig().await;
+    for (answer, needle) in [
+        (json!({}), "input parking: the broker answered 500"),
+        (
+            json!({ "detail": "the view is being rebuilt" }),
+            "input parking: the view is being rebuilt",
+        ),
+    ] {
+        rig.broker.reset().await;
+        Mock::given(method("POST"))
+            .and(path_regex("^/q/views/[a-z0-9-]+/preview$"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(answer))
+            .mount(&rig.broker)
+            .await;
+        let body = checked(&rig, draft("sum(parking.occupied) / count(stops)", "stops")).await;
+        assert_eq!(body["preview"]["values"], json!([]), "{body}");
+        assert_eq!(body["preview"]["problem"], needle, "{body}");
+    }
+}
+
+/// PL-104: an average over nothing is the preview's problem, and nothing is computed.
+#[tokio::test]
+async fn an_average_over_nothing_gives_no_value() {
+    let rig = rig().await;
+    let mut body = draft("sum(parking.occupied) / avg(stops.occupied)", "stops");
+    body["pipeline"]["spec"]["sources"][1]["query"]["attrs"] = json!(["district", "occupied"]);
+    let answer = checked(&rig, body).await;
+    assert_eq!(answer["problems"], json!([]), "{answer}");
+    assert_eq!(answer["preview"]["values"], json!([]), "{answer}");
+    let problem = answer["preview"]["problem"].as_str().expect("a problem");
+    assert!(problem.contains("has no values"), "{problem}");
+    assert_eq!(answer["preview"]["rows"]["stops"], 3, "{answer}");
+}
+
 /// A source with no rows gives no value and says so; a sum over nothing must not read as 0.
 #[tokio::test]
 async fn an_empty_source_gives_no_value_and_says_why() {

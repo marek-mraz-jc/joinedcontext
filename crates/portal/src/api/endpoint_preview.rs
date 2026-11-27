@@ -642,4 +642,18 @@ mod tests {
         assert!(caller.grant_groups().is_empty());
         assert_eq!(organization_of(&state, "city"), None);
     }
+
+    /// Before the Endpoint's view is compiled nobody is named for it: 503 saying so.
+    #[test]
+    fn an_uncompiled_view_names_nobody() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let views =
+            crate::reconciler::views::ViewSync::new("http://broker.invalid", "/nonexistent");
+        let session = crate::auth::endpoint_token::tests::signed_in();
+        let refused = subject(&state, &views, &session, "city", "air-staff").expect_err("no view");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("not compiled yet")),
+            "{refused:?}"
+        );
+    }
 }

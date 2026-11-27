@@ -1562,6 +1562,16 @@ mod tests {
         assert_eq!(listed, ["fine"]);
         let published: Vec<&str> = catalogues.iter().map(|c| c.organization.as_str()).collect();
         assert_eq!(published, ["fine"]);
+        // An Organization with an id lists its addresses under that id.
+        let mut named = org("named", "named.example");
+        named.id = Some(jc_core::names::OrganizationId::parse("sk_named").expect("an id"));
+        let set = super::super::follow::Organizations {
+            run_time: vec![named],
+            removed: Vec::new(),
+        };
+        let (_, addresses) = run_time_entries(&set, "https", Some(reach), None);
+        assert_eq!(addresses.len(), 1);
+        assert_eq!(addresses[0].organization_id.as_deref(), Some("sk_named"));
     }
 
     /// A registry row's id reaches its run-time Organization when it parses and is dropped when

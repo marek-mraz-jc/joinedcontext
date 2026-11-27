@@ -152,7 +152,7 @@ pub async fn model_key(
     let event = {
         let mut known = KNOWN
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let event = transition(*known, &report);
         *known = Some(Known {
             state: report.state,
@@ -212,11 +212,14 @@ mod tests {
         })
         .join();
         let known = *KNOWN.lock().unwrap_or_else(|p| p.into_inner());
-        let answers = !matches!(
-            known.map(|known| known.state),
-            Some(KeyState::Invalid | KeyState::OutOfCredit)
+        let refused = matches!(
+            known,
+            Some(Known {
+                state: KeyState::Invalid | KeyState::OutOfCredit,
+                ..
+            })
         );
-        assert_eq!(builder_answers(), answers);
+        assert_eq!(builder_answers(), !refused);
     }
 
     /// Each state has its own name on the activity feed.

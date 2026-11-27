@@ -563,6 +563,17 @@ async fn a_calendar_preview_limit_is_1_to_50_and_needs_a_broker() {
         );
         assert!(answer.text.contains("1 to 50"), "{}", answer.text);
     }
+    // A body that does not read as a preview request is a 400 naming the member.
+    let unread = send(
+        &r.state,
+        member(),
+        "POST",
+        &ical_route("air-staff"),
+        Some(json!({ "output": 7 })),
+    )
+    .await;
+    assert_eq!(unread.status, StatusCode::BAD_REQUEST, "{}", unread.text);
+    assert!(unread.text.contains("output"), "{}", unread.text);
     let bare = rig(false).await;
     let answer = send(
         &bare.state,

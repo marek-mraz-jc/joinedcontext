@@ -427,6 +427,91 @@ async fn an_administrators_revoke_proposes_the_account_without_the_grant() {
     );
 }
 
+/// AG-131: the reaper proposes the account without its expired grant, under the Portal's own
+/// name, and notes when it tried.
+#[tokio::test]
+async fn the_reaper_proposes_the_account_without_its_expired_grant() {
+    let forge = MockServer::start().await;
+    let repo = "/odata/Repositories(Owner='owner',Name='config')";
+    Mock::given(method("GET"))
+        .and(path(repo))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })))
+        .mount(&forge)
+        .await;
+    for (route, answer) in [
+        (
+            "Shako.CreateBranch",
+            ResponseTemplate::new(201).set_body_json(json!({})),
+        ),
+        (
+            "Shako.CommitFiles",
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "new" })),
+        ),
+        (
+            "Shako.OpenPullRequest",
+            ResponseTemplate::new(201).set_body_json(json!({
+                "Number": 8,
+                "HtmlUrl": "https://shako.example.org/pulls/8",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
+            })),
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/{route}")))
+            .respond_with(answer)
+            .mount(&forge)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": "old", "Content": "" })),
+        )
+        .mount(&forge)
+        .await;
+    let client = ShakoClient::new(
+        forge.uri().parse().expect("url"),
+        "owner",
+        "config",
+        "token",
+    )
+    .expect("client");
+    let state = seeded(
+        AppState::new(Config::for_tests(), None).with_shako(Arc::new(client)),
+        two_grants(),
+    );
+    let mut tried = std::collections::HashMap::new();
+    joinedcontext_portal::api::agent_access::reap_expired_grants(
+        &state,
+        "2026-10-21T12:00:00Z".parse().expect("a time"),
+        &mut tried,
+    )
+    .await;
+    assert!(tried.contains_key("ovzdusie/vendor-ci"), "{tried:?}");
+    let put = forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .find(|r| r.method.as_str() == "POST" && r.url.path().ends_with("/Shako.CommitFiles"))
+        .expect("the account was written");
+    let sent: Value = serde_json::from_slice(&put.body).expect("json");
+    let content = sent["Files"][0]["content"].as_str().expect("content");
+    use base64::Engine;
+    let yaml = String::from_utf8(
+        base64::engine::general_purpose::STANDARD
+            .decode(content)
+            .expect("base64"),
+    )
+    .expect("utf8");
+    assert!(
+        yaml.contains("ovzdusie") && !yaml.contains("doprava"),
+        "{yaml}"
+    );
+}
+
 /// What the forge holds of the revoke's merge request (pull 7) decides who merges it: files it
 /// cannot list, a base that is no account, or a second file leave it pending for a person; one
 /// file whose head only drops a grant of its base is merged by the Portal at once (AG-132).

@@ -545,6 +545,32 @@ async fn a_people_admin_cannot_act_on_a_person_holding_a_right_they_lack() {
     assert_eq!(own_level.status, StatusCode::OK, "{}", own_level.text);
 }
 
+/// A reset of a person who holds nothing the caller lacks goes by mail when the realm sends it:
+/// 202 and no password.
+#[tokio::test]
+async fn a_reset_the_realm_mails_is_accepted_with_no_password() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    let reset = send(
+        &state,
+        person("ada"),
+        "POST",
+        &format!("{PEOPLE}/pia-id/reset-password"),
+        None,
+    )
+    .await;
+    assert_eq!(reset.status, StatusCode::ACCEPTED, "{}", reset.text);
+    let answer: Value = serde_json::from_str(&reset.text).expect("json");
+    assert_eq!(answer["emailSent"], true);
+    assert!(answer.get("temporaryPassword").is_none(), "{answer}");
+    let mailed = received(&kc, "PUT", "/pia-id/execute-actions-email").await;
+    assert_eq!(mailed.len(), 1);
+    assert!(String::from_utf8_lossy(&mailed[0].body).contains("UPDATE_PASSWORD"));
+    assert!(received(&kc, "PUT", "/pia-id/reset-password")
+        .await
+        .is_empty());
+}
+
 /// ola: holds no RoleBinding, has an authenticator app, and is named by the grant `grant`
 /// ("policy", "app", "endpoint" or none) of project `air`.
 async fn ola(kc: &MockServer, state: &AppState, grant: Option<&str>) {
@@ -701,6 +727,39 @@ async fn a_person_holding_an_uncovered_policy_gets_a_reset_by_mail_only() {
         received(&kc, "DELETE", "/users/ola-id").await.is_empty(),
         "nothing was deleted"
     );
+}
+
+/// PF-93: a binding naming the person that the Portal cannot read stops the action with its own
+/// error, not as a right the caller lacks; nothing is reset.
+#[tokio::test]
+async fn a_binding_that_cannot_be_read_stops_an_action_on_its_person() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    ola(&kc, &state, None).await;
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "ola-unscoped",
+        ORG_NAMESPACE,
+        json!({ "subjects": [{ "user": "ola@hel.fi" }], "role": "pipeline-reader" }),
+    ));
+    let reset = post(&state, "pia", "reset-password").await;
+    assert!(
+        reset.status.is_client_error() && reset.status != StatusCode::FORBIDDEN,
+        "{}: {}",
+        reset.status,
+        reset.text
+    );
+    assert!(
+        !reset.text.contains("holds a right you do not"),
+        "{}",
+        reset.text
+    );
+    assert!(received(&kc, "PUT", "/ola-id/execute-actions-email")
+        .await
+        .is_empty());
+    assert!(received(&kc, "PUT", "/ola-id/reset-password")
+        .await
+        .is_empty());
 }
 
 /// Without a mail server neither action is open: 403, no password set, nothing removed. The same
@@ -1452,6 +1511,46 @@ async fn a_persons_page_names_their_groups_and_roles() {
     );
 }
 
+/// A person's App roles are listed by project, App and role; an access entry naming someone
+/// else is left out.
+#[tokio::test]
+async fn a_persons_app_roles_are_sorted_and_another_persons_entry_is_left_out() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    state.mirror.upsert(envelope(
+        "App",
+        "alerts",
+        "helsinki",
+        json!({ "kind": "static", "access": [{ "role": "viewer", "subjects": [{ "group": "stewards" }] }] }),
+    ));
+    state.mirror.upsert(envelope(
+        "App",
+        "board",
+        "air",
+        json!({ "kind": "static", "access": [
+            { "role": "reader", "subjects": [{ "user": "jana@hel.fi" }] },
+            { "role": "editor", "subjects": [{ "user": "ola@hel.fi" }] }
+        ] }),
+    ));
+    let read = send(
+        &state,
+        person("pia"),
+        "GET",
+        &format!("{PEOPLE}/jana-id"),
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let detail: Value = serde_json::from_str(&read.text).expect("json");
+    assert_eq!(
+        detail["appRoles"],
+        json!([
+            { "project": "air", "app": "board", "role": "reader", "via": { "user": "jana@hel.fi" } },
+            { "project": "helsinki", "app": "alerts", "role": "viewer", "via": { "group": "stewards" } }
+        ])
+    );
+}
+
 /// PF-93: deleting a person named in the repository proposes one Change taking them out of every
 /// Group and RoleBinding, disables them at once, and deletes the Keycloak user only once that
 /// Change is merged. Needs a PostgreSQL (ci-full); without one it says so and checks nothing.
@@ -1580,6 +1679,107 @@ async fn deleting_a_person_proposes_the_change_and_deletes_them_only_after_the_m
         .await
         .expect("read")
         .is_none());
+}
+
+/// PF-93: a removal needs the forge its Change goes to (503 without one, nothing held); a
+/// binding left naming nobody whose file is not on the default branch has nothing to delete,
+/// and the person's page names the removal pending. Needs a PostgreSQL (ci-full).
+#[tokio::test]
+async fn a_removal_needs_the_forge_and_deletes_only_files_that_are_there() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|u| !u.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let _alone = DATABASE.lock().await;
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("connect + migrate");
+    joinedcontext_portal::db::remove_person_deletion(&pool, "jana-id")
+        .await
+        .expect("a clean row");
+    let (kc, shako) = (realm(true).await, forge().await);
+
+    let mut forgeless = AppState::new(joinedcontext_portal::config::Config::for_tests(), None)
+        .with_db(pool.clone());
+    forgeless.people = People::new(
+        &format!("{}/realms/hel", kc.uri()),
+        "portal".into(),
+        ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    organization(&forgeless);
+    let answer = send(
+        &forgeless,
+        person("ada"),
+        "DELETE",
+        &format!("{PEOPLE}/jana-id"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("git forge is not configured"),
+        "{}",
+        answer.text
+    );
+    assert!(joinedcontext_portal::db::person_deletion(&pool, "jana-id")
+        .await
+        .expect("read")
+        .is_none());
+
+    let state = state_with(&kc, &shako).with_db(pool.clone());
+    let answer = send(
+        &state,
+        person("ada"),
+        "DELETE",
+        &format!("{PEOPLE}/jana-id"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let files: Vec<Value> = shako
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| {
+            r.method.as_str() == "POST" && r.url.path() == format!("{REPO}/Shako.CommitFiles")
+        })
+        .filter_map(|r| serde_json::from_slice::<Value>(&r.body).ok())
+        .flat_map(|commit| commit["Files"].as_array().cloned().unwrap_or_default())
+        .collect();
+    assert!(
+        files.iter().any(|f| f["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("groups/stewards.yaml"))),
+        "{files:?}"
+    );
+    assert!(
+        files.iter().all(|f| f["operation"] != "delete"),
+        "no file to delete: {files:?}"
+    );
+    let read = send(
+        &state,
+        person("pia"),
+        "GET",
+        &format!("{PEOPLE}/jana-id"),
+        None,
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let detail: Value = serde_json::from_str(&read.text).expect("json");
+    assert!(detail["person"]["pendingDeletion"].is_string(), "{detail}");
+    joinedcontext_portal::db::remove_person_deletion(&pool, "jana-id")
+        .await
+        .expect("cleaned up");
 }
 
 /// A person nothing in the repository names is deleted at once.
@@ -2303,6 +2503,64 @@ async fn a_pending_invitation_is_sent_again_and_an_accepted_one_is_not() {
     assert_eq!(refused.status, StatusCode::FORBIDDEN, "{}", refused.text);
 }
 
+/// PF-108: a database that does not answer never fails the people routes: the list shows no
+/// expiry, an invitation is sent again and a new one goes out, and a person nothing names is
+/// deleted, each without the record the database would keep.
+#[tokio::test]
+async fn a_database_that_does_not_answer_never_fails_the_people_routes() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let mut state = state_with(&kc, &shako);
+    state.db = Some(
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@localhost:1/none")
+            .expect("a lazy pool"),
+    );
+    let waiting = pending_person(&kc).await;
+
+    let listed = send(&state, person("pia"), "GET", PEOPLE, None).await;
+    assert_eq!(listed.status, StatusCode::OK, "{}", listed.text);
+    let page: Value = serde_json::from_str(&listed.text).expect("json");
+    let wait = page["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .find(|p| p["id"] == waiting)
+        .cloned()
+        .expect("the waiting person");
+    assert!(wait["invitationExpires"].is_null(), "{wait}");
+
+    let resent = send(
+        &state,
+        person("pia"),
+        "POST",
+        &format!("{PEOPLE}/{waiting}/resend-invitation"),
+        None,
+    )
+    .await;
+    assert_eq!(resent.status, StatusCode::ACCEPTED, "{}", resent.text);
+
+    let body = json!({ "email": "new@example.org", "firstName": "Nora", "lastName": "Nová" });
+    let created = send(&state, person("pia"), "POST", PEOPLE, Some(body)).await;
+    assert_eq!(created.status, StatusCode::CREATED, "{}", created.text);
+
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/eva-id")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user("eva-id", "eve@example.org")))
+        .mount(&kc)
+        .await;
+    let deleted = send(
+        &state,
+        person("ada"),
+        "DELETE",
+        &format!("{PEOPLE}/eva-id"),
+        None,
+    )
+    .await;
+    assert_eq!(deleted.status, StatusCode::NO_CONTENT, "{}", deleted.text);
+    assert_eq!(received(&kc, "DELETE", "/users/eva-id").await.len(), 1);
+}
+
 /// What `/api/v1/auth/me` answers the session cookie `cookie`.
 async fn me_with(state: &AppState, cookie: &str) -> StatusCode {
     use tower::ServiceExt as _;
@@ -2487,6 +2745,105 @@ async fn names_behind_ids_are_read_by_a_people_admin_or_a_group_approver_alone()
     assert_eq!(bad.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", bad.text);
     let bad_body: Value = serde_json::from_str(&bad.text).expect("json");
     assert_eq!(bad_body["errors"][0]["path"], "ids", "{}", bad.text);
+}
+
+/// An id the realm does not hold is left out of the names; a realm that fails a lookup fails
+/// the answer, naming no person.
+#[tokio::test]
+async fn an_unknown_id_is_left_out_and_a_failing_realm_is_503() {
+    const GONE_ID: &str = "00000000-0000-4000-8000-00000000000b";
+    const BROKEN_ID: &str = "00000000-0000-4000-8000-00000000000c";
+    let (kc, shako) = (realm(true).await, forge().await);
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/{JANA_ID}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(user(JANA_ID, "jana@hel.fi")))
+        .mount(&kc)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{ADMIN}/users/{BROKEN_ID}")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&kc)
+        .await;
+    let state = state_with(&kc, &shako);
+    let known = send(
+        &state,
+        person("pia"),
+        "GET",
+        &format!("{PEOPLE}/names?ids={JANA_ID},{GONE_ID}"),
+        None,
+    )
+    .await;
+    assert_eq!(known.status, StatusCode::OK, "{}", known.text);
+    let body: Value = serde_json::from_str(&known.text).expect("json");
+    assert_eq!(body["items"], json!([{ "id": JANA_ID, "name": "F L" }]));
+    let broken = send(
+        &state,
+        person("pia"),
+        "GET",
+        &format!("{PEOPLE}/names?ids={JANA_ID},{BROKEN_ID}"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        broken.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        broken.text
+    );
+    assert!(!broken.text.contains("F L"), "{}", broken.text);
+}
+
+/// The migration reads the realm's users page by page: a full page asks for the next, and an
+/// address on the second page is resolved like one on the first.
+#[tokio::test]
+async fn the_migration_reads_every_page_of_the_realms_users() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let mut first = vec![user("ada-id", "ada@hel.fi"), user("pia-id", "pia@hel.fi")];
+    first.extend((0..498).map(|i| user(&format!("filler-{i}"), &format!("filler-{i}@hel.fi"))));
+    for (from, page) in [
+        ("0", json!(first)),
+        ("500", json!([user("jana-id", "jana@hel.fi")])),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .and(query_param("first", from))
+            .respond_with(ResponseTemplate::new(200).set_body_json(page))
+            .with_priority(1)
+            .mount(&kc)
+            .await;
+    }
+    let state = state_with(&kc, &shako);
+    let mut pia = person("pia");
+    pia.second_factor = true;
+    let answer = send(
+        &state,
+        pia,
+        "POST",
+        &format!("{PEOPLE}/name-by-id?dryRun=true"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let plan: Value = serde_json::from_str(&answer.text).expect("json");
+    assert_eq!(
+        plan["unresolved"],
+        json!(["eva@hel.fi"]),
+        "jana is on page two"
+    );
+    let pages: Vec<String> = received(&kc, "GET", "/users")
+        .await
+        .into_iter()
+        .filter_map(|r| {
+            r.url
+                .query_pairs()
+                .find(|(key, _)| key == "first")
+                .map(|(_, value)| value.into_owned())
+        })
+        .collect();
+    assert!(
+        pages.iter().any(|p| p == "0") && pages.iter().any(|p| p == "500"),
+        "{pages:?}"
+    );
 }
 
 /// ADR-N-061 (T-5711): the dry run over the organization's repository rewrites every address a

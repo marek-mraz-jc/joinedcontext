@@ -144,19 +144,16 @@ pub fn page_reader(state: &AppState, headers: &HeaderMap, project: &str) -> Opti
     Some(session.identity.subject)
 }
 
+const NOT_SET_UP: &str = "dashboards are not set up on this installation; ask your operator to \
+                          turn the grafana component on";
+
 pub(crate) fn client(state: &AppState) -> Result<Client<'_>, ApiError> {
     state
         .config
         .grafana
         .as_ref()
         .map(Client::new)
-        .ok_or_else(|| {
-            ApiError::Conflict(
-                "dashboards are not set up on this installation; ask your operator to turn the \
-             grafana component on"
-                    .into(),
-            )
-        })
+        .ok_or_else(|| ApiError::Conflict(NOT_SET_UP.into()))
 }
 
 /// The organization of `project`: the installation's for the organization's own namespace;
@@ -312,7 +309,12 @@ fn readable_dashboard(
     dashboard: &Value,
 ) -> Value {
     let mut dashboard = dashboard.clone();
-    if let Some(list) = dashboard["templating"]["list"].as_array_mut() {
+    // `pointer_mut`, not an index: indexing would write `templating.list: null` into a
+    // dashboard that has no variables.
+    if let Some(list) = dashboard
+        .pointer_mut("/templating/list")
+        .and_then(Value::as_array_mut)
+    {
         for variable in list {
             *variable = readable_variable(state, effective, project, variable);
         }
@@ -393,16 +395,13 @@ pub async fn list_dashboards(
     Path(project): Path<String>,
 ) -> Result<Json<DashboardList>, ApiError> {
     member(&state, &user.0.identity, &project)?;
-    let client = match client(&state) {
-        Ok(client) => client,
-        Err(ApiError::Conflict(reason)) => {
-            return Ok(Json(DashboardList {
-                ready: false,
-                reason: Some(reason),
-                items: Vec::new(),
-            }))
-        }
-        Err(err) => return Err(err),
+    // Without the service the list says why; `client` refuses for that reason alone.
+    let Ok(client) = client(&state) else {
+        return Ok(Json(DashboardList {
+            ready: false,
+            reason: Some(NOT_SET_UP.into()),
+            items: Vec::new(),
+        }));
     };
     let org = match organization_held(&client, &project).await {
         Ok(org) => org,
@@ -1733,6 +1732,152 @@ mod tests {
         ));
     }
 
+    /// A value of any JSON kind reads as text; an option without its own text shows its value
+    /// and one with no value is left out; a dashboard of no variables is read as it is.
+    #[test]
+    fn values_read_as_text_and_options_without_text_show_their_value() {
+        assert_eq!(text(&Value::Null), "");
+        assert_eq!(text(&json!(7)), "7");
+        assert_eq!(text(&json!(true)), "true");
+        let options = custom_options(&json!({ "options": [
+            { "value": "n" }, { "value": "" }, { "text": "South", "value": "s" }
+        ] }));
+        assert_eq!(
+            options
+                .iter()
+                .map(|o| (o.text.as_str(), o.value.as_str()))
+                .collect::<Vec<_>>(),
+            [("n", "n"), ("South", "s")]
+        );
+        assert!(is_time("now+1h") && is_time("now+2d/d"));
+        assert!(!is_time("now+") && !is_time("now+1x"));
+        let points = checked_query(&board(), &asked(&[("maxDataPoints", "500")]).0)
+            .expect("a number of points");
+        assert_eq!(points, [("maxDataPoints".to_owned(), "500".to_owned())]);
+        let state = world(None);
+        let effective = crate::permissions::for_request(&state, &admin().0.identity, PROJECT);
+        let plain = json!({ "panels": [] });
+        assert_eq!(
+            readable_dashboard(&state, &effective, PROJECT, &plain),
+            plain
+        );
+    }
+
+    /// A dashboard is asked for only by a uid of its shape, and shows a description it has; the
+    /// organization's own namespace is the installation's organization.
+    #[tokio::test]
+    async fn a_dashboard_is_read_by_a_uid_of_its_shape_and_shows_its_description() {
+        let server = service("grafana").await;
+        for (uid, description) in [("described", "Air over a week"), ("blank", "")] {
+            Mock::given(method("GET"))
+                .and(path(format!("/api/dashboards/uid/{uid}")))
+                .respond_with(
+                    ResponseTemplate::new(200).set_body_json(json!({ "dashboard": {
+                        "uid": uid, "title": uid, "description": description, "panels": []
+                    }})),
+                )
+                .mount(&server)
+                .await;
+        }
+        let state = world(Some(&server));
+        let read =
+            |uid: String| get_dashboard(admin(), State(state.clone()), Path((PROJECT.into(), uid)));
+        let Json(described) = read("described".into()).await.expect("a dashboard");
+        assert_eq!(described.description.as_deref(), Some("Air over a week"));
+        let Json(blank) = read("blank".into()).await.expect("a dashboard");
+        assert_eq!(blank.description, None);
+        let long = "x".repeat(65);
+        for bad in ["bad uid", "", "a/b", long.as_str()] {
+            assert!(
+                matches!(read(bad.to_owned()).await, Err(ApiError::NotFound(_))),
+                "{bad}"
+            );
+        }
+        let asked = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.url.path().starts_with("/api/dashboards/uid/"))
+            .count();
+        assert_eq!(asked, 2);
+        let client = client(&state).expect("a client");
+        assert_eq!(
+            organization(&client, ORG_NAMESPACE)
+                .await
+                .expect("an organization"),
+            Some(INSTALLATION_ORG)
+        );
+    }
+
+    /// A query variable saved as a plain string is asked with that query; one whose datasource a
+    /// variable names offers nothing and asks nothing.
+    #[tokio::test]
+    async fn a_query_variable_reads_its_saved_query_and_a_hidden_datasource_offers_nothing() {
+        let server = service("grafana").await;
+        Mock::given(method("GET"))
+            .and(path("/api/datasources/uid/prom/resources/variable"))
+            .and(query_param("query", "label_values(testid)"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "data": ["t2", "t1", "t2"] })),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/uid/hidden"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "dashboard": {
+                    "uid": "hidden", "title": "Hidden",
+                    "templating": { "list": [
+                        { "name": "picked", "type": "query", "datasource": "${ds}", "query": "q" }
+                    ]},
+                    "panels": []
+                }})),
+            )
+            .mount(&server)
+            .await;
+        let state = world(Some(&server));
+        let values = |uid: &str, name: &str| {
+            variable_values(
+                admin(),
+                State(state.clone()),
+                Path((PROJECT.into(), uid.to_owned(), name.to_owned())),
+            )
+        };
+        let Json(testid) = values("live", "testid").await.expect("values");
+        assert_eq!(
+            testid
+                .options
+                .iter()
+                .map(|o| o.value.as_str())
+                .collect::<Vec<_>>(),
+            ["t1", "t2"]
+        );
+        let Json(hidden) = values("hidden", "picked").await.expect("no values");
+        assert!(hidden.options.is_empty());
+    }
+
+    /// A frame that names its own query keeps it; one that does not gets its set's.
+    #[tokio::test]
+    async fn a_frame_naming_its_own_query_keeps_it() {
+        let server = service("grafana").await;
+        Mock::given(method("GET"))
+            .and(path("/api/dashboards/live/render"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "frameSets": [{ "refId": "A", "frames": [
+                    { "name": "own", "refId": "B", "fields": [] },
+                    { "name": "set", "fields": [] }
+                ]}]
+            })))
+            .mount(&server)
+            .await;
+        let state = world(Some(&server));
+        let data = panel(admin(), &state, 1, &[]).await.expect("frames");
+        let refs: Vec<&Value> = data.frames.iter().map(|f| &f["refId"]).collect();
+        assert_eq!(refs, [&json!("B"), &json!("A")]);
+    }
+
     #[tokio::test]
     async fn each_question_the_dashboard_does_not_take_is_refused_by_field() {
         let dashboard = board();
@@ -1744,6 +1889,7 @@ mod tests {
                 // A question that passes names no field, so the assertion below shows it.
                 _ => String::new(),
             };
+        assert_eq!(refused_field(&[("from", "now-1h")]), "");
         assert_eq!(refused_field(&[("from", "yesterday")]), "from");
         assert_eq!(refused_field(&[("to", "now-6x")]), "to");
         assert_eq!(refused_field(&[("maxDataPoints", "0")]), "maxDataPoints");
@@ -1761,10 +1907,11 @@ mod tests {
         // T-7835: a constant is no variable a person picks; All only where the variable offers it.
         assert_eq!(refused_field(&[("var-zone", "$__all")]), "var-zone");
         let mut constant = board();
-        if let Some(list) = constant["templating"]["list"].as_array_mut() {
-            list.push(json!({ "name": "env", "type": "constant", "query": "prod",
-                              "current": { "value": "prod" } }));
-        }
+        constant["templating"]["list"]
+            .as_array_mut()
+            .expect("a list")
+            .push(json!({ "name": "env", "type": "constant", "query": "prod",
+                          "current": { "value": "prod" } }));
         assert!(matches!(
             checked_query(&constant, &asked(&[("var-env", "test")]).0),
             Err(ApiError::Unprocessable { errors, .. }) if errors[0].starts_with("var-env")

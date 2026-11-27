@@ -638,6 +638,22 @@ async fn unset_secret_variables_never_become_guessable_secrets() {
     let kept = store.get_realm("unset").await.unwrap().unwrap();
     assert_eq!(kept.display_name, "silent");
     assert_eq!(kept.smtp_server.unwrap().host, "mail");
+    // A file naming a server without a password (no SMTP login) is applied as written.
+    let open = json!({ "realm": "unset", "smtpServer": {"host": "relay", "from": "a@b.c"} });
+    apply_realm_files(&store, &[("s.json".into(), open)], &opts)
+        .await
+        .expect("a server without a password applies");
+    let relay = store
+        .get_realm("unset")
+        .await
+        .unwrap()
+        .unwrap()
+        .smtp_server
+        .unwrap();
+    assert_eq!(
+        (relay.host.as_str(), relay.password.as_str()),
+        ("relay", "")
+    );
 }
 
 /// Inside `jc` the importer reads only the values it is handed: a realm file naming another

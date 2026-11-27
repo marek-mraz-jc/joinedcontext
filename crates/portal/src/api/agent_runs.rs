@@ -581,20 +581,6 @@ pub async fn create_run(
 
     let endpoint_slug = run_endpoints[0].slug.clone();
 
-    if request.kind != "conversation" {
-        if let Some(live) = state
-            .agents
-            .live_run_for_app(&project, &request.app_name)
-            .await
-            .map_err(unavailable)?
-        {
-            return Err(ApiError::Conflict(format!(
-                "application '{}' already has a live run: {}",
-                request.app_name, live.id
-            )));
-        }
-    }
-
     let id = mint_run_id();
     let (ticket, ticket_hash) = mint_ticket();
     let created_at = now_rfc3339();
@@ -649,16 +635,23 @@ pub async fn create_run(
         error: None,
     };
 
-    if run.kind == "conversation" {
-        state.agents.create_run(&run).await.map_err(unavailable)?;
-    } else if !state
+    // A conversation was refused above, so every run here is its application's only live one;
+    // the store decides that under its lock, and the refusal names the run that holds it.
+    if !state
         .agents
         .create_run_alone(&run)
         .await
         .map_err(unavailable)?
     {
+        let live = state
+            .agents
+            .live_run_for_app(&project, &request.app_name)
+            .await
+            .map_err(unavailable)?
+            .map(|live| format!(": {}", live.id))
+            .unwrap_or_default();
         return Err(ApiError::Conflict(format!(
-            "application '{}' already has a live run",
+            "application '{}' already has a live run{live}",
             request.app_name
         )));
     }
@@ -931,20 +924,8 @@ pub async fn stream_events(
             .into_iter()
             .map(|event| Ok::<Event, std::convert::Infallible>(sse(&event))),
     );
-    let tail = BroadcastStream::new(live).filter_map(
-        move |item| -> Option<Result<Event, std::convert::Infallible>> {
-            match item {
-                Ok(event) if event.seq > replayed_through => Some(Ok(sse(&event))),
-                // Already in the backlog this stream just sent.
-                Ok(_) => None,
-                // A browser that fell behind is told so rather than handed a stream with a hole in it;
-                // its reconnect carries `Last-Event-ID` and the backlog fills the gap.
-                Err(BroadcastStreamRecvError::Lagged(missed)) => Some(Ok(Event::default()
-                    .event("lag")
-                    .data(serde_json::json!({ "missed": missed }).to_string()))),
-            }
-        },
-    );
+    let tail =
+        BroadcastStream::new(live).filter_map(move |item| tail_frame(item, replayed_through));
 
     let stream = Sse::new(backlog.chain(tail)).keep_alive(
         KeepAlive::new()
@@ -964,6 +945,23 @@ pub async fn stream_events(
         header::HeaderValue::from_static("no-cache"),
     );
     Ok(response)
+}
+
+/// One live event of a stream whose backlog went up to `replayed_through`, as its frame.
+fn tail_frame(
+    item: Result<AgentRunEvent, BroadcastStreamRecvError>,
+    replayed_through: i64,
+) -> Option<Result<Event, std::convert::Infallible>> {
+    match item {
+        Ok(event) if event.seq > replayed_through => Some(Ok(sse(&event))),
+        // Already in the backlog this stream just sent.
+        Ok(_) => None,
+        // A browser that fell behind is told so rather than handed a stream with a hole in it;
+        // its reconnect carries `Last-Event-ID` and the backlog fills the gap.
+        Err(BroadcastStreamRecvError::Lagged(missed)) => Some(Ok(Event::default()
+            .event("lag")
+            .data(serde_json::json!({ "missed": missed }).to_string()))),
+    }
 }
 
 #[utoipa::path(
@@ -1044,10 +1042,10 @@ pub async fn answer_question(
 /// (ADR-N-038 §3.1, T-6483). No token, no agent runner: nothing to hand over, and the run keeps
 /// the grant it holds.
 async fn hand_over_on_turn(state: &AppState, headers: &HeaderMap, id: &str) {
-    let Some(token) = crate::agents::identity::run_token(state, headers) else {
-        return;
-    };
-    let Ok(settings) = agent_settings(state) else {
+    let (Some(token), Ok(settings)) = (
+        crate::agents::identity::run_token(state, headers),
+        agent_settings(state),
+    ) else {
         return;
     };
     crate::agents::identity::hand_over(
@@ -2197,14 +2195,16 @@ pub async fn publish_run(
         ));
     };
     // The run remembers its Change, so its page shows it and approves it in place (AP-71).
-    if let Ok(number) = crate::api::changes::parse_change_id(&change.metadata.name) {
-        if let Ok(number) = i32::try_from(number) {
-            state
-                .agents
-                .set_merge_request(&id, number)
-                .await
-                .map_err(unavailable)?;
-        }
+    // A Change number past what the store keeps is not remembered; the Change is still made.
+    if let Some(number) = crate::api::changes::parse_change_id(&change.metadata.name)
+        .ok()
+        .and_then(|number| i32::try_from(number).ok())
+    {
+        state
+            .agents
+            .set_merge_request(&id, number)
+            .await
+            .map_err(unavailable)?;
     }
     let response = (StatusCode::ACCEPTED, Json(change)).into_response();
 
@@ -2230,11 +2230,10 @@ pub async fn publish_run(
 /// sandbox. A version with no `tests` event (the first, quick one), or whose tests were skipped
 /// or could not run, is left to the build lane, which runs them again at publication (SDK-24).
 fn tests_hold(preview_url: Option<&str>, events: &[AgentRunEvent]) -> Option<String> {
-    let version: u64 = preview_url?
-        .split_once("?v=")?
-        .1
-        .split('&')
-        .next()?
+    let (_, query) = preview_url?.split_once("?v=")?;
+    let version: u64 = query
+        .split_once('&')
+        .map_or(query, |(version, _)| version)
         .parse()
         .ok()?;
     let tests = events.iter().rev().find(|event| {
@@ -3278,7 +3277,7 @@ mod tests {
 
 #[cfg(test)]
 mod frame_tests {
-    use super::{frame_data, AgentRunEvent};
+    use super::{frame_data, tail_frame, AgentRunEvent, BroadcastStreamRecvError};
 
     fn event(kind: &str, payload: serde_json::Value) -> AgentRunEvent {
         AgentRunEvent {
@@ -3307,6 +3306,27 @@ mod frame_tests {
             serde_json::json!({ "status": "interviewing", "timestamp": "2026-09-25T08:14:03.400Z" }),
         ));
         assert_eq!(status["timestamp"], "2026-09-25T08:14:03.400Z");
+    }
+
+    /// A payload that is no object is sent as it is: there is nowhere to put `seq` in it.
+    #[test]
+    fn a_frame_that_is_no_object_is_sent_as_it_is() {
+        let data = frame_data(&event("partial", serde_json::json!("half a sentence")));
+        assert_eq!(data, serde_json::json!("half a sentence"));
+    }
+
+    /// AG-45: a live event the backlog already sent is dropped, a newer one is sent, and a
+    /// stream that fell behind is told how much it missed.
+    #[test]
+    fn a_live_event_the_backlog_sent_is_dropped_and_a_lag_is_said() {
+        let tool = || event("tool", serde_json::json!({}));
+        assert!(tail_frame(Ok(tool()), 7).is_none());
+        assert!(tail_frame(Ok(tool()), 6).is_some());
+        let lag = tail_frame(Err(BroadcastStreamRecvError::Lagged(3)), 7)
+            .expect("a frame")
+            .expect("infallible");
+        let shown = format!("{lag:?}");
+        assert!(shown.contains("lag") && shown.contains("missed"), "{shown}");
     }
 }
 
@@ -3386,5 +3406,465 @@ mod invocation_tests {
             status_error(StatusChangeError::Unknown),
             ApiError::NotFound(why) if why == "no such run"
         ));
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use axum::http::HeaderMap;
+    use serde_json::{json, Value};
+    use tracing::level_filters::LevelFilter;
+    use wiremock::matchers::{method, path, path_regex};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use crate::agents::run::AgentRun;
+    use crate::agents::store::AgentStore;
+    use crate::auth::session::{Identity, Session};
+    use crate::auth::CurrentUser;
+    use crate::config::{AgentSettings, Config};
+    use crate::error::ApiError;
+    use crate::resource::ResourceEnvelope;
+    use crate::state::AppState;
+    use crate::test_log::logged;
+
+    /// The application repository of the runs here.
+    const APPS: &str =
+        "/odata/Repositories(Owner='joinedcontext',Name='helsinki_city-bikes-overview')";
+
+    fn identity() -> Identity {
+        Identity {
+            client: None,
+            subject: "f:1:demo.steward".into(),
+            username: "demo.steward".into(),
+            email: Some("demo.steward@hel.fi".into()),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    fn person() -> CurrentUser {
+        let now = crate::auth::session::now_unix();
+        CurrentUser(Session {
+            identity: identity(),
+            expires_at: now + 60,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 60,
+            refresh_token: None,
+        })
+    }
+
+    /// A run of a static application, in its own repository, in `status`.
+    fn own_run(id: &str, status: &str) -> AgentRun {
+        let mut run = crate::agents::store::tests::run(id, "helsinki", "2026-11-25T10:00:00Z");
+        run.path_prefix = String::new();
+        run.status = status.to_owned();
+        run
+    }
+
+    /// Every read and write of the runs fails: the database is down.
+    fn dead(state: &mut AppState) {
+        state.agents = Arc::new(AgentStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        ));
+    }
+
+    async fn forge() -> (MockServer, Arc<crate::forge::ShakoClient>) {
+        let server = MockServer::start().await;
+        let client = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("a url"),
+            "joinedcontext",
+            "configuration",
+            "token",
+        )
+        .expect("a client");
+        (server, Arc::new(client))
+    }
+
+    /// The open merge requests of the application's repository, one per run, numbered from 1.
+    async fn open_pulls(server: &MockServer, runs: &[&AgentRun]) {
+        let pulls: Vec<Value> = runs
+            .iter()
+            .zip(1..)
+            .map(|(run, number)| {
+                json!({
+                    "Number": number,
+                    "HtmlUrl": format!("http://forge/pulls/{number}"),
+                    "State": "open",
+                    "Title": "t",
+                    "Head": run.branch,
+                    "HeadSha": "abc",
+                    "Base": "main",
+                    "BaseSha": "base"
+                })
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!("{APPS}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": pulls })))
+            .mount(server)
+            .await;
+    }
+
+    async fn merges(server: &MockServer, number: u64, status: u16) {
+        Mock::given(method("POST"))
+            .and(path(format!("{APPS}/PullRequests({number})/Shako.Merge")))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({ "message": "m" })))
+            .mount(server)
+            .await;
+    }
+
+    /// The App manifest `run` published, building from `source`.
+    fn published(run: &AgentRun, source: Value) -> ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": crate::resource::API_VERSION,
+            "kind": "App",
+            "metadata": {
+                "name": run.app_name,
+                "namespace": "helsinki",
+                "annotations": { "joinedcontext.com/agent-run": run.id }
+            },
+            "spec": { "source": source }
+        }))
+        .expect("an App")
+    }
+
+    fn at_commit() -> Value {
+        json!({ "git": {
+            "url": "https://forge.example/joinedcontext/helsinki_city-bikes-overview.git",
+            "ref": "abc"
+        } })
+    }
+
+    async fn status_of(state: &AppState, id: &str) -> String {
+        state
+            .agents
+            .get_run(id)
+            .await
+            .expect("read")
+            .expect("a run")
+            .status
+    }
+
+    /// AP-77: a manifest that names no commit and a Portal with no forge merge nothing and leave
+    /// the run waiting; a store that cannot read the run is said in the log.
+    #[tokio::test]
+    async fn a_publication_without_a_commit_a_forge_or_a_store_merges_nothing() {
+        let (server, shako) = forge().await;
+        let run = own_run("run-a", "awaiting_approval");
+        let state = AppState::new(Config::for_tests(), None).with_shako(Arc::clone(&shako));
+        state.agents.create_run(&run).await.expect("stored");
+        let no_commit = published(
+            &run,
+            json!({ "git": { "url": "https://forge.example/x.git" } }),
+        );
+        super::merge_published_application(&state, "helsinki", Some(&no_commit), "ana").await;
+        let forgeless = AppState::new(Config::for_tests(), None);
+        forgeless.agents.create_run(&run).await.expect("stored");
+        let manifest = published(&run, at_commit());
+        super::merge_published_application(&forgeless, "helsinki", Some(&manifest), "ana").await;
+        assert_eq!(status_of(&state, "run-a").await, "awaiting_approval");
+        assert_eq!(status_of(&forgeless, "run-a").await, "awaiting_approval");
+        assert!(server
+            .received_requests()
+            .await
+            .expect("requests")
+            .is_empty());
+
+        let mut unreadable = AppState::new(Config::for_tests(), None).with_shako(shako);
+        dead(&mut unreadable);
+        let ((), log) = logged(
+            LevelFilter::WARN,
+            super::merge_published_application(&unreadable, "helsinki", Some(&manifest), "ana"),
+        )
+        .await;
+        assert!(
+            log.contains("published application's run not read"),
+            "{log}"
+        );
+    }
+
+    /// AP-77: a merge the forge made for a run that has ended already does not move the run,
+    /// and the log says so.
+    #[tokio::test]
+    async fn a_merged_publication_of_an_ended_run_is_logged_and_moves_nothing() {
+        let (server, shako) = forge().await;
+        let ended = own_run("run-ended", "cancelled");
+        open_pulls(&server, &[&ended]).await;
+        merges(&server, 1, 200).await;
+        let state = AppState::new(Config::for_tests(), None).with_shako(shako);
+        state.agents.create_run(&ended).await.expect("stored");
+        let manifest = published(&ended, at_commit());
+        let ((), log) = logged(
+            LevelFilter::WARN,
+            super::merge_published_application(&state, "helsinki", Some(&manifest), "ana"),
+        )
+        .await;
+        assert!(log.contains("published run not marked published"), "{log}");
+        assert_eq!(status_of(&state, "run-ended").await, "cancelled");
+    }
+
+    /// AP-77, T-3015: a decision the store records but whose event it refuses, and an end of a
+    /// rejected run the store refuses, are said in the log; a merged run is published still.
+    #[tokio::test]
+    async fn a_store_that_refuses_what_follows_a_decision_is_logged() {
+        let scratch = crate::test_db::scratch().await;
+        let (server, shako) = forge().await;
+        let merged = own_run("run-merged", "awaiting_approval");
+        let refused = own_run("run-refused", "awaiting_approval");
+        let rejected = own_run("run-rejected", "awaiting_approval");
+        open_pulls(&server, &[&merged, &refused]).await;
+        merges(&server, 1, 200).await;
+        merges(&server, 2, 409).await;
+        let mut state = AppState::new(Config::for_tests(), None).with_shako(shako);
+        state.agents = Arc::new(AgentStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("helsinki").await,
+        ));
+        for run in [&merged, &refused, &rejected] {
+            state.agents.create_run(run).await.expect("stored");
+        }
+        state
+            .agents
+            .set_merge_request("run-rejected", 7)
+            .await
+            .expect("its change");
+        scratch.refuse("agent_run_events", "INSERT").await;
+        let ((), log) = logged(LevelFilter::WARN, async {
+            for run in [&merged, &refused] {
+                let manifest = published(run, at_commit());
+                super::merge_published_application(&state, "helsinki", Some(&manifest), "ana")
+                    .await;
+            }
+        })
+        .await;
+        assert!(log.contains("published status not streamed"), "{log}");
+        assert!(log.contains("merge refusal not streamed"), "{log}");
+        assert_eq!(status_of(&state, "run-merged").await, "published");
+        assert_eq!(status_of(&state, "run-refused").await, "awaiting_approval");
+
+        scratch.refuse("agent_runs", "UPDATE").await;
+        let (ended, log) = logged(
+            LevelFilter::WARN,
+            super::end_rejected_publication(&state, "helsinki", "run-rejected", 7, "rejected"),
+        )
+        .await;
+        assert!(!ended);
+        assert!(
+            log.contains("rejected application's run not ended"),
+            "{log}"
+        );
+        assert_eq!(status_of(&state, "run-rejected").await, "awaiting_approval");
+        scratch.remove().await;
+    }
+
+    /// T-2772, AG-80, T-3015: a lease, an answer's activity line and a rejected run's end that
+    /// a dead store loses are each said in the log, and the rejection ends nothing.
+    #[tokio::test]
+    async fn what_a_dead_store_or_feed_loses_is_logged() {
+        let mut config = Config::for_tests();
+        config.agent_settings = Some(AgentSettings {
+            namespace: None,
+            portal_namespace: "jc".into(),
+            proxy_base: "http://jc-agent-proxy.example".into(),
+            run_ttl_secs: 1_200,
+            approval_ttl_secs: 86_400,
+        });
+        let mut state = AppState::new(config, None);
+        dead(&mut state);
+        state.activity = crate::activity::ActivityStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        );
+        let (ended, log) = logged(LevelFilter::WARN, async {
+            super::lease_for_approval(&state, "run-1").await;
+            super::record_answer(&state, "helsinki", "run-1", &person(), "layout").await;
+            super::end_rejected_publication(&state, "helsinki", "run-1", 7, "rejected").await
+        })
+        .await;
+        assert!(!ended);
+        for said in [
+            "the approval lease was not given",
+            "the answer is not on the activity feed",
+            "rejected application's run not read",
+        ] {
+            assert!(log.contains(said), "{said}: {log}");
+        }
+    }
+
+    /// PF-73: a quota the store cannot count is a server error, not a run started past it.
+    #[tokio::test]
+    async fn a_quota_the_store_cannot_count_starts_nothing() {
+        let mut state = AppState::new(Config::for_tests(), None);
+        dead(&mut state);
+        let refused = super::within_runs_per_day(&state, "helsinki")
+            .await
+            .expect_err("uncounted");
+        assert!(matches!(&refused, ApiError::Internal(_)), "{refused:?}");
+    }
+
+    /// AP-77: a static application is published from its own repository at the commit its
+    /// branch ends at, its merge request reused; no forge, or one that does not answer, publishes
+    /// nothing.
+    #[tokio::test]
+    async fn a_static_publication_names_the_commit_its_branch_ends_at() {
+        let run = own_run("run-pub", "previewing");
+        let forgeless = AppState::new(Config::for_tests(), None);
+        let refused = super::publish_source(&forgeless, &run)
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("AP-77")),
+            "{refused:?}"
+        );
+
+        let (server, shako) = forge().await;
+        let branch = format!("^{}/Branches\\(", regex::escape(APPS));
+        Mock::given(method("GET"))
+            .and(path_regex(branch.as_str()))
+            .respond_with(ResponseTemplate::new(500))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path_regex(branch.as_str()))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "Name": "b", "HeadSha": "abc" })),
+            )
+            .mount(&server)
+            .await;
+        let state = AppState::new(Config::for_tests(), None).with_shako(shako);
+        let down = super::publish_source(&state, &run)
+            .await
+            .expect_err("the forge is down");
+        assert!(
+            matches!(&down, ApiError::Unavailable(m) if m.contains("did not answer the Portal")),
+            "{down:?}"
+        );
+
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{APPS}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "abc",
+                "Truncated": false,
+                "Tree": [
+                    { "Path": "README.md", "Type": "blob", "Sha": "r" },
+                    { "Path": "src/App.tsx", "Type": "blob", "Sha": "a" }
+                ]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(APPS))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        open_pulls(&server, &[&run]).await;
+        let source = super::publish_source(&state, &run)
+            .await
+            .expect("published");
+        assert_eq!(source["git"]["ref"], "abc");
+        let url = source["git"]["url"].as_str().unwrap_or_default();
+        assert!(
+            url.ends_with("/joinedcontext/helsinki_city-bikes-overview.git"),
+            "{source}"
+        );
+        let opened = server
+            .received_requests()
+            .await
+            .expect("requests")
+            .into_iter()
+            .filter(|r| r.url.path().ends_with("/Shako.OpenPullRequest"))
+            .count();
+        assert_eq!(opened, 0, "the open merge request is reused");
+    }
+
+    /// SDK-18: a function of a run whose endpoint is gone still builds its request, and without
+    /// a runtime address the call is refused naming it.
+    #[tokio::test]
+    async fn a_function_of_a_run_on_several_endpoints_needs_a_runtime() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut run =
+            crate::agents::store::tests::run("run-fn", "helsinki", "2026-11-25T10:00:00Z");
+        let mut files = crate::agents::preview::template_files();
+        files.retain(|path, _| path.starts_with("functions/"));
+        run.files = json!(files);
+        run.endpoint_name = "gone".into();
+        run.endpoints = json!([
+            { "name": "air", "slug": "sa", "space": "air" },
+            { "name": "bikes", "slug": "sb", "space": "bikes" }
+        ]);
+        let invoked = super::invoke_function(
+            &state,
+            &run,
+            "summary",
+            Value::Null,
+            &BTreeMap::new(),
+            &identity(),
+            super::Caller::Person(None),
+        )
+        .await;
+        assert!(matches!(
+            invoked,
+            Err(super::InvokeError::Unavailable(m)) if m.contains("JC_FUNCTIONS_URL")
+        ));
+    }
+
+    /// SDK-16, AP-67: a code preview of a run whose endpoint is gone reads the run's project as
+    /// its space, names the basemap and every endpoint, and the Portal keeps sixteen documents.
+    #[tokio::test]
+    async fn a_code_preview_names_its_space_and_basemap_and_keeps_sixteen_documents() {
+        let mut config = Config::for_tests();
+        config.basemap = Some(crate::config::BasemapConfig::for_tests(
+            "https://tiles.example/{z}/{x}/{y}.png".into(),
+            "tiles".into(),
+            std::env::temp_dir(),
+        ));
+        let state = AppState::new(config, None);
+        let mut run =
+            crate::agents::store::tests::run("run-preview", "helsinki", "2026-11-25T10:00:00Z");
+        run.endpoint_name = "gone".into();
+        run.endpoints = json!([
+            { "name": "air", "slug": "sa", "space": "air" },
+            { "name": "bikes", "slug": "sb", "space": "bikes" }
+        ]);
+        let mut files = crate::agents::preview::template_files();
+        files.retain(|path, _| path.starts_with("src/"));
+        let mut first = None;
+        for version in 0..=super::RENDERED_KEEP {
+            files.insert(
+                "src/version.ts".to_owned(),
+                format!("export const version = {version};\n"),
+            );
+            let response = super::code_preview(&state, &run, &files, &HeaderMap::new())
+                .expect("a document: sdk/dist is built");
+            first.get_or_insert(response);
+        }
+        let first = first.expect("one document");
+        let body = axum::body::to_bytes(first.into_body(), usize::MAX)
+            .await
+            .expect("a body");
+        let html = String::from_utf8_lossy(&body);
+        assert!(html.contains("\"space\":\"helsinki\""), "{html}");
+        assert!(
+            html.contains("/api/v1/projects/helsinki/basemap/default/style.json"),
+            "{html}"
+        );
+        assert!(html.contains("\"slug\":\"sb\""), "{html}");
+        let kept = super::RENDERED.lock().expect("the cache").len();
+        assert!(kept <= super::RENDERED_KEEP, "{kept}");
     }
 }
