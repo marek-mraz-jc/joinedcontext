@@ -151,16 +151,18 @@ fn get(addr: &str, path: &str) -> Option<String> {
     Some(answer)
 }
 
-fn serving(child: &mut Child, addr: &str) -> String {
+/// The child's own health answer, or None when it stopped first: the model loads for seconds
+/// after the ports are free, so a parallel test can bind one meanwhile and the child then fails
+/// to bind; a foreign server's answer (ci 46065794555 met a `503 starting`) is not the child's.
+fn serving(child: &mut Child, addr: &str) -> Option<String> {
     let began = Instant::now();
     loop {
-        if let Some(answer) = get(addr, "/healthz") {
-            return answer;
+        if let Some(answer) = get(addr, "/healthz").filter(|a| a.ends_with("ok")) {
+            return Some(answer);
         }
-        assert!(
-            child.try_wait().expect("wait").is_none(),
-            "the embedder stopped before it served"
-        );
+        if child.try_wait().expect("wait").is_some() {
+            return None;
+        }
         assert!(began.elapsed() < Duration::from_secs(120), "never served");
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -171,15 +173,19 @@ fn it_serves_exports_metrics_and_stops_cleanly_on_a_signal() {
     let model = model_dir();
     for signal in ["TERM", "INT"] {
         let dir = scratch(&format!("serve-{signal}"));
-        let [listen, metrics] = free_ports();
-        let path = config(&dir, &model, &listen, Some(&metrics));
-        let mut child = embedder()
-            .arg("--config")
-            .arg(&path)
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn");
-        let health = serving(&mut child, &listen);
+        let (child, health, metrics) = (0..3)
+            .find_map(|_| {
+                let [listen, metrics] = free_ports();
+                let path = config(&dir, &model, &listen, Some(&metrics));
+                let mut child = embedder()
+                    .arg("--config")
+                    .arg(&path)
+                    .stdout(Stdio::piped())
+                    .spawn()
+                    .expect("spawn");
+                serving(&mut child, &listen).map(|health| (child, health, metrics))
+            })
+            .expect("the embedder stopped before it served, on three port pairs");
         assert!(
             health.starts_with("HTTP/1.0 200") && health.ends_with("ok"),
             "{health}"
