@@ -374,7 +374,9 @@ async fn inline_resources_buffer_and_secret_refs_are_built_for_the_run() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_page_over_eight_mib_is_written_whole() {
     let r = rig(vec![Step::Batch(vec!["ab"])], false, Collect::default());
-    let c = conf("pipeline:\n  processors:\n    - mapping: 'root = content().string().repeat(4718593)'\n");
+    let c = conf(
+        "pipeline:\n  processors:\n    - mapping: 'root = content().string().repeat(4718593)'\n",
+    );
     let s = run(&r, c, ResourceManager::new()).await;
     assert!(s.success, "{:?}", s.error);
     let written = r.out.written.lock().unwrap();
@@ -390,8 +392,14 @@ async fn a_secret_ref_falls_back_to_the_streams_scope() {
     resources
         .get_or_create_org(&OrgId::default())
         .replace_scoped_secrets(HashMap::from([
-            ("team".to_string(), HashMap::from([("TEAM_KEY".to_string(), "t-1".to_string())])),
-            ("other".to_string(), HashMap::from([("OTHER_KEY".to_string(), "o-1".to_string())])),
+            (
+                "team".to_string(),
+                HashMap::from([("TEAM_KEY".to_string(), "t-1".to_string())]),
+            ),
+            (
+                "other".to_string(),
+                HashMap::from([("OTHER_KEY".to_string(), "o-1".to_string())]),
+            ),
         ]));
     let r = rig(vec![Step::Batch(vec!["a"])], false, Collect::default());
     let c = conf(concat!(

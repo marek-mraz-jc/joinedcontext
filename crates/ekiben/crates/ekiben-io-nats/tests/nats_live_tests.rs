@@ -234,6 +234,53 @@ async fn jetstream_output_then_durable_input_with_metadata_nak_redelivery_and_co
     assert_eq!(info.num_ack_pending, 0, "every message acked");
 }
 
+/// A header without a value stays off the message; an ack given outside a runtime is never sent,
+/// so the server delivers the message again after ack_wait.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn jetstream_unsent_acks_leave_the_message_redelivered() {
+    let Some(srv) = start_server("jetstream_unsent_ack", &[], &[]) else {
+        return;
+    };
+    let (reg, sctx, _) = make_ctx("org-a", Some("org_a"));
+    add_stream(&srv.url, "ACKS", &["org_a.acks.>"]).await;
+    let mut headers = async_nats::HeaderMap::new();
+    headers.insert("X-Empty", "");
+    headers.insert("X-Kept", "yes");
+    js(&srv.url)
+        .await
+        .publish_with_headers("org_a.acks.1", headers, Bytes::from_static(b"one"))
+        .await
+        .unwrap()
+        .await
+        .unwrap();
+    let mut i = input(
+        &reg,
+        &sctx,
+        serde_json::json!({"nats_jetstream": {
+            "urls": [srv.url], "subject": "org_a.acks.>", "durable": "acks", "ack_wait": "1s"
+        }}),
+    )
+    .await;
+    let (p, ack) = read(&mut i, &sctx).await;
+    assert_eq!(p.meta_get_str("X-Kept"), "yes");
+    assert!(p.meta_get("X-Empty").is_none(), "an empty header is not metadata");
+    std::thread::spawn(move || ack.ack()).join().unwrap();
+    let (p, ack) = read(&mut i, &sctx).await;
+    assert_eq!(p.meta_get_str("nats_num_delivered"), "2", "the unsent ack redelivers");
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let info = js(&srv.url)
+        .await
+        .get_stream("ACKS")
+        .await
+        .unwrap()
+        .consumer_info("acks")
+        .await
+        .unwrap();
+    assert_eq!(info.num_ack_pending, 0, "the second ack was sent");
+    i.close().await.unwrap();
+}
+
 /// Two instances on one durable (pull) and two on one queue (push with deliver group) each
 /// process every message exactly once between them.
 #[tokio::test]
@@ -504,6 +551,14 @@ async fn jetstream_connect_names_what_is_missing_and_reads_existing_consumer_fil
     .await;
     assert!(err.contains("bind with only durable"), "{err}");
     add_stream(&srv.url, "MULTI", &["org_a.m.>"]).await;
+    // A filter the stream does not hold: the server refuses the consumer, push (no durable)
+    // and pull (a durable it cannot create nor find) alike.
+    for extra in [serde_json::json!({}), serde_json::json!({"durable": "dz"})] {
+        let mut v = serde_json::json!({"urls": [srv.url], "subject": "org_a.z", "stream": "MULTI"});
+        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        let err = connect_err(serde_json::json!({ "nats_jetstream": v })).await;
+        assert!(err.contains("failed to create JetStream consumer"), "{extra}: {err}");
+    }
     let stream = js(&srv.url).await.get_stream("MULTI").await.unwrap();
     stream
         .create_consumer(jetstream::consumer::pull::Config {

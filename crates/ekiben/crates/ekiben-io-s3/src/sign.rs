@@ -133,7 +133,11 @@ mod tests {
     #[test]
     fn hmac_takes_a_key_of_any_length() {
         for len in [0, 1, 64, 65, 4096] {
-            assert_eq!(hmac(&vec![7u8; len], "x").expect("any key").len(), 32, "{len}");
+            assert_eq!(
+                hmac(&vec![7u8; len], "x").expect("any key").len(),
+                32,
+                "{len}"
+            );
         }
     }
 

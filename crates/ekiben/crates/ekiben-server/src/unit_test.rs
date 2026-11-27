@@ -1063,7 +1063,11 @@ mod tests {
         set_mock(&mut root, &serde_json::json!({"y": 1}), &segs("/a")).expect("set");
         assert_eq!(root["a"], serde_json::json!({"label": "orig", "y": 1}));
         set_mock(&mut root, &serde_json::json!({"label": "own"}), &segs("/a")).expect("set");
-        assert_eq!(root["a"], serde_json::json!({}), "a mock's own label is dropped");
+        assert_eq!(
+            root["a"],
+            serde_json::json!({}),
+            "a mock's own label is dropped"
+        );
         set_mock(&mut root, &serde_json::json!({"z": 1}), &segs("/b")).expect("set");
         assert_eq!(root["b"], serde_json::json!({"z": 1}), "no label to keep");
         set_mock(&mut root, &serde_json::json!("plain"), &segs("/b")).expect("set");

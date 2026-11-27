@@ -344,9 +344,6 @@ impl JetStreamInput {
         };
         let filter_subject = user_subject.unwrap_or_default().to_string();
         let max_ack_pending = i64::try_from(self.max_ack_pending).unwrap_or(i64::MAX);
-        let err = |e: &dyn std::fmt::Display| {
-            CoreError::other(format!("failed to create JetStream consumer: {e}"))
-        };
 
         let is_push = match &existing {
             Some(info) => info.config.deliver_subject.is_some(),
@@ -365,15 +362,15 @@ impl JetStreamInput {
                 ..Default::default()
             };
             let consumer: consumer::PushConsumer = match (&existing, &durable) {
-                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(|e| err(&e))?,
+                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 // Replicas starting together race to create the durable: the loser uses it.
                 (None, Some(name)) => match stream.create_consumer(config).await {
                     Ok(c) => c,
-                    Err(_) => stream.get_consumer(name).await.map_err(|e| err(&e))?,
+                    Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 },
-                _ => stream.create_consumer(config).await.map_err(|e| err(&e))?,
+                _ => stream.create_consumer(config).await.map_err(consumer_failed)?,
             };
-            let messages = consumer.messages().await.map_err(|e| err(&e))?;
+            let messages = consumer.messages().await.map_err(consumer_failed)?;
             Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
         } else {
             let config = consumer::pull::Config {
@@ -386,13 +383,13 @@ impl JetStreamInput {
                 ..Default::default()
             };
             let consumer: consumer::PullConsumer = match (&existing, &durable) {
-                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(|e| err(&e))?,
+                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 // Replicas starting together race to create the durable: the loser uses it.
                 (None, Some(name)) => match stream.create_consumer(config).await {
                     Ok(c) => c,
-                    Err(_) => stream.get_consumer(name).await.map_err(|e| err(&e))?,
+                    Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 },
-                _ => stream.create_consumer(config).await.map_err(|e| err(&e))?,
+                _ => stream.create_consumer(config).await.map_err(consumer_failed)?,
             };
             // Each pull asks for at most max_ack_pending (cap 200) messages, so instances on
             // one durable split the backlog instead of the first one prefetching all of it.
@@ -401,13 +398,18 @@ impl JetStreamInput {
                 .max_messages_per_batch(self.max_ack_pending.clamp(1, 200))
                 .messages()
                 .await
-                .map_err(|e| err(&e))?;
+                .map_err(consumer_failed)?;
             Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
         }
     }
 }
 
 /// One JetStream message as a Bento part: the same metadata keys, ack = Ack, nack = Nak.
+/// A consumer the server would not create, open or start, named.
+fn consumer_failed(e: impl std::fmt::Display) -> CoreError {
+    CoreError::other(format!("failed to create JetStream consumer: {e}"))
+}
+
 fn live_part(msg: jetstream::Message) -> Result<(Batch, AckResponder), CoreError> {
     let mut part = Part::new(msg.message.payload.clone());
     part.meta_set_str("nats_subject", msg.message.subject.to_string());

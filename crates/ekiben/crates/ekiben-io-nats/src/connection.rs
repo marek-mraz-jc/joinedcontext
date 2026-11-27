@@ -653,22 +653,22 @@ mod tests {
                 .contains("tls root CA is not valid PEM")
         );
         // Without a custom CA the platform's roots are used (or an error says none were found).
-        match tls(serde_json::json!({"enabled": true}))
+        let platform = tls(serde_json::json!({"enabled": true}))
             .unwrap()
             .tls
             .client_config()
-        {
-            Ok(_) => {}
-            Err(e) => assert!(e.to_string().contains("root"), "{e}"),
-        }
+            .err()
+            .as_ref()
+            .map_or(String::from("root"), ToString::to_string);
+        assert!(platform.contains("root"), "{platform}");
     }
 
     #[test]
     fn tls_client_certificates_load_from_inline_pem_or_refuse_clearly() {
-        let Some((cert, key)) = self_signed() else {
-            eprintln!("SKIP tls_client_certificates: openssl is not available");
-            return;
-        };
+        let pair = self_signed();
+        let skip = if pair.is_none() { "SKIP (no openssl) " } else { "" };
+        eprintln!("{skip}tls_client_certificates");
+        let Some((cert, key)) = pair else { return };
         let client = |c: &str, k: &str| {
             tls(serde_json::json!({"enabled": true, "root_cas": cert, "client_certs": [{"cert": c, "key": k}]}))
                 .unwrap()

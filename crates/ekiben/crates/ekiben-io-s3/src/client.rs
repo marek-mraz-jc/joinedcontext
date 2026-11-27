@@ -175,8 +175,10 @@ impl S3Conn {
         for (k, v) in headers {
             // The names are fixed or checked by the output; a value may still be one HTTP
             // cannot carry.
-            let (Ok(name), Ok(value)) = (HeaderName::from_bytes(k.as_bytes()), HeaderValue::from_str(&v))
-            else {
+            let (Ok(name), Ok(value)) = (
+                HeaderName::from_bytes(k.as_bytes()),
+                HeaderValue::from_str(&v),
+            ) else {
                 return Err(CoreError::config(format!(
                     "aws_s3: header {k} has a value HTTP cannot carry"
                 )));

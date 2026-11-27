@@ -249,7 +249,10 @@ mod tests {
         for raw in ["http://", "https://", "https://:80/", "http://?q"] {
             assert!(url::Url::parse(raw).is_err(), "{raw}");
         }
-        for (raw, host) in [("http:example.org", "example.org"), ("http:///path", "path")] {
+        for (raw, host) in [
+            ("http:example.org", "example.org"),
+            ("http:///path", "path"),
+        ] {
             let odd = url::Url::parse(raw).expect("parses");
             assert_eq!(odd.host_str(), Some(host), "{raw}");
         }
