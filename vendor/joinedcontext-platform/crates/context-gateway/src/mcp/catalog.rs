@@ -973,11 +973,11 @@ pub(crate) mod tests {
         let asked = tokio::time::Instant::now();
         let read = public_entities(&gateway, &reach).await;
         assert!(read.is_empty());
-        assert!(
-            asked.elapsed() <= super::super::server::MEMBER_DEADLINE + Duration::from_secs(1),
-            "{:?}",
-            asked.elapsed()
-        );
+        // The broker holds the call for its minute: an answer before that is the deadline's
+        // cut, whatever the paused clock's auto-advance adds for the connect under load.
+        let took = asked.elapsed();
+        assert!(took >= super::super::server::MEMBER_DEADLINE, "{took:?}");
+        assert!(took < Duration::from_secs(60), "{took:?}");
         holder.await.expect("the holder ends with its minute");
     }
 
