@@ -704,7 +704,7 @@ async fn check_edge_client(store: &Arc<dyn Store>, realm: &setup::Realm) -> Resu
         .list_signing_keys(&realm.id)
         .await
         .map_err(|e| err(&e))?;
-    active_rs256(&keys, &realm.realm).map_err(|e| err(&e))
+    active_rs256(&keys, &realm.realm)
 }
 
 /// Both token algorithm attributes of `edge` name RS256.
@@ -722,15 +722,16 @@ fn edge_algorithms(edge: &ClientRepresentation, realm: &str) -> Result<(), Strin
 }
 
 /// The realm holds an ACTIVE RS256 key for the edge client.
-fn active_rs256(keys: &[SigningKeyRecord], realm: &str) -> Result<(), String> {
+fn active_rs256(keys: &[SigningKeyRecord], realm: &str) -> Result<(), StartError> {
     if keys
         .iter()
         .any(|k| k.algorithm == "RS256" && k.status == "ACTIVE")
     {
         Ok(())
     } else {
-        Err(format!(
-            "realm {realm} holds client {EDGE_CLIENT} but no ACTIVE RS256 key"
+        Err(StartError::module(
+            Module::Kaisatsu,
+            format!("realm {realm} holds client {EDGE_CLIENT} but no ACTIVE RS256 key"),
         ))
     }
 }
@@ -1996,7 +1997,7 @@ mod tests {
         let mut retired = rs.clone();
         retired.status = "RETIRED".into();
         active_rs256(&[es.clone(), rs], "dev").unwrap();
-        let e = active_rs256(&[es, retired], "dev").unwrap_err();
+        let e = active_rs256(&[es, retired], "dev").unwrap_err().to_string();
         assert!(e.contains("no ACTIVE RS256 key"), "{e}");
     }
 
