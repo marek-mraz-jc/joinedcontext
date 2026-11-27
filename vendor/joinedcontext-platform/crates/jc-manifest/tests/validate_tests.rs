@@ -904,6 +904,39 @@ mod federation_topology {
             .collect()
     }
 
+    /// CC-13: a typed `contextSpaceRef` names the hub as the bare name does; a registration
+    /// without a member Endpoint or whose spec does not parse adds no topology edge.
+    #[test]
+    fn a_typed_space_ref_reads_as_the_bare_name_and_a_memberless_registration_adds_no_edge() {
+        let dir = hub_repo("cc13-typed");
+        let plain = messages(&dir);
+        let path = dir.join("projects/ovzdusie/spaces/hub/registrations/transport.yaml");
+        let text = std::fs::read_to_string(&path).expect("the registration");
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/hub/registrations/transport.yaml",
+            &text.replace(
+                "contextSpaceRef: hub",
+                "contextSpaceRef: { kind: ContextSpace, name: hub }",
+            ),
+        );
+        assert_eq!(messages(&dir), plain);
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/hub/registrations/lone.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\nmetadata:\n  name: lone\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: hub\n  information:\n    - entities:\n        - type: Vehicle\n  federation:\n    identity: caller\n",
+        );
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/hub/registrations/broken.yaml",
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSourceRegistration\nmetadata:\n  name: broken\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: hub\n  information: 5\n",
+        );
+        let found = messages(&dir);
+        assert!(!found.iter().any(|m| m.contains("cycle")), "{found:?}");
+        assert!(found.iter().any(|m| m.contains("information")), "{found:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// CC-13: a hub over a member, served by its own Endpoint, is a topology with no finding.
     #[test]
     fn a_served_hub_over_a_declared_member_is_clean() {
