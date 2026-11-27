@@ -510,6 +510,21 @@ mod tests {
         assert!(!project.modules.contains_key("@app/src/App.tsx"));
     }
 
+    /// What the preview never runs is skipped without a problem: a note, a declaration file, a
+    /// stylesheet or JSON outside `src/` (T-7912).
+    #[test]
+    fn a_file_the_preview_never_runs_is_skipped_quietly() {
+        let project = transpile(&files(&[
+            ("src/notes.md", "# notes"),
+            ("src/env.d.ts", "declare const x: number;"),
+            ("functions/data.json", "{\"a\": 1}"),
+            ("functions/look.css", "a { color: red }"),
+        ]));
+        assert!(project.problems.is_empty(), "{:?}", project.problems);
+        assert!(project.modules.is_empty() && project.functions.is_empty());
+        assert!(project.styles.is_empty());
+    }
+
     #[test]
     fn a_syntax_error_is_named_and_a_missing_file_too() {
         let project = transpile(&files(&[

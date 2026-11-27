@@ -538,6 +538,41 @@ mod tests {
         );
     }
 
+    /// The forge answers 405 while it checks a fresh pull's mergeability: the approval waits it
+    /// out and merges on the next answer (T-7912).
+    #[tokio::test]
+    async fn an_approval_waits_out_a_merge_the_forge_is_not_ready_for() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let (server, repo) = forge().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PullRequests")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "value": [pull(7, "agent/app-city-bikes/run-1", "abc")]
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/PullRequests(7)/Shako.Merge")))
+            .respond_with(
+                ResponseTemplate::new(405)
+                    .set_body_json(serde_json::json!({ "message": "not yet" })),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{REPO}/PullRequests(7)/Shako.Merge")))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&server)
+            .await;
+        merge_published(&repo, &a_run(), "abc", "approver@hel.fi")
+            .await
+            .expect("merged after the wait");
+    }
+
     fn tree_of(paths: &[&str]) -> serde_json::Value {
         serde_json::json!({
             "Sha": "abc",

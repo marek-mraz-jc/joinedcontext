@@ -204,14 +204,18 @@ mod tests {
         json!({ "contextSpaceRef": "mobility", "types": ["Bike"], "attrs": attrs, "operations": operations })
     }
 
+    /// The violations of an `Invalid`; any other outcome is one line naming it, so an assertion
+    /// on the violations fails on it.
     fn errors(result: Result<bool, ApiError>) -> Vec<String> {
-        result
-            .err()
-            .and_then(|error| match error {
-                ApiError::Invalid { errors, .. } => Some(errors),
-                _ => None,
-            })
-            .expect("an Invalid")
+        match result {
+            Err(ApiError::Invalid { errors, .. }) => errors,
+            other => vec![format!("not an Invalid: {other:?}")],
+        }
+    }
+
+    #[test]
+    fn an_outcome_that_is_no_invalid_is_named_as_such() {
+        assert_eq!(errors(Ok(true)), ["not an Invalid: Ok(true)"]);
     }
 
     #[test]

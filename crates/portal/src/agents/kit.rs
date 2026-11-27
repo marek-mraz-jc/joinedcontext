@@ -59,6 +59,24 @@ pub fn script_hash(js: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every file of the SDK build reads the same through the derive's inherent calls and its trait (an empty build reads as no file).
+    #[test]
+    fn the_embedded_files_read_the_same_by_name_and_by_the_trait() {
+        let by_name: Vec<String> = Dist::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Dist as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                Dist::get(path).map(|f| f.data),
+                <Dist as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<Dist as RustEmbed>::get("no/such/file").is_none());
+        assert!(Dist::get("no/such/file").is_none());
+    }
+
     /// Each getter answers the embedded file exactly, or `None` when the build carried no SDK.
     #[test]
     fn the_getters_answer_the_embedded_files_or_none() {

@@ -480,10 +480,9 @@ fn mutate(model: &mut Value, operation: &Operation) -> Result<(), String> {
             delete_rule(on_delete)?;
             let pair = relationship_named(model, name)?;
             let slot = slot_object(model, &pair.source);
+            // A relationship end is one by its `annotations.ngsi_ld_kind`, so its annotations
+            // are an object here.
             let annotations = slot.entry("annotations").or_insert(json!({}));
-            if !annotations.is_object() {
-                *annotations = json!({});
-            }
             annotations["on_delete"] = json!(on_delete);
         }
         Operation::RemoveRelationship { name } => {
@@ -780,13 +779,12 @@ fn slot_flag(model: &Value, slot: &str, field: &str) -> bool {
     model["slots"][slot].get(field).and_then(Value::as_bool) == Some(true)
 }
 
-/// A declared slot's fields; the caller has checked the slot exists.
+/// A relationship end's fields; the caller has checked the slot is one, and a slot is a
+/// relationship end only by its `annotations.ngsi_ld_kind`, so it is an object.
 fn slot_object<'a>(model: &'a mut Value, name: &str) -> &'a mut Map<String, Value> {
     let slot = section_mut(model, "slots").entry(name).or_insert(json!({}));
-    if !slot.is_object() {
-        *slot = json!({});
-    }
-    slot.as_object_mut().expect("an object")
+    slot.as_object_mut()
+        .expect("a relationship end is an object")
 }
 
 fn set_slot_field(model: &mut Value, name: &str, field: &str, value: Option<Value>) {
@@ -1198,6 +1196,36 @@ mod tests {
             &op(json!({ "op": "addSlot", "name": "y", "class": "Nope" }))
         )
         .is_err());
+    }
+
+    /// A class or slot written without a body (`Vehicle:` in YAML is `null`) takes a parent, a
+    /// mixin or subsets as a field of an object of its own (T-7912).
+    #[test]
+    fn a_bodiless_class_takes_a_parent_and_a_bodiless_slot_takes_subsets() {
+        let mut model = bikes();
+        model["classes"]["Vehicle"] = Value::Null;
+        model["slots"]["status"] = Value::Null;
+        let changed = apply(
+            &model,
+            &ops(json!([
+                { "op": "setClassParent", "name": "Vehicle", "parent": "Entity" },
+                { "op": "setSlotSubsets", "name": "status", "subsets": [" name ", ""] },
+            ])),
+        )
+        .expect("applied");
+        assert_eq!(changed["classes"]["Vehicle"], json!({ "is_a": "Entity" }));
+        assert_eq!(changed["slots"]["status"]["subsets"], json!(["name"]));
+        let cleared = apply(
+            &changed,
+            &ops(json!([{ "op": "setClassParent", "name": "Vehicle", "parent": "  " }])),
+        )
+        .expect("applied");
+        assert!(cleared["classes"]["Vehicle"].get("is_a").is_none());
+        assert!(apply(
+            &model,
+            &ops(json!([{ "op": "setClassParent", "name": "Vehicle", "parent": "Vehicle" }]))
+        )
+        .is_err_and(|reason| reason.contains("cannot specialise itself")));
     }
 
     #[test]

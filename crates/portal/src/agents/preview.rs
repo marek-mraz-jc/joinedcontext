@@ -206,6 +206,50 @@ pub(crate) fn script_json(value: &serde_json::Value) -> String {
 mod tests {
     use super::*;
 
+    /// Every embedded file reads the same through the derive's inherent calls and its trait.
+    #[test]
+    fn the_embedded_files_read_the_same_by_name_and_by_the_trait() {
+        let by_name: Vec<String> = Runtime::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Runtime as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                Runtime::get(path).map(|f| f.data),
+                <Runtime as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<Runtime as RustEmbed>::get("no/such/file").is_none());
+        assert!(Runtime::get("no/such/file").is_none());
+        let by_name: Vec<String> = Template::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <Template as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                Template::get(path).map(|f| f.data),
+                <Template as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<Template as RustEmbed>::get("no/such/file").is_none());
+        assert!(Template::get("no/such/file").is_none());
+        let by_name: Vec<String> = TemplateWasm::iter().map(|path| path.into_owned()).collect();
+        let by_trait: Vec<String> = <TemplateWasm as RustEmbed>::iter()
+            .map(|path| path.into_owned())
+            .collect();
+        assert_eq!(by_name, by_trait);
+        for path in &by_name {
+            assert_eq!(
+                TemplateWasm::get(path).map(|f| f.data),
+                <TemplateWasm as RustEmbed>::get(path).map(|f| f.data)
+            );
+        }
+        assert!(<TemplateWasm as RustEmbed>::get("no/such/file").is_none());
+        assert!(TemplateWasm::get("no/such/file").is_none());
+    }
+
     fn config() -> serde_json::Value {
         serde_json::json!({
             "slug": "bikes", "orgDomain": "hel.fi", "space": "mobility",

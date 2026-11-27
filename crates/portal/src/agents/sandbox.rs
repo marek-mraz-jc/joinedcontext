@@ -10,7 +10,6 @@
 //! removed once the result is in, whatever it says.
 
 use std::collections::BTreeMap;
-use std::io::Write as _;
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -191,6 +190,14 @@ pub fn is_wasm(files: &BTreeMap<String, String>) -> bool {
     files.contains_key("server/Cargo.toml")
 }
 
+/// `value` as gzipped JSON. A map of strings written into a `Vec` has no way to fail; the
+/// `Result` is the encoder's signature.
+fn gzip_json(value: &impl serde::Serialize) -> std::io::Result<Vec<u8>> {
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    serde_json::to_writer(&mut gz, value)?;
+    gz.finish()
+}
+
 /// The version as the sandbox reads it: its files, gzipped JSON. The Portal's own files that
 /// never run in a test (the workflow under `.gitea/`) stay out; the sandbox refuses any path
 /// that is not plain.
@@ -199,19 +206,7 @@ pub fn project(files: &BTreeMap<String, String>) -> Result<Vec<u8>, String> {
         .iter()
         .filter(|(path, _)| !path.split('/').any(|part| part.starts_with('.')))
         .collect();
-    // a map of strings into a Vec, compressed into a Vec: neither step has a way to fail
-    let json = match serde_json::to_vec(&kept) {
-        Ok(json) => json,
-        Err(err) => return Err(err.to_string()),
-    };
-    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
-    if let Err(err) = gz.write_all(&json) {
-        return Err(err.to_string());
-    }
-    let bytes = match gz.finish() {
-        Ok(bytes) => bytes,
-        Err(err) => return Err(err.to_string()),
-    };
+    let bytes = gzip_json(&kept).map_err(|err| err.to_string())?;
     if bytes.len() > MAX_PROJECT_BYTES {
         return Err(format!(
             "the version is {} KiB compressed; the sandbox takes at most {} KiB",

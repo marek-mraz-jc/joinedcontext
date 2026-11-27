@@ -199,18 +199,22 @@ pub fn of_type(endpoints: &[RunEndpoint], data_needs: &Value, entity_type: &str)
 /// `id` gains the attributes it did not carry, a new `id` is a row of its own.
 pub fn join_by_id(rows: &mut Vec<Value>, read: Vec<Value>) {
     for entity in read {
-        let known = entity["id"]
-            .as_str()
-            .and_then(|id| rows.iter().position(|row| row["id"].as_str() == Some(id)));
-        match (known, entity) {
-            (Some(at), Value::Object(attributes)) => {
-                if let Value::Object(row) = &mut rows[at] {
-                    for (name, value) in attributes {
-                        row.entry(name).or_insert(value);
-                    }
-                }
-            }
-            (_, entity) => rows.push(entity),
+        let Value::Object(attributes) = entity else {
+            rows.push(entity);
+            continue;
+        };
+        let id = attributes.get("id").and_then(Value::as_str);
+        let known = id.and_then(|id| {
+            rows.iter_mut()
+                .filter_map(Value::as_object_mut)
+                .find(|row| row.get("id").and_then(Value::as_str) == Some(id))
+        });
+        let Some(row) = known else {
+            rows.push(Value::Object(attributes));
+            continue;
+        };
+        for (name, value) in attributes {
+            row.entry(name).or_insert(value);
         }
     }
 }
@@ -571,9 +575,17 @@ mod tests {
                 json!({ "id": "urn:a", "type": "S", "name": "Kaivopuisto", "status": "ignored", "location": { "type": "Point", "coordinates": [24.95, 60.16] } }),
                 json!({ "id": "urn:c", "type": "S", "name": "Laivasillankatu" }),
                 json!("not an entity"),
+                json!({ "type": "S", "name": "a row without an id is a row of its own" }),
+                json!({ "id": "urn:c", "status": "working" }),
             ],
         );
-        assert_eq!(rows.len(), 4);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(
+            rows[2]["status"],
+            json!("working"),
+            "a row read in this call joins too"
+        );
+        assert_eq!(rows[4].get("id"), None);
         assert_eq!(rows[0]["name"], json!("Kaivopuisto"));
         assert_eq!(rows[0]["status"], json!("working"));
         assert!(rows[0]["location"].is_object());

@@ -499,9 +499,7 @@ impl Asker<'_> {
         // opened without values opens on the object as it is.
         let manifest = if prefill.as_object().is_some_and(serde_json::Map::is_empty) {
             let mut as_is = base;
-            if let Some(fields) = as_is.as_object_mut() {
-                fields.remove("status");
-            }
+            crate::agents::share::remove_key(&mut as_is, "status");
             as_is
         } else {
             crate::agents::change::patched(&base, &prefill)?

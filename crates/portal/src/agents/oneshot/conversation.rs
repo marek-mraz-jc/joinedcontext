@@ -2002,6 +2002,27 @@ mod tests {
         assert!(pack.contains("jc_draft_list") && pack.contains("jc_workspace_list"));
     }
 
+    /// What carries no words adds nothing to the transcript: an empty thought and a tool event
+    /// naming no tool; a pack with no playbook to fold is sent as it is; an answer that is
+    /// neither words nor a list of them is no earlier answer (T-7912).
+    #[test]
+    fn what_carries_no_words_adds_nothing() {
+        let transcript = prior_transcript(
+            vec![
+                asked("how is the air?"),
+                event("thought", json!({ "text": "" })),
+                event("tool", json!({ "status": "ok" })),
+                event("thought", json!({ "text": "Good." })),
+            ],
+            10_000,
+        );
+        assert_eq!(
+            transcript,
+            vec![("how is the air?".to_owned(), "Good.".to_owned())]
+        );
+        assert_eq!(for_path("no playbooks here", None), "no playbooks here");
+    }
+
     /// AG-68: the evidence behind the answer travels with it. Without the tool line the model
     /// resumes with the prose it wrote and nothing that produced it.
     #[test]
@@ -2334,6 +2355,11 @@ mod tests {
             None
         );
         assert_eq!(answered_before(&events, &call(&[])), None);
+        // An answer that is neither words nor a list of them is no earlier answer.
+        for given in [json!(5), json!([])] {
+            let odd = vec![question("q-9", &["x", "y"]), answer("q-9", given)];
+            assert_eq!(answered_before(&odd, &call(&["x", "y"])), None);
+        }
 
         events.push(question("q-2", &["a", "b", "c"]));
         events.push(answer("q-2", json!(["a", "c"])));

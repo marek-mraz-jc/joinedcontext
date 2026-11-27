@@ -360,6 +360,59 @@ mod tests {
             .is_none());
     }
 
+    fn asked_and_answered(step: &str, answer: &str) -> Vec<AgentRunEvent> {
+        let event = |seq: i64, kind: &str, payload: Value| AgentRunEvent {
+            run_id: "test-run".into(),
+            seq,
+            kind: kind.into(),
+            payload,
+            created_at: String::new(),
+        };
+        vec![
+            event(
+                1,
+                "question",
+                json!({ "step": step, "questionId": format!("q-{step}") }),
+            ),
+            event(
+                2,
+                "answer",
+                json!({ "questionId": format!("q-{step}"), "answers": { "answer": answer } }),
+            ),
+        ]
+    }
+
+    /// Access and audience answered and no endpoint chosen is an error naming the endpoint; a
+    /// store that cannot answer fails the words with its reason (T-7912).
+    #[tokio::test]
+    async fn a_description_with_no_endpoint_chosen_and_a_store_that_cannot_answer_fail() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let driver = Driver::for_tests(state, "helsinki");
+        let mut events = asked_and_answered(ACCESS_STEP, "read");
+        events.extend(asked_and_answered(AUDIENCE_STEP, "project"));
+        let failed = driver
+            .build_answer(
+                DESCRIBE_STEP,
+                &json!({ "answer": "a map of bikes" }),
+                &events,
+            )
+            .await
+            .err()
+            .expect("no endpoint");
+        assert_eq!(failed, "no endpoint was chosen for the app to read");
+
+        let mut dead = Driver::for_tests(
+            AppState::new(crate::config::Config::for_tests(), None),
+            "helsinki",
+        );
+        dead.state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        ));
+        *dead.path.lock().expect("lock") = Some(crate::agents::paths::Path::BuildApp);
+        assert!(dead.build_words("a map").await.is_err());
+    }
+
     /// JC1-14: words typed where the project had no Endpoint to pick name none, so the path
     /// asks nothing further and the model takes the words.
     #[tokio::test]
