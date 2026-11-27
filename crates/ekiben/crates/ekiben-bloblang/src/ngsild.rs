@@ -944,11 +944,10 @@ mod tests {
             ("coordinates", Value::String("1,2".into())),
         ]);
         let attr = normalize("location", &bad, false);
-        let field = |k: &str| match &attr {
-            Ok(Value::Object(m)) => m.get(k).cloned(),
-            _ => None,
-        };
-        assert_eq!(field("type"), Some(Value::String("Property".into())));
-        assert_eq!(field("value"), Some(bad.clone()));
+        let want = obj(vec![
+            ("type", Value::String("Property".into())),
+            ("value", bad.clone()),
+        ]);
+        assert_eq!(attr, Ok(want));
     }
 }

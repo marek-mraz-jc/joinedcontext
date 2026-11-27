@@ -258,7 +258,7 @@ impl StreamManager {
         id: String,
         posted: JsonValue,
     ) -> Result<(), CoreError> {
-        let text = serde_json::to_string(&posted).map_err(|e| CoreError::other(e.to_string()))?;
+        let text = posted.to_string();
         let filled = self
             .interpolate_stream(&org, &id, &text)
             .map_err(|e| CoreError::config(format!("missing variables {:?}", e.missing)))?;
