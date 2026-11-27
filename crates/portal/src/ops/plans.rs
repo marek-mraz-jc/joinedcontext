@@ -2834,6 +2834,26 @@ mod tests {
         server
     }
 
+    /// A dry run of an inline manifest that names no draft answers its verdict from the forge
+    /// (T-7921).
+    #[tokio::test]
+    async fn an_inline_dry_run_answers_its_verdict() {
+        let server = empty_forge(None).await;
+        let state = on_forge(&server).await;
+        let space = json!({
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "parks", "namespace": "doprava" },
+            "spec": { "isSandbox": true }
+        });
+        let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
+        let checked = (op.run)(&steward(), &state, "doprava", json!({ "manifest": space }))
+            .await
+            .map_err(|err| format!("{err:?}"))
+            .expect("a verdict");
+        assert_eq!(checked["valid"], true, "{checked}");
+        assert_eq!(checked["verdict"]["ok"], true, "{checked}");
+    }
+
     fn steward() -> Caller {
         let mut steward = caller(None);
         steward.identity.groups = vec!["portal-approver".into()];

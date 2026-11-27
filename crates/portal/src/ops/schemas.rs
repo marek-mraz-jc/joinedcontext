@@ -788,6 +788,30 @@ pub fn operations() -> Vec<Operation> {
 mod tests {
     use super::*;
 
+    /// A field's schema carries each definition it reaches once, and a `$ref` naming no
+    /// definition carries none (T-7921).
+    #[test]
+    fn a_fields_schema_carries_the_definitions_it_reaches() {
+        let schema = json!({
+            "properties": { "spec": { "properties": {
+                "source": { "$ref": "#/definitions/Source" }
+            } } },
+            "definitions": {
+                "Source": { "properties": {
+                    "url": { "$ref": "#/definitions/Url" },
+                    "again": { "$ref": "#/definitions/Url" },
+                    "lost": { "$ref": "#/definitions/Nowhere" }
+                } },
+                "Url": { "type": "string" }
+            }
+        });
+        let field = field_schema(&schema, "/spec/source").expect("a field");
+        let defs = field["definitions"].as_object().expect("definitions");
+        let mut names: Vec<&str> = defs.keys().map(String::as_str).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["Source", "Url"], "{field}");
+    }
+
     /// T-6442: a connector planned a Layer and got nothing on screen: while the Dashboards page
     /// is hidden, the schema of what only that page draws says where a map is drawn instead.
     #[test]

@@ -1173,21 +1173,12 @@ mod tests {
         );
     }
 
-    /// A check of an inline manifest that names no draft answers its verdict and keeps none,
-    /// and an MCP client typing a new Endpoint's slug is refused at that field (EP-75, T-7921).
+    /// An MCP client typing a new Endpoint's slug is refused at that field (EP-75, T-7921).
     #[tokio::test]
-    async fn an_inline_check_keeps_no_draft_and_a_typed_slug_is_refused_at_its_field() {
+    async fn a_typed_slug_is_refused_at_its_field() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
         let admin = super::super::testkit::admin(&state);
         let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
-        let space = json!({ "manifest": {
-            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
-            "metadata": { "name": "bikes", "namespace": "p" }, "spec": {}
-        } });
-        let checked = (op.run)(&admin, &state, "p", space)
-            .await
-            .expect("a verdict");
-        assert!(checked["verdict"].is_object(), "{checked}");
         let mcp = Caller::new(admin.identity.clone(), Via::Mcp);
         let typed = json!({ "manifest": {
             "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",

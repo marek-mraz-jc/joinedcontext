@@ -573,10 +573,20 @@ mod tests {
         let mirror = Mirror::new();
         mirror.upsert(binding(
             "empty",
-            json!([{ "kind": "ServiceAccount" }, { "group": "nobody-defined" }]),
+            json!([{}, { "group": "nobody-defined" }]),
             "viewer",
             json!({ "project": "doprava" }),
         ));
+        // The binding parses as one (a stray member would make it no binding at all, and this
+        // test pass for that instead).
+        assert_eq!(
+            crate::permissions::binding_project(
+                &mirror,
+                &mirror.matching(|env| env.kind == "RoleBinding")[0].spec
+            )
+            .as_deref(),
+            Some("doprava")
+        );
         assert!(members_of(&mirror, "doprava").is_empty());
     }
 
@@ -589,10 +599,9 @@ mod tests {
         let members = json!({ "members": [{ "user": "id-group-1" }, { "user": "id-jana" }] });
         mirror.upsert(envelope("Group", ORG_NAMESPACE, "pipeliners", members));
         for item in [
-            // A subject naming neither a person nor a Group (a service account) reaches no one.
             binding(
                 "a",
-                json!([{ "user": "id-jana" }, { "serviceAccount": "bot" }]),
+                json!([{ "user": "id-jana" }]),
                 "viewer",
                 json!({ "project": "doprava" }),
             ),
@@ -634,7 +643,7 @@ mod tests {
         // What deleting each binding takes: the person alone, or the Group that carries them.
         assert_eq!(
             (found["id-jana"][0].subjects, &found["id-jana"][0].group),
-            (2, &None)
+            (1, &None)
         );
         assert_eq!(found["id-jana"][1].group.as_deref(), Some("pipeliners"));
         assert!(members_of(&mirror, "elsewhere").is_empty());

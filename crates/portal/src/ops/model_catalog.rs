@@ -411,6 +411,8 @@ mod tests {
             ]
         );
         assert!(classes_of("not: [yaml").is_empty());
+        // A source with no classes map lists none.
+        assert!(classes_of("slots: [id]\nclasses: [Parking]\n").is_empty());
     }
 
     use super::super::testkit::admin;
