@@ -723,9 +723,11 @@ pub(crate) async fn member_call(
     // A caller without a token lists and calls reads alone here (T-4168), so a write's create
     // is always a signed-in principal's.
     let caller = crate::handlers::ngsi_ld::create_key(subject, &parts.headers);
-    let (reserved, deletes) =
+    // A member call carries no `JC-Reason`, so a delete is refused above and none reaches here
+    // holding relationship changes to make: only the create it reserved is kept.
+    let reserved =
         match mcp::writes::guarded(gateway, endpoint, subject, &caller, &mut message).await {
-            Ok(guarded) => (guarded.reserved, guarded.deletes),
+            Ok(guarded) => guarded.reserved,
             Err(refusal) => return refusal,
         };
     parts
@@ -768,14 +770,6 @@ pub(crate) async fn member_call(
             .is_some_and(|answer| answer["result"]["isError"] != true);
     if let Some(reserved) = reserved.filter(|_| !taken) {
         reserved.release(gateway, endpoint);
-    }
-    // A confirmed delete's relationship changes are made once the broker took it.
-    let taken = taken
-        && parsed
-            .as_ref()
-            .is_some_and(|answer| answer["result"].is_object());
-    if let Err(why) = mcp::writes::carry_out(gateway, deletes, taken).await {
-        return member_refusal(id, Some(why));
     }
     if status.is_success() {
         // DM-128 (T-6885): a read of personal attributes is recorded or refused, as on the
@@ -1082,6 +1076,319 @@ mod tests {
         )
     }
 
+    /// A gateway whose broker answers every request `status` with `body` as `content_type`.
+    async fn answering(
+        status: StatusCode,
+        content_type: &'static str,
+        body: &'static str,
+    ) -> Gateway {
+        let app = axum::Router::new()
+            .fallback(move || async move { (status, [(CONTENT_TYPE, content_type)], body) });
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move { axum::serve(listener, app).await });
+        Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    /// A gateway whose broker is a port nothing listens on.
+    async fn unreachable_broker() -> Gateway {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        drop(listener);
+        Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        )
+    }
+
+    /// A form Endpoint: anyone creates a Report, one tenth of ten a day each.
+    fn form() -> Endpoint {
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.creates = Some(jc_core::kinds::Creates {
+            mint_ids: true,
+            per_day: Some(10),
+            embed_origins: Vec::new(),
+        });
+        endpoint.policies = vec![serde_norway::from_str(
+            "contextSpaceRef: mesto-ovzdusie\nassigner: did:web:mesto.sk\n\
+             assignee: { kind: role, id: public }\noperations: [createEntity]\n\
+             information:\n  - entities:\n      - type: Report\n",
+        )
+        .expect("the policy parses")];
+        endpoint
+    }
+
+    /// The person's confirmed create of a Report, as the broker's retry carries it.
+    fn confirmed_create() -> Value {
+        serde_json::json!({ "jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+            "name": "create_entity", "requestState": "sealed",
+            "arguments": { "entity": { "type": "Report",
+                "description": { "type": "Property", "value": "pothole" } } } } })
+    }
+
+    fn text_of(answer: &Value) -> String {
+        answer["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned()
+    }
+
+    /// A listing or instructions answer the broker sent as JSON that is not JSON goes on as it
+    /// came to a signed-in caller, and an answer of another shape is not given what it cannot
+    /// hold: no `tools` array takes no tool, no `result` takes no card.
+    #[tokio::test]
+    async fn a_listing_of_another_shape_goes_on_without_the_gateways_entries() {
+        let gateway = gateway();
+        let endpoint = crate::mcp::catalog::tests::fixture();
+        let subject = Subject::anonymous();
+        let json_answer = |body: &'static str| {
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(body))
+                .unwrap_or_default()
+        };
+        let asked = |method, reads_only| Asked {
+            method,
+            id: Value::from(5),
+            calls: false,
+            reads_only,
+        };
+        let read = |answer: Response<Body>| async move {
+            axum::body::to_bytes(answer.into_body(), MAX_BODY)
+                .await
+                .unwrap_or_default()
+        };
+        let garbled = decorate_answer(
+            &gateway,
+            &endpoint,
+            &subject,
+            asked("tools/list", false),
+            &[],
+            json_answer("not json"),
+        )
+        .await;
+        assert_eq!(&read(garbled).await[..], b"not json");
+        for (method, body) in [
+            ("tools/list", r#"{"result":{}}"#),
+            ("resources/list", r#"{"result":{"resources":"none"}}"#),
+        ] {
+            let kept = decorate_answer(
+                &gateway,
+                &endpoint,
+                &subject,
+                asked(method, false),
+                &[],
+                json_answer(body),
+            )
+            .await;
+            let kept: Value = serde_json::from_slice(&read(kept).await).unwrap_or_default();
+            let sent: Value = serde_json::from_str(body).unwrap_or_default();
+            assert_eq!(kept, sent, "{method}");
+        }
+        let mut errored = serde_json::json!({ "error": { "code": -32601 } });
+        card_instructions(&mut errored, "Types: Bike".to_owned());
+        assert_eq!(errored, serde_json::json!({ "error": { "code": -32601 } }));
+    }
+
+    /// T-5045: an Endpoint that serves the WebSocket names it in `initialize`, whatever else it
+    /// decorates; a federated tool with no description or output schema is left as it is.
+    #[tokio::test]
+    async fn initialize_of_a_websocket_endpoint_names_the_socket() {
+        let gateway = gateway();
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.representations.push(Representation::WebSocket);
+        let answer = Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"result":{"instructions":"Broker."}}"#))
+            .unwrap_or_default();
+        let asked = Asked {
+            method: "initialize",
+            id: Value::from(1),
+            calls: false,
+            reads_only: false,
+        };
+        let decorated = decorate_answer(
+            &gateway,
+            &endpoint,
+            &Subject::anonymous(),
+            asked,
+            &[],
+            answer,
+        )
+        .await;
+        let held = axum::body::to_bytes(decorated.into_body(), MAX_BODY)
+            .await
+            .unwrap_or_default();
+        let held: Value = serde_json::from_slice(&held).unwrap_or_default();
+        let said = held["result"]["instructions"].as_str().unwrap_or_default();
+        assert!(said.starts_with("Broker. Live updates: open "), "{said}");
+        assert!(said.contains("/ws as a WebSocket"), "{said}");
+
+        let members = ["transport".to_owned()];
+        let bare = serde_json::json!({ "result": { "tools": [{ "name": "query_entities" }] } });
+        let mut answer = bare.clone();
+        federated(&mut answer, "tools/list", &members);
+        assert_eq!(answer, bare, "nothing to append to or add to");
+    }
+
+    /// T-2509: a base address that cannot be a header value leaves the 401 without its
+    /// challenge, never a broken one.
+    #[test]
+    fn a_challenge_that_cannot_be_a_header_is_left_out() {
+        let mut gateway = gateway();
+        let plain = unauthorized(&gateway, "aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert!(plain
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .is_some_and(|challenge| challenge
+                .as_bytes()
+                .starts_with(b"Bearer resource_metadata=")));
+        gateway.public_url = Some("https://data.example\nfi".to_owned());
+        let broken = unauthorized(&gateway, "aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        assert_eq!(broken.status(), StatusCode::UNAUTHORIZED);
+        assert!(broken
+            .headers()
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .is_none());
+    }
+
+    /// A member call of an Endpoint with no tenant is refused with the Endpoint's own words
+    /// before any hop, and one the broker cannot be reached for is the generic tool error.
+    #[tokio::test]
+    async fn a_member_call_is_refused_without_a_tenant_and_names_nothing_of_a_dead_broker() {
+        let call = serde_json::json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+            "params": { "name": "query_entities", "arguments": {} } });
+        let mut untenanted = crate::mcp::catalog::tests::fixture();
+        untenanted.tenant = None;
+        let refused =
+            member_call(&gateway(), &untenanted, &Subject::anonymous(), call.clone()).await;
+        assert_eq!(
+            refused["result"]["isError"],
+            serde_json::json!(true),
+            "{refused}"
+        );
+        assert!(text_of(&refused).contains("organizationRef"), "{refused}");
+        let dead = member_call(
+            &unreachable_broker().await,
+            &crate::mcp::catalog::tests::fixture(),
+            &Subject::anonymous(),
+            call,
+        )
+        .await;
+        assert_eq!(
+            text_of(&dead),
+            "the context broker behind this Endpoint failed to answer this call"
+        );
+    }
+
+    /// A form's confirmed create that the broker does not take gives its slot of the day back,
+    /// on a member call and on the Endpoint's own MCP address alike: the same create is let in
+    /// again and again, never answered with the day's quota.
+    #[tokio::test]
+    async fn a_create_the_broker_does_not_take_gives_its_slot_back() {
+        let anonymous = Subject::anonymous();
+        let unreachable = unreachable_broker().await;
+        let refusing = answering(
+            StatusCode::OK,
+            "application/json",
+            r#"{"jsonrpc":"2.0","id":4,"result":{"isError":true,"content":[{"type":"text","text":"no"}]}}"#,
+        )
+        .await;
+        for (name, gateway) in [("unreachable", &unreachable), ("a tool error", &refusing)] {
+            let mut texts = Vec::new();
+            for _ in 0..3 {
+                let answer = member_call(gateway, &form(), &anonymous, confirmed_create()).await;
+                texts.push(text_of(&answer));
+            }
+            assert!(
+                texts.iter().all(|text| !text.contains("as many entries")),
+                "{name}: {texts:?}"
+            );
+        }
+        let bad_request = answering(StatusCode::BAD_REQUEST, "application/json", "{}").await;
+        let endpoint = Arc::new(form());
+        let gateway = Arc::new(bad_request);
+        let mut statuses = Vec::new();
+        for gateway in [Arc::clone(&gateway), Arc::new(unreachable_broker().await)] {
+            for _ in 0..3 {
+                let request = Request::builder()
+                    .method(Method::POST)
+                    .uri("/mcp")
+                    .body(Body::from(confirmed_create().to_string()))
+                    .unwrap_or_default();
+                let answer = mcp_answer(
+                    Arc::clone(&gateway),
+                    Arc::clone(&endpoint),
+                    Subject::anonymous(),
+                    endpoint.slug.clone(),
+                    request,
+                    false,
+                )
+                .await;
+                statuses.push(answer.status());
+            }
+        }
+        assert!(
+            statuses
+                .iter()
+                .all(|status| *status != StatusCode::TOO_MANY_REQUESTS),
+            "{statuses:?}"
+        );
+        assert_eq!(statuses[0], statuses[1], "{statuses:?}");
+        assert_eq!(statuses[3], statuses[4], "{statuses:?}");
+    }
+
+    /// DM-128: a read of personal attributes whose answer the gateway cannot read is refused on
+    /// a member call as on the Endpoint's own address, never served unlogged.
+    #[tokio::test]
+    async fn a_member_read_of_personal_data_it_cannot_read_is_refused() {
+        let model = serde_json::json!({
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "definitions": { "BikeTrip": { "type": "object", "properties": {
+                "id": { "type": "string" },
+                "rider": { "type": "string", "x-personal-data": true } } } }
+        });
+        let mut endpoint = crate::mcp::catalog::tests::fixture();
+        endpoint.declared_types = Some(Arc::new(crate::resolver::DeclaredTypes {
+            model: "bike-trips".into(),
+            classes: ["BikeTrip".to_owned()].into(),
+            units: Default::default(),
+            relationships: Default::default(),
+            quality: Vec::new(),
+            schema: Some(Arc::new(jc_manifest::model_schema::ModelSchema::compile(
+                "bike-trips",
+                "1.0.0",
+                &model,
+                &["BikeTrip".to_owned()],
+                true,
+            ))),
+        }));
+        let gateway = answering(StatusCode::OK, "text/plain", "plainly not JSON-RPC").await;
+        let call = serde_json::json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+            "params": { "name": "query_entities", "arguments": { "type": "BikeTrip" } } });
+        let answer = member_call(&gateway, &endpoint, &Subject::anonymous(), call).await;
+        assert_eq!(
+            answer["result"]["isError"],
+            serde_json::json!(true),
+            "{answer}"
+        );
+        assert!(
+            text_of(&answer).contains("could not be read to log who read it"),
+            "{answer}"
+        );
+    }
+
     /// T-5508: an anonymous `tools/call` of a write tool is refused before any hop, its
     /// refusal noted; a view id no broker view carries is the 503; a read goes on.
     #[tokio::test]
@@ -1136,19 +1443,13 @@ mod tests {
                 "params": {"name": "query_temporal", "arguments": arguments}})
         };
         let text = |answer: Option<Response<Body>>| async move {
-            let body = answer.map(|answer| answer.into_body());
-            match body {
-                Some(body) => {
-                    let bytes = axum::body::to_bytes(body, 1 << 16)
-                        .await
-                        .unwrap_or_default();
-                    serde_json::from_slice::<Value>(&bytes).unwrap_or_default()["result"]["content"]
-                        [0]["text"]
-                        .as_str()
-                        .map(str::to_owned)
-                }
-                None => None,
-            }
+            let bytes = axum::body::to_bytes(answer?.into_body(), 1 << 16)
+                .await
+                .unwrap_or_default();
+            serde_json::from_slice::<Value>(&bytes).unwrap_or_default()["result"]["content"][0]
+                ["text"]
+                .as_str()
+                .map(str::to_owned)
         };
         let mut decade = temporal(serde_json::json!({"type": "T", "timerel": "between",
             "timeAt": "2016-01-01T00:00:00Z", "endTimeAt": "2026-01-01T00:00:00Z"}));
