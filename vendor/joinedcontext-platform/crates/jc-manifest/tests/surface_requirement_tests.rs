@@ -456,7 +456,8 @@ fn a_dataset_of_a_served_type_is_accepted_and_an_unserved_one_refused() {
 /// EP-177: an Endpoint narrowed by a projection serves only the classes the projection keeps.
 #[test]
 fn a_dataset_of_a_type_its_projection_leaves_out_is_refused() {
-    let narrowed = format!("  projectionRef:\n    kind: ModelProjection\n    name: public\n{DATASETS}");
+    let narrowed =
+        format!("  projectionRef:\n    kind: ModelProjection\n    name: public\n{DATASETS}");
     let dir = repo_with("datasets-projection", Some(EVENT_MODEL), &narrowed);
     write(
         &dir,
@@ -467,7 +468,9 @@ fn a_dataset_of_a_type_its_projection_leaves_out_is_refused() {
     );
     let found = dataset_findings(&dir);
     assert!(
-        found.iter().any(|m| m.contains("names type Event, which the Endpoint does not serve")),
+        found
+            .iter()
+            .any(|m| m.contains("names type Event, which the Endpoint does not serve")),
         "{found:?}"
     );
     let _ = std::fs::remove_dir_all(&dir);

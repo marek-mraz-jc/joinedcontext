@@ -1120,6 +1120,43 @@ fn an_app_egress_of_every_address_or_a_host_name_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// EP-14: an App's own Endpoint (`app-<name>`) binds only the grants derived for that App, so
+/// a space Policy naming it is a write no Endpoint makes, said with the reason.
+#[test]
+fn a_space_policy_bound_only_by_an_apps_own_endpoint_is_an_unmade_write() {
+    let dir = valid_repo("app-own-endpoint");
+    write(
+        &dir,
+        ENDPOINT_PATH,
+        &format!("{ENDPOINT}  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:public-read\n"),
+    );
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app("{ group: air-quality-team }", ""),
+    );
+    space_policy(
+        &dir,
+        "writer",
+        "{ kind: serviceAccount, id: sensors }",
+        "[updateAttrs]",
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/app-alerts.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: app-alerts\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: q2bcdefghijklmnopqrstuvwxy\n  audience: organization\n  policyRef: urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:writer\n",
+    );
+    let report = validate::run(&dir);
+    let found = messages(&report.findings);
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("app-alerts is the App alerts's own Endpoint")),
+        "{found:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// AP-98: a write every person who can open the app may make is valid and is said as a warning,
 /// naming the app, the operation and the type; gating it by a role silences it.
 #[test]
