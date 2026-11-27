@@ -15,6 +15,7 @@ import { FormFrame, useCreateForm, useFormRoute } from "../../components/forms/F
 import { groupSchema } from "../../schemas/kinds";
 import { personLabel, usePersonNames, withPersonNames } from "../../api/personNames";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { PersonName } from "../../components/PersonName";
 import {
@@ -276,7 +277,7 @@ export function Groups({ project }: { project: string }): JSX.Element {
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (row) => {

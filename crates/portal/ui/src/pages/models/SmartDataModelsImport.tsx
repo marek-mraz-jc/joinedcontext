@@ -265,17 +265,14 @@ export function SmartDataModelsImport({
     setNewName("");
   };
 
-  const doImport = () => {
-    if (!imported || !selected) {
-      return;
-    }
+  const doImport = (source: string, picked: CatalogueModel) => {
     const className =
-      model?.classes.find((klass) => klass.name === selected.name)?.name ?? model?.classes[0]?.name ?? selected.name;
+      model?.classes.find((klass) => klass.name === picked.name)?.name ?? model?.classes[0]?.name ?? picked.name;
     const adopted =
       mode === "asIs"
-        ? imported
-        : withAttributes(deprecateUnused(imported, chosen), className, added);
-    onImport(adopted, selected);
+        ? source
+        : withAttributes(deprecateUnused(source, chosen), className, added);
+    onImport(adopted, picked);
   };
 
   return (
@@ -615,7 +612,7 @@ export function SmartDataModelsImport({
               variant="primary"
               size="sm"
               className="self-start"
-              onClick={doImport}
+              onClick={() => doImport(imported, selected)}
             >
               {t("models.sdm.import", { name: selected.name })}
             </Button>

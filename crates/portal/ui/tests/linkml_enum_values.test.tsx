@@ -124,6 +124,21 @@ describe("the editor's enums", () => {
     expect(screen.getByRole("textbox", { name: en.models.enumValues.new })).toHaveValue("");
   });
 
+  it("adds no enumeration for an empty or blank name, and adds the trimmed one", async () => {
+    const before = source();
+    const add = screen.getByRole("button", { name: en.models.addEnum });
+    await userEvent.click(add);
+    expect(source()).toBe(before);
+    await userEvent.type(screen.getByRole("textbox", { name: en.models.newEnum }), "   ");
+    await userEvent.click(add);
+    expect(source()).toBe(before);
+    await userEvent.clear(screen.getByRole("textbox", { name: en.models.newEnum }));
+    await userEvent.type(screen.getByRole("textbox", { name: en.models.newEnum }), "  RoadState ");
+    await userEvent.click(add);
+    expect(parseModel(source()).enums.map((one) => one.name)).toContain("RoadState");
+    expect(source()).not.toContain("  RoadState ");
+  });
+
   it("edits a value's label and its translation, and removes a value", async () => {
     await openEnum("AlertCategory");
     await userEvent.type(screen.getByRole("textbox", { name: en.models.enumValues.labelOf.replace("{value}", "weather") }), "Weather");

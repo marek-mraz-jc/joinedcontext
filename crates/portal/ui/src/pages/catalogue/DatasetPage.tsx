@@ -25,6 +25,7 @@ import { areaLabel } from "./nuts";
 import { QualityScore } from "../../components/quality/QualityScore";
 import { datasetQuery } from "./queries";
 import { subscriptionsOf } from "./subscriptions";
+import { noText } from "../../components/grid/noText";
 
 // The menu's dropdown (Radix, about 30 KB gz) loads beside the page, not in its first chunk, and only
 // for a dataset with something to subscribe to (T-5165).
@@ -298,7 +299,7 @@ function Resources({ detail }: { detail: DatasetDetail }): JSX.Element {
             {
               key: "links",
               label: t("catalogue.dataset.links"),
-              text: () => "",
+              text: noText,
               actions: true,
               cell: (resource) => <ExternalLink href={resource.url}>{t("catalogue.dataset.download")}</ExternalLink>,
             },

@@ -30,6 +30,7 @@ import {
   PageLoading,
 } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { Groups } from "../access/Groups";
 import { RoleBindings } from "../access/RoleBindings";
@@ -220,7 +221,7 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
     {
       key: "mqtt",
       label: t("mqttAllowance.admin.column"),
-      text: () => "",
+      text: noText,
       filter: false,
       sortable: false,
       cell: (name) => <ProjectMqttState project={name} />,
@@ -230,7 +231,7 @@ function OrganizationProjects({ anchor }: { anchor: string }): JSX.Element {
       label: t("approvals.actions"),
       actions: true,
       align: "right",
-      text: () => "",
+      text: noText,
       cell: (name) => (
         <span className="inline-flex items-center gap-2">
           <Link

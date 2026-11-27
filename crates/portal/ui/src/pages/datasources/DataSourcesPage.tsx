@@ -5,6 +5,7 @@ import { endpointView } from "../../components/ui/safeHref";
 export { endpointView };
 import { useMemo, useState } from "react";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import type { JSX } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -596,7 +597,7 @@ export function DataSourcesPage({ project }: { project: string }): JSX.Element {
     {
       key: "actions",
       label: t("datasources.edit"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       // Edit in the open, the rest in the row's menu (T-2287).

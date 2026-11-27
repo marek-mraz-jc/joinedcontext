@@ -2,7 +2,9 @@
  * T-4693 (AG-121, MF-58, MF-60): the deployment editor's selector, exclude list and categories,
  * and the preview beside the form of what the assistant being edited will read.
  */
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import en from "../src/locales/en.json";
 import { describe, expect, it } from "vitest";
 import validator from "../src/components/forms/validator";
 import { ContextView } from "../src/pages/knowledge/AssistantContextPreview";
@@ -129,6 +131,42 @@ describe("the preview of what the assistant will read (AG-121)", () => {
     const preview = await screen.findByRole("region", { name: "What the assistant will know" });
     expect(await within(preview).findByRole("alert")).toHaveTextContent("spec: unknown field");
     expect(within(preview).queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("asks for the preview again on Retry", async () => {
+    const { previews } = await openForm(null);
+    const preview = await screen.findByRole("region", { name: "What the assistant will know" });
+    await within(preview).findByRole("alert");
+    const before = previews.length;
+    await userEvent.click(within(preview).getByRole("button", { name: en.app.error.retry }));
+    await waitFor(() => expect(previews.length).toBeGreaterThan(before));
+    expect(await within(preview).findByRole("alert")).toHaveTextContent("spec: unknown field");
+  });
+});
+
+describe("the knowledge sources a context reads", () => {
+  it("names each source by its kind and the sites it crawls, a kind the Portal does not know by its code", () => {
+    render(
+      <ContextView
+        context={{
+          ...CONTEXT,
+          omitted: [],
+          problems: [],
+          sources: [
+            { project: "bbsk", name: "bb-web", kind: "website", visibility: "public", sites: ["https://www.banskabystrica.sk", "https://mesto.sk"], categories: [] },
+            { project: "bbsk", name: "bb-files", kind: "upload", visibility: "public", sites: [], categories: [] },
+            { project: "other", name: "bb-web", kind: "sitemap-x", visibility: "public", sites: [], categories: [] },
+          ],
+        }}
+      />,
+    );
+    const listed = screen.getByRole("list", { name: "Knowledge sources" });
+    const items = within(listed).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+    expect(items[0]).toHaveTextContent("bb-web (Website): https://www.banskabystrica.sk, https://mesto.sk");
+    expect(items[1]).toHaveTextContent(/^bb-files \(Uploaded files\)$/);
+    expect(items[2]).toHaveTextContent("bb-web (sitemap-x)");
+    expect(screen.queryByText("No knowledge source: it answers from live data alone.")).toBeNull();
   });
 });
 

@@ -1919,14 +1919,11 @@ const SUMMARY_CLASSES = 8;
  */
 export function classNamesOf(source: string | undefined): string[] | null {
   if (source === undefined) return null;
-  try {
-    const model = parseModel(source);
-    // A YAML error reads as EMPTY_MODEL: the summary says unreadable, never "0 classes".
-    if (model === EMPTY_MODEL) return null;
-    return model.classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name);
-  } catch {
-    return null;
-  }
+  // parseModel never throws: a YAML error reads as EMPTY_MODEL, and the summary says unreadable,
+  // never "0 classes" (fuzzed in outside_input_fuzz).
+  const model = parseModel(source);
+  if (model === EMPTY_MODEL) return null;
+  return model.classes.filter((klass) => !isAnyClass(klass)).map((klass) => klass.name);
 }
 
 function ModelClassSummary({ project, name, source }: { project: string; name: string; source: string }): JSX.Element {

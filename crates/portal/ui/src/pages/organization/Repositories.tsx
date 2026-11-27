@@ -5,6 +5,7 @@ import { door } from "../../api/odata";
 import { useAdministers } from "../../api/permissions";
 import type { components } from "../../api/schema";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import { Link } from "@tanstack/react-router";
 import { Alert, Badge, Button, buttonClass, EmptyState, Icon } from "../../components/ui";
 
@@ -116,7 +117,7 @@ function RepositoryList(): JSX.Element {
             key: "download",
             label: t("orgRepositories.download"),
             actions: true,
-            text: () => "",
+            text: noText,
             cell: (row) =>
               // A repository larger than the limit would stop mid-download: say so before the click.
               listing.data && row.sizeBytes > listing.data.maxArchiveBytes ? (

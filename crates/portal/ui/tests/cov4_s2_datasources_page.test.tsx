@@ -9,7 +9,7 @@ import { endpointOf, toForm, typeOf } from "../src/pages/datasources/DataSources
 import type { Manifest } from "../src/api/manifest";
 import { digestOf } from "../src/api/digest";
 import { findFormPage } from "./formPage";
-import { jsonResponse, list, problem, renderRoute } from "./pageHarness";
+import { jsonResponse, list, OTHER_BRAND, problem, renderRoute } from "./pageHarness";
 
 const P = "/projects/helsinki/datasources";
 const API = "/api/v1/projects/helsinki/datasources";
@@ -71,6 +71,64 @@ describe("DataSourcesPage coverage (T-7706)", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.check }));
     expect(await within(dialog).findByText(/is not reachable/)).toBeInTheDocument();
     expect(r.calls().filter((c) => c === "POST " + API)).toHaveLength(1);
+  });
+
+  it("carries a secret picked for a runner field into the check as a reference, never as text", async () => {
+    const bodies: Record<string, unknown>[] = [];
+    const r = await renderRoute({
+      path: P,
+      answer: answerWith(async (request) => {
+        bodies.push((await request.clone().json()) as Record<string, unknown>);
+        return problem(422, "the broker is not reachable");
+      }),
+      permissions: FULL,
+    });
+    await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
+    const dialog = await findFormPage();
+    await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "nats");
+    await userEvent.type(within(dialog).getAllByLabelText(/^Name/)[0], "bus-feed");
+    const [secret] = await within(dialog).findAllByPlaceholderText(/Secret name/);
+    await userEvent.type(secret, "nats-creds");
+    await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.check }));
+    await within(dialog).findByText(/not reachable/);
+    expect(r.calls().filter((c) => c === "POST " + API)).toHaveLength(1);
+    const spec = bodies[0]?.spec as { secrets?: { name: string; envVar: string }[] };
+    expect(spec.secrets?.some((one) => one.name === "nats-creds" && /^DS_NATS_CREDS_/.test(one.envVar))).toBe(true);
+    expect(JSON.stringify(bodies[0])).not.toContain('"nats-creds:');
+  });
+
+  it("names the runner field whose YAML does not parse and sends no check", async () => {
+    const r = await renderRoute({ path: P, answer: answerWith(() => problem(500, "x")), permissions: FULL });
+    await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
+    const dialog = await findFormPage();
+    await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "http_client");
+    await userEvent.type(within(dialog).getAllByLabelText(/^Name/)[0], "feed-csv");
+    const headers = await waitFor(() => {
+      const box = dialog.querySelector<HTMLTextAreaElement>("#root_headers");
+      expect(box).not.toBeNull();
+      return box as HTMLTextAreaElement;
+    });
+    fireEvent.change(headers, { target: { value: "{ Accept: [text/csv" } });
+    await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.check }));
+    expect(await within(dialog).findByText(/headers: not valid YAML/)).toBeInTheDocument();
+    expect(r.calls().filter((c) => c.startsWith("POST " + API))).toHaveLength(0);
+  });
+
+  it("refuses to propose a runner field whose YAML does not parse, under lax validation too", async () => {
+    const r = await renderRoute({ path: P, answer: answerWith(() => problem(500, "x")), permissions: FULL, brand: { ...OTHER_BRAND, validation: "lax" } });
+    await userEvent.click(await screen.findByRole("button", { name: en.datasources.add }));
+    const dialog = await findFormPage();
+    await userEvent.selectOptions(within(dialog).getByLabelText(en.datasources.field.type), "http_client");
+    await userEvent.type(within(dialog).getAllByLabelText(/^Name/)[0], "feed-csv");
+    const headers = await waitFor(() => {
+      const box = dialog.querySelector<HTMLTextAreaElement>("#root_headers");
+      expect(box).not.toBeNull();
+      return box as HTMLTextAreaElement;
+    });
+    fireEvent.change(headers, { target: { value: "{ Accept: [text/csv" } });
+    await userEvent.click(within(dialog).getByRole("button", { name: en.datasources.propose }));
+    expect(await within(dialog).findByText(/headers: not valid YAML/)).toBeInTheDocument();
+    expect(r.calls().filter((c) => c.startsWith("POST " + API))).toHaveLength(0);
   });
 
   it("offers to start a pipeline on the source just proposed", async () => {

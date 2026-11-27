@@ -721,6 +721,18 @@ describe("a source's index status (T-4197)", () => {
     expect(within(errors).getByText("https://old.banskabystrica.sk/gone")).toBeInTheDocument();
   });
 
+  it("says why the failed reads could not be listed and lists them on Retry", async () => {
+    const away: string[] = ["/sources/bb-old/errors"];
+    renderAt("/projects/banskabystrica/knowledge/bb-old", { away });
+    const status = await screen.findByRole("region", { name: "Index status" });
+    expect(await within(status).findByText(/the knowledge store is away/)).toBeInTheDocument();
+    expect(within(status).queryByRole("list", { name: "Pages and files not read" })).not.toBeInTheDocument();
+    away.length = 0;
+    await userEvent.click(within(status).getByRole("button", { name: en.app.error.retry }));
+    const errors = await within(status).findByRole("list", { name: "Pages and files not read" });
+    expect(within(errors).getByText("HTTP 404")).toBeInTheDocument();
+  });
+
   it("shows a viewer the counts and never asks for the errors", async () => {
     const { writes } = renderAt("/projects/banskabystrica/knowledge/bb-old", { verbs: ["read"] });
     const status = await screen.findByRole("region", { name: "Index status" });

@@ -689,7 +689,7 @@ function Devices({
   ];
   return (
     <AdminGrid
-      query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+      query={{ isPending: false, isError: false, error: null }}
       caption={t("mqttbrokers.page.devices")}
       rows={measured.accounts}
       rowKey={(account) => account.serviceAccount}
