@@ -123,6 +123,41 @@ async fn count(pool: &PgPool, sql: &'static str) -> i64 {
     n
 }
 
+/// Statements run as the service under Tenant [`TENANT`], in one transaction.
+async fn as_service(pool: &PgPool, sqls: &[&'static str]) {
+    let mut tx = pool.begin().await.expect("begin");
+    pg::set_service(&mut tx).await.expect("service");
+    sqlx::query("SELECT set_config('antares.tenant', $1, true)")
+        .bind(TENANT)
+        .execute(&mut *tx)
+        .await
+        .expect("tenant");
+    for sql in sqls {
+        tx.execute(*sql).await.expect(sql);
+    }
+    tx.commit().await.expect("commit");
+}
+
+/// A session of its own holding the advisory lock `name`, as another pod's step does.
+async fn other_pod(pool: &PgPool, name: &str) -> sqlx::PgConnection {
+    let mut conn = pool.acquire().await.expect("a connection").detach();
+    sqlx::query("SELECT pg_advisory_lock(hashtext($1))")
+        .bind(name)
+        .execute(&mut conn)
+        .await
+        .expect("lock");
+    conn
+}
+
+/// The other pod gives its locks back and goes.
+async fn other_pod_leaves(mut conn: sqlx::PgConnection) {
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut conn)
+        .await
+        .expect("unlock");
+    sqlx::Connection::close(conn).await.expect("close");
+}
+
 /// Platform retention on the partitioned backend: the expired week without rows goes, the
 /// expired week holding an audit row stays and says why, the DEFAULT partition loses its old
 /// plain row and keeps its old audit row, and the old superseded version goes.
@@ -222,6 +257,174 @@ async fn a_retention_pass_drops_an_expired_week_purges_default_and_keeps_audit_r
     pool.close().await;
 }
 
+/// The claim row held by another session (a pod mid-pass, `FOR KEY SHARE` lets this one's
+/// period claim through) keeps this pass and the retention drop off the partitions: the pass
+/// says so, the drop leaves the expired week, and the drop runs once the row is free.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_claim_row_another_session_holds_skips_the_pass_and_the_partition_drop() {
+    let url = require_db!();
+    let own = own_database(&url, "claimheld", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&pool).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    pool.execute(
+        "CREATE TABLE attr_instances_2001w02 PARTITION OF attr_instances
+         FOR VALUES FROM ('2001-01-08') TO ('2001-01-15')",
+    )
+    .await
+    .expect("old week");
+    let mut holder = pool.begin().await.expect("begin");
+    holder
+        .execute("SELECT 1 FROM maintenance_jobs WHERE name = 'temporal_partitions' FOR KEY SHARE")
+        .await
+        .expect("the claim row");
+    let summary = temporal_maintenance(&pool, TemporalBackend::Partitioned, None, Duration::ZERO)
+        .await
+        .expect("pass");
+    assert_eq!(summary, "skipped: another instance holds the claim");
+    let floors = [(TENANT.to_owned(), "2999-01-01T00:00:00Z".to_owned())];
+    let kept = maintenance::drop_retained_partitions(&pool, &floors)
+        .await
+        .expect("drop");
+    assert!(kept.is_empty(), "{kept:?}");
+    assert!(exists(&pool, "attr_instances_2001w02").await);
+    holder.rollback().await.expect("release");
+    let dropped = maintenance::drop_retained_partitions(&pool, &floors)
+        .await
+        .expect("drop");
+    assert!(
+        !exists(&pool, "attr_instances_2001w02").await,
+        "{dropped:?}"
+    );
+    pool.close().await;
+}
+
+/// A history walk of a type that runs out of its time on a full chunk stops after that chunk
+/// and the next call goes on from there; a walk past the last Entity starts over.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_history_walk_out_of_time_resumes_after_the_chunk_it_reached() {
+    use antares_store::HistoryScope;
+    let url = require_db!();
+    let own = own_database(&url, "walk", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    as_service(
+        &pool,
+        &[
+            "INSERT INTO temporal_entities (tenant_id, id, types, meta, created_at, modified_at)
+           SELECT 'pass', 'urn:p:e' || CASE WHEN n = 0 THEN '' ELSE (n - 1)::text END,
+                  ARRAY['https://example.org/Walk'], '{}'::jsonb, now(), now()
+             FROM generate_series(0, 9) n",
+        ],
+    )
+    .await;
+    let scope = || HistoryScope::Type {
+        type_iri: "https://example.org/Walk",
+        except_ids: &[],
+    };
+    let before = "2026-01-01T00:00:00Z";
+    // the superseded versions held past the walk's time, while it reads its first chunk
+    let mut holder = pool.begin().await.expect("begin");
+    holder
+        .execute("LOCK TABLE attr_versions IN ACCESS EXCLUSIVE MODE")
+        .await
+        .expect("lock");
+    let walking = pool.clone();
+    let walk = tokio::spawn(async move {
+        maintenance::retain_history(&walking, TENANT, scope(), before, 100, false).await
+    });
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    holder.rollback().await.expect("unlock");
+    assert_eq!(walk.await.expect("walk task").expect("walk"), 0);
+
+    // an old row of the first Entity: the next call starts past it, the one after that again
+    instance(
+        &pool,
+        "attr_instances",
+        "urn:i:walk",
+        "2002-06-01T00:00:00Z",
+        None,
+    )
+    .await;
+    let resumed = maintenance::retain_history(&pool, TENANT, scope(), before, 100, false)
+        .await
+        .expect("resumed walk");
+    assert_eq!(resumed, 0, "the walk went on after the tenth Entity");
+    let again = maintenance::retain_history(&pool, TENANT, scope(), before, 100, false)
+        .await
+        .expect("walk from the start");
+    assert_eq!(again, 1);
+    pool.close().await;
+}
+
+/// The audit index step: another pod holding it builds nothing here, an index a failed build
+/// left invalid is dropped and built again, and a name another relation took fails the step.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_audit_index_step_yields_rebuilds_an_invalid_index_and_fails_on_a_taken_name() {
+    let url = require_db!();
+    let own = own_database(&url, "auditindex", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&pool).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    pool.execute(
+        "CREATE TABLE attr_instances_2001w02 PARTITION OF attr_instances
+         FOR VALUES FROM ('2001-01-08') TO ('2001-01-15')",
+    )
+    .await
+    .expect("old week");
+    for (id, at) in [
+        ("urn:i:a1", "2001-01-09T00:00:00Z"),
+        ("urn:i:a2", "2001-01-10T00:00:00Z"),
+    ] {
+        instance(&pool, "attr_instances", id, at, None).await;
+    }
+    let pod = other_pod(&pool, "antares.history_audit_index").await;
+    assert_eq!(
+        maintenance::history_audit_index(&pool)
+            .await
+            .expect("held step"),
+        None
+    );
+    other_pod_leaves(pod).await;
+
+    // a build that failed (two rows of one Tenant under a unique index) leaves it invalid
+    pool.execute(
+        "CREATE UNIQUE INDEX CONCURRENTLY attr_instances_2001w02_audit
+         ON attr_instances_2001w02 (tenant_id)",
+    )
+    .await
+    .expect_err("a duplicate Tenant");
+    let line = maintenance::history_audit_index(&pool)
+        .await
+        .expect("audit step")
+        .expect("an index to build");
+    assert!(line.starts_with("audit index built on "), "{line}");
+    let valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index
+          WHERE indexrelid = 'public.attr_instances_2001w02_audit'::regclass",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("catalog");
+    assert!(valid, "{line}");
+
+    for sql in [
+        "CREATE TABLE attr_instances_2001w03 PARTITION OF attr_instances
+         FOR VALUES FROM ('2001-01-15') TO ('2001-01-22')",
+        "CREATE SEQUENCE attr_instances_2001w03_audit",
+    ] {
+        pool.execute(sql).await.expect(sql);
+    }
+    let taken = maintenance::history_audit_index(&pool)
+        .await
+        .expect_err("the name is taken");
+    assert!(taken.to_string().contains("already exists"), "{taken}");
+    pool.close().await;
+}
+
 async fn superseded_version_fresh(pool: &PgPool) {
     let mut tx = pool.begin().await.expect("begin");
     pg::set_service(&mut tx).await.expect("service");
@@ -317,6 +520,79 @@ async fn a_pass_without_rights_reports_every_step_it_skipped() {
     owner.close().await;
 }
 
+/// What a pass reports beside its partitions: a DEFAULT partition grown past incidental, the
+/// claim-check rows it reaped, nothing of a reap another process holds, and a leaf whose reap
+/// the database refused, by name.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_reports_a_full_default_partition_claim_checks_a_held_reap_and_a_refused_leaf() {
+    let url = require_db!();
+    let own = own_database(&url, "report", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&pool).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    as_service(
+        &pool,
+        &[
+            "INSERT INTO attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at,
+                                         created_at, modified_at, data)
+             SELECT 'pass', 'urn:p:e', 'https://example.org/speed', 'urn:i:pile' || n,
+                    timestamptz '2002-06-01Z' + n * interval '1 second', '2002-06-01Z',
+                    '2002-06-01Z', '{\"type\": \"Property\", \"value\": 1}'::jsonb
+               FROM generate_series(1, 120000) n",
+            "INSERT INTO attr_instances (tenant_id, entity_id, attr_id, instance_id, observed_at,
+                                         created_at, modified_at, data)
+             VALUES ('pass', 'urn:p:e', 'https://example.org/speed', 'urn:i:refused',
+                     '2002-07-01Z', '2002-07-01Z', '2002-07-01Z',
+                     '{\"type\": \"Property\", \"value\": 1, \"expiresAt\": \"2001-01-01T00:00:00Z\"}')",
+            "INSERT INTO outbox (tenant_id, event, published_at)
+             VALUES ('pass', '{}'::jsonb, now() - interval '25 hours')",
+        ],
+    )
+    .await;
+    for sql in [
+        "ANALYZE attr_instances_default",
+        "CREATE FUNCTION antares_test_refuse_reap() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN RAISE EXCEPTION 'reap refused'; END $$",
+        "CREATE TRIGGER antares_test_refuse_reap BEFORE DELETE ON attr_instances_default
+         FOR EACH ROW WHEN (OLD.instance_id = 'urn:i:refused')
+         EXECUTE FUNCTION antares_test_refuse_reap()",
+    ] {
+        pool.execute(sql).await.expect(sql);
+    }
+    let reaper = other_pod(&pool, "antares.history_reap").await;
+    let held = temporal_maintenance(&pool, TemporalBackend::Partitioned, None, Duration::ZERO)
+        .await
+        .expect("pass");
+    other_pod_leaves(reaper).await;
+    let got = lines(&held);
+    assert!(
+        got.iter().any(|l| l.starts_with("default partition ~")),
+        "{held}"
+    );
+    assert!(
+        got.contains(&"reaped 1 published claim-check rows"),
+        "{held}"
+    );
+    assert!(
+        !got.iter().any(|l| l.starts_with("instance reap")),
+        "the reap is the other process's: {held}"
+    );
+
+    let refused = temporal_maintenance(&pool, TemporalBackend::Partitioned, None, Duration::ZERO)
+        .await
+        .expect("pass");
+    assert!(
+        lines(&refused).iter().any(|l| {
+            l.starts_with("instance reap skipped on attr_instances_default (")
+                && l.contains("reap refused")
+        }),
+        "{refused}"
+    );
+    pool.close().await;
+}
+
 /// A pass held on `blocked` (a table another session locks exclusively) while its lease's session
 /// is terminated: the summary it returns once the lock goes. `None` where the server has
 /// timescaledb, which the partitioned pass does not run on.
@@ -392,6 +668,7 @@ async fn pass_whose_lease_session_dies(url: &str, tag: &str, blocked: &str) -> O
 async fn a_pass_whose_lease_session_dies_stops_and_says_so() {
     let url = require_db!();
     for (tag, blocked) in [
+        ("leaseclaim", "attr_instances"),
         ("leaseversions", "attr_versions"),
         ("leaseentities", "entities"),
     ] {
@@ -474,6 +751,147 @@ async fn a_hypertable_pass_drops_old_chunks_and_otherwise_has_nothing_to_do() {
         0,
         "the 2002 chunk went: {summary}"
     );
+    pool.close().await;
+}
+
+/// The hypertable pass against timescale's API as a stand-in gives it (`drop_chunks` and the
+/// chunk catalog, answering nothing): retention drops the chunks of both history parents, on a
+/// server without timescaledb too.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hypertable_pass_hands_retention_to_drop_chunks_for_both_parents() {
+    let url = require_db!();
+    let own = own_database(&url, "chunkapi", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&pool).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    for sql in [
+        "CREATE FUNCTION public.drop_chunks(relation regclass, older_than interval)
+         RETURNS SETOF text LANGUAGE sql AS $$ SELECT NULL::text WHERE false $$",
+        "CREATE SCHEMA timescaledb_information",
+        "CREATE VIEW timescaledb_information.chunks AS
+         SELECT NULL::name AS chunk_schema, NULL::name AS chunk_name, false AS is_compressed
+          WHERE false",
+    ] {
+        pool.execute(sql).await.expect(sql);
+    }
+    let summary =
+        temporal_maintenance(&pool, TemporalBackend::Hypertable, Some(30), Duration::ZERO)
+            .await
+            .expect("retention pass");
+    assert!(
+        lines(&summary).contains(&"timescale drop_chunks older than 30d"),
+        "{summary}"
+    );
+    assert!(
+        !summary.contains("partition "),
+        "a hypertable has no weeks to make: {summary}"
+    );
+    pool.close().await;
+}
+
+/// A week the pass would make waits while an index build holds the DEFAULT partition (and the
+/// expiry build leaves that DEFAULT alone too); once the build is gone the weeks are made, on
+/// `attr_rows` from the cut-over on.
+#[tokio::test(flavor = "multi_thread")]
+async fn weeks_wait_for_a_default_index_build_and_are_keyed_from_the_cut_over() {
+    let url = require_db!();
+    let own = own_database(&url, "keyedweeks", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&pool).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    pool.execute("UPDATE history_cutover SET at = date_trunc('week', now()) - interval '2 weeks'")
+        .await
+        .expect("cut-over");
+    let suffix: String =
+        sqlx::query_scalar("SELECT to_char(date_trunc('week', now()), 'IYYY\"w\"IW')")
+            .fetch_one(&pool)
+            .await
+            .expect("this week");
+    let build = other_pod(&pool, "antares.history_default_index").await;
+    let waiting = temporal_maintenance(&pool, TemporalBackend::Partitioned, None, Duration::ZERO)
+        .await
+        .expect("pass");
+    other_pod_leaves(build).await;
+    let weeks: Vec<&str> = lines(&waiting)
+        .into_iter()
+        .filter(|l| l.starts_with("partition "))
+        .collect();
+    assert_eq!(weeks.len(), 5, "{waiting}");
+    assert!(
+        weeks
+            .iter()
+            .all(|l| l.ends_with(": waits for the DEFAULT partition's index")),
+        "{waiting}"
+    );
+    assert!(!exists(&pool, &format!("attr_rows_{suffix}")).await);
+
+    let made = temporal_maintenance(&pool, TemporalBackend::Partitioned, None, Duration::ZERO)
+        .await
+        .expect("pass");
+    assert!(
+        lines(&made).contains(&format!("partition {suffix}: ok").as_str()),
+        "{made}"
+    );
+    assert!(
+        exists(&pool, &format!("attr_rows_{suffix}")).await,
+        "{made}"
+    );
+    assert!(
+        !exists(&pool, &format!("attr_instances_{suffix}")).await,
+        "{made}"
+    );
+    pool.close().await;
+}
+
+/// An expired Entity another session holds is left to the next batch, which takes it; a bare
+/// sweep without budget stops before its first Tenant and resumes at it.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_locked_expired_entity_waits_for_the_next_batch_and_a_spent_bare_sweep_resumes() {
+    let url = require_db!();
+    let own = own_database(&url, "lockedreap", &[]).await;
+    let pool = pg::connect(&own, 4).await.expect("connect+migrate");
+    let tenant = antares_model::TenantId::new(TENANT).expect("tenant");
+    pg::ensure_tenant(&pool, &tenant).await.expect("tenant row");
+    let id = "urn:ngsi-ld:T:lockedreap";
+    let doc = serde_json::json!({"id": id, "type": ["https://example.org/T"],
+        "createdAt": "2001-01-01T00:00:00Z", "modifiedAt": "2001-01-01T00:00:00Z",
+        "expiresAt": "2001-01-02T00:00:00Z"});
+    assert!(pg::entity::PgEntityStore::new(pool.clone())
+        .create(&tenant, id, &doc)
+        .await
+        .expect("create"));
+    let mut holder = pool.begin().await.expect("begin");
+    pg::set_tenant(&mut holder, &tenant).await.expect("tenant");
+    sqlx::query("SELECT 1 FROM entities WHERE tenant_id = $1 AND id = $2 FOR UPDATE")
+        .bind(TENANT)
+        .bind(id)
+        .execute(&mut *holder)
+        .await
+        .expect("row lock");
+    assert_eq!(
+        maintenance::reap_expired_entity_batch(&pool, 10)
+            .await
+            .expect("batch"),
+        0
+    );
+    holder.rollback().await.expect("release");
+    assert_eq!(
+        maintenance::reap_expired_entity_batch(&pool, 10)
+            .await
+            .expect("batch"),
+        1
+    );
+
+    for _ in 0..3 {
+        let sweep = maintenance::mark_bare(&pool, Duration::ZERO)
+            .await
+            .expect("sweep");
+        assert_eq!((sweep.checked, sweep.marked), (0, 0), "{sweep:?}");
+    }
     pool.close().await;
 }
 

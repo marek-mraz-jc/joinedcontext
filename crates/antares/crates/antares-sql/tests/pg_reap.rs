@@ -229,6 +229,58 @@ async fn a_timed_out_batch_keeps_the_prune_and_the_batches_before_it_and_the_nex
     assert_eq!(db.stored("speed").await, 0);
 }
 
+/// A reap that spends its time budget on one leaf leaves the next leaf to the next pass, which
+/// takes what is left.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reap_past_its_budget_leaves_the_next_leaf_to_the_next_pass() {
+    let db = own_database(&require_db!(), "budget").await;
+    if db.backend != TemporalBackend::Partitioned {
+        eprintln!("SKIP: the leaves are partitions");
+        return;
+    }
+    // the first instance in a week of its own, the others in DEFAULT
+    for sql in [
+        "CREATE TABLE attr_instances_2007w10 PARTITION OF attr_instances
+         FOR VALUES FROM ('2007-03-05Z') TO ('2007-03-06 00:00:02Z')",
+        "SELECT public.antares_partition_rls('public.attr_instances_2007w10'::regclass)",
+    ] {
+        db.owner.execute(sql).await.expect(sql);
+    }
+    db.instances("slow", 3, EXPIRED, None).await;
+    db.indexed().await;
+    for sql in [
+        "CREATE FUNCTION antares_test_slow_reap() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN PERFORM pg_sleep(21); RETURN OLD; END $$",
+        "CREATE TRIGGER antares_test_slow_reap BEFORE DELETE ON attr_instances
+         FOR EACH ROW WHEN (OLD.instance_id IN ('urn:i:slow1', 'urn:i:slow2'))
+         EXECUTE FUNCTION antares_test_slow_reap()",
+    ] {
+        db.owner.execute(sql).await.expect(sql);
+    }
+    let reaper = db.as_role(Duration::from_secs(60)).await;
+    let first = maintenance::reap_expired_instances(&reaper, db.backend)
+        .await
+        .expect("pass")
+        .expect("the lock is free");
+    assert!(first.failed.is_empty(), "{first:?}");
+    assert!(first.deleted < 3, "{first:?}");
+    assert_eq!(
+        db.stored("slow").await,
+        3 - i64::try_from(first.deleted).expect("rows")
+    );
+
+    db.owner
+        .execute("DROP TRIGGER antares_test_slow_reap ON attr_instances")
+        .await
+        .expect("drop trigger");
+    let second = maintenance::reap_expired_instances(&reaper, db.backend)
+        .await
+        .expect("pass")
+        .expect("the lock is free");
+    assert!(second.failed.is_empty(), "{second:?}");
+    assert_eq!(db.stored("slow").await, 0);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn rows_stored_before_the_index_are_reaped_and_audit_rows_never() {
     let db = own_database(&require_db!(), "backfill").await;
@@ -276,6 +328,79 @@ async fn rows_stored_before_the_index_are_reaped_and_audit_rows_never() {
     ] {
         assert_eq!(db.stored(kind).await, left, "{kind}");
     }
+}
+
+/// The expiry index step: another process holding it builds nothing here; an index a failed
+/// build left invalid is dropped and built again, and while its leaf holds the drop off the
+/// step defers that leaf and says why.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_invalid_expiry_index_is_rebuilt_once_its_leaf_lets_the_drop_through() {
+    use sqlx::Connection;
+    let db = own_database(&require_db!(), "invalidexpiry").await;
+    if db.backend != TemporalBackend::Partitioned {
+        eprintln!("SKIP: the index is named after a partition");
+        return;
+    }
+    db.instances("dup", 2, EXPIRED, None).await;
+    db.indexed().await;
+    db.owner
+        .execute("DROP INDEX attr_instances_default_expiry")
+        .await
+        .expect("drop");
+    // a build that failed: two rows of one Tenant under a unique index
+    db.owner
+        .execute(
+            "CREATE UNIQUE INDEX CONCURRENTLY attr_instances_default_expiry
+             ON attr_instances_default (tenant_id)",
+        )
+        .await
+        .expect_err("a duplicate Tenant");
+
+    let mut pod = db.owner.acquire().await.expect("a connection").detach();
+    sqlx::query("SELECT pg_advisory_lock(hashtext('antares.history_expiry_index'))")
+        .execute(&mut pod)
+        .await
+        .expect("lock");
+    assert_eq!(
+        maintenance::history_expiry_index(&db.owner, db.backend)
+            .await
+            .expect("held step"),
+        None
+    );
+    sqlx::query("SELECT pg_advisory_unlock_all()")
+        .execute(&mut pod)
+        .await
+        .expect("unlock");
+    pod.close().await.expect("close");
+
+    let mut holder = db.owner.begin().await.expect("begin");
+    holder
+        .execute("LOCK TABLE attr_instances_default IN SHARE MODE")
+        .await
+        .expect("lock");
+    let deferred = maintenance::history_expiry_index(&db.owner, db.backend)
+        .await
+        .expect("step")
+        .expect("a leaf to build");
+    holder.rollback().await.expect("unlock");
+    assert!(
+        deferred
+            .starts_with("expiry index built on 0 of 1 leaves; attr_instances_default deferred ("),
+        "{deferred}"
+    );
+    let built = maintenance::history_expiry_index(&db.owner, db.backend)
+        .await
+        .expect("step")
+        .expect("a leaf to build");
+    assert_eq!(built, "expiry index built on 1 of 1 leaves");
+    let valid: bool = sqlx::query_scalar(
+        "SELECT indisvalid FROM pg_index
+          WHERE indexrelid = 'public.attr_instances_default_expiry'::regclass",
+    )
+    .fetch_one(&db.owner)
+    .await
+    .expect("catalog");
+    assert!(valid);
 }
 
 #[tokio::test(flavor = "multi_thread")]

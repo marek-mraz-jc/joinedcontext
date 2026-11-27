@@ -28,9 +28,18 @@ fn second(n: u32) -> String {
 
 /// Wide:1 (30 Attributes, 12 000 rows) and Heavy:1 (a 256 KiB text valid over 50 rows).
 async fn fixture() -> Result<(TestBroker, Router), String> {
+    env();
+    fixture_on(TestBroker::new().await?).await
+}
+
+/// The schema bound and subject headers a broker reads when it is built.
+fn env() {
     std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, "65536");
     std::env::set_var("ANTARES_POLICY_SUBJECT_HEADERS", SUBJECT);
-    let broker = TestBroker::new().await?;
+}
+
+/// [`fixture`] on a broker the caller built after [`env`].
+async fn fixture_on(broker: TestBroker) -> Result<(TestBroker, Router), String> {
     let app = broker.serve(antares_odata::OData)?;
     let wide: Vec<String> = (0..30).map(|i| format!("a{i}")).collect();
     let mut slots: Map<String, Value> = wide
@@ -245,4 +254,47 @@ async fn a_wide_page_charges_the_rows_it_builds_and_no_others() {
     );
     // 12 000 rows of 30 members would be tens of MB: a page holds its own 100.
     assert!(hundred - one < 100 * 8 * 1024, "{one}, {hundred}");
+}
+
+/// A sort that would hold more bytes than one answer may is refused, as is a count that would.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sort_holding_more_bytes_than_one_answer_may_is_refused() {
+    env();
+    let broker = TestBroker::with_max_answer_bytes(600 * 1024)
+        .await
+        .expect("broker");
+    let (_broker, app) = fixture_on(broker).await.expect("fixture");
+    let refused = get(
+        &app,
+        &format!("{PAST}/Heavy_history?$orderby=tick%20desc&$top=3"),
+        None,
+    )
+    .await;
+    assert!(
+        refused
+            .as_ref()
+            .err()
+            .is_some_and(|e| e.starts_with("400") && e.contains("bytes one count or sort may hold")),
+        "{refused:?}"
+    );
+}
+
+/// Rows the answer pool has no room for are a 503 the client retries, not a part of a page.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sort_the_answer_pool_has_no_room_for_is_a_503() {
+    env();
+    let broker = TestBroker::with_answer_pool(400 * 1024)
+        .await
+        .expect("broker");
+    let (_broker, app) = fixture_on(broker).await.expect("fixture");
+    let refused = get(
+        &app,
+        &format!("{PAST}/Heavy_history?$orderby=tick%20desc&$top=2"),
+        None,
+    )
+    .await;
+    assert!(
+        refused.as_ref().err().is_some_and(|e| e.starts_with("503")),
+        "{refused:?}"
+    );
 }

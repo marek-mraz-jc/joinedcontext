@@ -285,6 +285,101 @@ async fn a_text_query_strips_an_expired_attribute_instance() {
     assert!(row.get("https://example.org/old").is_none(), "{row}");
     assert_eq!(row["https://example.org/kept"][0]["value"], 2);
     let _ = store.delete(&t, Kind::Entity, id).await;
+
+    // a document whose own expiresAt passed while its column still reads it live is left out
+    // by the read boundary on the same path
+    let gone = "urn:ngsi-ld:T:textexpired";
+    let _ = store.delete(&t, Kind::Entity, gone).await;
+    let doc = json!({
+        "id": gone, "type": ["https://example.org/T"],
+        "createdAt": "2026-08-04T09:00:00Z", "modifiedAt": "2026-08-04T09:00:00Z",
+        "https://example.org/kept": [{"type": "Property", "value": 3}]
+    });
+    assert!(store
+        .create(&t, Kind::Entity, gone, doc)
+        .await
+        .expect("create"));
+    let mut tx = pool.begin().await.expect("begin");
+    pg::set_tenant(&mut tx, &t).await.expect("tenant");
+    sqlx::query(
+        "UPDATE entities SET entity = entity || '{\"expiresAt\": \"2001-01-01T00:00:00Z\"}'::jsonb
+          WHERE tenant_id = $1 AND id = $2",
+    )
+    .bind(t.as_str())
+    .bind(gone)
+    .execute(&mut *tx)
+    .await
+    .expect("expired document, live column");
+    tx.commit().await.expect("commit");
+    let out = store
+        .query_entities_text(&t, &EntityFilter::default())
+        .await
+        .expect("query");
+    assert!(
+        out.rows.iter().all(|r| !r.get().contains(gone)),
+        "the expired document was read"
+    );
+    let _ = store.delete(&t, Kind::Entity, gone).await;
+}
+
+/// An upsert whose create never takes its row (a row a concurrent delete keeps taking away)
+/// is refused after its rounds, never answered as stored; a purge that finds its Tenant gone
+/// by its last step reports it unknown.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_upsert_that_never_lands_is_refused_and_a_purge_whose_tenant_went_says_so() {
+    use sqlx::Executor;
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let store = AnyStore::Pg(PgBackend::new(pool.clone()));
+    let t = tenant(&pool, "anyraced").await;
+    let id = "urn:ngsi-ld:T:anyraced";
+    for ddl in [
+        "CREATE OR REPLACE FUNCTION antares_test_swallow_insert() RETURNS trigger
+           LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$",
+        "DROP TRIGGER IF EXISTS antares_test_swallow ON entities",
+        "CREATE TRIGGER antares_test_swallow BEFORE INSERT ON entities FOR EACH ROW
+           WHEN (NEW.id = 'urn:ngsi-ld:T:anyraced')
+           EXECUTE FUNCTION antares_test_swallow_insert()",
+    ] {
+        pool.execute(ddl).await.expect(ddl);
+    }
+    let doc = json!({"id": id, "type": ["https://example.org/T"],
+                     "createdAt": "2026-08-04T09:00:00Z", "modifiedAt": "2026-08-04T09:00:00Z"});
+    let refused = store.upsert(&t, Kind::Entity, id, doc).await;
+    pool.execute("DROP TRIGGER antares_test_swallow ON entities")
+        .await
+        .expect("drop trigger");
+    let detail = internal(refused.expect_err("nothing was stored"));
+    assert!(
+        detail.contains("created and deleted concurrently"),
+        "{detail}"
+    );
+
+    // the first batch statement on the remint map takes the Tenant's row away
+    let purged = tenant(&pool, "anypurgerace").await;
+    for ddl in [
+        "CREATE OR REPLACE FUNCTION antares_test_drop_purged_tenant() RETURNS trigger
+           LANGUAGE plpgsql AS $$ BEGIN
+             IF current_setting('antares.tenant', true) = 'anypurgerace' THEN
+               DELETE FROM tenants WHERE tenant_id = 'anypurgerace';
+             END IF;
+             RETURN NULL;
+           END $$",
+        "DROP TRIGGER IF EXISTS antares_test_purge_race ON entity_id_remap",
+        "CREATE TRIGGER antares_test_purge_race AFTER DELETE ON entity_id_remap
+           FOR EACH STATEMENT EXECUTE FUNCTION antares_test_drop_purged_tenant()",
+    ] {
+        pool.execute(ddl).await.expect(ddl);
+    }
+    let raced = store.purge_tenant(&purged).await;
+    pool.execute("DROP TRIGGER antares_test_purge_race ON entity_id_remap")
+        .await
+        .expect("drop trigger");
+    assert!(
+        !raced.expect("purge"),
+        "the Tenant went before the last step"
+    );
+    let _ = store.purge_tenant(&t).await;
 }
 
 /// A database that stops answering (the pool closed under the drain) turns into the generic
@@ -314,6 +409,10 @@ async fn a_closed_pool_answers_the_generic_database_error_everywhere() {
             .await
             .map(|_| ()),
         store.purge_tenant(&t).await.map(|_| ()),
+        store
+            .query_temporal(&t, &TemporalFilter::default())
+            .await
+            .map(|_| ()),
         store
             .context_put_capped(
                 &t,
@@ -393,9 +492,25 @@ async fn the_memory_arm_answers_the_seams_it_has_no_index_for() {
         )
         .await
         .expect("append");
-    assert!(store
+    let before = store
         .get_temporal(&t, "urn:v:new", &TemporalFilter::default())
         .await
         .expect("read")
-        .is_some());
+        .expect("present");
+    // additions that are no Attribute map add nothing to the history
+    store
+        .temporal_append(
+            &t,
+            "urn:v:new",
+            &temporal("urn:v:new", "2026-08-04T09:00:00Z"),
+            &json!(null),
+        )
+        .await
+        .expect("append nothing");
+    let doc = store
+        .get_temporal(&t, "urn:v:new", &TemporalFilter::default())
+        .await
+        .expect("read")
+        .expect("present");
+    assert_eq!(doc[SPEED], before[SPEED], "{doc}");
 }

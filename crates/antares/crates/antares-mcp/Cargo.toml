@@ -40,7 +40,7 @@ antares-store = { workspace = true }
 async-trait = { workspace = true }
 axum = { version = "0.8", default-features = false }
 http-body-util = { version = "0.1", default-features = false }
-tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tracing-subscriber = { workspace = true }
 

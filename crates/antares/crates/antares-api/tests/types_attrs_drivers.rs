@@ -246,6 +246,101 @@ async fn a_fold_over_several_pages_on_a_driver_without_keyset_counts_each_entity
     }
 }
 
+/// A narrowing of one rule and two id patterns.
+struct Narrowing(antares_api::policy::Filter);
+
+impl antares_api::policy::PolicyEngine for Narrowing {
+    fn name(&self) -> &str {
+        "types-attrs-drivers"
+    }
+
+    fn decide<'a>(
+        &'a self,
+        _s: &'a antares_api::policy::Subject,
+        op: &'a antares_api::policy::Operation<'a>,
+    ) -> antares_api::policy::DecisionFuture<'a> {
+        let answer = if antares_api::policy::FILTERABLE.contains(&op.clause) {
+            antares_api::policy::Decision::Filter(Arc::new(self.0.clone()))
+        } else {
+            antares_api::policy::Decision::Allow
+        };
+        Box::pin(std::future::ready(answer))
+    }
+
+    fn pre_notify(
+        &self,
+        _s: &antares_api::policy::Subject,
+        _sub: &Value,
+        _n: &mut Value,
+    ) -> antares_api::policy::NotifyDecision {
+        antares_api::policy::NotifyDecision::Filter(Box::new(self.0.clone()))
+    }
+}
+
+/// 5.7.5 under a narrowing whose rule selects by two id patterns, which
+/// narrow nothing in the store: the probe for the type walks past its first
+/// page. A driver that ignores the keyset cursor is walked by offset, one
+/// that decides nothing has every row judged here, and both list the type.
+/// Without rules and without a type list nothing can be probed, and the
+/// listing is the fold's.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_probe_past_its_first_page_finds_the_type_on_lesser_drivers() {
+    let inner = Arc::new(AnyStore::Mem(Default::default()));
+    let full = AppState::with_store("me".into(), inner.clone(), "memory");
+    for i in 0..60 {
+        let car = json!({"id": format!("urn:ngsi-ld:Car:{i:04}"), "type": "Car"});
+        let (code, body) = send(&full, "POST", "/ngsi-ld/v1/entities", Some(car)).await;
+        assert_eq!(code, StatusCode::CREATED, "{body}");
+    }
+    let bike = json!({"id": "urn:ngsi-ld:Bike:0050", "type": "Bike"});
+    let (code, body) = send(&full, "POST", "/ngsi-ld/v1/entities", Some(bike)).await;
+    assert_eq!(code, StatusCode::CREATED, "{body}");
+    let view = antares_api::policy::Filter {
+        rules: vec![antares_api::policy::Rule {
+            types: vec!["https://uri.etsi.org/ngsi-ld/default-context/Car".to_owned()],
+            id_patterns: vec!["^.*:0050$".to_owned(), "^.*:0051$".to_owned()],
+            every_attribute: true,
+            ..antares_api::policy::Rule::default()
+        }],
+        ..antares_api::policy::Filter::default()
+    };
+    for (name, lesser) in [
+        ("no keyset", Lesser::NoKeyset),
+        ("undecided", Lesser::Undecided),
+    ] {
+        let st = AppState::with_drivers(
+            "me".into(),
+            Arc::new(Double::lesser(inner.clone(), lesser)),
+            inner.clone(),
+            "memory",
+        )
+        .with_policy(Arc::new(Narrowing(view.clone())));
+        let (code, body) = send(&st, "GET", "/ngsi-ld/v1/types", None).await;
+        assert_eq!(code, StatusCode::OK, "{name}: {body}");
+        assert_eq!(body["typeList"], json!(["Car"]), "{name}: {body}");
+    }
+    // a narrowing without rules on a driver that keeps no type list: no
+    // probe can be planned, and the answer is the fold's
+    let omitting = antares_api::policy::Filter {
+        omit: vec!["https://uri.etsi.org/ngsi-ld/default-context/colour".to_owned()],
+        ..antares_api::policy::Filter::default()
+    };
+    let st = AppState::with_drivers(
+        "me".into(),
+        Arc::new(Double::lesser(inner.clone(), Lesser::NoTypeNames)),
+        inner.clone(),
+        "memory",
+    )
+    .with_policy(Arc::new(Narrowing(omitting)));
+    let (code, body) = send(&st, "GET", "/ngsi-ld/v1/types", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(body["typeList"], json!(["Bike", "Car"]), "{body}");
+    for uri in ["/ngsi-ld/v1/types?details=true", "/ngsi-ld/v1/attributes"] {
+        let (code, body) = send(&st, "GET", uri, None).await;
+        assert_eq!(code, StatusCode::OK, "{uri}: {body}");
+    }
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_lesser_driver_answers_discovery_as_the_full_store() {
     let inner = Arc::new(AnyStore::Mem(Default::default()));

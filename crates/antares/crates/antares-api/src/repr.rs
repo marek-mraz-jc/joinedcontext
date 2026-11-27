@@ -2570,6 +2570,49 @@ mod shaping_edges {
         assert!(omit.is_none());
     }
 
+    /// An engine pick that names a member of the Entity frame keeps it once.
+    #[test]
+    fn a_policy_pick_naming_the_frame_keeps_it_once() {
+        let ctx = Loader::new().core();
+        let f = crate::policy::Filter {
+            pick: vec![format!("{T}speed"), "id".into()],
+            ..Default::default()
+        };
+        let mut pick = None;
+        let mut omit = None;
+        narrow_projection(&mut pick, &mut omit, &f, &ctx).expect("narrowed");
+        let raws: Vec<String> = pick.iter().flatten().map(|n| n.raw.clone()).collect();
+        assert_eq!(raws, vec![format!("{T}speed"), "id".into(), "type".into()]);
+    }
+
+    /// Ordering under a projecting narrowing orders the documents as shown;
+    /// a stored row that is no document has nothing to be ordered by and is
+    /// left out.
+    #[test]
+    fn ordering_as_shown_leaves_out_a_row_that_is_no_document() {
+        let narrow = Repr {
+            policy_omit: Some(policy_nodes(&[format!("{T}secret")])),
+            ..Default::default()
+        };
+        let mut docs = vec![
+            json!("not a document"),
+            json!({"id": "urn:a", "type": "T"}),
+            json!({"id": "urn:b", "type": "T"}),
+        ];
+        order_as_shown(&mut docs, Some(&narrow), |views| {
+            views.reverse();
+            Ok::<(), ()>(())
+        })
+        .expect("ordered");
+        assert_eq!(
+            docs,
+            vec![
+                json!({"id": "urn:b", "type": "T"}),
+                json!({"id": "urn:a", "type": "T"})
+            ]
+        );
+    }
+
     /// A closing brace before its opening one is refused, though the braces
     /// count out even.
     #[test]
@@ -2790,10 +2833,7 @@ mod shaping_edges {
     #[test]
     fn rewinding_walks_collections_and_passes_malformed_rings() {
         let cw = json!([[0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]]);
-        let mut ccw = cw.clone();
-        if let Some(a) = ccw.as_array_mut() {
-            a.reverse();
-        }
+        let ccw = json!([[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0], [0.0, 0.0]]);
         let gc = json!({"type": "GeometryCollection", "geometries": [
             {"type": "Polygon", "coordinates": [cw.clone()]},
             {"type": "Point", "coordinates": [1, 2]}]});
@@ -2807,6 +2847,8 @@ mod shaping_edges {
         assert_eq!(rewound(odd.clone()), odd);
         let bare = json!({"type": "Polygon"});
         assert_eq!(rewound(bare.clone()), bare);
+        let empty = json!({"type": "GeometryCollection"});
+        assert_eq!(rewound(empty.clone()), empty);
     }
 
     /// 4.5.16.1: several instances, none the default, select no geometry.

@@ -36,7 +36,7 @@ http-body-util = { version = "0.1", default-features = false }
 # the Postgres arm of the quality sweep tests (T-4018), skipped without ANTARES_TEST_DATABASE_URL
 antares-sql = { workspace = true, features = ["postgres"] }
 # tests/sweep_fault.rs: the shared fault driver over the memory store
-antares-store = { workspace = true }
+antares-store = { workspace = true, features = ["test-kit"] }
 async-trait = { workspace = true }
 proptest = { workspace = true }
 # the broker's allocator, so `benches/view_query.rs` times what ships

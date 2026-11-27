@@ -1437,6 +1437,47 @@ mod pipeline_edges {
         assert!(TASK_PANICS.load(Ordering::Relaxed) > before);
     }
 
+    /// 4.9: a link chain deeper than the evaluator's lookup budget stops
+    /// after that many passes and is answered on what the cache holds.
+    #[tokio::test]
+    async fn a_link_chain_past_the_lookup_budget_ends_on_the_cache() {
+        let st = AppState::new("link-chain".into());
+        let mut passes = 0usize;
+        let mut last = Some(Value::Null);
+        let out = linked_eval(&st, &TenantId::default(), None, |lookup| {
+            passes += 1;
+            last = lookup(&format!("urn:ngsi-ld:Hop:{passes}"));
+            true
+        })
+        .await;
+        assert!(out);
+        assert_eq!(passes, antares_ql::eval::MAX_Q_LINK_LOOKUPS + 1);
+        assert_eq!(last, None, "the last hop reads as unresolved");
+    }
+
+    /// ADR-0023 rule 9: a notification body a policy left without `data`
+    /// has no Entity the view could show, so nothing is notified.
+    #[cfg(feature = "views")]
+    #[tokio::test]
+    async fn a_view_finds_nothing_to_notify_in_a_body_without_data() {
+        let st = AppState::new("view-project".into());
+        let view = crate::views::CompiledView::new(
+            &["Vehicle".to_owned()],
+            None,
+            None,
+            None,
+            vec![crate::policy::Rule {
+                types: vec!["Vehicle".to_owned()],
+                ..crate::policy::Rule::default()
+            }],
+        )
+        .expect("view");
+        let mut body = json!({"type": "Notification"});
+        let ctx = antares_jsonld::Loader::new().core();
+        let sub = stalled("urn:ngsi-ld:Subscription:v", "x-stall://v");
+        assert!(!view_project(&st, &TenantId::default(), &sub, &view, &mut body, &ctx).await);
+    }
+
     /// A row without an `id` cannot be keyed, so the seed leaves it out.
     #[tokio::test]
     async fn a_seed_skips_a_row_without_an_id() {
@@ -3233,6 +3274,34 @@ mod delivery_policy_tests {
         );
     }
 
+    /// A letter stored without its `id` member cannot be named for
+    /// eviction: the cap skips it rather than failing the park.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_cap_skips_a_letter_without_an_id() {
+        let (st, t) = state(policy(1, 0));
+        let letter = |i: usize| {
+            json!({"id": format!("urn:ngsi-ld:DeadLetter:{i:013}-x"),
+            "type": "DeadLetter", "subscriptionId": SUB_ID, "payload": {}})
+        };
+        st.store
+            .create(
+                &t,
+                Kind::DeadLetter,
+                "urn:ngsi-ld:DeadLetter:0000000000000-a",
+                json!({"type": "DeadLetter", "subscriptionId": SUB_ID}),
+            )
+            .await
+            .expect("an id-less letter");
+        for i in 1..=MAX_DEAD_LETTERS {
+            assert!(park_dead_letter(&st, &t, letter(i)).await);
+        }
+        assert_eq!(
+            letters(&st, &t).await.len(),
+            MAX_DEAD_LETTERS + 1,
+            "the id-less oldest letter is not evicted"
+        );
+    }
+
     /// Letter ids sort by the time they were written.
     #[test]
     fn dead_letter_ids_sort_by_time() {
@@ -3300,6 +3369,21 @@ mod delivery_policy_tests {
             1,
             "another tenant is not starved"
         );
+    }
+
+    /// S4-32: with the whole retry ledger spent, a failure gets no slot
+    /// even for a tenant holding no retry yet.
+    #[test]
+    fn a_spent_retry_ledger_gives_no_slot() {
+        let (st, _) = state(policy(2, 0));
+        let t = TenantId::new("spent-ledger").expect("tenant");
+        let budget = *crate::bounds::DELIVERY_LANE_BYTES;
+        let fill = budget.saturating_sub(RETRY_LEDGER.used()).max(1);
+        let held = RETRY_LEDGER.take(fill, budget);
+        let refused = take_retry_slot(&st, &t, SUB_ID, &outbound()).err();
+        drop(held);
+        assert_eq!(refused, Some("the retry memory budget is spent"));
+        assert_eq!(retries_in_flight(&st, &t), 0);
     }
 
     /// S4-32: one tenant's large failing bodies stop at its byte share of
@@ -3667,6 +3751,95 @@ mod delivery_policy_tests {
             other => panic!("a letter without subscriptionId is refused, got {other:?}"),
         }
         assert_eq!(hits.load(Ordering::SeqCst), 0, "nothing was sent");
+    }
+
+    /// A grant that still decides what the notification was built under
+    /// lets the retry go.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_notification_the_policy_still_delivers_may_go() {
+        let (mut st, t) = state(policy(1, 10));
+        st.policy = Some(Arc::new(Switch(std::sync::atomic::AtomicBool::new(false))));
+        let uri = "http://127.0.0.1:9/notify";
+        subscribe(&st, &t, SUB_ID, uri).await;
+        still_deliverable(
+            &st,
+            &t,
+            Kind::Subscription,
+            SUB_ID,
+            uri,
+            &outbound().body,
+            None,
+        )
+        .await
+        .expect("a Deliver now is the Deliver it was built under");
+    }
+
+    /// A retry delivered after its row was rewritten into something that is
+    /// no subscription document books nothing on it and parks no letter.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_retry_success_on_a_rewritten_row_books_nothing() {
+        let (st, t) = state(policy(2, 10));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (rw_st, rw_t) = (st.clone(), t.clone());
+        let app = axum::Router::new().route(
+            "/notify",
+            axum::routing::post(move || {
+                let (st, t) = (rw_st.clone(), rw_t.clone());
+                async move {
+                    st.store
+                        .upsert(&t, Kind::Subscription, SUB_ID, json!("rewritten"))
+                        .await
+                        .expect("rewrite");
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        tokio::spawn(async move { axum::serve(listener, app).await.expect("serve") });
+        let uri = format!("http://{addr}/notify");
+        subscribe(&st, &t, SUB_ID, &uri).await;
+        retry_and_settle(
+            &st,
+            &t,
+            Kind::Subscription,
+            SUB_ID,
+            &uri,
+            1_000,
+            outbound(),
+            "first".into(),
+        )
+        .await;
+        let row = st
+            .store
+            .get(&t, Kind::Subscription, SUB_ID)
+            .await
+            .expect("read")
+            .expect("row");
+        assert_eq!(row, json!("rewritten"));
+        assert!(letters(&st, &t).await.is_empty());
+    }
+
+    /// A failure without a retry slot whose letter the store refuses is
+    /// logged, never parked.
+    #[cfg(feature = "postgres")]
+    #[tokio::test]
+    async fn an_unretried_letter_the_store_refuses_is_not_parked() {
+        let st = crate::state::refusing_state();
+        let t = TenantId::default();
+        let letter = dead_letter(
+            SUB_ID,
+            "http://x/n",
+            1_000,
+            &outbound(),
+            1,
+            "e",
+            "e",
+            &now_iso(),
+        );
+        park_unretried(&st, &t, SUB_ID, "http://x/n", letter, "no slot").await;
+        assert!(st.store.list(&t, Kind::DeadLetter).await.is_err());
     }
 
     /// A store that refuses the letter answers false: nothing was parked.

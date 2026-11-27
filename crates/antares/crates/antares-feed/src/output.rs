@@ -521,6 +521,26 @@ mod tests {
         Plan::of(output).map(|(p, _)| p)
     }
 
+    /// A dotted path reads a member of the value first, then a member or
+    /// sub-attribute of the attribute itself; a name in neither is nothing.
+    #[test]
+    fn a_dotted_path_reads_the_value_then_the_attribute() {
+        let entity = json!({"id": "urn:e", "type": "Event",
+            "speed": {"type": "Property", "value": 5, "unitCode": "KMH",
+                "observedBy": {"type": "Relationship", "object": "urn:sensor"}},
+            "address": {"type": "Property", "value": {"city": "Brno"}}});
+        assert_eq!(at(&entity, "address.city", None), Some(&json!("Brno")));
+        assert_eq!(at(&entity, "speed.unitCode", None), Some(&json!("KMH")));
+        assert_eq!(
+            at(&entity, "speed.observedBy", None),
+            Some(&json!("urn:sensor"))
+        );
+        assert_eq!(at(&entity, "speed", None), Some(&json!(5)));
+        assert_eq!(at(&entity, "speed.nothing", None), None);
+        assert_eq!(at(&entity, "absent.x", None), None);
+        assert_eq!(at(&entity, "", None), None);
+    }
+
     #[test]
     fn a_newer_output_is_served_from_its_presets_and_keeps_its_filter() -> Result<(), String> {
         let (p, degraded) = Plan::of(&json!({"name": "sport", "version": 2, "limit": 20,

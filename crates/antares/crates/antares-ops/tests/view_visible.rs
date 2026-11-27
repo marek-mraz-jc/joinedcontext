@@ -240,6 +240,32 @@ async fn the_view_alone_shows_what_the_engine_would_narrow() {
     );
 }
 
+/// A view that narrows Entities shows no list of records alone either: the Registrations it
+/// would select by what an Entity carries are refused, as through the engine.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_view_that_narrows_entities_refuses_a_list_of_records_alone() {
+    let app = broker(None).await.expect("a broker");
+    let view = json!({
+        "id": "regs", "tenant": "city", "selector": ["Car"],
+        "rules": [{"types": ["Car"], "attributes": ["speed"]}],
+        "operations": ["query_registrations"]
+    });
+    let body = view.to_string();
+    let req = Request::builder()
+        .method(Method::PUT)
+        .uri("/q/views/regs")
+        .header("Content-Type", "application/json")
+        .header("Content-Length", body.len())
+        .body(Body::from(body))
+        .expect("request");
+    let Ok(resp) = app.clone().oneshot(req).await;
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    assert_eq!(
+        get_json(&app, "/x/visible/alone/regs/query_registrations").await,
+        json!(403)
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn an_operation_the_view_leaves_out_is_not_allowed() {
     let app = broker(None).await.expect("a broker");

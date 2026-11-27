@@ -1713,16 +1713,14 @@ pub async fn spawn_background(broker: &mut Broker) -> Result<(), Box<dyn std::er
         // for Cached rows and not at all for the rest — a boot that a client
         // could make impossible by storing large @contexts.
         // No Tenant: the store then hands back the rows that belong to none
-        // (ADR-0021), which is exactly the `Cached` set this warm wants.
+        // (ADR-0021), which is exactly the `Cached` set this warm wants, and
+        // `context_get` without a Tenant reads no other row.
         for row in state
             .store
             .context_list_meta(None)
             .await
             .unwrap_or_default()
         {
-            if row.get("kind").and_then(serde_json::Value::as_str) != Some("Cached") {
-                continue;
-            }
             let (Some(url), Some(id), Some(created)) = (
                 row.get("url").and_then(serde_json::Value::as_str),
                 row.get("localId").and_then(serde_json::Value::as_str),
@@ -2238,6 +2236,11 @@ async fn wait_drain(rx: &mut tokio::sync::watch::Receiver<bool>) {
         }
     }
 }
+
+/// A delegating store that fails the calls a test names.
+#[cfg(test)]
+#[path = "../../antares-ops/tests/support/fault_store.rs"]
+mod fault_store;
 
 /// The live services a test reads from the harness namespace; unset, the test
 /// skips loudly (each caller returns on `None`).
@@ -3317,6 +3320,156 @@ mod build_state_tests {
             .await
             .expect("body");
         assert!(String::from_utf8_lossy(&body).contains("t7829_probe 1"));
+    }
+
+    /// A broker over `state` that ticks every second, with no Postgres halves
+    /// unless the test hands them over.
+    fn broker_over(
+        state: AppState,
+        docs_pool: Option<antares_sql::sqlx::PgPool>,
+        maintenance: Vec<(
+            antares_sql::sqlx::PgPool,
+            antares_sql::store::pg::maintenance::TemporalBackend,
+        )>,
+    ) -> Broker {
+        Broker {
+            state,
+            roles: wiring::Roles::parse("all").expect("roles"),
+            bus_mode: "local".into(),
+            maintenance,
+            docs_pool,
+            sweep_secs: 1,
+            metrics_port: None,
+            subject_from: None,
+        }
+    }
+
+    fn cached_row(url: Option<&str>, local_id: &str, body: serde_json::Value) -> serde_json::Value {
+        let mut row = serde_json::json!({
+            "kind": "Cached",
+            "localId": local_id,
+            "createdAt": "2026-01-01T00:00:00.000Z",
+            "body": body,
+        });
+        if let Some(url) = url {
+            row["url"] = url.into();
+        }
+        row
+    }
+
+    /// The boot warm seeds only the Cached rows that name their URL, id and
+    /// creation time and carry a body @context, and the first sweep tick
+    /// reaps an entity whose 4.22 `expiresAt` has passed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_boot_warm_seeds_whole_cached_rows_and_the_sweep_reaps_expired_entities() {
+        let (state, _fault) = fault_store::FaultStore::state("broker.test");
+        let tenant = antares_model::TenantId::new("t").expect("tenant");
+        for (id, row) in [
+            (
+                "urn:ctx:whole",
+                cached_row(
+                    Some("https://example.org/whole.jsonld"),
+                    "urn:ctx:whole",
+                    serde_json::json!({"@context": {"x": "https://example.org/x"}}),
+                ),
+            ),
+            (
+                "urn:ctx:nourl",
+                cached_row(None, "urn:ctx:nourl", serde_json::json!({"@context": {}})),
+            ),
+            (
+                "urn:ctx:nobody",
+                cached_row(
+                    Some("https://example.org/nobody.jsonld"),
+                    "urn:ctx:nobody",
+                    serde_json::json!({}),
+                ),
+            ),
+        ] {
+            state
+                .store
+                .context_put(None, id, row)
+                .await
+                .expect("seeded row");
+        }
+        assert!(state
+            .store
+            .create(
+                &tenant,
+                antares_store::Kind::Entity,
+                "urn:gone",
+                serde_json::json!({"id": "urn:gone", "type": ["T"], "expiresAt": "2020-01-01T00:00:00Z"}),
+            )
+            .await
+            .expect("created"));
+        let mut broker = broker_over(state, None, Vec::new());
+        spawn_background(&mut broker).await.expect("spawned");
+        let seeded = broker.state.loader.usage_list().await;
+        assert_eq!(seeded.len(), 1, "{seeded:?}");
+        assert_eq!(seeded[0].url, "https://example.org/whole.jsonld");
+        let mut reaped = false;
+        for _ in 0..100 {
+            let held = broker
+                .state
+                .store
+                .get(&tenant, antares_store::Kind::Entity, "urn:gone")
+                .await
+                .expect("read");
+            reaped = held.is_none();
+            if reaped {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        assert!(reaped, "the sweep never reaped the expired entity");
+    }
+
+    /// A store that fails the body read leaves the warm with nothing seeded
+    /// and the boot still goes on.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_failing_body_read_seeds_nothing_and_the_boot_goes_on() {
+        let (state, fault) = fault_store::FaultStore::state("broker.test");
+        state
+            .store
+            .context_put(
+                None,
+                "urn:ctx:whole",
+                cached_row(
+                    Some("https://example.org/whole.jsonld"),
+                    "urn:ctx:whole",
+                    serde_json::json!({"@context": {}}),
+                ),
+            )
+            .await
+            .expect("seeded row");
+        fault.fail(|method, _, _| method == "context_get");
+        let mut broker = broker_over(state, None, Vec::new());
+        spawn_background(&mut broker).await.expect("spawned");
+        assert!(broker.state.loader.usage_list().await.is_empty());
+    }
+
+    /// A Postgres that cannot be reached fails the expiry claim and the
+    /// temporal pass; both loops log it and tick again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_unreachable_database_fails_the_claims_and_the_loops_tick_on() {
+        let (state, _fault) = fault_store::FaultStore::state("broker.test");
+        let pool = || async {
+            let pool = antares_sql::sqlx::postgres::PgPoolOptions::new()
+                .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+                .expect("a lazy pool opens no connection");
+            pool.close().await;
+            pool
+        };
+        let mut broker = broker_over(
+            state,
+            Some(pool().await),
+            vec![(
+                pool().await,
+                antares_sql::store::pg::maintenance::TemporalBackend::Partitioned,
+            )],
+        );
+        spawn_background(&mut broker).await.expect("spawned");
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     }
 
     /// A host default under a key the broker does not read, or outside the

@@ -22,6 +22,8 @@ pub type Rule = Box<dyn Fn(&str, Option<&str>, Option<Kind>) -> bool + Send + Sy
 pub struct FaultStore {
     inner: Arc<dyn CurrentStateDriver>,
     rule: Mutex<Option<Rule>>,
+    /// The one method that answers as a store that does not offer it.
+    pub unsupported: Mutex<Option<&'static str>>,
 }
 
 impl FaultStore {
@@ -33,6 +35,7 @@ impl FaultStore {
         let fault = Arc::new(Self {
             inner: store.clone(),
             rule: Mutex::new(None),
+            unsupported: Mutex::new(None),
         });
         let state =
             antares_api::AppState::with_drivers(host.into(), fault.clone(), store, "memory");
@@ -53,6 +56,15 @@ impl FaultStore {
         tenant: Option<&str>,
         kind: Option<Kind>,
     ) -> Result<(), NgsiError> {
+        let unsupported = *self
+            .unsupported
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if unsupported == Some(method) {
+            return Err(NgsiError::OperationNotSupported(format!(
+                "{method} is not offered"
+            )));
+        }
         let rule = self.rule.lock().unwrap_or_else(PoisonError::into_inner);
         match rule.as_ref() {
             Some(r) if r(method, tenant, kind) => Err(NgsiError::InternalError(format!(

@@ -1198,6 +1198,207 @@ async fn a_comma_seconds_fraction_survives_the_geo_prefilter() {
     }
 }
 
+/// The shapes the temporal compiler writes only in part: a window with no column bound
+/// (`any`) still pages and prefilters, a geoquery it cannot write (`near` a polygon) and a
+/// window it refuses (`between` without its end) narrow nothing and rebuild the history
+/// unpruned, an offset past the end still counts under a geo prefilter, an aggregation over an
+/// empty window answers the Entity without Attributes, and an empty idPattern list selects
+/// nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn partly_compiled_temporal_shapes_narrow_only_what_they_write() {
+    use antares_sql::compile::temporal::InstanceRange;
+    use antares_sql::store::filter::{Aggregate, GeoSpec, Page, Period, Rel, TemporalFilter};
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgTemporalStore::new(pool.clone());
+    let t = TenantId::new("pgtempshapes").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let id = "urn:ngsi-ld:Vehicle:shapes";
+    let _ = s.delete(&t, id).await;
+    let location = antares_sql::store::filter::LOCATION_IRI;
+    let speed = "https://uri.etsi.org/ngsi-ld/default-context/speed";
+    let doc = json!({
+        "id": id, "type": "Vehicle",
+        "createdAt": "2026-01-01T00:00:00Z", "modifiedAt": "2026-01-01T00:00:00Z",
+        location: [{
+            "type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": [0.0, 0.0]},
+            "observedAt": "2026-01-01T01:00:00Z",
+            "instanceId": "urn:ngsi-ld:Instance:shapes1",
+        }],
+        speed: [{
+            "type": "Property", "value": 5, "observedAt": "2026-01-01T02:00:00Z",
+            "instanceId": "urn:ngsi-ld:Instance:shapes2",
+        }],
+    });
+    assert!(s.create(&t, id, &doc).await.expect("create"));
+    let expand = |t: &str| t.to_owned();
+    let ids = [id];
+    let any = || {
+        Some(InstanceRange {
+            timerel: "any",
+            time_at: "2026-01-01T00:00:00Z",
+            end_time_at: None,
+            timeproperty: "observedAt",
+        })
+    };
+    let open_between = || {
+        Some(InstanceRange {
+            timerel: "between",
+            time_at: "2026-01-01T00:00:00Z",
+            end_time_at: None,
+            timeproperty: "observedAt",
+        })
+    };
+    let origin = json!([0.0, 0.0]);
+    let near = GeoSpec {
+        rel: Rel::Near {
+            max: Some(1000.0),
+            min: None,
+        },
+        geometry: "Point",
+        coordinates: &origin,
+        geoproperty_iri: location,
+    };
+    let square = json!([[
+        [-1.0, -1.0],
+        [1.0, -1.0],
+        [1.0, 1.0],
+        [-1.0, 1.0],
+        [-1.0, -1.0]
+    ]]);
+    let near_polygon = GeoSpec {
+        geometry: "Polygon",
+        coordinates: &square,
+        ..near.clone()
+    };
+    let base = || TemporalFilter {
+        ids: Some(&ids),
+        expand: &expand,
+        ..TemporalFilter::default()
+    };
+
+    let page = |offset| {
+        Some(Page {
+            offset,
+            limit: 10,
+            count: true,
+        })
+    };
+    let out = s
+        .query(
+            &t,
+            &TemporalFilter {
+                range: any(),
+                page: page(0),
+                ..base()
+            },
+        )
+        .await
+        .expect("any, paged");
+    assert!(out.paged);
+    assert_eq!((out.rows.len(), out.total), (1, Some(1)));
+
+    for geo in [
+        [(near.clone(), location.to_owned())],
+        [(near_polygon.clone(), location.to_owned())],
+    ] {
+        let out = s
+            .query(
+                &t,
+                &TemporalFilter {
+                    range: any(),
+                    geo: &geo,
+                    ..base()
+                },
+            )
+            .await
+            .expect("geo");
+        assert_eq!(out.rows.len(), 1, "{:?}", out.rows);
+    }
+
+    let out = s
+        .query(
+            &t,
+            &TemporalFilter {
+                range: open_between(),
+                ..base()
+            },
+        )
+        .await
+        .expect("a refused window");
+    assert_eq!(out.rows.len(), 1);
+    assert_eq!(out.rows[0][speed].as_array().map(Vec::len), Some(1));
+    let got = s
+        .get_range(
+            &t,
+            id,
+            &TemporalFilter {
+                range: open_between(),
+                ..base()
+            },
+        )
+        .await
+        .expect("a refused window, one Entity")
+        .expect("present");
+    assert_eq!(got[location].as_array().map(Vec::len), Some(1), "{got}");
+
+    let geo = [(near.clone(), location.to_owned())];
+    let past = s
+        .query(
+            &t,
+            &TemporalFilter {
+                geo: &geo,
+                page: page(5),
+                ..base()
+            },
+        )
+        .await
+        .expect("past the end");
+    assert!(past.paged && past.rows.is_empty());
+    assert_eq!(past.total, Some(1));
+
+    let methods = ["max".to_owned()];
+    let empty = s
+        .query(
+            &t,
+            &TemporalFilter {
+                range: Some(InstanceRange {
+                    timerel: "after",
+                    time_at: "2999-01-01T00:00:00Z",
+                    end_time_at: None,
+                    timeproperty: "observedAt",
+                }),
+                aggregate: Some(Aggregate {
+                    methods: &methods,
+                    period: Period::Seconds(3600),
+                    anchor: None,
+                    attrs: None,
+                }),
+                ..base()
+            },
+        )
+        .await
+        .expect("an empty window");
+    assert!(empty.aggregated);
+    assert_eq!(empty.rows.len(), 1);
+    assert!(empty.rows[0].get(speed).is_none(), "{:?}", empty.rows);
+
+    let none: [String; 0] = [];
+    let out = s
+        .query(
+            &t,
+            &TemporalFilter {
+                id_patterns: Some(&none),
+                ..base()
+            },
+        )
+        .await
+        .expect("no pattern");
+    assert!(out.rows.is_empty());
+    assert!(s.delete(&t, id).await.expect("delete"));
+}
+
 /// T-4906: the probes read only the weeks that can hold the instance, and
 /// record what they recorded before. A value written this week is compared
 /// with this week's newest, never with an older equal one behind it; one

@@ -107,6 +107,48 @@ async fn a_query_whose_registrations_cannot_be_read_is_not_answered_locally() {
     );
 }
 
+/// A broker with no registration mirror reads the store for every temporal
+/// write's registrations: an unreadable store refuses the write before any
+/// local change.
+#[tokio::test]
+async fn a_temporal_write_of_an_unwired_broker_whose_registrations_cannot_be_read_is_refused() {
+    let mut st = AppState::new("me".into());
+    let id = "urn:ngsi-ld:Vehicle:tw-unwired";
+    let created = json!({"id": id, "type": "Vehicle", "speed": [
+        {"type": "Property", "value": 10, "observedAt": "2026-01-01T09:00:00Z"}]});
+    assert_eq!(
+        post(&st, "temporal/entities", created).await,
+        StatusCode::CREATED
+    );
+    st.store = Arc::new(Double::refusing_registrations(st.store.clone()));
+    let base = format!("/ngsi-ld/v1/temporal/entities/{id}");
+    let instance = "urn:ngsi-ld:Instance:any";
+    for (method, uri, body) in [
+        ("DELETE", format!("{base}/attrs/speed/{instance}"), None),
+        ("DELETE", format!("{base}/attrs/speed"), None),
+        (
+            "PATCH",
+            format!("{base}/attrs/speed/{instance}"),
+            Some(json!({"type": "Property", "value": 11})),
+        ),
+        ("DELETE", base.clone(), None),
+    ] {
+        let payload = body.map(|b: Value| b.to_string()).unwrap_or_default();
+        let mut req = Request::builder().method(method).uri(&uri);
+        if !payload.is_empty() {
+            req = req
+                .header("Content-Type", "application/json")
+                .header("Content-Length", payload.len());
+        }
+        let status = antares_api::router(st.clone())
+            .oneshot(req.body(Body::from(payload)).expect("request"))
+            .await
+            .expect("response")
+            .status();
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{method} {uri}");
+    }
+}
+
 /// The same for a retrieval by id: a `redirect` or `exclusive` registration
 /// holds the Attributes this broker does not, so the local document is a
 /// fragment of the Entity, never the Entity.

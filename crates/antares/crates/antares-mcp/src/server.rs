@@ -1461,6 +1461,53 @@ mod tests {
         assert!(matches!(named.get("attrs"), Some(Checked::One(v)) if v == "speed"));
     }
 
+    /// A stream dropped where no runtime runs (the process ending) is
+    /// forgotten and deletes nothing: expiresAt reaps its Subscriptions.
+    #[tokio::test]
+    async fn a_stream_closed_with_no_runtime_is_forgotten_without_a_delete() -> Result<(), String> {
+        struct Keep;
+        impl antares_ops::ForwardTransport for Keep {
+            fn forward<'a>(
+                &'a self,
+                _req: antares_ops::BuiltForward<'a>,
+            ) -> Option<antares_ops::ForwardFuture<'a>> {
+                None
+            }
+        }
+        let kept: Arc<std::sync::Mutex<Option<antares_ops::Ops>>> = Arc::default();
+        let slot = kept.clone();
+        let broker = antares_ops::test_kit::TestBroker::new()
+            .await?
+            .with_forward_transport(move |ops| {
+                *slot
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(ops);
+                Arc::new(Keep)
+            })?;
+        let doc = json!({"id": "v", "tenant": "city", "selector": ["Car"],
+            "rules": [{"types": ["Car"], "attributes": ["speed"]}],
+            "operations": ["retrieve_entity"]});
+        broker.store_view_doc("v", doc).await?;
+        let ops = kept
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+            .ok_or("the transport is made with the broker")?;
+        let view = ops.view("v").ok_or("the view loaded")?;
+        let (mut parts, ()) = axum::http::Request::new(()).into_parts();
+        let Ok(caller) =
+            <Caller as axum::extract::FromRequestParts<()>>::from_request_parts(&mut parts, &())
+                .await;
+        let closing = Closing {
+            stream: "never-opened".into(),
+            view,
+            caller,
+        };
+        let joined = std::thread::spawn(move || drop(closing)).join();
+        assert!(joined.is_ok(), "the drop panicked");
+        Ok(())
+    }
+
     #[test]
     fn a_summary_without_its_permits_is_answered_busy() {
         let busy = CallToolResult::from(budget::Busy);

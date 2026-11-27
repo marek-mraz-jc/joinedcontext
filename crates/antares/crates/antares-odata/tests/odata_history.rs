@@ -753,6 +753,41 @@ async fn a_page_ends_short_past_its_reads_and_a_count_past_the_scan_is_refused()
     );
 }
 
+/// A filter that visits more nodes of one row than the residual evaluator allows (a nested
+/// `any` over 1100 values) is the 400 `TooComplexQuery`, as it is over the Entities.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_row_the_filter_cannot_judge_within_its_step_budget_is_too_complex_query() {
+    let app = past().await.expect("fixture");
+    let view = json!({"id": "past", "tenant": "city", "@context": {"city": CITY},
+        "selector": ["city:Car"],
+        "rules": [{"types": ["city:Car"], "attributes": ["city:speed", "city:tags"]}],
+        "operations": ["query_entities", "retrieve_entity", "temporal_query"]});
+    let (status, answer) = send(&app, Method::PUT, "/q/views/past", Some(&view.to_string())).await;
+    assert!(status.is_success(), "{status} {answer}");
+    let tags: Vec<String> = (0..1100).map(|i| format!("t{i}")).collect();
+    let heavy = json!({"id": "urn:ngsi-ld:Car:9", "type": format!("{CITY}Car"),
+        format!("{CITY}tags"): [at(&json!(tags), T0)]});
+    let (status, answer) = send(
+        &app,
+        Method::POST,
+        "/ngsi-ld/v1/temporal/entities",
+        Some(&heavy.to_string()),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {answer}");
+    let (status, refused) = get(
+        &app,
+        "Car_history?$filter=tags/any(a:tags/any(b:b%20eq%20'zz'))",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{refused}");
+    assert_eq!(
+        refused["error"]["code"],
+        json!("TooComplexQuery"),
+        "{refused}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_count_whose_filter_keeps_no_row_stops_at_the_scan_bound() {
     let app = past().await.expect("fixture");

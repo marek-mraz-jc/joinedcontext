@@ -61,6 +61,74 @@ fn served_instants(body: &Value) -> Vec<String> {
     out
 }
 
+/// Appends a character no header value may hold to every instant of `v`.
+fn spoil_instants(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            for (k, member) in o.iter_mut() {
+                match member {
+                    Value::String(t) if k.ends_with("observedAt") => t.push('\u{7f}'),
+                    other => spoil_instants(other),
+                }
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(spoil_instants),
+        _ => {}
+    }
+}
+
+/// 6.3.10: a truncated retrieve or query whose interval cannot be spelled as
+/// a header value (instants written around the API that are no 4.6.3
+/// DateTime) is still the 206 it is, only without a Content-Range.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_range_no_header_can_carry_is_left_out_of_the_partial_answer() {
+    use antares_store::TemporalDriverExt as _;
+    let st = AppState::new("me".into());
+    let n = u32::try_from(
+        st.temporal_default_instances
+            .min(st.temporal_instance_limit),
+    )
+    .expect("default")
+        + 1;
+    let at: Vec<String> = (0..n)
+        .map(|i| format!("2020-01-01T{:02}:{:02}:00Z", i / 60, i % 60))
+        .collect();
+    let at: Vec<&str> = at.iter().map(String::as_str).collect();
+    let id = "urn:ngsi-ld:Vehicle:spoiled";
+    post(&st, "/ngsi-ld/v1/temporal/entities", evolution(id, &at)).await;
+    st.temporal
+        .mutate(&antares_model::TenantId::default(), id, |doc| {
+            spoil_instants(doc);
+            Ok::<(), std::convert::Infallible>(())
+        })
+        .await
+        .expect("store")
+        .expect("the evolution is held")
+        .expect("spoiled");
+    let res = send(
+        &st,
+        Request::builder()
+            .method("GET")
+            .uri(format!("/ngsi-ld/v1/temporal/entities/{id}"))
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
+    assert!(res.headers().get("Content-Range").is_none());
+    let res = send(
+        &st,
+        Request::builder()
+            .method("GET")
+            .uri("/ngsi-ld/v1/temporal/entities?type=Vehicle&timerel=after&timeAt=2019-01-01T00:00:00Z")
+            .body(Body::empty())
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT, "the query too");
+    assert!(res.headers().get("Content-Range").is_none());
+}
+
 /// 6.3.10: the Content-Range of a truncated temporal QUERY bounds the
 /// instances of every entity in the body, so its end is the latest instant
 /// served anywhere in the result. Two entities whose latest served instants

@@ -197,6 +197,36 @@ async fn scripted(registrations: &[Value]) -> (AppState, Arc<Scripted>) {
     (st, peer)
 }
 
+/// A broker with no registration mirror, its forwards going to one
+/// [`Scripted`] source: every forward reads the registrations the store
+/// holds, rows written around the API included.
+fn unwired() -> (AppState, Arc<Scripted>) {
+    let peer = Arc::new(Scripted {
+        answer: Mutex::new((200, json!([]))),
+        asked: Mutex::default(),
+    });
+    let st = AppState::new("fed-arms".into())
+        .with_forward_transport(Arc::clone(&peer) as Arc<dyn ForwardTransport>)
+        .expect("a transport on a fresh state");
+    (st, peer)
+}
+
+/// One write with a JSON body: its status and its body.
+async fn write(st: &AppState, method: &str, uri: &str, body: &Value) -> (StatusCode, Value) {
+    let body = body.to_string();
+    call(
+        st,
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .body(Body::from(body))
+            .expect("request"),
+    )
+    .await
+}
+
 fn registration(name: &str, endpoint: &str, operations: &[&str], information: Value) -> Value {
     json!({
         "id": format!("urn:ngsi-ld:ContextSourceRegistration:{name}"),
@@ -392,11 +422,15 @@ async fn a_temporal_retrieve_ignores_answers_that_are_not_the_entity() {
     )])
     .await;
     let uri = format!("/ngsi-ld/v1/temporal/entities/{VEHICLE_1}");
-    for answer in [
-        json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle"}),
-        invalid_entity(VEHICLE_1),
+    for (code, answer) in [
+        (500, Value::Null),
+        (
+            200,
+            json!({"id": "urn:ngsi-ld:Vehicle:2", "type": "Vehicle"}),
+        ),
+        (200, invalid_entity(VEHICLE_1)),
     ] {
-        peer.say(200, answer);
+        peer.say(code, answer);
         let (status, _, body) = get(&st, &uri).await;
         assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         assert_eq!(peer.take().len(), 1, "the source was asked once");
@@ -458,11 +492,163 @@ async fn an_entity_info_naming_several_types_is_asked_for_any_of_them() {
     assert_eq!(peer.take().len(), 1, "the source was asked");
 }
 
+/// clause 5.7.1, step 4: a registration whose information names no Entity type admits
+/// every type, so a retrieve forwarded as a query asks for any.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_retrieve_through_a_registration_naming_no_type_asks_for_any() {
+    let (st, peer) = scripted(&[registration(
+        "untyped",
+        "http://peer-a.invalid",
+        &["queryEntity"],
+        json!([{"propertyNames": ["speed"]}]),
+    )])
+    .await;
+    let (status, _, body) = get(&st, &format!("/ngsi-ld/v1/entities/{VEHICLE_1}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    let asked = peer.take();
+    assert_eq!(asked.len(), 1);
+    assert!(
+        asked[0].2.contains(&("type".to_owned(), "*".to_owned())),
+        "{:?}",
+        asked[0].2
+    );
+}
+
+/// clause 4.3.6, step 1: an Append whose fragment names a type outside the registration's
+/// EntityInfo is not that source's data: nothing of it is forwarded.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_append_naming_a_type_outside_the_registration_is_not_forwarded() {
+    let (st, peer) = scripted(&[registration(
+        "vehicles",
+        "http://peer-a.invalid",
+        &["appendAttrs"],
+        json!([{"entities": [{"id": VEHICLE_1, "type": "Vehicle"}]}]),
+    )])
+    .await;
+    let (status, body) = write(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        &json!({"id": VEHICLE_1, "type": "Vehicle"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    peer.take();
+    let (status, body) = write(
+        &st,
+        "POST",
+        &format!("/ngsi-ld/v1/entities/{VEHICLE_1}/attrs"),
+        &json!({"type": "Car", "speed": {"type": "Property", "value": 1}}),
+    )
+    .await;
+    assert!(status.as_u16() < 500, "{status} {body}");
+    assert!(peer.take().is_empty(), "nothing went to the source");
+}
+
+/// clause 5.6.12, step 4: an append forwarded to an inclusive source of an Entity this
+/// broker holds no history of reports the local half as not found and the
+/// forwarded half as the source answered.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_temporal_append_held_only_by_a_source_is_not_found_locally() {
+    let (st, peer) = scripted(&[registration(
+        "history",
+        "http://peer-a.invalid",
+        &["appendAttrsTemporal"],
+        json!([{"entities": [{"id": VEHICLE_1, "type": "Vehicle"}]}]),
+    )])
+    .await;
+    peer.say(204, Value::Null);
+    let (status, body) = write(
+        &st,
+        "POST",
+        &format!("/ngsi-ld/v1/temporal/entities/{VEHICLE_1}/attrs"),
+        &json!({"speed": [{"type": "Property", "value": 1,
+                           "observedAt": "2026-01-01T00:00:00Z"}]}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::MULTI_STATUS, "{body}");
+    assert!(body.to_string().contains("not found locally"), "{body}");
+    assert_eq!(peer.take().len(), 1, "the source was asked");
+}
+
+/// clause 5.14.4, step 4: with splitEntities=true a peer's EntityMap is asked without the
+/// value filters, which are applied on the merged Entities.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_split_entity_map_is_asked_without_its_value_filters() {
+    let (st, peer) = scripted(&[registration(
+        "maps",
+        "http://peer-a.invalid",
+        &["createEntityMapQueryEntity"],
+        json!([{"entities": [{"type": "Vehicle"}]}]),
+    )])
+    .await;
+    peer.say(
+        200,
+        json!({"id": "urn:ngsi-ld:EntityMap:peer", "type": "EntityMap", "entityMap": {}}),
+    );
+    let (status, _, body) = get(
+        &st,
+        "/ngsi-ld/v1/entityMaps?type=Vehicle&q=speed%3E1&splitEntities=true",
+    )
+    .await;
+    assert!(status.is_success(), "{status} {body}");
+    let asked = peer.take();
+    assert_eq!(asked.len(), 1);
+    assert!(
+        !asked[0].2.iter().any(|(k, _)| k == "q"),
+        "{:?}",
+        asked[0].2
+    );
+    assert!(
+        asked[0]
+            .2
+            .contains(&("type".to_owned(), "Vehicle".to_owned())),
+        "{:?}",
+        asked[0].2
+    );
+}
+
+/// clause 4.5.23, step 1: a Relationship whose objectType a registration holds joins its
+/// target through that registration, an auxiliary one too when it is the
+/// only source.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_held_only_by_an_auxiliary_source_joins_its_answer() {
+    let person = "urn:ngsi-ld:Person:1";
+    let mut aux = registration(
+        "people",
+        "http://peer-a.invalid",
+        &["retrieveEntity"],
+        json!([{"entities": [{"id": person, "type": "Person"}]}]),
+    );
+    aux["mode"] = json!("auxiliary");
+    let (st, peer) = scripted(&[aux]).await;
+    let (status, body) = write(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        &json!({"id": VEHICLE_1, "type": "Vehicle",
+                "owner": {"type": "Relationship", "object": person, "objectType": "Person"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    peer.say(
+        200,
+        json!({"id": person, "type": "Person", "name": {"type": "Property", "value": "P"}}),
+    );
+    let (status, _, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/entities/{VEHICLE_1}?join=inline&joinLevel=1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["owner"]["entity"]["name"]["value"], "P", "{body}");
+}
+
 /// T-7306: a row that names a Tenant of another Organization, written before
 /// that rule, forwards nothing.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_registration_naming_another_organizations_tenant_forwards_nothing() {
-    let (st, peer) = scripted(&[]).await;
+    let (st, peer) = unwired();
     store_registration(
         &st,
         "foreign",

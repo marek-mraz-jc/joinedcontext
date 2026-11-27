@@ -447,6 +447,27 @@ async fn query_pushdown_narrows_without_dropping_matches() {
         ["urn:ngsi-ld:Room:1"]
     );
 
+    // the same numeric q on a counted page: the count statement binds the
+    // number as the page statement does
+    let ast = antares_ql::parse_q("temperature>20").expect("parse");
+    let counted = s
+        .query(
+            &t,
+            &antares_sql::store::pg::entity::EntityFilter {
+                q: Some(&ast),
+                page: Some(antares_sql::store::pg::entity::Page {
+                    offset: 0,
+                    limit: 5,
+                    count: true,
+                }),
+                ..base()
+            },
+        )
+        .await
+        .expect("a counted page under a numeric q");
+    assert_eq!(ids_of(&counted.rows), ["urn:ngsi-ld:Room:1"]);
+    assert_eq!(counted.total, Some(1), "the count under the numeric q");
+
     // q=: string equality, and the AND of two predicates
     let ast = antares_ql::parse_q("name==\"south\";speed==60").expect("parse");
     assert_eq!(
@@ -1757,6 +1778,88 @@ async fn id_pattern_offset_pages_follow_the_cursor_pages() {
     let (ids, total) = page(&s, &t, want.len() as i64 + 3, None, true).await;
     assert!(ids.is_empty(), "a page past the end: {ids:?}");
     assert_eq!(total, Some(want.len() as i64), "and its count");
+}
+
+/// The candidates of a rule's idPatterns beside a geoquery page from the id the regex finds
+/// past `offset`, the radius bound in the skip's own statement; a geoquery on another
+/// GeoProperty, or over a self-intersecting polygon, narrows nothing and leaves the rows to
+/// the evaluator; an empty pattern list selects nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn id_pattern_candidates_page_beside_a_geoquery_and_unpushed_geoqueries_narrow_nothing() {
+    use antares_sql::store::filter::{GeoSpec, Rel, LOCATION_IRI};
+    let url = require_db!();
+    let pool = pg::connect(&url, 5).await.expect("connect");
+    let s = PgEntityStore::new(pool.clone());
+    let t = TenantId::new("pgidpatterngeo").expect("tenant");
+    pg::ensure_tenant(&pool, &t).await.expect("tenant row");
+    let ids: Vec<String> = (0..6)
+        .map(|i| format!("urn:ngsi-ld:Spot:geo:{i:02}"))
+        .collect();
+    for (i, id) in ids.iter().enumerate() {
+        let _ = s.delete(&t, id).await;
+        let mut d = expanded(id, "Spot", json!({}));
+        d[LOCATION_IRI] = json!([{"type": "GeoProperty",
+            "value": {"type": "Point", "coordinates": [0.0, 0.0001 * i as f64]}}]);
+        assert!(s.create(&t, id, &d).await.expect("create"), "seed {id}");
+    }
+    let ex = |t: &str| t.to_owned();
+    let ps = ["^urn:ngsi-ld:Spot:geo:[0-9]+$".to_owned()];
+    let origin = json!([0.0, 0.0]);
+    let near = [GeoSpec {
+        rel: Rel::Near {
+            max: Some(100_000.0),
+            min: None,
+        },
+        geometry: "Point",
+        coordinates: &origin,
+        geoproperty_iri: "",
+    }];
+    let f = antares_sql::store::pg::entity::EntityFilter {
+        id_patterns: Some(&ps),
+        geo: &near,
+        expand: &ex,
+        page: Some(antares_store::filter::Page {
+            offset: 2,
+            limit: 2,
+            count: false,
+        }),
+        ..Default::default()
+    };
+    let out = s.query_candidates(&t, &f).await.expect("candidates");
+    assert!(!out.decided, "a geoquery leaves the evaluator its residual");
+    assert_eq!(ids_of(&out.rows), ids[2..4].to_vec());
+
+    let elsewhere = [GeoSpec {
+        geoproperty_iri: "https://example.org/elsewhere",
+        ..near[0].clone()
+    }];
+    let bowtie = json!([[[0.0, 0.0], [1.0, 1.0], [1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]]);
+    let invalid = [GeoSpec {
+        rel: Rel::Within,
+        geometry: "Polygon",
+        coordinates: &bowtie,
+        geoproperty_iri: "",
+    }];
+    for geo in [&elsewhere[..], &invalid[..]] {
+        let f = antares_sql::store::pg::entity::EntityFilter {
+            id_patterns: Some(&ps),
+            geo,
+            expand: &ex,
+            ..Default::default()
+        };
+        let out = s.query(&t, &f).await.expect("query");
+        assert!(!out.decided);
+        assert_eq!(ids_of(&out.rows), ids, "nothing narrowed");
+    }
+
+    let none: [String; 0] = [];
+    let f = antares_sql::store::pg::entity::EntityFilter {
+        id_patterns: Some(&none),
+        expand: &ex,
+        ..Default::default()
+    };
+    let out = s.query(&t, &f).await.expect("query");
+    assert!(out.decided && out.rows.is_empty(), "{:?}", out.rows);
 }
 
 /// F-ANT1-011: `list_slice` is never refused for volume (the driver

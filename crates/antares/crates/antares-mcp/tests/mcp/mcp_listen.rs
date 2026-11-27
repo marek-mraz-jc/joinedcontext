@@ -355,6 +355,34 @@ async fn a_stream_ends_once_its_caller_may_no_longer_read() -> Result<(), String
     until_subscriptions(&f.app, "city", 0).await
 }
 
+/// The read is asked again once a minute, so a caller who lost it ends a stream whose
+/// Entities never change.
+#[tokio::test(start_paused = true)]
+async fn a_quiet_stream_ends_at_the_next_recheck_once_its_caller_may_no_longer_read(
+) -> Result<(), String> {
+    let _city = CITY.lock().await;
+    let engine = Arc::new(Revocable::default());
+    let f = fixture_with(Some(engine.clone())).await?;
+    let car = "ngsi-ld://watch/entities/urn:ngsi-ld:Car:1";
+    let mut stream = listen(&f.app, "watch", &[car]).await;
+    assert!(
+        stream.next(Duration::from_secs(5)).await.is_some(),
+        "no acknowledgment"
+    );
+    until_subscriptions(&f.app, "city", 1).await?;
+    engine.0.store(true, std::sync::atomic::Ordering::SeqCst);
+    for _ in 0..3 {
+        tokio::time::advance(Duration::from_secs(61)).await;
+    }
+    // the stream's own end may come as a last message; an update may not
+    let mut last = stream.next(Duration::from_secs(5)).await;
+    if last.as_ref().is_some_and(|e| e.get("method").is_none()) {
+        last = stream.next(Duration::from_secs(5)).await;
+    }
+    assert!(last.is_none(), "the stream is still open: {last:?}");
+    until_subscriptions(&f.app, "city", 0).await
+}
+
 /// A view that does not let its caller make a Subscription watches
 /// nothing, and its acknowledgment says so.
 #[tokio::test(flavor = "multi_thread")]

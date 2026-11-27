@@ -136,6 +136,29 @@ async fn seed(app: &Router, city: &str, port: &str) {
     }
 }
 
+/// The view table follows the store's revision: a reload that finds it
+/// unchanged lists nothing, and every sixtieth one lists whatever it says.
+#[expect(clippy::print_stderr, reason = "a skipped database test says so")]
+#[tokio::test(flavor = "multi_thread")]
+async fn a_reload_at_an_unchanged_revision_keeps_the_table_on_postgres() {
+    let Ok(url) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
+        return;
+    };
+    let pool = antares_sql::store::pg::connect(&url, 5)
+        .await
+        .expect("connect");
+    let state = antares_api::AppState::with_store(
+        "antares-test".into(),
+        Arc::new(AnyStore::Pg(PgBackend::new(pool))),
+        "postgres",
+    );
+    let b = TestBroker::over(state).await.expect("broker");
+    for _ in 0..61 {
+        b.reload_now().await.expect("reload");
+    }
+}
+
 #[expect(clippy::print_stderr, reason = "a skipped database test says so")]
 #[tokio::test(flavor = "multi_thread")]
 async fn a_stale_entity_is_quarantined_and_lifted_on_postgres() {

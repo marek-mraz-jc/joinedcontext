@@ -43,8 +43,12 @@ async fn put(app: &Router, body: &str) -> StatusCode {
         .map_or(StatusCode::IM_A_TEAPOT, |r| r.status())
 }
 
+/// The environment is process-wide: the tests of this binary take turns.
+static ENV: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test(flavor = "multi_thread")]
 async fn the_hosts_default_bounds_a_schema_and_only_its_first_setting_counts() {
+    let _env = ENV.lock().await;
     std::env::remove_var(antares_ops::views::SCHEMA_MAX_ENV);
     antares_ops::views::default_schema_max("64");
     antares_ops::views::default_schema_max("1");
@@ -58,4 +62,21 @@ async fn the_hosts_default_bounds_a_schema_and_only_its_first_setting_counts() {
         StatusCode::PAYLOAD_TOO_LARGE,
         "65 bytes"
     );
+}
+
+/// A bound that is no positive byte count stops the install, naming the key.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_schema_bound_that_is_no_byte_count_refuses_the_install() {
+    let _env = ENV.lock().await;
+    for bad in ["lots", "0", "-1"] {
+        std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, bad);
+        let refused = TestBroker::with_platform_history(std::time::Duration::from_secs(60))
+            .await
+            .err();
+        std::env::remove_var(antares_ops::views::SCHEMA_MAX_ENV);
+        assert!(
+            refused.is_some_and(|e| e.contains("is not a positive byte count")),
+            "{bad}"
+        );
+    }
 }

@@ -73,6 +73,19 @@ mod clause_4_11 {
         );
     }
 
+    /// A core member only the remote copy carries is taken from it; one both
+    /// carry stays the base's.
+    #[test]
+    fn merge_takes_the_core_members_the_base_lacks() {
+        let mut base = json!({"id": "urn:e", "speed": []});
+        let add = json!({"id": "urn:other", "type": "T", "scope": "/a"});
+        merge_temporal_docs(&mut base, &add, false, "observedAt");
+        assert_eq!(
+            base,
+            json!({"id": "urn:e", "type": "T", "scope": "/a", "speed": []})
+        );
+    }
+
     /// 4.3.6.2: "An auxiliary Context Source Registration never overrides
     /// data held directly within a Context Broker. […] Context data from
     /// auxiliary context sources is only included if it is supplementary to
@@ -1609,6 +1622,35 @@ mod f_ant2_014_scope_window {
             "speed": [{"type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:00.500Z"}]});
         assert!(scope_window_retain(&mut doc, "/a", None, "observedAt"));
         assert_eq!(doc["speed"].as_array().map(Vec::len), Some(1));
+    }
+
+    /// ADR-0023 rule 8: an Entity held only temporally is in a narrowing by
+    /// scopeQ while some of its history lies in that scope, and out of it
+    /// otherwise.
+    #[tokio::test]
+    async fn a_history_only_entity_is_a_member_while_its_scope_matches() {
+        let st = AppState::new("me".into());
+        let tenant = TenantId::default();
+        let ctx = st.loader.core();
+        let filter = crate::policy::Filter {
+            scope_q: Some("/a".into()),
+            ..crate::policy::Filter::default()
+        };
+        let held = |scope: &str| {
+            json!({"id": "urn:e", "type": "T",
+                "scope": [{"type": "Property", "value": scope, "observedAt": "2026-01-01T00:00:00Z"}],
+                "speed": [{"type": "Property", "value": 1, "observedAt": "2026-01-01T00:00:01Z"}]})
+        };
+        let member = |doc: Value| {
+            let (st, tenant, ctx, filter) = (&st, &tenant, &ctx, &filter);
+            async move {
+                crate::temporal::query::member_now(st, tenant, ctx, filter, "urn:e", Some(&doc))
+                    .await
+                    .expect("member_now")
+            }
+        };
+        assert!(member(held("/a")).await);
+        assert!(!member(held("/b")).await);
     }
 }
 

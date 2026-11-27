@@ -1792,6 +1792,39 @@ mod discovery_folds {
             .contains_key(V));
     }
 
+    /// Rows written around the API fold as far as they can be read: a type
+    /// that is no string names no type, an instance without a type string
+    /// adds no attribute type, a member that holds no instance list is still
+    /// counted once, and a row that is no object adds nothing.
+    #[tokio::test]
+    async fn rows_written_around_the_api_fold_what_they_can() {
+        let st = AppState::new("test".into());
+        seed(
+            &st,
+            "ta",
+            "urn:ngsi-ld:B:odd",
+            json!({"id": "urn:ngsi-ld:B:odd", "type": [BUILDING, 7],
+                   V: [{"value": 1}], R: 5}),
+        )
+        .await;
+        seed(&st, "ta", "urn:ngsi-ld:B:row", json!(["no", "object"])).await;
+        let (types, _) = type_stats(&st, &tid("ta"), ALL, Narrow::Tenant, None)
+            .await
+            .expect("stats");
+        assert_eq!(types.keys().collect::<Vec<_>>(), vec![BUILDING]);
+        let (count, attrs) = types.get(BUILDING).expect("Building");
+        assert_eq!(*count, 1);
+        assert!(attrs.get(V).is_some_and(BTreeSet::is_empty), "{attrs:?}");
+        let (stats, _) = attr_stats(&st, &tid("ta"), ALL, Narrow::Tenant, None)
+            .await
+            .expect("stats");
+        let (v_count, v_types, _) = stats.get(V).expect("v");
+        assert_eq!((*v_count, v_types.is_empty()), (1, true));
+        let (r_count, r_types, r_of) = stats.get(R).expect("r");
+        assert_eq!((*r_count, r_types.is_empty()), (1, true));
+        assert!(r_of.contains(BUILDING));
+    }
+
     /// A tenant with no entities has no types and no attributes — an empty
     /// fold, not an error, and never "incomplete".
     #[tokio::test]
@@ -1909,6 +1942,51 @@ mod discovery_folds {
             .expect("the memory store keeps a catalogue");
         assert!(shapes.is_empty(), "{shapes:?}");
         assert!(!partial);
+    }
+
+    /// A probe that reaches the ceiling before it sees an Entity the rules
+    /// show is cut: a type cut on its first probe has no shape, an Attribute
+    /// cut on its own probe is left out, and the answer says it is partial.
+    #[tokio::test]
+    async fn a_probe_stopped_at_the_ceiling_is_partial() {
+        use crate::policy::{Filter, Rule};
+        let st = AppState::new("test".into());
+        for (id, ty, attr) in [
+            ("urn:ngsi-ld:B:1", BUILDING, V),
+            ("urn:ngsi-ld:B:2", BUILDING, R),
+            ("urn:ngsi-ld:B:3", BUILDING, R),
+            ("urn:ngsi-ld:S:2", SENSOR, V),
+        ] {
+            seed(
+                &st,
+                "tn",
+                id,
+                json!({"id": id, "type": [ty], attr: [{"type": "Property", "value": 1}]}),
+            )
+            .await;
+        }
+        let filter = Filter {
+            rules: vec![Rule {
+                types: vec![BUILDING.to_owned(), SENSOR.to_owned()],
+                id_patterns: vec!["^.*:1$".to_owned(), "^.*:3$".to_owned()],
+                every_attribute: true,
+                ..Rule::default()
+            }],
+            ..Filter::default()
+        };
+        let ctx = antares_jsonld::pinned::core_context();
+        let repr = crate::repr::narrowing(&filter);
+        let (shapes, partial) = type_shapes(&st, &tid("tn"), 1, Some((&repr, &ctx)))
+            .await
+            .expect("shapes")
+            .expect("the memory store keeps a catalogue");
+        assert!(partial);
+        assert_eq!(shapes.keys().collect::<Vec<_>>(), vec![BUILDING]);
+        assert_eq!(
+            shapes.get(BUILDING),
+            Some(&BTreeSet::from([V.to_owned()])),
+            "{shapes:?}"
+        );
     }
 
     /// An Attribute a type omits is never probed for on that type, and only

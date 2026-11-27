@@ -189,6 +189,70 @@ async fn a_failing_confirmation_store_answers_500_and_writes_nothing() -> Result
     Ok(())
 }
 
+/// `area_overview` over a store that cannot read: the first read of a type
+/// fails, and the tool answers an error whole rather than a part of one.
+#[tokio::test]
+async fn an_area_read_the_store_cannot_serve_is_an_error_not_a_part() -> Result<(), String> {
+    let (_broker, app, fault) = writes().await?;
+    let view = json!({"id": "geo", "tenant": "w", "selector": ["Car"],
+        "rules": [{"types": ["Car"], "attributes": ["speed", "location"]}],
+        "operations": ["query_entities"]});
+    let (status, text) = send(&app, "PUT", "/q/views/geo", &[], &view).await;
+    assert_eq!(status, StatusCode::CREATED, "{text}");
+    // a Tenant that holds nothing answers before any read; one Car makes the read reach the store
+    let car = json!({"id": "urn:ngsi-ld:Car:area", "type": "Car",
+        "location": {"type": "GeoProperty", "value": {"type": "Point", "coordinates": [24.94, 60.17]}}});
+    let (status, text) = send(
+        &app,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        &[("NGSILD-Tenant", "w")],
+        &car,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{text}");
+    let params = json!({"name": "area_overview",
+    "arguments": {"geometry": "Point", "coordinates": [24.94, 60.17], "maxDistance": 500},
+    "_meta": {
+        "io.modelcontextprotocol/protocolVersion": MODERN,
+        "io.modelcontextprotocol/clientInfo": {"name": "t", "version": "1"},
+        "io.modelcontextprotocol/clientCapabilities": {}
+    }});
+    let call = json!({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": params});
+    let ask = || {
+        send(
+            &app,
+            "POST",
+            "/x/views/geo/mcp",
+            &[
+                ("MCP-Protocol-Version", MODERN),
+                ("Mcp-Method", "tools/call"),
+                ("Mcp-Name", "area_overview"),
+                ("x-jc-subject", "alice"),
+            ],
+            &call,
+        )
+    };
+    fault.fail(|method, _, _| method.starts_with("query_"));
+    let (status, answer) = ask().await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        answer.pointer("/result/isError"),
+        Some(&json!(true)),
+        "{answer}"
+    );
+    assert!(!answer.to_string().contains("injected"), "{answer}");
+    fault.fail(|_, _, _| false);
+    let (status, answer) = ask().await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_ne!(
+        answer.pointer("/result/isError"),
+        Some(&json!(true)),
+        "{answer}"
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_question_the_store_cannot_keep_is_refused_and_writes_nothing() -> Result<(), String> {
     let (_broker, app, fault) = writes().await?;
