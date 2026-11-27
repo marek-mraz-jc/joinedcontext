@@ -682,6 +682,39 @@ async fn more_than_the_share_is_held_until_a_steward_releases_or_keeps_it() {
     assert_eq!(other.status, StatusCode::CONFLICT);
 }
 
+/// T-7928: a steward's keep whose activity event cannot be written (the feed's database is down)
+/// still clears the hold: the warning is the only trace, the answer is 202.
+#[tokio::test]
+async fn a_decision_stands_when_its_activity_event_cannot_be_written() {
+    let (mut state, _runner) = world(10).await;
+    let dropped: Vec<usize> = (0..8).collect();
+    run(&state, "registry", "r1", &without(&[]), 0, true).await;
+    for r in ["r2", "r3"] {
+        run(&state, "registry", r, &without(&dropped), 0, true).await;
+    }
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(200))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    state.activity =
+        joinedcontext_portal::activity::ActivityStore::new(Some(pool), state.mirror.clone());
+    let kept = send(
+        &state,
+        person("jana"),
+        "POST",
+        PAGE,
+        Some(json!({ "decision": "keep" })),
+    )
+    .await;
+    assert_eq!(kept.status, StatusCode::ACCEPTED, "{}", kept.text);
+    let (rows, hold) = state
+        .source_ledger
+        .book("helsinki", "registry")
+        .await
+        .expect("book");
+    assert!(hold.is_none() && rows.values().all(|row| row.misses == 0));
+}
+
 /// An id of `len` bytes the gateway can name (deletable: URI characters only).
 fn long_id(len: usize) -> String {
     let head = "urn:ngsi-ld:Dataset:hel.fi:open:";

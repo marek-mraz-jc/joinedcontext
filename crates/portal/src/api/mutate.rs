@@ -6377,6 +6377,217 @@ mod tests {
         assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
     }
 
+    /// Records the green check of `body` the way a person's dry run does, which a gated proposal
+    /// of the same manifest needs first (PF-57, T-0956).
+    async fn checked_first(state: &AppState, front: Front, body: &Value) {
+        let answer = propose_checked(
+            &dummy_user(),
+            front,
+            state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            true,
+            body.clone(),
+            None,
+            None,
+        )
+        .await
+        .expect("a dry run");
+        assert_eq!(answer.status(), StatusCode::OK, "the check is green");
+    }
+
+    /// T-7928 (AG-11): a bearer caller's checked proposal is a Change (202) left to its approver,
+    /// never approved on the caller's word.
+    #[tokio::test]
+    async fn a_bearer_callers_proposal_is_a_change_left_to_its_approver() {
+        let (state, _forge) = forge_state().await;
+        let body = space_body("mobility");
+        checked_first(&state, Front::Bearer, &body).await;
+        let answer = propose_checked(
+            &dummy_user(),
+            Front::Bearer,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            false,
+            body,
+            None,
+            None,
+        )
+        .await
+        .expect("a Change");
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        let bytes = answer
+            .into_body()
+            .collect()
+            .await
+            .expect("a body")
+            .to_bytes();
+        let change: Value = serde_json::from_slice(&bytes).expect("a Change");
+        assert!(
+            change["metadata"]["name"]
+                .as_str()
+                .is_some_and(|name| name.starts_with("chg-")),
+            "{change}"
+        );
+        assert_ne!(
+            change["status"]["phase"], "Approved",
+            "a bearer caller's Change waits for its approver: {change}"
+        );
+    }
+
+    /// T-7928 (CC-76): a workspace whose branch the forge refuses (500) is a dependency down, and
+    /// nothing is written.
+    #[tokio::test]
+    async fn a_workspace_whose_branch_the_forge_refuses_is_a_dependency_down() {
+        let (state, forge) = forge_with(500, json!({ "value": [] })).await;
+        state
+            .workspaces
+            .create(crate::ops::workspaces::Opening {
+                name: "air-v2",
+                title: None,
+                project: "ovzdusie",
+                owner: "demo@example.com",
+                base_revision: "base1",
+                scope: crate::ops::workspaces::Scope::Project {},
+                ttl_hours: 1,
+            })
+            .await
+            .expect("opened");
+        let body = space_body("mobility");
+        checked_first(&state, Front::Portal, &body).await;
+        let err = propose_gated_in(
+            &dummy_user().0.identity,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            body,
+            Some("air-v2"),
+        )
+        .await
+        .expect_err("the forge refuses the workspace branch");
+        assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
+        let commits = forge
+            .received_requests()
+            .await
+            .expect("recorded")
+            .into_iter()
+            .filter(|request| request.url.path().ends_with("Shako.CommitFiles"))
+            .count();
+        assert_eq!(commits, 0, "nothing is committed");
+    }
+
+    /// T-7928 (T-6282, CC-34): a plan's shared branch is refused while a change of the resource
+    /// is open on its own branch, naming that change; with none open, a forge that refuses the
+    /// shared branch (500) is a dependency down.
+    #[tokio::test]
+    async fn a_plans_branch_meets_an_open_change_and_a_forge_that_refuses_it() {
+        let own = branch_name("ovzdusie", "ContextSpace", "mobility", Operation::Create);
+        let (state, _forge) = forge_with(
+            201,
+            json!({ "value": [{ "Number": 7, "Head": format!("{own}_0000abcd"), "State": "open" }] }),
+        )
+        .await;
+        let body = space_body("mobility");
+        checked_first(&state, Front::Portal, &body).await;
+        let err = propose_gated_onto(
+            &dummy_user().0.identity,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            body.clone(),
+            "portal/plan-1",
+        )
+        .await
+        .expect_err("an open change holds the resource");
+        assert!(
+            matches!(&err, ApiError::Conflict(message)
+                if message.contains("ContextSpace 'mobility'") && message.contains("chg-00000007")),
+            "{err:?}"
+        );
+
+        let (state, _forge) = forge_with(500, json!({ "value": [] })).await;
+        checked_first(&state, Front::Portal, &body).await;
+        let err = propose_gated_onto(
+            &dummy_user().0.identity,
+            &state,
+            "ovzdusie",
+            "spaces",
+            None,
+            Operation::Create,
+            body,
+            "portal/plan-1",
+        )
+        .await
+        .expect_err("the forge refuses the plan's branch");
+        assert!(matches!(err, ApiError::Unavailable(_)), "{err:?}");
+    }
+
+    /// T-7928 (EP-125): a backing model whose source is no YAML cannot be checked against, and the
+    /// Endpoint is refused naming the space, never passed unchecked.
+    #[tokio::test]
+    async fn a_model_that_is_no_yaml_cannot_be_checked_against() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        let (state, forge) = forge_state().await;
+        let encoded = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::STANDARD.encode("key: [")
+        };
+        Mock::given(method("GET"))
+            .and(path(format!("{FORGE}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": "s1", "Content": encoded })),
+            )
+            .with_priority(1)
+            .mount(&forge)
+            .await;
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "DataModel",
+            "air",
+            "ovzdusie",
+            json!({
+                "linkml": "air.linkml.yaml",
+                "version": "1.0.0",
+                "lifecycle": "published",
+                "classes": ["Station"],
+                "contextSpaceRef": "ovzdusie",
+                "artifacts": {
+                    "jsonSchema": "generated/air.schema.json",
+                    "context": "generated/air.context.jsonld",
+                    "docs": "generated/air.md",
+                    "example": "generated/air.example.json"
+                }
+            }),
+        ));
+        let refused = check_surfaces(
+            &state,
+            "ovzdusie",
+            "e",
+            &json!({
+                "contextSpaceRef": "ovzdusie", "slug": "zt4qm7ge2xdv6ksb3ncf5arw2y",
+                "audience": "organization", "enabledRepresentations": ["ngsi-ld", "sta"]
+            }),
+        )
+        .await
+        .expect_err("a model that does not parse");
+        assert!(
+            matches!(&refused, ApiError::BadRequest(message)
+                if message.starts_with("Endpoint ovzdusie/e, space ovzdusie: the representations cannot be checked")
+                    && message.ends_with("(EP-125)")),
+            "{refused:?}"
+        );
+    }
+
     /// T-7917: the status of a build write keeps the shard the Portal published and no build when
     /// the manifest names none; every other write commits no status at all.
     #[test]
