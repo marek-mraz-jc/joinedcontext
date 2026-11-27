@@ -475,10 +475,7 @@ async fn a_pipeline_test_is_red_at_a_type_the_model_lacks_and_a_record_it_refuse
         .filter_map(|f| f["path"].as_str())
         .collect();
     assert!(paths.contains(&"spec.output.type"), "{paths:?}");
-    assert!(
-        paths.iter().any(|p| p.starts_with("validation[")),
-        "{paths:?}"
-    );
+    assert!(paths.contains(&"records[0].capacity"), "{paths:?}");
     assert!(answer["steps"].is_array(), "{answer}");
 }
 

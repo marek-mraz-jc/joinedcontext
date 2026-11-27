@@ -1545,7 +1545,15 @@ fn no_credential_in(
 pub fn source_in_readme(content: &str) -> Option<(String, Value, Vec<Finding>)> {
     content
         .split_whitespace()
-        .map(|word| word.trim_matches(|c| matches!(c, '(' | ')' | '<' | '>' | '"' | '\'')))
+        // A sentence's own punctuation around the address is no part of it: `<https://x>.`
+        .map(|word| {
+            word.trim_matches(|c| {
+                matches!(
+                    c,
+                    '(' | ')' | '<' | '>' | '"' | '\'' | '.' | ',' | ';' | ':' | '!' | '?'
+                )
+            })
+        })
         .find(|word| word.starts_with("http://") || word.starts_with("https://"))
         .map(http_source)
 }
@@ -2099,6 +2107,14 @@ mod tests {
             ("http", &json!("https://x.example/feed"))
         );
         assert!(super::source_in_readme("no address here").is_none());
+        // The sentence's punctuation after an address is no part of it.
+        for text in [
+            "Read it at <https://x.example/feed.csv>.",
+            "Read it at https://x.example/feed.csv, daily",
+        ] {
+            let (_, spec, _) = super::source_in_readme(text).expect("a source");
+            assert_eq!(spec["http"]["url"], "https://x.example/feed.csv", "{text}");
+        }
 
         let env =
             "# comment\nMQTT_HOST=tcp://broker:1883\nMQTT_TOPIC=t\nMQTT_PASSWORD=\"hunter2\"\n";
