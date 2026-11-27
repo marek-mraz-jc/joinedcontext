@@ -1172,3 +1172,27 @@ async fn a_planned_streaming_source_is_sampled_only_once_approved() {
         answer.text
     );
 }
+
+/// Without a runner to fetch it, an address infers nothing and says so at `url`.
+#[tokio::test]
+async fn an_address_no_runner_can_fetch_infers_nothing() {
+    let state = state("unrun", None);
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("unrun", "jc_model_infer"),
+        Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+    )
+    .await;
+    assert!(
+        answer.status.is_client_error() || answer.status.is_server_error(),
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("/url") || answer.text.contains("runner"),
+        "{}",
+        answer.text
+    );
+}

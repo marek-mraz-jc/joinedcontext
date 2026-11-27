@@ -1822,7 +1822,8 @@ mod tests {
             .expect("removed");
         ledger.forget("p", "pl", &ids[..1]).await.expect("forget");
         let (rows, _) = ledger.book("p", "pl").await.expect("book");
-        assert!(rows.is_empty(), "{:?}", rows.keys().collect::<Vec<_>>());
+        // The forgotten id is gone; the removed one waits for its run's outcome.
+        assert_eq!(rows.keys().collect::<Vec<_>>(), [&ids[1]]);
     }
 
     /// An id of `len` bytes, distinct per `n`.

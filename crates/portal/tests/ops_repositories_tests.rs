@@ -835,3 +835,82 @@ async fn an_empty_repository_is_empty_and_a_failing_root_read_is_an_error() {
         failed.text()
     );
 }
+
+/// A forge answer short of a field reads its default: an empty default branch is `main` and an
+/// empty owner the client's. A broken one is an error: an id that is no UUID, a file that does
+/// not decode, a failing file read. A binary README is not shown.
+#[tokio::test]
+async fn a_forge_answer_short_of_a_field_reads_its_default_and_a_broken_one_is_an_error() {
+    let (server, state) = world_on(Some("https://git.public.example")).await;
+    let mut bare = repo(CONFIG_ID, "ovzdusie-config", "");
+    bare["Owner"] = json!("");
+    bare["DefaultBranch"] = json!("");
+    Mock::given(method("GET"))
+        .and(path("/odata/Repositories"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [
+            bare,
+            repo(APP_ID, "ovzdusie_dash", ""),
+            repo("not-a-uuid", "ovzdusie_odd", ""),
+        ] })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let file = format!("/odata/Repositories('{CONFIG_ID}')/File");
+    for (at, answer) in [
+        (
+            "README.md",
+            ResponseTemplate::new(200).set_body_json(blob(b"\0\x01\x02 binary")),
+        ),
+        (
+            "src/page.html",
+            ResponseTemplate::new(200)
+                .set_body_json(json!({ "Sha": "b", "Size": 3, "Content": "!!!" })),
+        ),
+        (
+            "logo.png",
+            ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })),
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(file.clone()))
+            .and(query_param("Path", at))
+            .respond_with(answer)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let got = doors::call(
+        "jc_repository_get",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config" }),
+    )
+    .await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
+    assert_eq!(
+        got.body["cloneUrl"],
+        "https://git.public.example/test-owner/ovzdusie-config.git",
+        "{}",
+        got.text()
+    );
+    assert!(got.body.get("readme").is_none(), "{}", got.text());
+    for (repository, path) in [
+        ("ovzdusie-config", "src/page.html"),
+        ("ovzdusie-config", "logo.png"),
+        ("ovzdusie_odd", "README.md"),
+    ] {
+        let failed = doors::call(
+            "jc_repository_file",
+            &session(steward()),
+            &state,
+            json!({ "repository": repository, "path": path }),
+        )
+        .await;
+        assert!(
+            failed.status.is_server_error(),
+            "{repository} {path}: {} {}",
+            failed.status,
+            failed.text()
+        );
+    }
+}
