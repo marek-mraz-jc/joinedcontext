@@ -509,6 +509,14 @@ fn picked_values_are_formatted_as_grafanas_prometheus_formats_them() {
     );
     let single = variable(json!({ "name": "job", "type": "custom" }));
     assert_eq!(format_picked(Some(&single), &["a.b".to_owned()]), "a.b");
+    // Nothing picked, or All of a variable without options: an empty value.
+    assert_eq!(format_picked(Some(&single), &[]), "");
+    assert_eq!(format_picked(None, &[]), "");
+    let all_of_nothing = variable(json!({ "name": "e", "type": "custom", "includeAll": true }));
+    assert_eq!(
+        format_picked(Some(&all_of_nothing), &["$__all".to_owned()]),
+        ""
+    );
     // Multi-value alone, or All alone, already makes one picked value a regex.
     for flags in [json!({ "multi": true }), json!({ "includeAll": true })] {
         let mut v = json!({ "name": "job", "type": "custom" });
@@ -592,6 +600,76 @@ async fn a_multi_value_variable_reaches_prometheus_as_a_regex_alternation() {
         ],
         "{seen:?}"
     );
+}
+
+/// A panel's `timeFrom` overrides the saved range when the caller names none: `2h` and
+/// `now-3h` read as the last two and three hours, a blank one keeps the dashboard's hour.
+#[tokio::test]
+async fn a_panels_relative_time_overrides_the_saved_range() {
+    let (url, seen) = prometheus().await;
+    let w = World::new();
+    w.ok(
+        "POST",
+        "/api/datasources",
+        json!({ "uid": "prom", "name": "Prom", "type": "prometheus", "url": url }),
+    )
+    .await;
+    let panel = |id: u32, time_from: &str| {
+        json!({
+            "id": id, "type": "timeseries", "title": "Requests", "timeFrom": time_from,
+            "gridPos": { "x": 0, "y": 0, "w": 12, "h": 8 },
+            "datasource": { "type": "prometheus", "uid": "prom" },
+            "targets": [{ "refId": "A", "datasource": { "type": "prometheus", "uid": "prom" },
+                          "expr": format!("up{{panel=\"{id}\"}}") }]
+        })
+    };
+    w.ok(
+        "POST",
+        "/api/dashboards/db",
+        json!({ "overwrite": true, "dashboard": {
+            "uid": "shift", "title": "shift", "schemaVersion": 42,
+            "time": { "from": "now-1h", "to": "now" },
+            "panels": [panel(1, "2h"), panel(2, "now-3h"), panel(3, "  ")]
+        }}),
+    )
+    .await;
+    for id in 1..=3 {
+        let (status, view) = w
+            .send(
+                "GET",
+                &format!("/api/dashboards/shift/render?panel={id}"),
+                &admin_basic(),
+                None,
+                None,
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "panel {id}: {view}");
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let starts: Vec<f64> = seen
+        .lock()
+        .iter()
+        .filter(|head| head.contains("query_range"))
+        .map(|head| {
+            let target = head.split_whitespace().nth(1).unwrap_or_default();
+            let address = target.split_once('?').map_or("", |(_, q)| q);
+            let body = head.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+            [address, body]
+                .iter()
+                .flat_map(|part| url::form_urlencoded::parse(part.as_bytes()))
+                .find(|(k, _)| k == "start")
+                .and_then(|(_, v)| v.parse().ok())
+                .unwrap_or_default()
+        })
+        .collect();
+    assert_eq!(starts.len(), 3, "{starts:?}");
+    for (start, hours) in starts.iter().zip([2.0, 3.0, 1.0]) {
+        let back = (now - start) / 3600.0;
+        assert!((back - hours).abs() < 0.1, "{hours} h asked, {back} h read");
+    }
 }
 
 /// A members-only Endpoint: answers 401 to every request and logs each request head.
