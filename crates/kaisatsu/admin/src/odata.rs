@@ -751,6 +751,24 @@ mod tests {
         }
     }
 
+    /// A service document, `$metadata` or `$batch` in the entity-set place parses as OData yet
+    /// names no resource: the query is refused as one, not read as an entity set.
+    #[test]
+    fn a_path_that_is_no_resource_is_refused_as_a_query() {
+        for (set, query) in [
+            ("$metadata", None),
+            ("$metadata", Some("$format=json")),
+            ("$batch", None),
+        ] {
+            let err = parse_odata_options(set, query).expect_err(set).to_string();
+            assert!(err.contains("not an OData resource URI"), "{set}: {err}");
+        }
+        let err = parse_odata_options("users", Some("$top=x"))
+            .expect_err("a bad $top")
+            .to_string();
+        assert!(err.contains("invalid OData URL"), "{err}");
+    }
+
     #[test]
     fn keys_and_xml_text() {
         assert_eq!(
