@@ -235,6 +235,56 @@ async fn opening_recuts_a_left_branch_and_records_nothing_when_no_branch_is_cut(
     assert_eq!(body(&listed.text)["items"], json!([]), "{}", listed.text);
 }
 
+/// A left branch the forge will not delete opens no workspace; a forge failing the workspace's
+/// tree read is said on a compare, never read as an empty workspace.
+#[tokio::test]
+async fn a_forge_failing_the_branch_or_tree_is_said_and_records_nothing() {
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "exists" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.DeleteBranch")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert!(answer.status.is_server_error(), "{}", answer.text);
+    let listed = send(&state, steward(), "GET", WS, None).await;
+    assert_eq!(body(&listed.text)["items"], json!([]), "{}", listed.text);
+
+    let (server, state) = world().await;
+    opened(&state).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'workspace/air-v2'"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .mount(&server)
+        .await;
+    let compared = send(
+        &state,
+        steward(),
+        "GET",
+        &format!("{WS}/air-v2/compare"),
+        None,
+    )
+    .await;
+    assert!(compared.status.is_server_error(), "{}", compared.text);
+}
+
 #[tokio::test]
 async fn opening_refuses_a_bad_name_title_or_ttl_and_a_second_of_the_same_name() {
     let (_server, state) = world().await;

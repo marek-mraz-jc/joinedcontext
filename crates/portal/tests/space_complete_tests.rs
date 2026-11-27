@@ -311,6 +311,70 @@ async fn space_complete_env_file_creates_secret_ref_without_leaking_password() {
     );
 }
 
+/// Every kind of uploaded file finds its place: a YAML file that is no manifest is left out, a
+/// `.blobl` file is the pipeline's mapping, a README names the source, and a `.env` that names
+/// none leaves the README's.
+#[tokio::test]
+async fn each_uploaded_file_kind_takes_its_place_in_the_completion() {
+    let mut config = Config::for_tests();
+    let model_tools = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/infer-schema"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "linkml": "id: https://example.com/benches\nclasses:\n  Bench:\n    slots: [id]\n"
+        })))
+        .mount(&model_tools)
+        .await;
+    config.model_tools_url = Some(model_tools.uri());
+    let state = AppState::new(config.clone(), None);
+    let cookie = session_cookie(
+        &config,
+        "steward.user",
+        Some("steward@banskabystrica.sk"),
+        vec!["portal-approver"],
+        vec![],
+    );
+    let mapping = "root = this\nroot.type = \"Bench\"\n";
+    let payload = json!({
+        "space": "benches",
+        "files": [
+            { "name": "notes.yaml", "content": "just: notes\n" },
+            { "name": "map.blobl", "content": mapping },
+            { "name": "README.md", "content": "Benches, read from <https://data.example/benches.csv>." },
+            { "name": "README", "content": "A second README: https://other.example/ignored.csv" },
+            { "name": "local.env", "content": "COLOUR=green\n" },
+            { "name": "benches.csv", "content": "id,seats\n1,3\n" }
+        ]
+    });
+    let resp = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/projects/ovzdusie/ops/jc_space_complete")
+                .header(header::COOKIE, cookie)
+                .echo_csrf()
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(serde_json::to_vec(&payload).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body: Value = serde_json::from_slice(&resp.into_body().collect().await.unwrap().to_bytes())
+        .unwrap_or(Value::Null);
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        draft(&body, "Pipeline")["manifest"]["spec"]["compute"]["bloblang"],
+        mapping,
+        "{body}"
+    );
+    assert_eq!(
+        draft(&body, "DataSource")["manifest"]["spec"]["http"]["url"],
+        "https://data.example/benches.csv",
+        "{body}"
+    );
+}
+
 #[tokio::test]
 async fn space_complete_all_manifests_provided_yields_found_and_no_inferred_drafts() {
     let config = Config::for_tests();
@@ -608,7 +672,7 @@ async fn a_feed_address_that_is_not_http_says_so_at_its_field() {
     }))
     .await;
     assert!(
-        body.to_string().contains("the URL is not an http(s) URL"),
+        body.to_string().contains("the source names no http(s) URL"),
         "{status}: {body}"
     );
 }
@@ -1840,4 +1904,13 @@ async fn a_changed_model_of_a_served_space_is_still_proposed() {
     assert_eq!(body["alreadyLive"], false, "{body}");
     assert!(body["change"].is_object(), "{body}");
     assert_eq!(opened, 1, "{body}");
+}
+
+/// Without `propose`, another model open on the space is no refusal: the completion only drafts.
+#[tokio::test]
+async fn another_model_open_on_the_space_is_only_drafted_without_propose() {
+    let (status, body, opened) = proposed_again(Some("classes: {}\n"), None, false, false).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body["change"].is_null(), "{body}");
+    assert_eq!(opened, 0, "{body}");
 }

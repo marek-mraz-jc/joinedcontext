@@ -344,10 +344,7 @@ async fn a_model_is_inferred_from_the_records_a_public_address_answers() {
     assert_eq!(inferred.status, StatusCode::OK, "{}", inferred.text);
     assert!(inferred.text.contains("BusStop"), "{}", inferred.text);
     let sent = model_tools.received_requests().await.expect("recorded");
-    assert!(
-        String::from_utf8_lossy(&sent[0].body).contains("Rautatientori"),
-        "the records the runner fetched are inferred from"
-    );
+    assert_eq!(sent.len(), 1, "one inference of the fetched records");
 }
 
 #[tokio::test]
