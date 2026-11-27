@@ -2873,6 +2873,11 @@ mod tests {
             );
             assert_eq!(canonical_key(&set, &urn), single_or(&key), "{edm}");
         }
+        // a compound key without a pair has no single form to take
+        assert_eq!(
+            single_or(&Key::Compound(Vec::new())),
+            Key::Compound(Vec::new())
+        );
         let by_id = |urn: &str| named("id", Literal::String(urn.into()));
         for (edm, urn) in [
             (

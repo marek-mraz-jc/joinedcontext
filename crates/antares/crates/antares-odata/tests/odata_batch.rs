@@ -467,6 +467,21 @@ async fn odata_batch_member_is_refused_like_the_request_alone() {
     );
 }
 
+/// Two members naming the model (the service document and `$metadata`) are served over the
+/// one narrowed model: the later ones reuse the first's, and every one answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn odata_batch_members_naming_the_model_twice_share_it() {
+    let (_b, app) = city().await.expect("broker");
+    let members = json!([
+        {"id": "1", "method": "get", "url": "$metadata"},
+        {"id": "2", "method": "get", "url": ""},
+        {"id": "3", "method": "get", "url": "$metadata"}
+    ]);
+    let (status, _, answer) = json_batch(&app, &members, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(statuses(&answer), [200, 200, 200], "{answer}");
+}
+
 /// T-3773: a member whose answer is past the broker's buffer bound answers
 /// 413 inside the batch; the members under it still answer.
 #[tokio::test(flavor = "multi_thread")]
