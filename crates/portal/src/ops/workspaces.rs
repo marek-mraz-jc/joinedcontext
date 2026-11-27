@@ -2107,7 +2107,10 @@ mod tests {
         learn(&names, &many);
         let known = known(&names);
         assert_eq!(known.len(), 1);
-        assert_eq!(known.get(&format!("w{KNOWN_NAMES}")).map(String::as_str), Some("helsinki"));
+        assert_eq!(
+            known.get(&format!("w{KNOWN_NAMES}")).map(String::as_str),
+            Some("helsinki")
+        );
     }
 
     /// A database that is down fails a create as a database error, never as an unplaced project.

@@ -895,7 +895,9 @@ mod tests {
         let down = |got: Result<(), DataViewError>| matches!(got, Err(DataViewError::Db(_)));
         assert!(down(store.list("hel", "bikes").await.map(drop)));
         assert!(down(store.get("hel", "bikes", "v1").await.map(drop)));
-        assert!(down(store.create("hel", "bikes", JANA, view()).await.map(drop)));
+        assert!(down(
+            store.create("hel", "bikes", JANA, view()).await.map(drop)
+        ));
         assert!(down(store.delete("hel", "bikes", "v1").await));
     }
 

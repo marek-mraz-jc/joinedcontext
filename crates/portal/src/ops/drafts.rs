@@ -1288,7 +1288,9 @@ mod tests {
         let put = |store: DraftStore, expected: Option<i64>| async move {
             let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
             store
-                .put("hel", "Endpoint", "air", manifest, expected, "ana", "person")
+                .put(
+                    "hel", "Endpoint", "air", manifest, expected, "ana", "person",
+                )
                 .await
         };
         let failed = |got: Result<Draft, DraftError>| matches!(got, Err(DraftError::Db(_)));
@@ -1305,7 +1307,13 @@ mod tests {
 
         let scratch = crate::test_db::scratch().await;
         let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
-        assert_eq!(put(store.clone(), None).await.expect("the first put").version, 1);
+        assert_eq!(
+            put(store.clone(), None)
+                .await
+                .expect("the first put")
+                .version,
+            1
+        );
         scratch.refuse("drafts", "UPDATE").await;
         assert!(failed(put(store.clone(), Some(1)).await));
         scratch.drop_table("drafts").await;
@@ -1316,7 +1324,11 @@ mod tests {
         let store = DraftStore::new(Some(scratch.pool.clone()), scratch.placed("hel").await);
         scratch.refuse_commit("drafts").await;
         assert!(failed(put(store.clone(), None).await));
-        assert!(store.get("hel", "Endpoint", "air").await.expect("a read").is_none());
+        assert!(store
+            .get("hel", "Endpoint", "air")
+            .await
+            .expect("a read")
+            .is_none());
         scratch.remove().await;
     }
 

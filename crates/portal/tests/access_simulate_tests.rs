@@ -225,10 +225,8 @@ async fn the_operation_answers_the_routes_decision() {
     let r = rig().await;
     granting(&r.gateway).await;
     let op = joinedcontext_portal::ops::find("jc_access_simulate").expect("registered");
-    let caller = joinedcontext_portal::ops::Caller::new(
-        admin(),
-        joinedcontext_portal::ops::Via::Mcp,
-    );
+    let caller =
+        joinedcontext_portal::ops::Caller::new(admin(), joinedcontext_portal::ops::Via::Mcp);
     let input = json!({
         "endpoint": "air",
         "subject": { "kind": "group", "name": "stewards" },

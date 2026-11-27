@@ -545,7 +545,10 @@ mod tests {
         let a = "items:\n- name: x\n  fetchedAt: '2026-10-05'\n";
         let b = "items:\n- name: x\n  fetchedAt: '2026-10-06'\n";
         assert_eq!(without_fetch_time(a), without_fetch_time(b));
-        assert_ne!(without_fetch_time(a), without_fetch_time("items:\n- name: y\n"));
+        assert_ne!(
+            without_fetch_time(a),
+            without_fetch_time("items:\n- name: y\n")
+        );
     }
 
     #[test]

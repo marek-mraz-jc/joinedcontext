@@ -1251,17 +1251,23 @@ mod tests {
     async fn a_stray_state_ends_nothing_and_a_poisoned_queue_still_ticks() {
         let now = at("2026-10-17T05:00:00Z");
         let mut q = RunQueue::new(2, 1);
-        q.plan([(key("a"), planned(Clock::Once))].into_iter().collect(), now);
+        q.plan(
+            [(key("a"), planned(Clock::Once))].into_iter().collect(),
+            now,
+        );
         q.planned_at = Some(now);
-        let states = vec![(key("gone"), RunState::Finished), (key("a"), RunState::Finished)];
+        let states = vec![
+            (key("gone"), RunState::Finished),
+            (key("a"), RunState::Finished),
+        ];
         let (ended, _) = q.settle(states, now);
         assert!(ended.is_empty(), "{ended:?}");
 
         let queue = Mutex::new(RunQueue::new(2, 1));
-        queue
-            .lock()
-            .expect("the lock")
-            .plan([(key("b"), planned(Clock::Once))].into_iter().collect(), now);
+        queue.lock().expect("the lock").plan(
+            [(key("b"), planned(Clock::Once))].into_iter().collect(),
+            now,
+        );
         queue.lock().expect("the lock").planned_at = Some(now);
         let _ = std::thread::scope(|s| {
             s.spawn(|| {

@@ -294,12 +294,19 @@ mod tests {
     #[tokio::test]
     async fn an_unplaced_project_lists_none_and_a_dead_database_fails_the_list() {
         let unplaced = TemplateStore::new(Some(crate::test_db::dead_pool()), Default::default());
-        assert!(unplaced.list("helsinki").await.expect("no key, no rows").is_empty());
+        assert!(unplaced
+            .list("helsinki")
+            .await
+            .expect("no key, no rows")
+            .is_empty());
         let down = TemplateStore::new(
             Some(crate::test_db::dead_pool()),
             crate::test_db::placed_mirror("helsinki"),
         );
-        assert!(matches!(down.list("helsinki").await, Err(TemplateError::Db(_))));
+        assert!(matches!(
+            down.list("helsinki").await,
+            Err(TemplateError::Db(_))
+        ));
     }
 
     #[test]

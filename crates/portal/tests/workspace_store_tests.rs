@@ -334,13 +334,9 @@ async fn a_workspace_gone_meanwhile_is_not_found_by_the_replica_that_knew_it() {
         let name = format!("g{}", &unique::unique()[7..]);
         store.create(opening(&name, "helsinki", 1)).await.unwrap();
         assert_eq!(fresh.delete(&name).await.unwrap().name, name);
-        let gone = |got: Result<(), WorkspaceError>| {
-            matches!(got, Err(WorkspaceError::NotFound(n)) if n == name)
-        };
+        let gone = |got: Result<(), WorkspaceError>| matches!(got, Err(WorkspaceError::NotFound(n)) if n == name);
         assert!(gone(
-            store
-                .set_preview_state(&name, PreviewState::Running)
-                .await
+            store.set_preview_state(&name, PreviewState::Running).await
         ));
         let access = PreviewAccess {
             salt: "s4lt".into(),

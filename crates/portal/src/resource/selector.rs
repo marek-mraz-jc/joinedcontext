@@ -340,7 +340,10 @@ mod tests {
             ("Bad Key=x", "invalid key in: Bad Key=x"),
             ("Bad Key", "invalid key in: Bad Key"),
         ] {
-            assert_eq!(malformed(input), Some(SelectorError::Malformed(said.into())));
+            assert_eq!(
+                malformed(input),
+                Some(SelectorError::Malformed(said.into()))
+            );
         }
         assert!(LabelSelector::parse("")
             .expect("empty selector")
