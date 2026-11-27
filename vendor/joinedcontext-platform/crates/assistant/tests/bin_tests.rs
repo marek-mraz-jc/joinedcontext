@@ -437,6 +437,88 @@ async fn a_start_without_a_bind_address_or_hostname_takes_the_pods_defaults() {
     db::drop_database(admin, pool, &name).await;
 }
 
+/// A pod whose first warm-up does not finish in time (a store that takes a connection and never
+/// answers it) says so and goes on, rather than holding its readiness.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_first_warm_up_that_does_not_finish_is_said_and_not_waited_for() {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Arc;
+    use tracing::instrument::WithSubscriber as _;
+
+    let dir = scratch("slowwarm");
+    let vars = configured(&dir, "unused");
+    let assistant = dir.join("repo/projects/slowproj/assistant");
+    std::fs::create_dir_all(assistant.join("sources")).expect("sources directory");
+    let manifest = |kind: &str, name: &str, spec: &str| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: {name}\n  namespace: slowproj\nspec:\n  {spec}\n")
+    };
+    std::fs::write(
+        assistant.join("sources/web.yaml"),
+        manifest("KnowledgeSource", "web", "source: guide"),
+    )
+    .expect("source manifest");
+    std::fs::write(
+        assistant.join("help.yaml"),
+        manifest(
+            "AssistantDeployment",
+            "help",
+            "publicId: slow-help\n  channel: internal\n  sources: [web]",
+        ),
+    )
+    .expect("deployment manifest");
+    let lookup = |key: &str| vars.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone());
+    // A server that takes the connection and never speaks: the language read waits for it.
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let port = silent.local_addr().expect("an address").port();
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(5))
+        .connect_lazy(&format!("postgres://postgres@127.0.0.1:{port}/none"))
+        .expect("a lazy pool");
+    let embedder =
+        assistant::embed::Embedder::from_lookup(&lookup, 1).expect("the remote embedder");
+    let credential = assistant::host::credential(&lookup).expect("the credential");
+    let config = assistant::host::chat_config(&lookup, credential).expect("the chat config");
+    let (chat_state, reader) =
+        assistant::service::chat_state(config, &pool, &embedder, "bin.example").expect("the chat");
+    let ready = Arc::new(AtomicBool::new(false));
+    let mut minute = assistant::host::Minute::new(
+        pool,
+        embedder,
+        assistant::crawl::Crawler::public().expect("the crawler"),
+        reader,
+        "bin.example".into(),
+        "slow".into(),
+        assistant::host::checkout(lookup).expect("the checkout"),
+        chat_state,
+        Arc::clone(&ready),
+    );
+    minute.first_warm = Duration::from_millis(300);
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    // The rest of the minute waits on the same store; only the first warm-up's line is asked for.
+    let _ = tokio::time::timeout(
+        Duration::from_secs(3),
+        minute
+            .work()
+            .with_subscriber(tracing::Dispatch::new(subscriber)),
+    )
+    .await;
+    assert!(
+        log.text()
+            .contains("the first warm-up did not finish in time"),
+        "{}",
+        log.text()
+    );
+    drop(silent);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A minute over a live database with the real model: a source that is not due queues nothing,
 /// a guide source is queued as changed, a passage without an embedding is embedded and one
 /// whose terms are pending gets them, and a chat state whose lock a panic poisoned is left as it
@@ -517,9 +599,17 @@ async fn a_minute_over_a_live_database_does_each_of_its_steps() {
         "the guide was queued: {}",
         log.text()
     );
-    // The next minute finds the same guide and the same sources: no catalogue is seen changed.
-    minute.work().with_subscriber(dispatch).await;
+    // The next minute finds the same guide: none is seen changed. A process that forgot its
+    // digests reads the guide again (a new release), unless its job still waits in the queue.
+    minute.work().with_subscriber(dispatch.clone()).await;
     assert!(!log.text().contains("catalogues changed"), "{}", log.text());
+    sqlx::query("DELETE FROM crawl_jobs")
+        .execute(&pool)
+        .await
+        .expect("the queue is emptied");
+    minute.catalogue_digests.clear();
+    minute.work().with_subscriber(dispatch).await;
+    assert!(log.text().contains("catalogues changed"), "{}", log.text());
 
     let mut tx = assistant::project_scope(&pool, "liveproj")
         .await

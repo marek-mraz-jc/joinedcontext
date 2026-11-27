@@ -18,11 +18,16 @@ pub(crate) struct Parts {
     cache: super::routed::AnswerCache,
     trace: super::trace::Trace,
     suggestions: BTreeMap<String, Vec<String>>,
+    /// What this test's thread logs: a log line is only run when a subscriber wants it, and a
+    /// thread with none caches `Interest::never` for the line for every test (see the model's
+    /// tests), so a test over these parts always holds one.
+    _guard: tracing::subscriber::DefaultGuard,
 }
 
 impl Parts {
     /// Parts whose database, embedder and model are a closed local port.
     pub(crate) fn new() -> Self {
+        let (_log, _guard) = Log::capture();
         let http = reqwest::Client::new();
         let closed = "http://127.0.0.1:9";
         Self {
@@ -52,7 +57,33 @@ impl Parts {
             cache: super::routed::AnswerCache::default(),
             trace: super::trace::Trace::default(),
             suggestions: BTreeMap::new(),
+            _guard,
         }
+    }
+
+    /// The embedder service at `url`, which answers as a token endpoint of its own (`/token`).
+    pub(crate) fn embedder_at(&mut self, url: &str) {
+        self.embedder = crate::embed::Embedder::remote(jc_embedder::client::RemoteConfig {
+            url: url.into(),
+            token_url: format!("{url}/token"),
+            client_id: "jc-assistant".into(),
+            client_secret: "s".into(),
+        })
+        .expect("a remote embedder");
+    }
+
+    /// The model proxy at `url`, whose `/token` is also its token endpoint.
+    pub(crate) fn model_at(&mut self, url: &str) {
+        self.model = super::model::Model::new(
+            super::model::ModelConfig {
+                proxy: url.into(),
+                token_url: format!("{url}/token"),
+                client_id: "jc-assistant".into(),
+                credential: jc_core::ClientCredential::Secret(jc_core::Secret::new("s")),
+                model: "test/model".into(),
+            },
+            self.http.clone(),
+        );
     }
 
     /// An anonymous public question of project `hronov` over `connectors`.

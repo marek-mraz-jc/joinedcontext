@@ -186,6 +186,8 @@ pub struct Minute {
     pub extra_origins: BTreeMap<String, Vec<String>>,
     /// The last minute whose due sources were queued.
     pub queued_until: Option<time::OffsetDateTime>,
+    /// How long a new pod waits for its first warm-up; [`FIRST_WARM`] unless a test shortens it.
+    pub first_warm: Duration,
 }
 
 impl Minute {
@@ -215,6 +217,7 @@ impl Minute {
             catalogue_digests: BTreeMap::new(),
             extra_origins: BTreeMap::new(),
             queued_until: None,
+            first_warm: FIRST_WARM,
         }
     }
 
@@ -239,10 +242,12 @@ impl Minute {
         // questions met no connector and were answered as if the data held nothing (T-5782).
         let warming = tokio::spawn(chat::warm_types(Arc::clone(&self.chat_state)));
         if !self.ready.load(Ordering::Relaxed)
-            && tokio::time::timeout(FIRST_WARM, warming).await.is_err()
+            && tokio::time::timeout(self.first_warm, warming)
+                .await
+                .is_err()
         {
             tracing::warn!(
-                seconds = FIRST_WARM.as_secs(),
+                seconds = self.first_warm.as_secs(),
                 "the first warm-up did not finish in time; ready without every type list"
             );
         }

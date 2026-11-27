@@ -1493,6 +1493,14 @@ impl AnswerCache {
             .map(|(_, listed)| listed.clone())
     }
 
+    /// A listing kept `age` ago, for a test of what a stale one still answers.
+    #[cfg(test)]
+    pub(super) fn keep_listing_aged(&self, slug: &str, age: Duration, listed: Vec<Value>) {
+        if let Ok(mut tools) = self.tools.lock() {
+            tools.insert(slug.to_owned(), (Instant::now() - age, listed));
+        }
+    }
+
     pub fn keep_listing(&self, slug: &str, listed: Vec<Value>) {
         if let Ok(mut tools) = self.tools.lock() {
             // One entry per connector's Endpoint, like the type lists.
@@ -4726,8 +4734,8 @@ mod tests {
     /// and the most frequent are named, equal counts by name.
     #[tokio::test]
     async fn warming_the_languages_keeps_what_it_read_and_says_when_it_could_not() {
-        let (log, _guard) = crate::chat::test_world::Log::capture();
         let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
         let ask = parts.ask(&[]);
         let cache = AnswerCache::default();
         // Nothing to read in no sources: an empty list, kept and fresh.
@@ -4766,8 +4774,8 @@ mod tests {
     /// step says why. A catalogue search that fails is said and leaves no dataset page.
     #[tokio::test]
     async fn a_search_over_no_sources_is_empty_and_a_failing_catalogue_search_is_said() {
-        let (log, _guard) = crate::chat::test_world::Log::capture();
         let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
         let ask = parts.ask(&[]);
         let found = search_index(&ask, "knižnica", 5).await.expect("no sources");
         assert_eq!(found, (Vec::new(), "time: no sources to search".to_owned()));
@@ -4915,7 +4923,6 @@ mod tests {
     /// links no page, the step says so, and the line says which Endpoint.
     #[tokio::test]
     async fn a_page_lookup_on_a_silent_store_is_cut_at_its_deadline_and_says_so() {
-        let (log, _guard) = crate::chat::test_world::Log::capture();
         let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("a port");
@@ -4925,6 +4932,7 @@ mod tests {
             .connect_lazy(&format!("postgres://jc@127.0.0.1:{port}/jc"))
             .expect("a lazy pool");
         let parts = Parts::new();
+        let (log, _guard) = crate::chat::test_world::Log::capture();
         let endpoint = connector("http://127.0.0.1:9", "most", &[], None);
         let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
         let mut ask = parts.ask(&[]);
@@ -5061,6 +5069,190 @@ mod tests {
             linked[1].1.url, "https://api.example/api/endpoint/zzz/",
             "an Endpoint with no page keeps the address"
         );
+    }
+
+    /// The router call and its token endpoint on one mock server; `slow` answers the first call
+    /// after the hedge's three seconds, `second` is what the call beside it gets.
+    async fn router_proxy(
+        slow: wiremock::ResponseTemplate,
+        second: wiremock::ResponseTemplate,
+    ) -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer};
+        let proxy = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(slow)
+            .up_to_n_times(1)
+            .mount(&proxy)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(second)
+            .mount(&proxy)
+            .await;
+        proxy
+    }
+
+    fn routed_reply(text: &str) -> wiremock::ResponseTemplate {
+        wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 40, "completion_tokens": 5, "total_tokens": 45, "cost": 0.0001},
+        }))
+    }
+
+    fn router_call() -> Call<'static> {
+        Call {
+            model: None,
+            max_tokens: 50,
+            json: false,
+            provider: None,
+            reasoning: Default::default(),
+        }
+    }
+
+    /// A router that has not answered in [`ROUTER_HEDGE`] is asked again beside it: the second
+    /// call's answer wins and the first, left running, is charged as its twin; when the second
+    /// call fails the first is waited for and the hedge is a route note, not a priced call.
+    #[tokio::test]
+    async fn a_slow_router_is_asked_again_and_the_hedge_is_charged_or_noted() {
+        let late = || routed_reply("late").set_delay(ROUTER_HEDGE + Duration::from_millis(600));
+        let messages = [json!({"role": "user", "content": "kde je knižnica"})];
+
+        let proxy = router_proxy(late(), routed_reply("quick")).await;
+        let mut parts = Parts::new();
+        parts.model_at(&proxy.uri());
+        let ask = parts.ask(&[]);
+        let (reply, took, twin) = route_call(&ask, &router_call(), &messages).await;
+        assert_eq!(reply.expect("the second call answered").text, "quick");
+        assert!(took >= ROUTER_HEDGE && took < ROUTER_HEDGE + Duration::from_millis(500));
+        assert_eq!(
+            twin.expect("the first call is charged as its twin").text,
+            "quick"
+        );
+        let steps = ask.trace.steps();
+        assert!(
+            steps
+                .iter()
+                .any(|s| s.name == "router_hedge" && s.kind == "model"),
+            "{steps:?}"
+        );
+
+        let proxy = router_proxy(late(), wiremock::ResponseTemplate::new(400)).await;
+        let mut parts = Parts::new();
+        parts.model_at(&proxy.uri());
+        let ask = parts.ask(&[]);
+        let (reply, _, twin) = route_call(&ask, &router_call(), &messages).await;
+        assert_eq!(reply.expect("the first call answered").text, "late");
+        assert!(twin.is_none(), "a failed second call is no cost to pay");
+        let steps = ask.trace.steps();
+        let noted = steps
+            .iter()
+            .find(|s| s.name == "router_hedge")
+            .expect("a hedge step");
+        assert_eq!(noted.kind, "route");
+        assert_eq!(
+            noted.output.as_deref(),
+            Some("first call answered; the other failed")
+        );
+    }
+
+    /// A round's searches that are still out [`SEARCH_WAVE`] after the first came back are
+    /// dropped: the reader sees the search failed, and the trace says how many were cut.
+    #[tokio::test]
+    async fn a_search_that_is_out_a_wave_after_its_round_began_to_answer_is_cut() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+        struct Embeds;
+        impl Respond for Embeds {
+            fn respond(&self, req: &Request) -> ResponseTemplate {
+                let body: Value = serde_json::from_slice(&req.body).expect("a JSON body");
+                let texts = body["input"].as_array().expect("an input");
+                let data: Vec<Value> = (0..texts.len())
+                    .map(|index| {
+                        json!({"index": index, "embedding": vec![0.1_f32; jc_embedder::DIMENSIONS]})
+                    })
+                    .collect();
+                let answer = ResponseTemplate::new(200).set_body_json(json!({
+                    "model": jc_embedder::MODEL,
+                    "model_sha256": jc_embedder::MODEL_SHA256,
+                    "data": data,
+                }));
+                if texts
+                    .iter()
+                    .any(|t| t.as_str().is_some_and(|t| t.contains("slow")))
+                {
+                    answer.set_delay(Duration::from_secs(12))
+                } else {
+                    answer
+                }
+            }
+        }
+        let embedder = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"access_token": "tok", "expires_in": 300})),
+            )
+            .mount(&embedder)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(Embeds)
+            .mount(&embedder)
+            .await;
+        let mut parts = Parts::new();
+        parts.embedder_at(&embedder.uri());
+        let sources = [("hronov".to_owned(), vec!["web".to_owned()])];
+        let mut ask = parts.ask(&[]);
+        ask.sources = &sources;
+        let (tx, mut rx) = tokio::sync::mpsc::channel(64);
+        let judging = std::sync::atomic::AtomicBool::new(true);
+        let q = Question {
+            ask: &ask,
+            history: &[],
+            question: "kde je knižnica",
+            events: &tx,
+            languages: &[],
+            now: "now",
+            judging: &judging,
+        };
+        let mut spent = Spent::default();
+        let mut found = Found {
+            hits: Vec::new(),
+            asked: Vec::new(),
+            rounds: 0,
+        };
+        let began = Instant::now();
+        let queries = vec!["fast knižnica".to_owned(), "slow knižnica".to_owned()];
+        assert!(search_rounds(q, &mut spent, &router_call(), &mut found, queries, true).await);
+        assert!(
+            began.elapsed() < Duration::from_secs(8),
+            "the slow search is not waited for"
+        );
+        let mut statuses = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            if let Event::Tool { name, status, .. } = event {
+                statuses.push((name, status));
+            }
+        }
+        // Started twice; the fast search failed on the store that is down, the slow one was cut.
+        assert_eq!(statuses.iter().filter(|(_, s)| *s == "started").count(), 2);
+        assert_eq!(statuses.iter().filter(|(_, s)| *s == "failed").count(), 2);
+        let steps = ask.trace.steps();
+        let cut = steps
+            .iter()
+            .find(|s| s.name == "search_wave")
+            .expect("a wave note");
+        assert_eq!(cut.output.as_deref(), Some("1 of 2 searches cut"));
+        assert_eq!(found.asked.len(), 2);
     }
 
     /// An absence's markers are read to the end: a bracket left open is text.
