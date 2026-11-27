@@ -317,6 +317,94 @@ async fn a_pass_without_rights_reports_every_step_it_skipped() {
     owner.close().await;
 }
 
+/// A pass held on `blocked` (a table another session locks exclusively) while its lease's session
+/// is terminated: the summary it returns once the lock goes. `None` where the server has
+/// timescaledb, which the partitioned pass does not run on.
+async fn pass_whose_lease_session_dies(url: &str, tag: &str, blocked: &str) -> Option<String> {
+    let own = own_database(url, tag, &[]).await;
+    let owner = pg::connect(&own, 3).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&owner).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return None;
+    }
+    let mut blocker = owner.begin().await.expect("begin");
+    blocker
+        .execute(sqlx::AssertSqlSafe(format!(
+            "LOCK TABLE {blocked} IN ACCESS EXCLUSIVE MODE"
+        )))
+        .await
+        .expect("lock");
+    let pass_pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(&own)
+        .await
+        .expect("pass pool");
+    let running = pass_pool.clone();
+    let pass = tokio::spawn(async move {
+        temporal_maintenance(
+            &running,
+            TemporalBackend::Partitioned,
+            Some(30),
+            Duration::ZERO,
+        )
+        .await
+    });
+    let mut waiting = 0i64;
+    for _ in 0..400 {
+        waiting = sqlx::query_scalar(
+            "SELECT count(*) FROM pg_stat_activity
+              WHERE datname = current_database() AND wait_event_type = 'Lock'",
+        )
+        .fetch_one(&owner)
+        .await
+        .expect("activity");
+        if waiting > 0 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(waiting > 0, "the pass never reached the locked table");
+    let lease_pid: i32 = sqlx::query_scalar(
+        "SELECT l.pid FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+          WHERE l.locktype = 'advisory' AND l.granted AND a.state = 'idle'
+            AND a.datname = current_database()
+          LIMIT 1",
+    )
+    .fetch_one(&owner)
+    .await
+    .expect("the lease's session");
+    let ended: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+        .bind(lease_pid)
+        .fetch_one(&owner)
+        .await
+        .expect("terminate");
+    assert!(ended);
+    blocker.rollback().await.expect("unlock");
+    let summary = pass.await.expect("pass task").expect("pass");
+    pass_pool.close().await;
+    owner.close().await;
+    Some(summary)
+}
+
+/// A pass whose lease's session dies while it waits on the superseded versions, or on the
+/// Entities, stops at the next step boundary and says so instead of running on unprotected.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_whose_lease_session_dies_stops_and_says_so() {
+    let url = require_db!();
+    for (tag, blocked) in [
+        ("leaseversions", "attr_versions"),
+        ("leaseentities", "entities"),
+    ] {
+        let Some(summary) = pass_whose_lease_session_dies(&url, tag, blocked).await else {
+            return;
+        };
+        assert!(
+            lines(&summary).last() == Some(&"stopped: the lease was lost"),
+            "{blocked}: {summary}"
+        );
+    }
+}
+
 /// The hypertable pass: platform retention drops old chunks (never partitions), and a pass
 /// without retention and without work says so. Runs only where the server has timescaledb.
 #[tokio::test(flavor = "multi_thread")]

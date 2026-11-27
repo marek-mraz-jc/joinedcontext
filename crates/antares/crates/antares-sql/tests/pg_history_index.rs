@@ -65,6 +65,42 @@ async fn instance_rows(pool: &sqlx::PgPool) -> i64 {
     n
 }
 
+/// The step belongs to the pod that holds its advisory lock: another pod's
+/// pass finds it taken, builds nothing and reports nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_step_another_pod_holds_is_left_to_it() {
+    use sqlx::Connection;
+    let url = require_db!();
+    let pool = own_database(&url).await;
+    let backend = maintenance::detect_temporal_backend(&pool)
+        .await
+        .expect("backend");
+    if backend == TemporalBackend::Hypertable {
+        return;
+    }
+    sqlx::query(
+        "CREATE INDEX i_attr_instances_lookup ON attr_instances (tenant_id, entity_id, attr_id, observed_at DESC)",
+    )
+    .execute(&pool)
+    .await
+    .expect("the pre-0017 index the step moves off");
+    let mut other_pod = pool.acquire().await.expect("a connection").detach();
+    let held: bool =
+        sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext('antares.history_one_index'))")
+            .fetch_one(&mut other_pod)
+            .await
+            .expect("lock");
+    assert!(held, "the lock was free");
+    assert_eq!(
+        maintenance::history_one_index(&pool)
+            .await
+            .expect("one index step"),
+        None
+    );
+    assert!(present(&pool, "i_attr_instances_lookup").await);
+    other_pod.close().await.expect("close");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_migrated_history_moves_onto_one_index_and_reads_the_same() {
     let url = require_db!();

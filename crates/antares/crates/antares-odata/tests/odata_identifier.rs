@@ -353,6 +353,61 @@ async fn writes_address_and_check_the_key() {
     assert_eq!(a.status, StatusCode::NOT_FOUND, "{}", a.body);
 }
 
+/// A write below a keyed Entity names a member, never the key; a key naming an alias the write
+/// does not carry names no Entity.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_property_write_below_a_keyed_entity_takes_a_member_and_not_the_key() {
+    let (_b, app) = shop().await.expect("broker");
+    let view = json!({
+        "id": "shop", "tenant": "shop", "@context": {"shop": SHOP},
+        "selector": ["shop:Product", "shop:Category", "shop:Bin"],
+        "rules": [{"types": ["shop:Product"], "attributes": ["shop:ID", "shop:Name", "shop:category"]},
+                  {"types": ["shop:Category"], "attributes": ["shop:code", "shop:Name"]},
+                  {"types": ["shop:Bin"], "attributes": ["shop:number"]}],
+        "operations": ["query_entities", "retrieve_entity", "retrieve_attribute_value",
+                       "create_entity", "merge_entity", "delete_entity", "replace_attribute",
+                       "partial_attribute_update", "delete_attribute"]
+    });
+    let put = send(&app, Method::PUT, "/q/views/shop", Some(&view.to_string())).await;
+    assert!(put.status.is_success(), "{} {}", put.status, put.body);
+    let a = odata(
+        &app,
+        Method::PATCH,
+        &format!("Product({GUID})/Name"),
+        Some(r#"{"value": "Saw"}"#),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::NO_CONTENT, "{}", a.body);
+    let a = odata(&app, Method::GET, &format!("Product({GUID})/Name"), None).await;
+    assert_eq!(a.body["value"], "Saw", "{}", a.body);
+    let a = odata(
+        &app,
+        Method::PATCH,
+        &format!("Product({GUID})/ID"),
+        Some(&json!({"value": OTHER}).to_string()),
+    )
+    .await;
+    assert_eq!(
+        a.status,
+        StatusCode::BAD_REQUEST,
+        "the key is read-only: {}",
+        a.body
+    );
+    let a = odata(
+        &app,
+        Method::DELETE,
+        &format!("Product(ID=@k)/Name?@k={GUID}"),
+        None,
+    )
+    .await;
+    assert!(
+        a.status == StatusCode::NOT_IMPLEMENTED,
+        "a query option on a write is refused (ADR-0024 decision 5): {} {}",
+        a.status,
+        a.body
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn entity_dereferences_an_id_of_this_service() {
     // Q23: `$entity?$id=` reads the Entity the id names, as its URL does.

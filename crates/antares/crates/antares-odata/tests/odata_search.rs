@@ -324,6 +324,26 @@ async fn a_property_the_engine_hides_never_matches() -> Result<(), String> {
     Ok(())
 }
 
+/// AUZ-06: `$entity` is read over the caller's narrowed model too, so the Entity it answers
+/// holds no property the engine hides.
+#[tokio::test]
+async fn an_entity_dereferenced_by_id_holds_no_hidden_property() -> Result<(), String> {
+    let id = "$entity?$id=Car('urn:ngsi-ld:Car:1')";
+    let (_b, plain) = broker(false).await?;
+    let (status, shown) = send(&plain, Method::GET, &format!("{ROOT}/{id}"), None).await;
+    assert_eq!(
+        (status, &shown["owner"]),
+        (StatusCode::OK, &json!("Ana")),
+        "{shown}"
+    );
+    let (_b, app) = broker(true).await?;
+    let (status, hidden) = send(&app, Method::GET, &format!("{ROOT}/{id}"), None).await;
+    assert_eq!(status, StatusCode::OK, "{hidden}");
+    assert_eq!(hidden["label"], json!("Blue Car"), "{hidden}");
+    assert!(hidden.get("owner").is_none(), "{hidden}");
+    Ok(())
+}
+
 /// AUZ-06, ISO-03: a property the engine hides is refused in `$filter`, `$orderby` and
 /// `$select` exactly as one the view never shows, so the answers name no hidden property.
 #[tokio::test]

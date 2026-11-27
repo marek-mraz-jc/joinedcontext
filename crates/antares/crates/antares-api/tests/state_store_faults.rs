@@ -51,6 +51,9 @@ async fn a_purge_stops_at_the_walk_it_cannot_read() {
     st.put_grant_doc("a~b", json!({"target": "a", "source": "b"}))
         .await
         .expect("grant stored");
+    st.put_grant_doc("loose", json!({"target": "purged"}))
+        .await
+        .expect("grant stored");
     let err = st
         .purge_tenant_documents(&t)
         .await
@@ -64,6 +67,10 @@ async fn a_purge_stops_at_the_walk_it_cannot_read() {
     assert!(
         st.grant_doc("a~b").await.expect("read").is_some(),
         "another Tenant's grant stays"
+    );
+    assert!(
+        st.grant_doc("loose").await.expect("read").is_some(),
+        "a grant naming no source is no party to the Tenant"
     );
 }
 

@@ -218,6 +218,60 @@ async fn a_forward_never_advertises_a_context_its_terms_are_not_in() {
     );
 }
 
+/// 4.3.6 step 6: a registered @context that cannot be loaded leaves the forward
+/// in the @context its terms are in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_registered_context_that_cannot_be_loaded_is_not_advertised() {
+    let st = state();
+    // nothing listens on port 1
+    let ctx = "http://127.0.0.1:1/ctx.jsonld".to_owned();
+    let m = mock_source();
+    register(&st, m.port, &ctx, &["createEntity"]).await;
+
+    let ent = serde_json::json!({"id": ENTITY, "type": "Vehicle",
+        "speed": {"type": "Property", "value": 10}});
+    let (status, body) = send(&st, "POST", "/ngsi-ld/v1/entities", Some(ent.to_string())).await;
+    assert!(status < 300, "create: {status} {body}");
+
+    let head = m.head.lock().expect("lock").clone();
+    let sent = m.body.lock().expect("lock").clone();
+    assert!(!head.is_empty(), "the create must reach the Context Source");
+    assert!(
+        !link_of(&head).unwrap_or_default().contains(&ctx),
+        "an @context that did not load is not advertised: {head}"
+    );
+    assert!(sent.contains("\"speed\""), "terms stay as sent: {sent}");
+}
+
+/// 4.3.6 step 6: a batch body is an array, which has no entity-document
+/// translation, so it travels in the @context its terms are in.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_batch_forward_is_not_claimed_to_be_in_the_registered_context() {
+    let st = state();
+    let ctx = format!("http://127.0.0.1:{}/ctx.jsonld", context_server());
+    let m = mock_source();
+    register(&st, m.port, &ctx, &["createBatch"]).await;
+
+    let ent = serde_json::json!({"id": ENTITY, "type": "Vehicle",
+        "speed": {"type": "Property", "value": 10}});
+    let batch = serde_json::json!([ent]);
+    let (status, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entityOperations/create",
+        Some(batch.to_string()),
+    )
+    .await;
+    assert!(status < 500, "batch create: {status} {body}");
+
+    let head = m.head.lock().expect("lock").clone();
+    assert!(!head.is_empty(), "the batch must reach the Context Source");
+    assert!(
+        !link_of(&head).unwrap_or_default().contains(&ctx),
+        "an untranslated batch must not advertise the registered context: {head}"
+    );
+}
+
 /// The request line of the forward the mock saw.
 fn target_of(head: &str) -> String {
     head.lines()

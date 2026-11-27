@@ -1311,6 +1311,20 @@ mod temporal_requests {
         assert_eq!(status, StatusCode::CREATED, "{body}");
     }
 
+    /// 5.7.4 step 4: a malformed `q` on a temporal query is BadRequestData.
+    #[tokio::test]
+    async fn a_temporal_query_with_a_malformed_q_is_refused() {
+        let st = AppState::new("antares-temporal-q".into());
+        let (status, body) = call(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/temporal/entities?type=Vehicle&q=speed%3E(&timerel=before&timeAt=2999-01-01T00:00:00Z",
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+
     /// 5.7.4.4: an idPattern that does not compile, and a Query body of
     /// another type, are BadRequestData.
     #[tokio::test]
@@ -1685,6 +1699,30 @@ mod t5616_rules_in_the_store {
         ]);
         let car = ["Car".to_owned()];
         assert!(rules_window(&two, Some(&car), &none, None).is_err());
+    }
+
+    /// The windows are on observedAt: a request on another time property,
+    /// or on none, stands for no range under a windowed rule.
+    #[test]
+    fn a_window_range_needs_the_observed_at_property() {
+        let none = HashMap::new();
+        let windowed = Rule {
+            temporal: vec![Window {
+                from: "2026-01-01T00:00:00Z".parse().ok().map(TimeBound::At),
+                to: None,
+            }],
+            ..every("Car")
+        };
+        let f = rules(vec![windowed]);
+        let car = ["Car".to_owned()];
+        assert!(rules_window(&f, Some(&car), &none, None).is_err());
+        let tq = TemporalQ {
+            timerel: "after".to_owned(),
+            time_at: "2025-01-01T00:00:00Z".to_owned(),
+            end_time_at: None,
+            timeproperty: "modifiedAt".to_owned(),
+        };
+        assert!(rules_window(&f, Some(&car), &none, Some(&tq)).is_err());
     }
 
     /// ADR-0023 rule 11 per instance: a document that is no object is

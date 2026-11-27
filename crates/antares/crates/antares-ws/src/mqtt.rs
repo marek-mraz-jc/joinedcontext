@@ -329,6 +329,8 @@ mod tests {
         let mut nul = string("MQTT");
         nul.extend_from_slice(&[4, 2, 0, 0]);
         nul.extend(string("a\0b"));
+        let mut latin = string("MQTT");
+        latin.extend_from_slice(&[4, 2, 0, 0, 0, 1, 0xff]);
         let mut qos = vec![0, 1];
         qos.extend(string("t"));
         qos.push(3);
@@ -342,6 +344,7 @@ mod tests {
         for (bytes, why) in [
             (packet(0x10, &[0, 9, b'M']), "short packet"),
             (packet(0x10, &nul), "U+0000 in a string"),
+            (packet(0x10, &latin), "not UTF-8"),
             (packet(0x82, &qos), "a QoS above 2"),
             (packet(0xa2, &[0, 1]), "an UNSUBSCRIBE without a topic"),
             (packet(0xc0, &[0]), "not a packet a client sends a server"),

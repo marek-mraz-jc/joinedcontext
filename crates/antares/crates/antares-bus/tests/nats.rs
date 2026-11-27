@@ -740,6 +740,29 @@ async fn publish_all_keeps_page_order_and_acks_every_event() {
     assert_eq!(seqs, want, "every event once, in outbox order");
 }
 
+/// A page whose second event the bus refuses to take (an envelope past the
+/// server's payload limit) stops there: the first event, acknowledged, is
+/// counted, and the refusal comes back as the error.
+#[tokio::test(flavor = "multi_thread")]
+async fn publish_all_stops_at_an_event_the_bus_refuses() {
+    let url = require_nats!();
+    let bus = NatsBus::connect(&url).await.expect("connect");
+    let n = nonce();
+    let tenant = TenantId::new(&format!("pr{n}")).expect("tenant");
+    let mut refused = event(&tenant, &format!("urn:pr:{n}:2"), 2);
+    // `types` stay in the envelope the claim check sends, past any payload limit
+    refused.types.push("x".repeat(4 * 1024 * 1024));
+    let (sent, failed) = bus
+        .publish_all(&[
+            event(&tenant, &format!("urn:pr:{n}:1"), 1),
+            refused,
+            event(&tenant, &format!("urn:pr:{n}:3"), 3),
+        ])
+        .await;
+    assert_eq!(sent, 1, "only the event before the refusal is sent");
+    assert!(failed.is_some_and(|e| e.to_string().starts_with("bus error: ")));
+}
+
 /// Messages the subscription bucket holds under `prefix` (a key prefix).
 async fn subs_messages(url: &str, prefix: &str) -> u64 {
     let js = async_nats::jetstream::new(async_nats::connect(url).await.expect("connect"));

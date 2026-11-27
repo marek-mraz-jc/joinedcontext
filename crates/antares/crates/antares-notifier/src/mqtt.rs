@@ -948,6 +948,8 @@ mod tests {
         Ignore,
         /// PUBACK it, then drop the connection.
         AckThenHang,
+        /// PUBACK it and drop the connection in the same breath.
+        AckThenHangAtOnce,
         /// Drop the connection without acknowledging.
         Hang,
         /// As `Hang`, and also drop the connection once a SUBSCRIBE was
@@ -1015,12 +1017,16 @@ mod tests {
                             Some(3) if packet.first().is_some_and(|b| b & 0x06 == 0) => continue,
                             Some(3)
                                 if on_publish == OnPublish::Ack
-                                    || on_publish == OnPublish::AckThenHang =>
+                                    || on_publish == OnPublish::AckThenHang
+                                    || on_publish == OnPublish::AckThenHangAtOnce =>
                             {
                                 let topic = usize::from(packet.get(3).copied().unwrap_or(0));
                                 let at = 4usize.saturating_add(topic);
                                 let pkid = packet.get(at..at.saturating_add(2)).unwrap_or(&[0, 1]);
                                 let _ = s.write_all(&[&[0x40, 0x02][..], pkid].concat()).await;
+                                if on_publish == OnPublish::AckThenHangAtOnce {
+                                    return;
+                                }
                                 if on_publish == OnPublish::AckThenHang {
                                     // let the client read the PUBACK before the EOF
                                     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1117,6 +1123,29 @@ mod tests {
                 "v5={v5}"
             );
         }
+    }
+
+    /// A broker that acknowledges and hangs up in one breath hands back a
+    /// connection whose pump is already over: the publish counts for nothing,
+    /// is retried once, and the second loss is reported.
+    #[tokio::test]
+    async fn a_session_that_ends_with_its_acknowledgement_is_not_a_delivery() {
+        let (port, accepted, _) = stub(OnPublish::AckThenHangAtOnce, Vec::new()).await;
+        let sink = MqttSink::new(2, Duration::from_secs(2));
+        let err = sink
+            .publish_message(&ep_at(port), MqttParams { qos: 1, v5: false }, b"{}")
+            .await
+            .expect_err("a connection that is gone is no delivery");
+        assert!(err.to_string().contains("connection lost"), "{err}");
+        assert_eq!(
+            accepted.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "one retry on a fresh connection"
+        );
+        assert!(
+            sink.pool.lock().expect("pool").is_empty(),
+            "a finished session is not pooled"
+        );
     }
 
     /// F-ANT3-022: a broker that drops the connection after taking a QoS 1

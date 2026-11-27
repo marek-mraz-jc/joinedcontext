@@ -742,15 +742,13 @@ mod tests {
             .await
             .expect("probe cleanup");
         store.outbox_ack(&mine).await.expect("outbox cleanup");
-        assert!(
-            store
-                .outbox_peek(500)
-                .await
-                .expect("peek")
-                .into_iter()
-                .all(|row| row.1 != tenant.as_str()),
-            "the test left its own rows in the shared outbox"
-        );
+        for row in store.outbox_peek(500).await.expect("peek") {
+            assert_ne!(
+                row.1,
+                tenant.as_str(),
+                "the test left its own rows in the shared outbox"
+            );
+        }
     }
 
     /// Step 1 is the flag the health endpoint reads; nothing else may flip it.

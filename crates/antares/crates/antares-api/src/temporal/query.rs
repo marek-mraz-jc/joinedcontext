@@ -1314,3 +1314,37 @@ pub(crate) async fn build_temporal_map(
     }
     crate::entity_map::merge_and_store_map(st, tenant, headers, ctx, params, true, emap).await
 }
+
+#[cfg(test)]
+mod federated_merge {
+    use super::*;
+
+    /// The local Evolutions keep their order and absorb their remote
+    /// copies; an exclusive source adds the Entities only it holds; a
+    /// document without an id, local or remote, and an auxiliary copy of an
+    /// Entity nobody holds locally, add nothing.
+    #[test]
+    fn remote_copies_merge_in_and_unkeyed_or_auxiliary_only_ones_are_left_out() {
+        let at = |t: &str, v: i64| json!({"type": "Property", "value": v, "observedAt": t});
+        let local = vec![
+            json!({"id": "urn:a", "type": "T", "speed": [at("2026-01-01T00:00:00Z", 1)]}),
+            json!({"type": "T"}),
+        ];
+        let fed = vec![
+            (true, json!({"id": "urn:aux-only", "type": "T"})),
+            (false, json!({"type": "T"})),
+            (
+                false,
+                json!({"id": "urn:a", "type": "T", "speed": [at("2026-01-02T00:00:00Z", 2)]}),
+            ),
+            (false, json!({"id": "urn:b", "type": "T"})),
+        ];
+        let merged = merge_federated(local, &fed, "observedAt");
+        let ids: Vec<&str> = merged
+            .iter()
+            .filter_map(|d| d.get("id").and_then(Value::as_str))
+            .collect();
+        assert_eq!(ids, ["urn:a", "urn:b"], "{merged:?}");
+        assert_eq!(merged[0]["speed"].as_array().map(Vec::len), Some(2));
+    }
+}

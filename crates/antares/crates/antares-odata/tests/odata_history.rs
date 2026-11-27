@@ -495,6 +495,8 @@ async fn each_bound_on_observed_at_and_each_other_conjunct_narrows_the_rows() {
             "id%20eq%20'urn:ngsi-ld:Car:7'%20and%20id%20eq%20'urn:ngsi-ld:Car:8'".to_owned(),
             vec![],
         ),
+        // a lower bound past every instance: no Entity holds a row, nothing is read before it
+        ("observedAt%20ge%202030-01-01T00:00:00Z".to_owned(), vec![]),
     ];
     for (filter, expected) in cases {
         let got = read(&app, &format!("Car_history?$filter={filter}")).await;
@@ -547,6 +549,17 @@ async fn a_sorted_page_links_on_and_what_a_history_refuses_besides() {
             StatusCode::BAD_REQUEST,
         ),
         ("Car_history?$skiptoken=3.garbage", StatusCode::BAD_REQUEST),
+        // a pattern too big to compile is no filter this service answers
+        (
+            "Car_history?$filter=matchesPattern(label,'((a%7B100%7D)%7B100%7D)%7B100%7D')",
+            StatusCode::BAD_REQUEST,
+        ),
+        // a number is no predicate
+        ("Car_history?$filter=speed", StatusCode::BAD_REQUEST),
+        (
+            "Car_history?$filter=speed%20add%201",
+            StatusCode::BAD_REQUEST,
+        ),
         // a key whose aliases name no text id: no such row
         (
             "Car_history(id=@i,observedAt=@t)?@i=1&@t=2026-10-01T10:00:00Z",

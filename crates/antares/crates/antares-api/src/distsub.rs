@@ -1650,6 +1650,7 @@ mod mapping_edges {
         let st = AppState::new("me".into());
         let t = TenantId::default();
         inbound_put(&st, "urn:remote:r", &t, OWN, &proof_digest("p0")).await;
+        assert_eq!(index_ids(&st).await, vec![OWN.to_owned()]);
         inbound_rotate(&st, "urn:remote:r", Some(&proof_digest("p1"))).await;
         inbound_rotate(&st, "urn:remote:r", Some(&proof_digest("p2"))).await;
         inbound_rotate(&st, "urn:remote:r", None).await;

@@ -1029,9 +1029,6 @@ async fn partial_update_inner(
                             }
                             let t = antares_store::stored_object(slot)?;
                             for (k, v) in antares_jsonld::expanded_object(&frag_inst)? {
-                                if matches!(k.as_str(), "createdAt" | "modifiedAt") {
-                                    continue;
-                                }
                                 // a member set to the Null, or a sub-Attribute whose every
                                 // instance is a deletion, leaves the instance (10.2.5.4)
                                 if antares_jsonld::removes_member(v) {
@@ -1843,6 +1840,127 @@ mod attr_name_and_via_paths {
         );
     }
 
+    /// A Context Source answering `reply` to every request, one per
+    /// connection.
+    fn mock_replying(reply: &'static str) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { continue };
+                let mut buf = [0u8; 8192];
+                let _ = s.read(&mut buf);
+                let _ = s.write_all(reply.as_bytes());
+            }
+        });
+        port
+    }
+
+    async fn send_json(
+        st: &AppState,
+        method: &str,
+        uri: &str,
+        via: Option<&str>,
+        body: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut b = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len());
+        if let Some(v) = via {
+            b = b.header("Via", v);
+        }
+        let res = send(st, b.body(Body::from(body.to_owned())).expect("request")).await;
+        let status = res.status();
+        let bytes = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    /// 6.3.18: a write whose Via chain already names this broker is answered
+    /// 508 before anything local happens, on every single-Attribute write.
+    #[tokio::test]
+    async fn single_attribute_writes_on_a_via_loop_answer_508() {
+        let st = state();
+        const E: &str = "urn:ngsi-ld:Vehicle:attrs-via-loop";
+        create_entity(&st, E).await;
+        let attr = format!("/ngsi-ld/v1/entities/{E}/attrs/speed");
+        let fragment = r#"{"type":"Property","value":2}"#;
+        for (method, uri, body) in [
+            ("PATCH", attr.clone(), fragment),
+            ("PUT", attr.clone(), fragment),
+            ("PUT", format!("{attr}/value"), "2"),
+        ] {
+            let (status, doc) = send_json(&st, method, &uri, Some("1.1 antares1"), body).await;
+            assert_eq!(status, StatusCode::LOOP_DETECTED, "{method} {uri}: {doc}");
+        }
+    }
+
+    /// 10.2.6: a datasetId that is not a URI is a 400 on Set Attribute Value.
+    #[tokio::test]
+    async fn set_attribute_value_with_a_dataset_id_that_is_not_a_uri_is_refused() {
+        let st = state();
+        const E: &str = "urn:ngsi-ld:Vehicle:attrs-bad-dataset";
+        create_entity(&st, E).await;
+        let uri = format!("/ngsi-ld/v1/entities/{E}/attrs/speed/value?datasetId=not%20a%20uri");
+        let (status, doc) = send_json(&st, "PUT", &uri, None, "2").await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{doc}");
+    }
+
+    /// 5.2.18: an inclusive source whose 207 UpdateResult lists neither an
+    /// Attribute it covers as updated nor as refused leaves that Attribute in
+    /// notUpdated with the broker's own reason.
+    #[tokio::test]
+    async fn an_attribute_a_source_leaves_out_of_its_update_result_is_not_updated() {
+        let st = state();
+        const E: &str = "urn:ngsi-ld:Vehicle:attrs-207-silent";
+        let port = mock_replying(
+            "HTTP/1.1 207 Multi-Status\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: 37\r\n\r\n{\"updated\":[\"speed\"],\"notUpdated\":[]}",
+        );
+        create_entity(&st, E).await;
+        register(&st, port, "attrs-207-silent", E, "inclusive").await;
+        let uri = format!("/ngsi-ld/v1/entities/{E}/attrs");
+        let body =
+            r#"{"speed":{"type":"Property","value":3},"color":{"type":"Property","value":"red"}}"#;
+        let (status, doc) = send_json(&st, "POST", &uri, None, body).await;
+        assert_eq!(status, StatusCode::MULTI_STATUS, "{doc}");
+        let not_updated = doc["notUpdated"].as_array().expect("notUpdated");
+        assert_eq!(not_updated.len(), 1, "{doc}");
+        assert!(
+            not_updated[0]["attributeName"]
+                .as_str()
+                .is_some_and(|n| n.ends_with("color")),
+            "{doc}"
+        );
+        assert!(
+            not_updated[0]["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("returned 207")),
+            "{doc}"
+        );
+    }
+
+    /// 6.3.17: a lone redirect source answering 508 passes the loop verdict
+    /// through to the caller.
+    #[tokio::test]
+    async fn a_redirect_source_answering_508_passes_the_loop_through() {
+        let st = state();
+        const E: &str = "urn:ngsi-ld:Vehicle:attrs-508-source";
+        let port = mock_replying(
+            "HTTP/1.1 508 Loop Detected\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
+        );
+        register(&st, port, "attrs-508-source", E, "redirect").await;
+        let uri = format!("/ngsi-ld/v1/entities/{E}/attrs");
+        let body = r#"{"speed":{"type":"Property","value":3}}"#;
+        let (status, doc) = send_json(&st, "POST", &uri, None, body).await;
+        assert_eq!(status, StatusCode::LOOP_DETECTED, "{doc}");
+    }
+
     /// Antares serves the form it forwards (T-3701): Append and Update
     /// Entity Attributes (5.6.2, 5.6.3) go out as `…/attrs/`, the form the
     /// ETSI mock sources expect, and the router itself answers that path,
@@ -2320,6 +2438,30 @@ mod scope_and_type_edges {
     async fn create(st: &AppState, doc: Value) {
         let (status, body) = call(st, "POST", "/ngsi-ld/v1/entities", Some(doc)).await;
         assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+
+    /// 5.6.19 step 4: a replacement fragment with nothing to replace with is
+    /// BadRequestData and leaves the Attribute as it was.
+    #[tokio::test]
+    async fn clause_5_6_19_an_empty_replacement_fragment_is_refused() {
+        let st = AppState::new("attrs-empty-replace".into());
+        let id = "urn:ngsi-ld:Vehicle:empty-replace";
+        create(
+            &st,
+            json!({"id": id, "type": "Vehicle", "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        for frag in [json!([]), json!("x")] {
+            let (status, body) = call(
+                &st,
+                "PUT",
+                &format!("/ngsi-ld/v1/entities/{id}/attrs/speed"),
+                Some(frag),
+            )
+            .await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        }
+        assert_eq!(entity(&st, id).await["speed"]["value"], 1);
     }
 
     /// 5.6.3.4: an appended type joins the Entity's list; an appended scope

@@ -1070,15 +1070,14 @@ impl Store {
             if !m.get(id).is_some_and(keep) {
                 return None;
             }
-            let removed = m.remove(id);
-            if removed.is_some() {
-                self.persist(
-                    table_for(Kind::Entity),
-                    &key_bytes(tenant.as_str(), id),
-                    None,
-                );
-            }
-            removed
+            // `keep` held for the document just read, so the remove finds it
+            let removed = m.remove(id)?;
+            self.persist(
+                table_for(Kind::Entity),
+                &key_bytes(tenant.as_str(), id),
+                None,
+            );
+            Some(removed)
         });
         if let Some(old) = &removed {
             self.emit(tenant, Some(old.clone()), None).await;
@@ -1834,13 +1833,15 @@ mod tests {
 
             // no write reaches the neighbour's document either
             assert!(!s.delete(&b, kind, id).await, "{kind:?}: delete");
+            let claim = |d: &mut Value| {
+                d["owner"] = json!("b");
+                Ok::<(), ()>(())
+            };
+            let mut probe = json!({});
+            assert_eq!(claim(&mut probe), Ok(()));
+            assert_eq!(probe["owner"], "b");
             assert!(
-                s.mutate::<(), ()>(&b, kind, id, |d| {
-                    d["owner"] = json!("b");
-                    Ok(())
-                })
-                .await
-                .is_none(),
+                s.mutate::<(), ()>(&b, kind, id, claim).await.is_none(),
                 "{kind:?}: mutate"
             );
 
@@ -2184,10 +2185,9 @@ mod tests {
         assert!(s.create(&t, Kind::Entity, "urn:l", live.clone()).await);
 
         // patching or deleting something already invalid is a 404, not a 204
-        assert!(s
-            .mutate(&t, Kind::Entity, "urn:e", |_d| Ok::<(), ()>(()))
-            .await
-            .is_none());
+        let touch = |_d: &mut Value| Ok::<(), ()>(());
+        assert_eq!(touch(&mut json!({})), Ok(()));
+        assert!(s.mutate(&t, Kind::Entity, "urn:e", touch).await.is_none());
         assert!(
             !s.delete(&t, Kind::Entity, "urn:e").await,
             "expired delete is 404"
@@ -2437,6 +2437,35 @@ mod tests {
             .collect();
         assert_eq!(vals, [2, 3], "expired pruned, no-expiry instance kept");
         assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 0, "idempotent");
+    }
+
+    /// In `file` mode a pruned attribute instance is rewritten in the file:
+    /// the reopened store holds the pruned document, not the old one.
+    #[tokio::test]
+    async fn a_pruned_attribute_instance_stays_pruned_after_reopen() {
+        let dir = tempdir("prune_reopen");
+        let t = TenantId::new("prune_t").expect("tenant");
+        {
+            let s = Store::open_file(&dir).expect("open");
+            assert!(
+                s.create(
+                    &t,
+                    Kind::Entity,
+                    "urn:e",
+                    json!({"id": "urn:e", "type": ["T"],
+                        "https://a/attr": [
+                            {"type": "Property", "value": 1, "expiresAt": "2000-01-01T00:00:00Z"},
+                            {"type": "Property", "value": 2, "expiresAt": "2999-01-01T00:00:00Z"}]}),
+                )
+                .await
+            );
+            assert_eq!(s.sweep_expired("2026-01-01T00:00:00Z"), 1);
+        }
+        let s = Store::open_file(&dir).expect("reopen");
+        let e = s.get(&t, Kind::Entity, "urn:e").expect("entity survives");
+        assert_eq!(e["https://a/attr"].as_array().expect("attr").len(), 1);
+        assert_eq!(e["https://a/attr"][0]["value"], 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// ADR-0021 + 4.14: the memory/file arm has no Row-Level Security under
@@ -2878,6 +2907,57 @@ mod tests {
         });
         assert!(booted, "the file boots once the disk answers");
         assert!(refused > 0, "no fault reached the boot");
+    }
+
+    /// A disk that fails a read after the file opened refuses the boot with
+    /// the error, for a marked file, an unmarked empty file and an unmarked
+    /// file that holds data; a disk that answers boots (or refuses the
+    /// unmarked data) whole.
+    #[test]
+    fn a_read_fault_anywhere_in_the_boot_refuses_the_start() {
+        let rows: Vec<(Vec<u8>, Vec<u8>)> = (0..300)
+            .map(|i| {
+                (
+                    format!("t\0urn:e:{i}").into_bytes(),
+                    format!(r#"{{"id":"urn:e:{i}","type":"T"}}"#).into_bytes(),
+                )
+            })
+            .collect();
+        let rows: Vec<(Table, &[u8], &[u8])> = rows
+            .iter()
+            .map(|(k, v)| (T_ENTITIES, k.as_slice(), v.as_slice()))
+            .collect();
+        let ctx: (Table, &[u8], &[u8]) = (
+            T_JSONLD_CONTEXTS,
+            b"https://ctx",
+            br#"{"kind":"Cached","body":{}}"#,
+        );
+        let mut with_ctx = rows.clone();
+        with_ctx.push(ctx);
+        let files = [
+            redb_file(true, &with_ctx),
+            redb_file(false, &[]),
+            redb_file(false, &rows),
+        ];
+        let mut outcomes = std::collections::BTreeSet::new();
+        for (n, file) in files.iter().enumerate() {
+            for reads in (0..400).chain([i64::MAX]) {
+                let fault = self::redb::tests::Fault::new(file.clone(), reads, i64::MAX);
+                let Ok(db) = Database::builder().create_with_backend(fault) else {
+                    continue;
+                };
+                let booted = Store::from_database(db, "read-fault").is_ok();
+                if reads == i64::MAX {
+                    outcomes.insert((n, booted));
+                }
+            }
+        }
+        // a healthy disk boots the marked and the empty file and refuses the
+        // unmarked file that holds data
+        assert_eq!(
+            outcomes.into_iter().collect::<Vec<_>>(),
+            [(0, true), (1, true), (2, false)]
+        );
     }
 
     /// A conditional delete of an Entity that expired takes nothing, as a

@@ -1002,6 +1002,26 @@ mod tests {
         Ok(())
     }
 
+    /// An entry without `attributes` narrows to itself, whole, for every need: a policy
+    /// mixing it with an entry that names capabilities keeps it unchanged.
+    #[test]
+    fn an_entry_without_capabilities_narrows_to_itself() -> Result<(), Box<dyn std::error::Error>> {
+        let info: Information = serde_json::from_value(json!({"entities": [{"type": "Air"}],
+            "propertyNames": ["name"], "relationshipNames": ["near"]}))?;
+        for need in [
+            Need::Schema,
+            Need::Read,
+            Need::of("5.6.3"),
+            Need::of("5.6.6"),
+        ] {
+            let narrowed = info.narrowed(need)?.ok_or("a whole entry grants")?;
+            assert_eq!(narrowed.property_names, ["name"], "{need:?}");
+            assert_eq!(narrowed.relationship_names, ["near"], "{need:?}");
+            assert!(narrowed.attributes.is_empty(), "{need:?}");
+        }
+        Ok(())
+    }
+
     #[test]
     fn write_kinds_narrow_each_write_clause() -> Result<(), String> {
         let got = split(&air(

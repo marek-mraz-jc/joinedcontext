@@ -1020,6 +1020,147 @@ fn nats_outage_flips_health_and_recovers() {
     assert!(h.starts_with("HTTP/1.1 200"), "no panic, still UP: {h}");
 }
 
+/// The mirror writes behind a dead bus: a subscription put and a registry
+/// delta retry their ladder and give up (the API still answers 201), a
+/// cooldown stamp and an outbox page fail to publish, and a retire timer
+/// armed before the outage fires into it. After the restart a write still
+/// lands and the pod stays UP.
+#[test]
+fn a_bus_outage_retries_the_mirror_writes_and_the_pod_recovers() {
+    let _serial = serial();
+    let (Ok(db), Ok(nats)) = (
+        std::env::var("ANTARES_TEST_DATABASE_URL"),
+        std::env::var("ANTARES_TEST_NATS_URL"),
+    ) else {
+        eprintln!("SKIP: ANTARES_TEST_DATABASE_URL / ANTARES_TEST_NATS_URL not set");
+        return;
+    };
+    let upstream = nats
+        .trim_start_matches("nats://")
+        .trim_end_matches('/')
+        .to_string();
+    let run = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("clock")
+        .as_millis();
+    let tenant = format!("mirrorgap{run}");
+    let etype = format!("GapVeh{run}");
+    let (src_port, _dials) = silent_source();
+    let (recv_port, _seen) = receiver();
+
+    let proxy_port = free_port();
+    let proxy = start_proxy(proxy_port, upstream.clone());
+    let port = free_port();
+    let _broker = start(port, "all", &db, &format!("nats://127.0.0.1:{proxy_port}"));
+    wait_healthy(port);
+    wait_for("health reports bus connected", 15, || {
+        http(port, "GET", "/q/health", None, None).contains("\"connected\":true")
+    });
+
+    let sub = |id: &str| {
+        format!(
+            r#"{{"id":"urn:ngsi-ld:Subscription:{id}","type":"Subscription","entities":[{{"type":"{etype}"}}],"notification":{{"endpoint":{{"uri":"http://127.0.0.1:{recv_port}/notify"}}}}}}"#
+        )
+    };
+    // a subscription deleted while the bus is up arms the retire timer
+    let gone = format!("gone{run}");
+    let r = http(
+        port,
+        "POST",
+        "/ngsi-ld/v1/subscriptions",
+        Some(&tenant),
+        Some(&sub(&gone)),
+    );
+    assert!(r.starts_with("HTTP/1.1 201"), "subscription: {r}");
+    let r = http(
+        port,
+        "DELETE",
+        &format!("/ngsi-ld/v1/subscriptions/urn:ngsi-ld:Subscription:{gone}"),
+        Some(&tenant),
+        None,
+    );
+    assert!(r.starts_with("HTTP/1.1 204"), "delete subscription: {r}");
+    let armed = Instant::now();
+
+    // ---- outage ----
+    kill_proxy(&proxy);
+    wait_for("health flips bus.connected to false", 20, || {
+        let h = http(port, "GET", "/q/health", None, None);
+        h.starts_with("HTTP/1.1 200") && h.contains("\"connected\":false")
+    });
+    let r = http(
+        port,
+        "POST",
+        "/ngsi-ld/v1/subscriptions",
+        Some(&tenant),
+        Some(&sub(&format!("live{run}"))),
+    );
+    assert!(r.starts_with("HTTP/1.1 201"), "subscription in outage: {r}");
+    let csr = format!(
+        r#"{{"id":"urn:ngsi-ld:ContextSourceRegistration:gap:{run}",
+            "type":"ContextSourceRegistration",
+            "information":[{{"entities":[{{"type":"{etype}"}}]}}],
+            "management":{{"timeout":300,"cooldown":20000}},
+            "endpoint":"http://127.0.0.1:{src_port}"}}"#
+    );
+    let r = http(
+        port,
+        "POST",
+        "/ngsi-ld/v1/csourceRegistrations",
+        Some(&tenant),
+        Some(&csr),
+    );
+    assert!(r.starts_with("HTTP/1.1 201"), "csr in outage: {r}");
+    // a failed forward stamps the cooldown, whose broadcast has no bus
+    let r = http(
+        port,
+        "GET",
+        &format!("/ngsi-ld/v1/entities?type={etype}"),
+        Some(&tenant),
+        None,
+    );
+    assert!(r.starts_with("HTTP/1.1 200"), "query in outage: {r}");
+    // a write lands in the outbox, whose drain cannot publish it
+    let r = http(
+        port,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some(&tenant),
+        Some(&format!(
+            r#"{{"id":"urn:ngsi-ld:{etype}:1","type":"{etype}","speed":{{"type":"Property","value":1}}}}"#
+        )),
+    );
+    assert!(r.starts_with("HTTP/1.1 201"), "entity in outage: {r}");
+    // both retry ladders run out, and the retire timer (60 s) fires into the gap
+    let hold = stretch(66);
+    while armed.elapsed() < hold {
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    let h = http(port, "GET", "/q/health", None, None);
+    assert!(h.starts_with("HTTP/1.1 200"), "still UP in the gap: {h}");
+
+    // ---- restart ----
+    let _proxy2 = start_proxy(proxy_port, upstream);
+    wait_for("reconnect visible on health", 30, || {
+        let h = http(port, "GET", "/q/health", None, None);
+        h.contains("\"connected\":true") && !h.contains("\"reconnects\":0")
+    });
+    // a write after the restart still lands
+    std::thread::sleep(Duration::from_secs(4));
+    let r = http(
+        port,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        Some(&tenant),
+        Some(&format!(
+            r#"{{"id":"urn:ngsi-ld:{etype}:2","type":"{etype}","speed":{{"type":"Property","value":2}}}}"#
+        )),
+    );
+    assert!(r.starts_with("HTTP/1.1 201"), "entity after the gap: {r}");
+    let h = http(port, "GET", "/q/health", None, None);
+    assert!(h.starts_with("HTTP/1.1 200"), "no panic, still UP: {h}");
+}
+
 /// 5.2.34 cooldown across api pods (fleet regression, IOP_EXT_ERR_01_06
 /// red): the per-registration cooldown stamped after a failed forward must
 /// be visible to EVERY api pod — round-robin otherwise re-dials the failed

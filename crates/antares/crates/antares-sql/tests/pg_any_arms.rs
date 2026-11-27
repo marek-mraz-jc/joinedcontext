@@ -95,6 +95,26 @@ async fn temporal_state_pages_by_id_and_slices_with_its_total() {
     assert!(none.is_empty());
     assert_eq!(total, 3);
 
+    // an upsert over an existing history replaces it and says it did
+    assert!(store
+        .upsert(
+            &t,
+            Kind::Temporal,
+            "urn:v:a",
+            temporal("urn:v:a", "2026-08-05T09:00:00Z")
+        )
+        .await
+        .expect("replace"));
+    assert_eq!(
+        store
+            .list_slice(&t, Kind::Temporal, 0, 10)
+            .await
+            .expect("slice")
+            .1,
+        3,
+        "a replace adds no Entity"
+    );
+
     // an append to an Entity's history lands in what the next read returns; the history
     // half of a mixed deployment appends without looking for the Entity's current state
     let store = AnyStore::Pg(PgBackend::new(pool.clone())).temporal_only();

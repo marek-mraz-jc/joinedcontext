@@ -312,10 +312,11 @@ fn the_planner_names_each_option_it_does_not_serve() {
             &odata_url::Limits::strict(),
         )
         .expect("the parser takes it");
-        match uri {
-            odata_url::ODataUri::Resource { options, .. } => options,
-            _ => QueryOptions::default(),
+        let mut found = QueryOptions::default();
+        if let odata_url::ODataUri::Resource { options, .. } = uri {
+            found = options;
         }
+        found
     };
     assert_eq!(planned(&parsed("$search=blue")), unsupported("$search"));
     assert_eq!(

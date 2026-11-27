@@ -89,3 +89,77 @@ async fn a_member_without_a_registered_attribute_is_not_forwarded() {
         assert_eq!(code, StatusCode::OK, "{id} is stored here: {body}");
     }
 }
+
+/// With an exclusive registration in play, a member that is no JSON object
+/// is still no local part of anything: it fails alone as an invalid member,
+/// and the proxied member goes to the source.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_member_that_is_no_object_fails_alone_beside_an_exclusive_registration() {
+    let peer = Arc::new(Peer::default());
+    let mut st = AppState::new("me".into());
+    antares_api::wire(&mut st).await;
+    let st = st
+        .with_forward_transport(Arc::clone(&peer) as Arc<dyn ForwardTransport>)
+        .expect("a transport on a fresh state");
+    let reg = json!({
+        "id": "urn:ngsi-ld:ContextSourceRegistration:exclusive",
+        "type": "ContextSourceRegistration",
+        "mode": "exclusive",
+        "information": [{"entities": [{"id": "urn:ngsi-ld:Remote:r", "type": "Remote"}], "propertyNames": ["speed"]}],
+        "operations": ["createBatch"],
+        "endpoint": "http://peer.invalid",
+    });
+    let (code, body) = send(&st, "POST", "/ngsi-ld/v1/csourceRegistrations", Some(reg)).await;
+    assert_eq!(code, StatusCode::CREATED, "{body}");
+    let (code, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entityOperations/create",
+        Some(json!([
+            7,
+            {"id": "urn:ngsi-ld:Remote:r", "type": "Remote",
+             "speed": {"type": "Property", "value": 1}},
+        ])),
+    )
+    .await;
+    assert_eq!(code, StatusCode::MULTI_STATUS, "{body}");
+    let bad = "https://uri.etsi.org/ngsi-ld/errors/BadRequestData";
+    assert!(
+        body["errors"]
+            .as_array()
+            .is_some_and(|e| e.iter().any(|x| x["error"]["type"] == bad)),
+        "{body}"
+    );
+    assert_eq!(*peer.0.lock().expect("lock"), 1, "the proxied member went");
+}
+
+/// A delete batch holding no string id sends nothing to a registration that
+/// would take any id, and the member fails as an invalid id.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_delete_batch_without_a_string_id_forwards_nothing() {
+    let peer = Arc::new(Peer::default());
+    let mut st = AppState::new("me".into());
+    antares_api::wire(&mut st).await;
+    let st = st
+        .with_forward_transport(Arc::clone(&peer) as Arc<dyn ForwardTransport>)
+        .expect("a transport on a fresh state");
+    let reg = json!({
+        "id": "urn:ngsi-ld:ContextSourceRegistration:delete",
+        "type": "ContextSourceRegistration",
+        "mode": "inclusive",
+        "information": [{"entities": [{"type": "Remote"}]}],
+        "operations": ["deleteBatch"],
+        "endpoint": "http://peer.invalid",
+    });
+    let (code, body) = send(&st, "POST", "/ngsi-ld/v1/csourceRegistrations", Some(reg)).await;
+    assert_eq!(code, StatusCode::CREATED, "{body}");
+    let (code, body) = send(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entityOperations/delete",
+        Some(json!([5])),
+    )
+    .await;
+    assert_ne!(code, StatusCode::NO_CONTENT, "{body}");
+    assert_eq!(*peer.0.lock().expect("lock"), 0, "nothing was forwarded");
+}

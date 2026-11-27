@@ -99,3 +99,16 @@ async fn an_upgrade_on_another_organizations_tenant_reads_as_an_unknown_tenant(
     );
     Ok(())
 }
+
+/// The process hub of a mistyped limit runs on its defaults (the broker has
+/// refused the value at startup; a host that did not still gets a hub).
+#[test]
+fn the_process_hub_falls_back_to_the_defaults_on_a_mistyped_limit() {
+    std::env::set_var(antares_ws::QUEUE_ENV, "plenty");
+    let hub = Hub::process();
+    assert_eq!(hub.connections(), 0);
+    assert!(
+        std::sync::Arc::ptr_eq(&hub, &Hub::process()),
+        "one hub per process"
+    );
+}

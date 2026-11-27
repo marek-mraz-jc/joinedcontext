@@ -302,12 +302,12 @@ impl Planner<'_> {
                         ))
                     }
                 },
-                SelectItem::Annotation(_) => {
+                // a `*` among the items was answered by the caller before this runs
+                SelectItem::Annotation(_) | SelectItem::Star => {
                     return Err(TableError::NotImplemented(
                         "$select of an annotation".into(),
                     ))
                 }
-                SelectItem::Star => {}
             }
         }
         Ok(names)

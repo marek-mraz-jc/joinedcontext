@@ -1316,6 +1316,49 @@ mod change_pipeline {
     }
 }
 
+/// What a change records into history when its Entity is odd: no id, a type
+/// that is neither a name nor a list, or an Attribute the recording mode
+/// leaves out.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod temporal_recording_edges {
+    use super::*;
+    use serde_json::json;
+
+    const D: &str = "https://uri.etsi.org/ngsi-ld/default-context";
+
+    /// No `id`, nothing to key the history by: nothing is recorded.
+    #[tokio::test]
+    async fn an_entity_without_an_id_records_nothing() {
+        let st = AppState::new("antares-record-idless".into());
+        let t = TenantId::default();
+        let after = json!({"type": [format!("{D}/T")],
+            format!("{D}/speed"): [{"type": "Property", "value": 1}]});
+        record_temporal_change(&st, &t, None, Some(&after)).await;
+        assert!(st.temporal.list(&t).await.expect("list").is_empty());
+    }
+
+    /// In `ruled` mode an Attribute written without `observedAt` is not a
+    /// new observation, so an Entity that keeps its own history still
+    /// records nothing of it.
+    #[tokio::test]
+    async fn a_change_the_mode_does_not_admit_is_not_recorded() {
+        let mut st = AppState::new("antares-record-ruled".into());
+        st.temporal_record = crate::state::TemporalRecord::Ruled;
+        let t = TenantId::default();
+        let id = "urn:ngsi-ld:T:ruled";
+        let after = json!({"id": id, "type": [format!("{D}/T")],
+            antares_store::HISTORY_RETENTION: [{"type": "Property", "value": "P1D"}],
+            format!("{D}/speed"): [{"type": "Property", "value": 1}]});
+        record_temporal_change(&st, &t, None, Some(&after)).await;
+        let held = st.temporal.get(&t, id).await.expect("read");
+        assert!(
+            held.as_ref()
+                .is_none_or(|d| d.get(format!("{D}/speed")).is_none()),
+            "{held:?}"
+        );
+    }
+}
+
 /// The pipeline's own seams: a full queue, a panicking step, a seed over
 /// a row it cannot key, a failed seed, a delivery that never ends, and a
 /// lost group told to its binding.
@@ -5226,6 +5269,19 @@ mod context_memo {
         );
     }
 
+    /// An `@context` that cannot be resolved falls back to the core context.
+    #[tokio::test]
+    async fn an_unresolvable_context_falls_back_to_the_core_context() {
+        let st = AppState::new("antares-ctx-memo-broken".into());
+        let tenant = TenantId::new_internal("alpha").expect("tenant");
+        let mut memo = CtxMemo::new();
+        let sub = json!({"id": "urn:ngsi-ld:Subscription:1", "__context": 7});
+
+        let ctx = sub_context_memo(&st, &tenant, "alpha", &sub, &mut memo).await;
+
+        assert_eq!(ctx.expand_key("id"), st.loader.core().expand_key("id"));
+    }
+
     /// A Subscription carrying an inline `@context` rather than a URL has no
     /// cheap identity to key on: it resolves as it did before the memo, and
     /// leaves no entry behind that a later URL lookup could collide with.
@@ -5243,6 +5299,49 @@ mod context_memo {
 
         assert_eq!(ctx.expand_key("Vehicle"), "https://example.org/Vehicle");
         assert!(memo.is_empty(), "an inline @context left a memo entry");
+    }
+}
+
+/// What the matcher skips before it reads a candidate's conditions.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod candidate_guards {
+    use super::matching::matches_for;
+    use super::*;
+
+    /// A paused Subscription and a periodic one are no candidate of a change, and a tenant
+    /// name no tenant has matches nothing.
+    #[tokio::test]
+    async fn a_paused_or_periodic_subscription_is_never_matched_by_a_change() {
+        let st = AppState::new("antares-candidate-guards".into());
+        let tenant = TenantId::new_internal("alpha").expect("tenant");
+        for (id, more) in [
+            (
+                "urn:ngsi-ld:Subscription:paused",
+                json!({"isActive": false}),
+            ),
+            (
+                "urn:ngsi-ld:Subscription:periodic",
+                json!({"timeInterval": 60}),
+            ),
+        ] {
+            let mut doc = json!({"id": id, "type": "Subscription",
+                "entities": [{"type": "Vehicle"}],
+                "notification": {"endpoint": {"uri": "http://h/n"}}});
+            if let (Some(d), Some(m)) = (doc.as_object_mut(), more.as_object()) {
+                d.extend(m.clone());
+            }
+            st.store
+                .create(&tenant, Kind::Subscription, id, doc)
+                .await
+                .expect("seed subscription");
+        }
+        let entity = json!({"id": "urn:ngsi-ld:Vehicle:1", "type": ["Vehicle"]});
+        let mut memo = CtxMemo::new();
+        let matched = matches_for(&st, "alpha", None, Some(entity.clone()), 0, &mut memo).await;
+        assert!(matched.is_empty());
+        let mut memo = CtxMemo::new();
+        let matched = matches_for(&st, "", None, Some(entity), 0, &mut memo).await;
+        assert!(matched.is_empty());
     }
 }
 

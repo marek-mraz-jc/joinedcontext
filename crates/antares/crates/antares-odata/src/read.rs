@@ -2953,13 +2953,13 @@ mod tests {
 
     fn single_or(key: &Key) -> Key {
         // The canonical form of a named key is the single one.
-        match key {
-            Key::Compound(pairs) => match pairs.first() {
-                Some((_, v)) => Key::Single(v.clone()),
-                None => key.clone(),
-            },
-            Key::Single(_) => key.clone(),
+        let mut canonical = key.clone();
+        if let Key::Compound(pairs) = key {
+            if let Some((_, v)) = pairs.first() {
+                canonical = Key::Single(v.clone());
+            }
         }
+        canonical
     }
 
     #[test]

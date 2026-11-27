@@ -1395,17 +1395,16 @@ mod wire_golden {
                 ("2026-03-28T20:00:00", "2026-03-29", false),
                 ("2026-03-28T20:00:00", "2026-03-29T02:30:00", false),
             ] {
-                let (Some(s), Some(e)) = (When::parse(start), When::parse(end)) else {
-                    got.push(format!("{name} {start} {end} => unread"));
-                    continue;
-                };
-                let w = Window::read(Some(s), Some(e), z);
-                got.push(format!(
-                    "{name} {start} {end} {inclusive} => {} {} {}",
-                    s.end_like(e, inclusive, z).property("DTEND"),
-                    w.holds(s, None, z),
-                    Window::read(Some(e), None, z).holds(s, Some(e), z),
-                ));
+                // a bound that does not read leaves its row out of the snapshot
+                got.extend(When::parse(start).zip(When::parse(end)).map(|(s, e)| {
+                    let w = Window::read(Some(s), Some(e), z);
+                    format!(
+                        "{name} {start} {end} {inclusive} => {} {} {}",
+                        s.end_like(e, inclusive, z).property("DTEND"),
+                        w.holds(s, None, z),
+                        Window::read(Some(e), None, z).holds(s, Some(e), z),
+                    )
+                }));
             }
         }
         assert_eq!(

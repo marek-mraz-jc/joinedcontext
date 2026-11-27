@@ -326,6 +326,26 @@ fn attribute(p: &Prop, value: &Value) -> Value {
 mod tests {
     use super::*;
 
+    /// A body streamed past the bound is refused 413 before it is parsed, whatever its
+    /// declared length says.
+    #[tokio::test]
+    async fn a_streamed_body_past_the_bound_is_413() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            CONTENT_TYPE,
+            HeaderValue::from_static("application/geo+json"),
+        );
+        let body = Body::from(vec![b' '; MAX_BODY + 1]);
+        let refused = read(&headers, body, false).await;
+        assert_eq!(
+            refused,
+            Err(Problem(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "the body is above 1 MiB"
+            ))
+        );
+    }
+
     /// T-5912: only the data model's refusal of an attribute the collection shows passes on;
     /// a hidden attribute, another 400 and a detail without a name stay the broker's.
     #[test]

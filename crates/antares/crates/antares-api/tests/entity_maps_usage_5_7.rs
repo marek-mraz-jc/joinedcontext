@@ -298,6 +298,48 @@ async fn clause_5_7_4_4_live_map_fixes_the_result_set() {
     assert_eq!(map_header(&headers).as_deref(), Some(loc.as_str()));
 }
 
+/// 5.5.9 step 3 / 5.5.14: the recheck of a live temporal map drops the local
+/// entries the request's filters no longer admit, and a map none of whose
+/// entries fit answers an empty list, not the whole Tenant.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_7_4_4_the_recheck_prunes_entries_no_longer_fitting() {
+    let st = state().await;
+    create_vehicle(&st, "urn:ngsi-ld:Vehicle:r1", 30).await;
+    create_vehicle(&st, "urn:ngsi-ld:Vehicle:r2", 60).await;
+    let window = "timerel=after&timeAt=2000-01-01T00:00:00Z&timeproperty=createdAt";
+    let (status, headers, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{window}&entityMap=true"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let loc = map_header(&headers).expect("map location");
+
+    let (status, _, body) = get_with_map(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{window}&q=speed%3E40"),
+        &loc,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body
+        .as_array()
+        .expect("array")
+        .iter()
+        .filter_map(|d| d.get("id").and_then(Value::as_str))
+        .collect();
+    assert_eq!(ids, vec!["urn:ngsi-ld:Vehicle:r2"], "{body}");
+
+    let (status, _, body) = get_with_map(
+        &st,
+        &format!("/ngsi-ld/v1/temporal/entities?type=Vehicle&{window}&q=speed%3E1000"),
+        &loc,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body, json!([]), "{body}");
+}
+
 /// 5.7.4.4: "If the resource cannot be found, or the data has expired, a
 /// new EntityMap shall be created" — the temporal query recreates (201).
 #[tokio::test(flavor = "multi_thread")]
