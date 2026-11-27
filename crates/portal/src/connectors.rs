@@ -2918,6 +2918,12 @@ pub(crate) mod tests {
         None
     }
 
+    /// The fixture places nothing, whatever it is asked.
+    #[test]
+    fn nowhere_places_nothing() {
+        assert_eq!(nowhere("Endpoint", "air"), None);
+    }
+
     fn item(project: &str, endpoint: Option<&str>) -> ScopeItem {
         ScopeItem {
             project: project.into(),

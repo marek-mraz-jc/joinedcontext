@@ -313,6 +313,75 @@ async fn a_space_completed_from_a_url_infers_its_model_from_the_probed_records()
     );
 }
 
+/// A model inferred from a public address is inferred from the records the runner fetched there.
+#[tokio::test]
+async fn a_model_is_inferred_from_the_records_a_public_address_answers() {
+    let runner = runner().await;
+    let model_tools = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path_regex("^/infer-schema$"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "linkml": "id: https://example.com/stops\nclasses:\n  BusStop:\n    is_a: Entity\n"
+        })))
+        .mount(&model_tools)
+        .await;
+    let mut config = config(Some(&runner));
+    config.model_tools_url = Some(model_tools.uri());
+    let state = AppState::new(config, None).with_mirror(mirror("infer"));
+    let feed = json!({ "data": { "stops": [{ "id": "1", "name": "Rautatientori" }] } });
+    let probed = [json!({ "input": feed.to_string(), "output": feed, "error": null })];
+    let uri = op("infer", "jc_model_infer");
+    let (inferred, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &uri,
+            Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+        ),
+        play_runner(&runner, &state, 0, &probed),
+    );
+    assert_eq!(inferred.status, StatusCode::OK, "{}", inferred.text);
+    assert!(inferred.text.contains("BusStop"), "{}", inferred.text);
+    let sent = model_tools.received_requests().await.expect("recorded");
+    assert_eq!(sent.len(), 1, "one inference of the fetched records");
+}
+
+/// An address whose fetch answers nothing within the test's window is the address's fault, said
+/// at its field (T-7921).
+#[tokio::test]
+async fn an_address_that_answers_nothing_infers_nothing_and_says_so_at_its_field() {
+    let runner = runner().await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror("silent"));
+    let uri = op("silent", "jc_model_infer");
+    let (inferred, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &uri,
+            Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+        ),
+        play_runner(&runner, &state, 0, &[]),
+    );
+    assert_eq!(
+        inferred.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        inferred.text
+    );
+    assert!(
+        inferred.text.contains(r#""path":"url""#),
+        "{}",
+        inferred.text
+    );
+    assert!(
+        inferred.text.contains("the feed answered nothing"),
+        "{}",
+        inferred.text
+    );
+}
+
 #[tokio::test]
 async fn a_source_with_a_credential_a_stream_or_no_name_says_what_to_give_instead() {
     let state = state("refusals", None);
@@ -401,6 +470,52 @@ async fn trying_a_mapping_answers_what_the_pipeline_test_answers() {
     assert_eq!(tried["input"], tested["input"]);
     assert_eq!(tried["errors"][0]["line"], 3);
     assert_eq!(tried["errors"][0]["step"], 0);
+}
+
+/// A pipeline test is red at the output type the model lacks and at each record the model
+/// refuses, and with `steps` it names each step it ran.
+#[tokio::test]
+async fn a_pipeline_test_is_red_at_a_type_the_model_lacks_and_a_record_it_refuses() {
+    let runner = runner().await;
+    let state = state("tested", Some(&runner));
+    let pipeline = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Pipeline",
+        "metadata": { "name": "stations" },
+        "spec": {
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "stations-csv" } },
+            "compute": { "kind": "bloblang", "bloblang": "root = this" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:bikes:bikes-write",
+            "output": { "type": "Bench", "mode": "upsert" }
+        }
+    });
+    let captured = [
+        json!({ "input": "{}", "error": null, "output": {
+        "id": "urn:ngsi-ld:BikeStation:hel.fi:bikes:01", "type": "BikeStation",
+        "capacity": "twelve" } }),
+        json!({ "input": "{}", "error": null, "output": { "id": "bench-1", "type": "BikeStation" } }),
+    ];
+    let body = json!({ "pipeline": pipeline, "steps": true,
+        "sample": { "text": "station,capacity\n01,twelve\n", "format": "csv" } });
+    let uri = op("tested", "jc_pipeline_test");
+    let (tested, _) = tokio::join!(
+        send(&state, person("dev"), "POST", &uri, Some(body)),
+        play_runner(&runner, &state, 0, &captured),
+    );
+    assert_eq!(tested.status, StatusCode::OK, "{}", tested.text);
+    let answer = json_of(&tested.text);
+    assert_eq!(answer["verdict"]["ok"], false, "{answer}");
+    let paths: Vec<&str> = answer["verdict"]["findings"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|f| f["path"].as_str())
+        .collect();
+    assert!(paths.contains(&"spec.output.type"), "{paths:?}");
+    assert!(paths.contains(&"records[0].capacity"), "{paths:?}");
+    assert!(paths.contains(&"validation[1]"), "{paths:?}");
+    assert!(answer["steps"].is_array(), "{answer}");
 }
 
 #[tokio::test]
@@ -597,6 +712,20 @@ async fn validating_refuses_a_space_without_a_model_too_many_records_and_a_stran
         "{}",
         nothing.text
     );
+
+    let aimless = send(
+        &state,
+        person("jana"),
+        "POST",
+        &op("edges", "jc_pipeline_validate"),
+        Some(json!({ "records": one, "pipeline": {
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Pipeline",
+            "metadata": { "name": "aimless", "namespace": "edges" },
+            "spec": { "steps": [] } } })),
+    )
+    .await;
+    assert!(aimless.status.is_client_error(), "{}", aimless.text);
+    assert!(aimless.text.contains("no target space"), "{}", aimless.text);
 
     let many: Vec<Value> = (0..101).map(|n| json!({ "id": n })).collect();
     let too_many = send(
@@ -1040,5 +1169,69 @@ async fn a_planned_data_source_on_a_private_or_unknown_host_or_of_another_plan_i
         StatusCode::UNPROCESSABLE_ENTITY,
         "{}",
         alone.text
+    );
+}
+
+/// A planned source that streams is not sampled before its approval: the answer says to give the
+/// sample as text.
+#[tokio::test]
+async fn a_planned_streaming_source_is_sampled_only_once_approved() {
+    let state = state("streams", None);
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("streams", "jc_change_plan"),
+        Some(
+            json!({ "changes": [{ "op": "create", "kind": "DataSource", "name": "live",
+            "manifest": { "apiVersion": "joinedcontext.com/v1alpha1", "kind": "DataSource",
+                "metadata": { "name": "live", "namespace": "streams" },
+                "spec": { "type": "mqtt", "mqtt": {
+                    "urls": ["tcp://93.184.215.14:1883"], "topics": ["city/#"] } } } }] }),
+        ),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let id = json_of(&answer.text)["planId"]
+        .as_str()
+        .expect("a planId")
+        .to_owned();
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("streams", "jc_pipeline_sample_source"),
+        Some(json!({ "dataSource": "live", "planId": id })),
+    )
+    .await;
+    assert!(answer.status.is_client_error(), "{}", answer.text);
+    assert!(
+        answer.text.contains("of type mqtt") && answer.text.contains("only over http"),
+        "{}",
+        answer.text
+    );
+}
+
+/// Without a runner to fetch it, an address infers nothing and says so at `url`.
+#[tokio::test]
+async fn an_address_no_runner_can_fetch_infers_nothing() {
+    let state = state("unrun", None);
+    let answer = send(
+        &state,
+        person("dev"),
+        "POST",
+        &op("unrun", "jc_model_infer"),
+        Some(json!({ "name": "stops", "url": "https://93.184.215.14/stops.json" })),
+    )
+    .await;
+    assert!(
+        answer.status.is_client_error() || answer.status.is_server_error(),
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("/url") || answer.text.contains("runner"),
+        "{}",
+        answer.text
     );
 }

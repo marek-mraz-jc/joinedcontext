@@ -77,7 +77,12 @@ async fn world() -> (MockServer, AppState) {
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
         .mount(&server)
         .await;
-    let files = files();
+    let mut files = files();
+    // Another project of the organization: the preview renders the workspace's project alone.
+    files.push((
+        "projects/elsewhere/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: elsewhere\n  namespace: org\nspec:\n  organizationRef: bb\n".to_owned(),
+    ));
     Mock::given(method("GET"))
         .and(path(format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"))).and(query_param("@r", format!("'{HEAD}'")))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -353,5 +358,271 @@ async fn the_rest_route_and_the_ops_door_refuse_alike() {
         "{} vs {}",
         rest.text(),
         door.text()
+    );
+}
+
+/// The project repository of layout 2 the mirror names for the project (CC-85).
+const PROJECT_REPO: &str = "/odata/Repositories(Owner='test-owner',Name='ovzdusie-data')";
+
+/// `repo`'s tree at `head` holding `files`, each file readable at that ref.
+async fn mount_tree(server: &MockServer, repo: &str, head: &str, files: &[(&str, String)]) {
+    Mock::given(method("GET"))
+        .and(path(format!("{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)")))
+        .and(query_param("@r", format!("'{head}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Truncated": false,
+            "Tree": files.iter().map(|(p, _)| json!({ "Path": p, "Type": "blob", "Sha": format!("s-{head}-{p}") })).collect::<Vec<_>>()
+        })))
+        .mount(server)
+        .await;
+    for (file, content) in files {
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{file}'")))
+            .and(query_param("@r", format!("'{head}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "x",
+                "Content": encode(content)
+            })))
+            .mount(server)
+            .await;
+    }
+}
+
+/// Jana's workspace `air-v2` of a project with a repository of its own: the organization at
+/// its main head, the project's branch in the project repository.
+async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
+    let server = forge().await;
+    common::mount_repository(&server, PROJECT_REPO).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{PROJECT_REPO}/Branches('workspace%2Fair-v2')"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('main')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "main1" })))
+        .mount(&server)
+        .await;
+    let all = files();
+    let layout = ("2\n").to_owned();
+    let entry = all[1].1.replace(
+        "  organizationRef: bb\n",
+        "  organizationRef: bb\n  repository:\n    name: ovzdusie-data\n  ref: main\n",
+    );
+    let organization = vec![
+        (".jc/layout", layout.clone()),
+        (all[0].0, all[0].1.clone()),
+        ("projects/ovzdusie.yaml", entry),
+    ];
+    mount_tree(&server, REPO, "main1", &organization).await;
+    let mut inside: Vec<(&str, String)> =
+        vec![(".jc/layout", layout), ("project.yaml", all[1].1.clone())];
+    inside.extend(
+        all[2..]
+            .iter()
+            .map(|(p, c)| (p.trim_start_matches("projects/ovzdusie/"), c.clone())),
+    );
+    if project_tree {
+        mount_tree(&server, PROJECT_REPO, HEAD, &inside).await;
+    } else {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{PROJECT_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+    }
+    let state = doors::state_with(state_on(&server));
+    state
+        .mirror
+        .set_repositories(std::collections::BTreeMap::from([(
+            PROJECT.to_owned(),
+            "ovzdusie-data".to_owned(),
+        )]));
+    open(&state, "air-v2", "jana").await;
+    (server, state)
+}
+
+/// CC-85: a preview of a project with its own repository assembles the organization at main
+/// with the project's branch; the answer is the render or the assembly's refusal, never a
+/// stage of the wrong repository.
+#[tokio::test]
+async fn a_preview_of_a_project_repository_assembles_it_with_the_organization() {
+    let (server, state) = layout_two(true).await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, started.status, "{}", started.text());
+    assert_eq!("running", started.body["state"], "{}", started.text());
+    let asked: Vec<String> = server
+        .received_requests()
+        .await
+        .expect("requests")
+        .iter()
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(
+        asked
+            .iter()
+            .any(|p| p.starts_with(PROJECT_REPO) && p.contains("Shako.Tree")),
+        "the project repository is staged: {asked:?}"
+    );
+}
+
+/// A project repository the forge cannot list is a 503 saying the branch did not stage.
+#[tokio::test]
+async fn a_project_repository_that_does_not_stage_is_unavailable() {
+    let (_server, state) = layout_two(false).await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.text().contains("did not stage"),
+        "{}",
+        started.text()
+    );
+}
+
+/// A forge that fails reading the workspace's branch is the forge's error, not a missing branch.
+#[tokio::test]
+async fn a_forge_failing_the_branch_read_is_not_a_missing_branch() {
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let state = doors::state_with(state_on(&server));
+    open(&state, "air-v2", "jana").await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_ne!(StatusCode::OK, started.status, "{}", started.text());
+    assert_ne!(StatusCode::NOT_FOUND, started.status, "{}", started.text());
+}
+
+/// CC-81: the gateway's list holds a running preview that renders, and leaves out one whose
+/// branch went away since it started, without failing the list.
+#[tokio::test]
+async fn the_served_list_leaves_out_a_preview_that_no_longer_renders() {
+    let (server, state) = world().await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, started.status, "{}", started.text());
+    let listed = joinedcontext_portal::ops::previews::served(&state)
+        .await
+        .expect("listed");
+    assert_eq!(listed.items.len(), 1);
+    server.reset().await;
+    let listed = joinedcontext_portal::ops::previews::served(&state)
+        .await
+        .expect("listed");
+    assert!(
+        listed.items.is_empty(),
+        "a branch that is gone serves nothing"
+    );
+}
+
+/// A branch of the organization's repository that the forge cannot list is a 503 saying the
+/// branch did not stage (T-7921).
+#[tokio::test]
+async fn a_branch_that_does_not_stage_is_unavailable() {
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&server)
+        .await;
+    let state = doors::state_with(state_on(&server));
+    open(&state, "air-v2", "jana").await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.text().contains("did not stage"),
+        "{}",
+        started.text()
+    );
+}
+
+/// CC-81: a running preview whose branch moved to files that no longer load is left out of the
+/// gateway's list, and the list still answers (T-7921).
+#[tokio::test]
+async fn the_served_list_leaves_out_a_preview_whose_files_no_longer_load() {
+    let (server, state) = world().await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(StatusCode::OK, started.status, "{}", started.text());
+    server.reset().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": "head2" })))
+        .mount(&server)
+        .await;
+    let mut broken = files();
+    // The same ContextSpace twice: the repository does not load.
+    let twice = broken[2].1.clone();
+    broken.push(("projects/ovzdusie/spaces/air/again.yaml", twice));
+    mount_tree(&server, REPO, "head2", &broken).await;
+    let listed = joinedcontext_portal::ops::previews::served(&state)
+        .await
+        .expect("listed");
+    assert!(
+        listed.items.is_empty(),
+        "files that do not load serve nothing: {:?}",
+        listed
+            .items
+            .iter()
+            .map(|item| item.files.keys().cloned().collect::<Vec<_>>())
+            .collect::<Vec<_>>()
     );
 }

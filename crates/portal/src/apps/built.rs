@@ -744,4 +744,36 @@ mod tests {
             }
         }
     }
+
+    /// A build of an App with no repository of its own is refused before the forge is asked; a
+    /// forge that does not answer is a 503 naming the App and its repository.
+    #[tokio::test]
+    async fn a_build_without_a_repository_or_forge_is_refused() {
+        let closed = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = closed.local_addr().expect("addr").port();
+        drop(closed);
+        let shako = ShakoClient::new(
+            format!("http://127.0.0.1:{port}").parse().expect("url"),
+            "o",
+            "r",
+            "t",
+        )
+        .expect("client");
+        let build = serde_json::json!({ "digest": "sha256:aa", "commit": "c1" });
+        let none = check_and_publish(&shako, None, "roads", "map", &serde_json::json!({}), &build)
+            .await
+            .expect_err("no spec.source.git");
+        assert!(
+            matches!(&none, ApiError::BadRequest(why) if why.contains("names no spec.source.git")),
+            "{none:?}"
+        );
+        let spec = serde_json::json!({ "source": { "git": "roads-map" } });
+        let down = check_and_publish(&shako, None, "roads", "map", &spec, &build)
+            .await
+            .expect_err("no forge");
+        assert!(
+            matches!(&down, ApiError::Unavailable(why) if why.contains("could not check the build of App 'map'")),
+            "{down:?}"
+        );
+    }
 }

@@ -539,6 +539,17 @@ mod tests {
             "{embed}"
         );
         assert!(!embed.contains("<script>"), "{embed}");
+        // An Endpoint naming no type embeds its slug alone.
+        let untyped = endpoint(
+            json!({ "slug": "bikesdopravazzzzzzzzzzzzzzz", "audience": "public" }),
+            None,
+        );
+        let access = reach(&state, "doprava", &untyped).detail(&state, &untyped);
+        let embed = access["embed"].as_str().expect("embed");
+        assert!(
+            embed.contains("embed.html#bikesdopravazzzzzzzzzzzzzzz\" title=\"bikes\""),
+            "{embed}"
+        );
         let mut restricted = spec;
         restricted["audience"] = json!("restricted");
         let hidden = endpoint(restricted, None);

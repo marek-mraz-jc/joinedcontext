@@ -46,6 +46,8 @@ struct Bucket {
     versioning: String,
     objects: BTreeMap<String, Versions>,
     counter: u32,
+    /// Lists no versions once an object was written: a run's prune meets a failing store.
+    refuse_listing_after_put: bool,
     /// `(method, text of the request's URI, status)`: a call matching one is answered with that
     /// status and changes nothing, so a failing bucket can be told apart per call.
     fail: Vec<(String, String, u16)>,
@@ -133,6 +135,13 @@ async fn s3(
             StatusCode::NOT_FOUND,
             "ObjectLockConfigurationNotFoundError",
         ),
+        ("GET", true)
+            if query.contains_key("versions")
+                && bucket.refuse_listing_after_put
+                && !bucket.objects.is_empty() =>
+        {
+            error(StatusCode::SERVICE_UNAVAILABLE, "SlowDown")
+        }
         ("GET", true) if query.contains_key("versions") => {
             let prefix = query.get("prefix").cloned().unwrap_or_default();
             let mut out = String::from("<ListVersionsResult>");
@@ -536,6 +545,21 @@ async fn saved_and_run(world: &World, who: &str) -> Value {
     .await;
     assert_eq!(run.status, StatusCode::OK, "{}", run.text);
     body(&run)
+}
+
+/// A run whose old versions cannot be listed afterwards still succeeds: the backup is written
+/// and the prune waits for the next run (T-7921).
+#[tokio::test]
+async fn a_prune_the_store_refuses_leaves_the_written_backup_standing() {
+    let world = world("alfa", "Enabled").await;
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .refuse_listing_after_put = true;
+    let run = saved_and_run(&world, "ada").await;
+    assert_eq!(run["ok"], true, "{run}");
+    assert!(!world.bucket.lock().expect("bucket").objects.is_empty());
 }
 
 /// Two due backups: alfa's configuration target as ada saves it, and the same target copied to
@@ -2864,6 +2888,14 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
          VALUES ('alfa-city', 'air', 'urn:ngsi-ld:X:alfa-2', 'ada', 'Ada', 'alfa-kept-mark')",
     )
     .await;
+    // A row addressed by no id of its own: the copy writes it under the new name too.
+    as_project(
+        &db,
+        "alfa-city",
+        "INSERT INTO pipeline_status (project, pipeline, status) \
+         VALUES ('alfa-city', 'ingest', '{\"phase\":\"Running\"}')",
+    )
+    .await;
     let world = world_with("alfa", "Enabled", Some(db.clone())).await;
     let ids = identities();
     let run = data_saved_and_run(&world, &ids).await;
@@ -2924,6 +2956,7 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
     let plan = body(&check);
     assert_eq!(plan["tables"]["entity_comments"]["create"], 2, "{plan}");
     assert_eq!(plan["projectId"], "", "a check mints no id");
+    assert_eq!(plan["tables"]["pipeline_status"]["create"], 1, "{plan}");
     let minted: i64 =
         sqlx::query_scalar("SELECT count(*) FROM project_ids WHERE name = 'alfa-copy'")
             .fetch_one(&db)
@@ -3250,6 +3283,55 @@ async fn only_administrators_reach_the_project_copy_doors() {
             refused.text
         );
     }
+}
+
+/// A check counts a row changed since the backup as an update, and refuses the rows of a
+/// project the Organization no longer holds: there is no key to write them under (T-7921).
+#[tokio::test]
+async fn a_restore_check_updates_a_changed_row_and_refuses_a_project_no_longer_held() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    let world = world_with("alfa", "Enabled", Some(db.clone())).await;
+    let ids = identities();
+    let run = data_saved_and_run(&world, &ids).await;
+    assert_eq!(run["ok"], true, "{run}");
+    let version = run["versionId"].as_str().expect("a version").to_owned();
+    let door = format!("{DATA_DOOR}/versions/{version}/restore");
+    let check = || async {
+        let check = send(
+            &world.state,
+            person("ada"),
+            "POST",
+            &door,
+            Some(json!({ "identity": secret_of(&ids[0]) })),
+        )
+        .await;
+        assert_eq!(check.status, StatusCode::OK, "{}", check.text);
+        body(&check)["plan"]["modules"]["portal"].clone()
+    };
+    as_project(
+        &db,
+        "alfa-city",
+        "UPDATE activity SET summary = 'changed since' WHERE project = 'alfa-city'",
+    )
+    .await;
+    let portal = check().await;
+    assert_eq!(portal["activity"]["update"], 1, "{portal}");
+
+    world
+        .state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "Project".to_owned(),
+            name: "alfa-city".to_owned(),
+        })
+        .expect("the project was held");
+    let portal = check().await;
+    assert_eq!(portal["activity"]["refused"], 1, "{portal}");
+    assert_eq!(portal["entity_comments"]["refused"], 1, "{portal}");
+    assert_eq!(portal["activity"]["update"], 0, "{portal}");
 }
 
 #[tokio::test]

@@ -191,6 +191,100 @@ async fn opening_records_the_workspace_and_cuts_its_branch_from_main() {
     assert_eq!(body(&listed.text)["items"][0]["name"], "air-v2");
 }
 
+/// A branch an earlier workspace of the name left is deleted and cut again from main; a forge
+/// that cuts no branch leaves no record behind.
+#[tokio::test]
+async fn opening_recuts_a_left_branch_and_records_nothing_when_no_branch_is_cut() {
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "exists" })))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CREATED, "{}", answer.text);
+    assert_eq!(calls(&server, "POST", "/Shako.DeleteBranch").await.len(), 1);
+    assert_eq!(calls(&server, "POST", "/Shako.CreateBranch").await.len(), 2);
+
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert!(answer.status.is_server_error(), "{}", answer.text);
+    let listed = send(&state, steward(), "GET", WS, None).await;
+    assert_eq!(body(&listed.text)["items"], json!([]), "{}", listed.text);
+}
+
+/// A left branch the forge will not delete opens no workspace; a forge failing the workspace's
+/// tree read is said on a compare, never read as an empty workspace.
+#[tokio::test]
+async fn a_forge_failing_the_branch_or_tree_is_said_and_records_nothing() {
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.CreateBranch")))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "exists" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path(format!("{REPO}/Shako.DeleteBranch")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        WS,
+        Some(json!({ "name": "air-v2" })),
+    )
+    .await;
+    assert!(answer.status.is_server_error(), "{}", answer.text);
+    let listed = send(&state, steward(), "GET", WS, None).await;
+    assert_eq!(body(&listed.text)["items"], json!([]), "{}", listed.text);
+
+    let (server, state) = world().await;
+    opened(&state).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'workspace/air-v2'"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .mount(&server)
+        .await;
+    let compared = send(
+        &state,
+        steward(),
+        "GET",
+        &format!("{WS}/air-v2/compare"),
+        None,
+    )
+    .await;
+    assert!(compared.status.is_server_error(), "{}", compared.text);
+}
+
 #[tokio::test]
 async fn opening_refuses_a_bad_name_title_or_ttl_and_a_second_of_the_same_name() {
     let (_server, state) = world().await;
@@ -425,6 +519,68 @@ async fn compare_names_a_removal_against_mains_change_as_the_whole_file() {
     assert_eq!(conflict["fields"][0]["theirs"], "changed");
 }
 
+/// The mirror image: the workspace changed a file main removed; the conflict is the whole file,
+/// changed on ours and removed on theirs.
+#[tokio::test]
+async fn compare_names_mains_removal_against_the_workspaces_change_as_the_whole_file() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    tree(&server, "workspace/air-v2", &[(AIR, "s-ours")]).await;
+    tree(&server, "base1", &[(AIR, "s-base")]).await;
+    tree(&server, "main", &[]).await;
+    file(&server, "workspace/air-v2", &space("en", 12)).await;
+    file(&server, "base1", &space("en", 10)).await;
+    let compare = ops::find("jc_workspace_compare").unwrap();
+    let cmp = ops::call(
+        compare,
+        &Caller::new(steward(), Via::Session),
+        &state,
+        PROJECT,
+        json!({ "name": "air-v2" }),
+    )
+    .await
+    .expect("compared");
+    let conflict = &cmp["conflicts"][0];
+    assert_eq!(conflict["path"], AIR, "{cmp}");
+    assert_eq!(conflict["fields"][0]["ours"], "changed", "{cmp}");
+    assert_eq!(conflict["fields"][0]["theirs"], "removed", "{cmp}");
+}
+
+/// A workspace already brought back as an open change is not brought back a second time.
+#[tokio::test]
+async fn bringing_back_twice_names_the_change_already_open() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    changed(&server, &space("en", 10), "s-base").await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/PullRequests")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [{
+            "Number": 5, "HtmlUrl": "https://shako.example/pulls/5", "State": "open",
+            "Title": "workspace air-v2: Air", "Head": "workspace/air-v2", "Base": "main",
+            "CreatedAt": "2026-09-18T10:00:00Z", "Author": "jana",
+            "Mergeable": true, "Merged": false }] })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = send(
+        &state,
+        steward(),
+        "POST",
+        &format!("{WS}/air-v2/propose"),
+        None,
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("already brought back as chg-00000005"),
+        "{}",
+        answer.text
+    );
+    assert!(calls(&server, "POST", "/Shako.OpenPullRequest")
+        .await
+        .is_empty());
+}
+
 #[tokio::test]
 async fn update_from_main_refuses_an_unanswered_conflict_and_merges_an_answered_one() {
     let (server, state) = world().await;
@@ -628,6 +784,98 @@ async fn update_from_main_takes_mains_files_asks_for_whole_files_and_masks_a_cre
         "{text}"
     );
     assert!(!text.contains(OLD), "ours kept: {text}");
+}
+
+/// CC-80 (T-7921): a YAML file both sides changed that merges into no manifest, or into a kind
+/// this Portal does not serve, is refused at its path; a file main removed that the workspace
+/// changed asks for a whole-file choice, naming main's side removed.
+#[tokio::test]
+async fn update_from_main_refuses_yaml_that_is_no_manifest_and_asks_for_a_removed_file() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    const README: &str = "projects/ovzdusie/README.md";
+    const NOTES: &str = "projects/ovzdusie/notes.yaml";
+    let uri = format!("{WS}/air-v2/update");
+    tree(&server, "workspace/air-v2", &[(NOTES, "n-ours")]).await;
+    tree(&server, "base1", &[(NOTES, "n-base")]).await;
+    tree(&server, "main", &[(NOTES, "n-main")]).await;
+    for (head, words) in [
+        ("workspace/air-v2", "a: 2\nb: 1\n"),
+        ("base1", "a: 1\nb: 1\n"),
+        ("main", "a: 1\nb: 2\n"),
+    ] {
+        file_at(&server, NOTES, head, words).await;
+    }
+    let refused = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(
+        refused.text.contains(&format!("{NOTES}: not a manifest")),
+        "{}",
+        refused.text
+    );
+    // The same file as a manifest of a kind the Portal does not serve.
+    let bogus = |a: u8, b: u8| {
+        format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Bogus\nmetadata:\n  name: notes\n  namespace: ovzdusie\nspec:\n  a: {a}\n  b: {b}\n")
+    };
+    for (head, words) in [
+        ("workspace/air-v2", bogus(2, 1)),
+        ("base1", bogus(1, 1)),
+        ("main", bogus(1, 2)),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", format!("'{NOTES}'")))
+            .and(query_param("@r", format!("'{head}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "x",
+                "Content": encode(&words)
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let refused = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(
+        refused.text.contains("kind 'Bogus' is not served"),
+        "{}",
+        refused.text
+    );
+    // The workspace changed its README; main removed it.
+    for (head, sha) in [("workspace/air-v2", "r-ours"), ("base1", "r-base")] {
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .and(query_param("@r", format!("'{head}'")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Tree": [{ "Path": README, "Type": "blob", "Sha": sha }],
+                "Truncated": false
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .and(query_param("@r", "'main'"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Tree": [], "Truncated": false })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let asked = send(&state, steward(), "POST", &uri, Some(json!({}))).await;
+    assert_eq!(asked.status, StatusCode::CONFLICT, "{}", asked.text);
+    let conflicts = body(&asked.text)["conflicts"].clone();
+    assert_eq!(conflicts[0]["path"], README, "{conflicts}");
+    assert_eq!(conflicts[0]["fields"][0]["ours"], "changed", "{conflicts}");
+    assert_eq!(
+        conflicts[0]["fields"][0]["theirs"], "removed",
+        "{conflicts}"
+    );
 }
 
 #[tokio::test]

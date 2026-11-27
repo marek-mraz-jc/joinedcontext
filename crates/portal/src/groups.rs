@@ -570,6 +570,17 @@ mod tests {
             &group_write("board-viewer", Some("doprava/board"))
         )
         .may("Group", Verb::Propose));
+        // A default group the realm does not hold yet is the organization's to create (T-7921).
+        steward.mirror.remove(&crate::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "Group".to_owned(),
+            name: "board-viewer".to_owned(),
+        });
+        assert!(!may_propose(
+            &steward,
+            true,
+            &group_write("board-viewer", Some("doprava/board"))
+        ));
     }
 
     /// The steward of another project, a reader of the App and the build lane (whose `propose`

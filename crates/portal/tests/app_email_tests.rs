@@ -447,6 +447,42 @@ async fn a_database_that_stops_answering_sends_nothing_and_stops_nothing() {
     assert_eq!(delivered(&inbox).len(), 1);
 }
 
+/// A database of the test's own that refuses the day's counter, then holds no unsubscribes to
+/// read or write: each is a server error, and nothing more is sent (T-7921).
+#[tokio::test]
+async fn a_refused_counter_or_unsubscribe_store_sends_nothing() {
+    let db = common::build_lane::fresh_db()
+        .await
+        .expect("JC_PORTAL_TEST_DATABASE_URL names the test database");
+    let (url, inbox) = relay().await;
+    let project = project("db-refuses");
+    let state = state(&url, db.clone(), &project, app(json!(["email"]), json!({}))).await;
+    assert_eq!(send(&state, to_me("first")).await.0, StatusCode::ACCEPTED);
+    let link = unsubscribe_link(&delivered(&inbox)[0].1);
+    for statement in [
+        "CREATE FUNCTION refused() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+        "CREATE TRIGGER refused BEFORE INSERT OR UPDATE ON app_service_usage \
+         FOR EACH STATEMENT EXECUTE FUNCTION refused()",
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&db)
+            .await
+            .expect("a refusing trigger");
+    }
+    let (status, _, text) = send(&state, to_me("counted")).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+    sqlx::query("DROP TABLE email_unsubscribes")
+        .execute(&db)
+        .await
+        .expect("drop");
+    let (status, _, text) = send(&state, to_me("unread")).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+    let (status, _, text) = call(&state, &link, "POST", Value::Null).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{text}");
+    assert_eq!(delivered(&inbox).len(), 1);
+}
+
 /// AP-168: an HTML body travels beside the text as an alternative, its unsubscribe link escaped
 /// for an attribute.
 #[tokio::test]

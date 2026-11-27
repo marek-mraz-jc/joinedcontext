@@ -1322,4 +1322,14 @@ mod tests {
         assert!(refused.starts_with("recoveryRecipient:"), "{refused}");
         assert_eq!(fingerprint("age1abc").len(), 19);
     }
+
+    /// A data archive that fails is the Portal's 500 naming the data archive.
+    #[test]
+    fn a_failed_data_archive_names_it() {
+        let err = archive_error("disk full");
+        assert!(
+            matches!(&err, ApiError::Internal(why) if why == "the data archive failed: disk full"),
+            "{err:?}"
+        );
+    }
 }

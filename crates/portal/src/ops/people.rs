@@ -566,6 +566,30 @@ mod tests {
         envelope("RoleBinding", ORG_NAMESPACE, name, spec)
     }
 
+    /// A subject naming neither a person nor a Group, and one naming a Group nobody defined,
+    /// reach nobody.
+    #[test]
+    fn a_subject_naming_nobody_reaches_nobody() {
+        let mirror = Mirror::new();
+        mirror.upsert(binding(
+            "empty",
+            json!([{}, { "group": "nobody-defined" }]),
+            "viewer",
+            json!({ "project": "doprava" }),
+        ));
+        // The binding parses as one (a stray member would make it no binding at all, and this
+        // test pass for that instead).
+        assert_eq!(
+            crate::permissions::binding_project(
+                &mirror,
+                &mirror.matching(|env| env.kind == "RoleBinding")[0].spec
+            )
+            .as_deref(),
+            Some("doprava")
+        );
+        assert!(members_of(&mirror, "doprava").is_empty());
+    }
+
     /// T-6039: the members of a project are the people its bindings reach, through a Group or a
     /// space of the project too; another project's and the organization's bindings stay out.
     #[test]

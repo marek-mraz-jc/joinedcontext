@@ -1003,6 +1003,64 @@ mod tests {
         found
     }
 
+    /// An entry whose input schema does not compile, which is no closed object and which writes
+    /// on the read verb is caught by the soundness check, and a call of it is a 500 naming the
+    /// operation, never a pass of an unchecked input.
+    #[tokio::test]
+    async fn a_broken_entry_is_caught_and_its_call_refused() {
+        let base = registry()
+            .iter()
+            .find(|op| op.verb == Some(Verb::Read) && op.annotations.read_only_hint)
+            .expect("a read");
+        let broken = Operation {
+            name: "jc_broken_probe",
+            input: || json!({ "type": "object", "properties": { "a": { "type": 12 } } }),
+            annotations: OperationAnnotations {
+                read_only_hint: false,
+                ..base.annotations
+            },
+            ..*base
+        };
+        let found = problems(&broken);
+        for wanted in [
+            "jc_broken_probe writes with only the read verb",
+            "jc_broken_probe's input schema is not a closed object",
+        ] {
+            assert!(found.iter().any(|f| f == wanted), "{wanted}: {found:?}");
+        }
+        assert!(
+            found
+                .iter()
+                .any(|f| f.contains("input schema does not compile")),
+            "{found:?}"
+        );
+        let state = super::testkit::state();
+        let err = call(
+            &broken,
+            &super::testkit::admin(&state),
+            &state,
+            "doprava",
+            json!({}),
+        )
+        .await
+        .expect_err("no schema, no call");
+        assert!(
+            err.to_string()
+                .contains("the input schema of jc_broken_probe does not compile"),
+            "{err}"
+        );
+    }
+
+    /// A JSON error inside an operation is the Portal's own 500, never the caller's input.
+    #[test]
+    fn a_json_error_is_internal() {
+        let err = serde_json::from_str::<Value>("{").expect_err("not json");
+        assert!(matches!(
+            OpError::from(err),
+            OpError::Api(ApiError::Internal(_))
+        ));
+    }
+
     #[test]
     fn every_registry_entry_is_sound() {
         let found: Vec<String> = registry().iter().flat_map(problems).collect();
@@ -1212,22 +1270,20 @@ mod tests {
 
     #[test]
     fn every_mcp_write_operation_opens_a_change_or_is_allowlisted() {
-        let mut skipping = Vec::new();
-        for op in registry()
+        let skipping: Vec<&str> = registry()
             .iter()
             .filter(|op| !op.annotations.read_only_hint)
-        {
-            let answers_a_change = (op.output)().to_string().contains("\"changeId\"");
-            let listed = WRITES_OUTSIDE_GIT.iter().any(|(name, _)| *name == op.name);
-            assert!(
-                !(answers_a_change && listed),
-                "{} answers a Change: take it off WRITES_OUTSIDE_GIT",
-                op.name
-            );
-            if !answers_a_change && !listed {
-                skipping.push(op.name);
-            }
-        }
+            .filter_map(|op| {
+                let answers_a_change = (op.output)().to_string().contains("\"changeId\"");
+                let listed = WRITES_OUTSIDE_GIT.iter().any(|(name, _)| *name == op.name);
+                assert!(
+                    !(answers_a_change && listed),
+                    "{} answers a Change: take it off WRITES_OUTSIDE_GIT",
+                    op.name
+                );
+                (!answers_a_change && !listed).then_some(op.name)
+            })
+            .collect();
         assert!(
             skipping.is_empty(),
             "these write operations neither answer a Change nor are listed in WRITES_OUTSIDE_GIT \

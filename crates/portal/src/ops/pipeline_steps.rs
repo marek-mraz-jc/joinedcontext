@@ -1383,6 +1383,13 @@ mod tests {
         assert!(sample_address("https://feeds.invalid/a.csv", "/sample/url")
             .await
             .is_ok());
+        // An address that does not parse is said at its member, before any lookup.
+        let got = sample_address("not an address", "/sample/url").await;
+        assert!(
+            matches!(&got, Err(OpError::InvalidInput { path, message })
+                if path == "/sample/url" && message.contains("does not parse")),
+            "{got:?}"
+        );
     }
 
     /// AG-158 (T-6265): an MCP client and an agent run get a sample without the fields the

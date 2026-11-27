@@ -1450,4 +1450,20 @@ mod tests {
             "{listed:?}"
         );
     }
+
+    /// A restore's own failure and a database that refuses it are told apart: the first is the
+    /// Portal's 500, the second a 503 an operator retries.
+    #[test]
+    fn a_restore_failure_says_whose_it_is() {
+        let own = internal("no scratch");
+        assert!(
+            matches!(&own, ApiError::Internal(why) if why == "the restore failed: no scratch"),
+            "{own:?}"
+        );
+        let db = failed(sqlx::Error::PoolTimedOut);
+        assert!(
+            matches!(&db, ApiError::Unavailable(why) if why.starts_with("the Portal database could not be restored")),
+            "{db:?}"
+        );
+    }
 }

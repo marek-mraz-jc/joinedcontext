@@ -288,6 +288,26 @@ mod tests {
         assert!(component_of(b"not a gzip").is_err());
     }
 
+    /// A bundle whose compressed bytes break inside the component is refused, never read as a
+    /// shorter component.
+    #[test]
+    fn a_bundle_broken_inside_the_component_is_refused() {
+        let mut big = COMPONENT.to_vec();
+        let mut seed = 0x2545_f491_u32;
+        big.extend((0..200_000).map(|_| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed.to_le_bytes()[0]
+        }));
+        let mut broken = bundle(&[(COMPONENT_PATH, &big)]);
+        let middle = broken.len() / 2;
+        for byte in &mut broken[middle..middle + 64] {
+            *byte = !*byte;
+        }
+        assert!(component_of(&broken).is_err());
+    }
+
     /// The component's place holding a directory or a link, a component over 64 MiB, and a
     /// bundle cut short inside the component are each refused with the reason.
     #[test]

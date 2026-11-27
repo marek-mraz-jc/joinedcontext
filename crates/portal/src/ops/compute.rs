@@ -1034,6 +1034,23 @@ mod tests {
         assert!(reads[0].url.query().unwrap_or("").contains("limit=0"));
     }
 
+    /// A gateway that answers without its count is unavailable, never a value of one page.
+    #[tokio::test]
+    async fn a_read_the_gateway_does_not_count_is_unavailable() {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::path(format!(
+            "/api/endpoint/{SLUG}/ngsi-ld/v1/entities"
+        )))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!([])))
+        .mount(&server)
+        .await;
+        let got = compute(&server, json!({ "agg": "count" })).await;
+        assert!(
+            matches!(&got, Err(OpError::Api(ApiError::Unavailable(why))) if why.contains("did not count")),
+            "{got:?}"
+        );
+    }
+
     /// A fold over more than one indicator reads is refused, never a value of the first pages.
     #[tokio::test]
     async fn a_fold_past_the_cap_is_refused_at_q() {

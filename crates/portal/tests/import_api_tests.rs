@@ -1455,6 +1455,18 @@ async fn manifests_import_through_the_odata_action_as_through_the_rest_door() {
         .expect("a 412 names the project's ETag")
         .to_owned();
 
+    // Each conflict policy plans the same new manifest (MF-23, T-7921).
+    for policy in ["fail", "skip", "replace", "rename"] {
+        let input = json!({ "manifests": [manifest], "dryRun": true, "conflictPolicy": policy });
+        let (status, _, plan) = call(input, Some(etag.clone())).await;
+        assert_eq!(status, StatusCode::OK, "{policy}: {plan}");
+        assert_eq!(
+            plan["value"]["created"],
+            json!(["ovzdusie"]),
+            "{policy}: {plan}"
+        );
+    }
+    // The plain check last: the change below carries its verdict.
     let (status, _, plan) = call(input, Some(etag.clone())).await;
     assert_eq!(status, StatusCode::OK, "{plan}");
     assert_eq!(plan["value"]["created"], json!(["ovzdusie"]), "{plan}");

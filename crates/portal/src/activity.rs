@@ -692,6 +692,24 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A panic while the trim clock was held poisons it; the hourly trim is still claimed once.
+    #[test]
+    fn a_poisoned_trim_clock_still_claims_the_trim_once_an_hour() {
+        let store = ActivityStore::new(None, Arc::new(crate::store::Mirror::new()));
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = store.trimmed_at.lock();
+                    panic!("poison the trim clock on purpose");
+                })
+                .join();
+        });
+        assert!(store.trimmed_at.is_poisoned());
+        let now = TimestampTz::from_second(1_789_000_000).expect("a time");
+        assert!(store.trim_due(now));
+        assert!(!store.trim_due(now));
+    }
+
     fn event(kind: &str, severity: &str, minutes: i64) -> ActivityEvent {
         ActivityEvent {
             time: TimestampTz::from_second(1_789_000_000 + minutes * 60).expect("a time"),

@@ -95,13 +95,15 @@ pub async fn keyed_project(
     project: &str,
     organization: &str,
 ) {
-    let recorded: Option<String> = sqlx::query_scalar(
+    // A row another binary left unplaced holds no Organization: this one places it.
+    let recorded: Option<String> = sqlx::query_scalar::<_, Option<String>>(
         "SELECT organization FROM project_ids WHERE parent IS NULL AND NOT reserved AND name = $1",
     )
     .bind(project)
     .fetch_optional(pool)
     .await
-    .expect("the registry's projects");
+    .expect("the registry's projects")
+    .flatten();
     let organization = recorded.as_deref().unwrap_or(organization);
     state.mirror.upsert(envelope(
         "Project",

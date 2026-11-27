@@ -232,6 +232,30 @@ async fn a_member_previews_the_draft_as_themselves() {
     );
 }
 
+/// The MCP door's jc_endpoint_preview reads the page the route reads (T-7921).
+#[tokio::test]
+async fn the_preview_operation_reads_the_routes_page() {
+    use joinedcontext_portal::ops::{self, Caller, Via};
+    let r = rig(true).await;
+    let op = ops::find("jc_endpoint_preview").expect("registered");
+    let mut input = draft();
+    input["name"] = json!("air-staff");
+    let page = ops::call(
+        op,
+        &Caller::new(member(), Via::Mcp),
+        &r.state,
+        "city",
+        input,
+    )
+    .await
+    .map_err(|err| format!("{err:?}"))
+    .expect("the page");
+    assert_eq!(
+        page,
+        json!({"count": 7, "entities": [{"id": "urn:ngsi-ld:Car:1", "type": "Car"}]})
+    );
+}
+
 /// EP-16: a public Endpoint's draft is read as the anonymous caller, never as the person.
 #[tokio::test]
 async fn a_public_endpoints_draft_is_read_as_the_public() {

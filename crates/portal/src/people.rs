@@ -964,6 +964,11 @@ mod tests {
     use wiremock::matchers::{body_json, method, path, path_regex, query_param};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    /// The edit the update tests send: the account switched off.
+    fn disable(user: &mut Value) {
+        user["enabled"] = json!(false);
+    }
+
     const ADMIN: &str = "/admin/realms/hel";
 
     fn admin_for(base: &str) -> Admin {
@@ -1162,7 +1167,7 @@ mod tests {
             Err(PeopleError::Unreachable(_))
         ));
         assert!(matches!(
-            admin.update("u1", |_| {}).await,
+            admin.update("u1", disable).await,
             Err(PeopleError::Unreachable(_))
         ));
         assert!(matches!(
@@ -1358,14 +1363,9 @@ mod tests {
             .mount(&realm)
             .await;
         let admin = admin_for(&realm.uri());
+        assert_eq!(admin.update("u1", disable).await, Ok(()));
         assert_eq!(
-            admin
-                .update("u1", |user| user["enabled"] = json!(false))
-                .await,
-            Ok(())
-        );
-        assert_eq!(
-            admin.update("../x", |_| {}).await,
+            admin.update("../x", disable).await,
             Err(PeopleError::NotFound)
         );
     }

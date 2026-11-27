@@ -762,7 +762,7 @@ languages:
         // Every one of these was given white text by the old luminance threshold, and every one
         // of them was unreadable with it: #808080 reached 3.95:1 and #a0a0a0 only 2.61:1.
         for primary in [
-            "#808080", "#a0a0a0", "#c0c0c0", "#ff0000", "#00ff00", "#ffff00",
+            "#808080", "#a0a0a0", "#c0c0c0", "#ff0000", "#00ff00", "#ffff00", "#1d4ed8",
         ] {
             let branding = with_primary(primary);
             let chosen = branding.primary_foreground();

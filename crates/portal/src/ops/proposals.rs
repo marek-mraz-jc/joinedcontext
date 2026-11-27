@@ -1050,6 +1050,35 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// A draft store that fails is an error of the check, never a pass: reading a manifest's or an
+    /// import's verdict, and recording an import's check whose verdict write fails.
+    #[tokio::test]
+    async fn a_failing_draft_store_is_no_verdict() {
+        let scratch = crate::test_db::scratch().await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("hel").await,
+        );
+        let jana = super::super::testkit::person("jana", &[]);
+        let subject = json!({ "files": ["a.yaml"] });
+        scratch.refuse("drafts", "UPDATE").await;
+        let recorded = record_import_check(&state, &jana, "hel", &subject).await;
+        assert!(recorded.is_err(), "{recorded:?}");
+        scratch.drop_table("drafts").await;
+        let manifest = json!({ "kind": "Endpoint", "metadata": { "name": "air" } });
+        for got in [
+            verdict_for_manifest(&state, "hel", &manifest).await,
+            verdict_for_import(&state, &jana, "hel", &subject).await,
+        ] {
+            assert!(
+                matches!(&got, Err(OpError::Api(ApiError::Internal(_)))),
+                "{got:?}"
+            );
+        }
+        scratch.remove().await;
+    }
+
     /// JC2-38: a draft the caller may not read answers no verdict refusal, so its verdict state
     /// tells a stranger nothing; the approver who reads it still gets `verdict_required`.
     #[tokio::test]
@@ -1140,6 +1169,28 @@ mod tests {
             .expect_err("an audience the kind does not know");
         assert!(
             matches!(&refused, OpError::Api(ApiError::BadRequest(why)) if why.contains("spec.audience")),
+            "{refused:?}"
+        );
+    }
+
+    /// An MCP client typing a new Endpoint's slug is refused at that field (EP-75, T-7921).
+    #[tokio::test]
+    async fn a_typed_slug_is_refused_at_its_field() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = super::super::testkit::admin(&state);
+        let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
+        let mcp = Caller::new(admin.identity.clone(), Via::Mcp);
+        let typed = json!({ "manifest": {
+            "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+            "metadata": { "name": "counters", "namespace": "p" },
+            "spec": { "contextSpaceRef": "bikes", "audience": "public", "slug": "typedbyamodel" }
+        } });
+        let refused = (op.run)(&mcp, &state, "p", typed)
+            .await
+            .expect_err("the platform mints the slug");
+        assert!(
+            matches!(&refused, OpError::InvalidInput { path, message }
+                if path == "/manifest/spec/slug" && message.contains("EP-75")),
             "{refused:?}"
         );
     }
@@ -1346,5 +1397,27 @@ mod tests {
             let verdict = datasource_verdict(&json!({ "valid": true, "probe": odd }), &manifest);
             assert!(verdict.findings.is_empty(), "{odd} became a finding");
         }
+    }
+
+    /// An import check that could not be kept says why in words an operator acts on: a
+    /// project not created yet, one of no active Organization, or the store's own failure.
+    #[test]
+    fn an_unkept_import_check_says_why() {
+        let state = crate::ops::testkit::state();
+        let fresh = import_check_error(&state, DraftError::Unplaced("hel".into())).to_string();
+        assert!(fresh.contains("is not created yet"), "{fresh}");
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Project",
+            "hel",
+            crate::permissions::ORG_NAMESPACE,
+            json!({}),
+        ));
+        let unplaced = import_check_error(&state, DraftError::Unplaced("hel".into())).to_string();
+        assert!(unplaced.contains("no active Organization"), "{unplaced}");
+        let other = import_check_error(&state, DraftError::Db("gone".into()));
+        assert!(
+            matches!(&other, ApiError::Internal(why) if why.contains("was not recorded") && why.contains("gone")),
+            "{other:?}"
+        );
     }
 }

@@ -2204,6 +2204,25 @@ async fn creating_a_person_through_an_operation_never_answers_the_password() {
     );
 }
 
+/// A realm that sends mail invites the new person by e-mail: the operation says so and names no
+/// hand-over (T-7921).
+#[tokio::test]
+async fn creating_a_person_where_mail_goes_out_names_no_hand_over() {
+    let (kc, shako) = (realm(true).await, forge().await);
+    let state = state_with(&kc, &shako);
+    let created = op(
+        &state,
+        "pia",
+        "jc_person_create",
+        json!({ "email": "new@example.org", "firstName": "Nora", "lastName": "Nová" }),
+    )
+    .await;
+    assert_eq!(created.status, StatusCode::OK, "{}", created.text);
+    let answer: Value = serde_json::from_str(&created.text).expect("json");
+    assert_eq!(answer["emailSent"], true, "{answer}");
+    assert!(answer.get("handOver").is_none(), "{answer}");
+}
+
 /// T-2732, PF-91, PF-93: the operations refuse whom the routes refuse — a person with no verb on
 /// Person, and a people-admin acting on an administrator — and the realm hears nothing.
 #[tokio::test]
