@@ -1084,6 +1084,33 @@ async fn contract_plans_and_apply(store: &dyn DaiyaStore) {
     assert_eq!(saved[0].version, 1);
     assert_eq!(store.list_folders(org).await.unwrap().len(), 1);
     assert_eq!(store.list_dashboards(org).await.unwrap().len(), 1);
+
+    // A plan made over the listed state applies: the etag reads the datasources in the
+    // list's order, also once there are several.
+    let listed_etag = || async {
+        org_state_etag(
+            &store.list_folders(org).await.unwrap(),
+            &store.list_datasources(org).await.unwrap(),
+            &store.list_dashboards(org).await.unwrap(),
+        )
+    };
+    for name in ["Zed", "Alpha"] {
+        let next = ApplyBundle {
+            installation_id: INST,
+            org_id: org,
+            instance_id: INSTANCE,
+            base_etag: listed_etag().await,
+            folders: Vec::new(),
+            datasources: vec![datasource(org, &name.to_lowercase(), name, "loki")],
+            dashboards: Vec::new(),
+            message: "imported".into(),
+        };
+        store
+            .apply_bundle(next)
+            .await
+            .expect("a plan over the listed state");
+    }
+    assert_eq!(store.list_datasources(org).await.unwrap().len(), 3);
 }
 
 pub async fn run_contract(store: &dyn DaiyaStore) {

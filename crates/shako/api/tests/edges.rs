@@ -34,6 +34,8 @@ use support::fault_store::{FaultStore, refused};
 struct FaultSecrets {
     inner: shako_core::store::MemorySecretStore,
     failing: Mutex<bool>,
+    /// Reads never answer while set: a secret store that hangs.
+    stalled: Mutex<bool>,
 }
 
 impl SecretStore for FaultSecrets {
@@ -44,6 +46,9 @@ impl SecretStore for FaultSecrets {
     ) -> StoreFuture<'a, Option<String>> {
         if *self.failing.lock() {
             return refused("get_secret");
+        }
+        if *self.stalled.lock() {
+            return Box::pin(std::future::pending());
         }
         self.inner.get_secret(org_id, secret_ref)
     }
@@ -445,6 +450,27 @@ async fn a_commit_stands_when_its_size_or_quota_cannot_be_recorded() {
     }
 }
 
+/// A compaction that fails after a write leaves the write standing: the size is measured again
+/// and stored, the failure only logged.
+#[tokio::test]
+async fn a_write_whose_compaction_fails_still_records_its_size() {
+    let w = seeded().await;
+    let mut repo = w.repo("site").await;
+    // Enough packs to be due, none of them a pack: the compaction cannot read them.
+    let broken = tempfile::tempdir().expect("dir");
+    let packs = broken.path().join("objects/pack");
+    std::fs::create_dir_all(&packs).expect("pack dir");
+    for n in 0..shako_git::AUTO_COMPACT_PACK_THRESHOLD {
+        std::fs::write(packs.join(format!("pack-{n}.pack")), b"0123456789").expect("pack");
+        std::fs::write(packs.join(format!("pack-{n}.idx")), b"0123456789").expect("idx");
+    }
+    assert!(shako_git::compaction_due(broken.path()));
+    shako_api::service::settle_after_write(&w.state, &mut repo, broken.path()).await;
+    let expected = 20 * shako_git::AUTO_COMPACT_PACK_THRESHOLD as u64;
+    assert_eq!(repo.size_bytes, expected);
+    assert_eq!(w.repo("site").await.size_bytes, expected);
+}
+
 /// A pull request read refreshes its state even when the refreshed record cannot be stored.
 #[tokio::test]
 async fn a_pull_request_reads_when_its_refresh_cannot_be_stored() {
@@ -559,6 +585,32 @@ async fn a_pull_request_refuses_unknown_styles_and_moves_its_base() {
     )
     .await;
     assert_eq!(s, StatusCode::UNPROCESSABLE_ENTITY, "{answer}");
+}
+
+/// A merge asked to delete its head branch merges even when the branch cannot be deleted (its
+/// ref is locked): the branch stays and the pull request reads merged.
+#[tokio::test]
+async fn a_merge_stands_when_its_head_branch_cannot_be_deleted() {
+    let w = seeded().await;
+    let number = w.open_pull("dev").await;
+    let lock = w.disk("site").await.join("refs/heads/dev.lock");
+    std::fs::write(&lock, b"").expect("lock the branch");
+    let (s, answer) = send(
+        &w.app,
+        "POST",
+        &format!("{R}/pulls/{number}/merge"),
+        Some(json!({ "Do": "merge", "delete_branch_after_merge": true })),
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{answer}");
+    std::fs::remove_file(&lock).expect("unlock");
+    let head = w
+        .git("site", &["rev-parse", "--verify", "refs/heads/dev"])
+        .await;
+    assert_eq!(head.len(), 40, "the branch stays: {head}");
+    let (s, pr) = send(&w.app, "GET", &format!("{R}/pulls/{number}"), None).await;
+    assert_eq!(s, StatusCode::OK, "{pr}");
+    assert_eq!(pr["merged"], true, "{pr}");
 }
 
 /// The author approves their own pull request when no rule on its base asks for approvals.
@@ -923,6 +975,60 @@ async fn a_hook_signs_with_both_secrets_and_never_unsigned() {
     );
 }
 
+/// A hook stored before the API refused non-key secret names still signs with it, and is
+/// delivered beside the hook registered since.
+#[tokio::test]
+async fn a_hook_with_a_legacy_secret_name_still_signs() {
+    let w = seeded().await;
+    let (s, hook) = send(&w.app, "POST", &format!("{R}/hooks"), Some(json!({ "type": "gitea",
+        "config": { "url": "https://hooks.city.example/h", "content_type": "json", "secret": "s3cret-value" },
+        "events": ["push"], "active": true }))).await;
+    assert_eq!(s, StatusCode::CREATED, "{hook}");
+    let repo = w.repo("site").await;
+    let stored = w
+        .state
+        .store()
+        .list_webhooks(INSTANCE, ORG, Some(repo.id))
+        .await
+        .expect("hooks")
+        .remove(0);
+    for (secret_ref, previous) in [
+        ("a pasted value", None),
+        ("legacy-hook-key", Some("an old pasted value")),
+    ] {
+        w.state
+            .store()
+            .create_webhook(WebhookRecord {
+                id: WebhookId::new(),
+                secret_ref: secret_ref.into(),
+                previous_secret_ref: previous.map(str::to_owned),
+                ..stored.clone()
+            })
+            .await
+            .expect("legacy hook");
+        w.secrets
+            .put_secret(ORG, secret_ref, "legacy-value")
+            .await
+            .expect("secret");
+    }
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "signed", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    let sent = w.deliveries.lock().clone();
+    assert_eq!(sent.len(), 3, "{sent:?}");
+    assert!(
+        sent.iter().all(|h| h
+            .iter()
+            .any(|(k, v)| k == "X-Gitea-Signature" && !v.is_empty())),
+        "{sent:?}"
+    );
+}
+
 /// A receiver that redirects is refused by the guard: the delivery is recorded failed and the
 /// event is done with, never retried.
 #[tokio::test]
@@ -1227,6 +1333,74 @@ async fn a_mirror_with_a_legacy_secret_name_still_pushes() {
     // The push ran with the legacy name: what is recorded is the remote's answer, not a credential refusal.
     let error = list[0]["last_error"].as_str().unwrap_or_default();
     assert!(!error.contains("credential"), "{list}");
+}
+
+/// A sync now whose remote never answers stops waiting after its 10 s and answers busy; the
+/// sync runs on in the background until its 10 minutes are up. Its late result is recorded on
+/// no mirror removed meanwhile.
+#[tokio::test]
+async fn a_sync_that_never_ends_answers_busy_and_writes_back_no_removed_mirror() {
+    let w = seeded().await;
+    let (s, mirror) = send(&w.app, "POST", &format!("{R}/push_mirrors"),
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git", "sync_on_commit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    let name = mirror["remote_name"]
+        .as_str()
+        .expect("remote name")
+        .to_owned();
+    *w.secrets.stalled.lock() = true;
+    tokio::time::pause();
+    let (s, answer) = send(&w.app, "POST", &format!("{R}/push_mirrors-sync"), None).await;
+    assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{answer}");
+    assert!(
+        answer.to_string().contains("runs longer than 10 s"),
+        "{answer}"
+    );
+    let (s, answer) = send(&w.app, "DELETE", &format!("{R}/push_mirrors/{name}"), None).await;
+    assert!(s.is_success(), "{answer}");
+    tokio::time::sleep(std::time::Duration::from_secs(11 * 60)).await;
+    *w.secrets.stalled.lock() = false;
+    let (s, list) = send(&w.app, "GET", &format!("{R}/push_mirrors"), None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    assert_eq!(
+        list,
+        json!([]),
+        "a late result brings no removed mirror back"
+    );
+}
+
+/// A drain that never ends records that the sync took longer than 10 minutes; a third drain
+/// while two run starts none.
+#[tokio::test]
+async fn a_drain_past_its_limit_records_why_and_a_third_starts_none() {
+    let w = seeded().await;
+    let (s, mirror) = send(&w.app, "POST", &format!("{R}/push_mirrors"),
+        Some(json!({ "remote_address": "https://github.com/joinedcontext-apps/site.git", "sync_on_commit": true }))).await;
+    assert_eq!(s, StatusCode::OK, "{mirror}");
+    *w.secrets.stalled.lock() = true;
+    tokio::time::pause();
+    let (s, _) = send(
+        &w.app,
+        "PUT",
+        &format!("{R}/contents/a.md"),
+        Some(put("a", "due", "main")),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED);
+    // The write's drain holds one slot; a second takes the other; a third finds none.
+    for _ in 0..2 {
+        shako_api::drain_mirrors(&w.state, INSTANCE, ORG);
+    }
+    tokio::time::sleep(std::time::Duration::from_secs(11 * 60)).await;
+    *w.secrets.stalled.lock() = false;
+    let (s, list) = send(&w.app, "GET", &format!("{R}/push_mirrors"), None).await;
+    assert_eq!(s, StatusCode::OK, "{list}");
+    assert!(
+        list[0]["last_error"]
+            .as_str()
+            .is_some_and(|e| e.contains("longer than 10 minutes")),
+        "{list}"
+    );
 }
 
 /// A remote's report-status for every command of a receive-pack request: each ref taken.

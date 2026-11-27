@@ -7,8 +7,12 @@
 //! print `SKIP`; the configuration tests run anyway.
 
 use serde_json::json;
-use shako_core::model::{AuditRecord, InstanceRecord, OutboxEvent, PackageRecord};
-use shako_core::{InstanceId, OrgId, PackageId, SecretStore, ShakoError, Store, sha256_hex};
+use shako_core::model::{
+    AuditRecord, CommitStatusRecord, InstanceRecord, OutboxEvent, PackageRecord, RepoRecord,
+};
+use shako_core::{
+    InstanceId, OrgId, PackageId, RepoId, SecretStore, ShakoError, Store, sha256_hex,
+};
 use shako_store_pg::{PgSecretStore, PgStore, PgStoreConfig};
 use sqlx::AssertSqlSafe;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -422,6 +426,82 @@ async fn the_store_refuses_what_it_cannot_read_or_hold() {
         "{taken:?}"
     );
 
+    // An event whose row no longer reads as an event (a time the record cannot hold) is a
+    // storage error at its claim, never a guessed event.
+    sqlx::query("UPDATE shako.outbox SET created_at = 'infinity' WHERE org_id = $1")
+        .bind(org.as_uuid())
+        .execute(&db.admin)
+        .await
+        .expect("damage the event");
+    let err = store.claim_outbox(inst, org).await.expect_err("unreadable");
+    assert!(!storage_message(&err).is_empty(), "{err:?}");
+
+    // Postgres holds no NUL in text: a name with one lists no tag, whichever part holds it.
+    for (owner, image, after) in [
+        ("ci\0ty", "app", None),
+        ("city", "a\0pp", None),
+        ("city", "app", Some("v\0")),
+    ] {
+        let tags = store
+            .list_package_tags(inst, org, owner, image, after, 10)
+            .await
+            .expect("tags");
+        assert!(tags.is_empty(), "{owner:?} {image:?} {after:?}");
+    }
+
+    // The replay below copies this status's log entry.
+    let status = CommitStatusRecord {
+        id: uuid::Uuid::now_v7(),
+        instance_id: inst,
+        org_id: org,
+        repo_id: RepoId::new(),
+        sha: "a".repeat(40),
+        context: "ci".into(),
+        state: "success".into(),
+        description: String::new(),
+        target_url: String::new(),
+        updated_at: now,
+    };
+    store.upsert_commit_status(status).await.expect("status");
+
+    // A repository renamed onto a name the Organization already holds: a conflict naming no
+    // record, and the renamed one keeps its name.
+    let repo = |name: &str| RepoRecord {
+        id: RepoId::new(),
+        instance_id: inst,
+        org_id: org,
+        project_id: String::new(),
+        owner: "city".into(),
+        name: name.into(),
+        description: String::new(),
+        default_branch: "main".into(),
+        private: false,
+        archived: false,
+        size_bytes: 0,
+        next_pr_number: 1,
+        created_at: now,
+        updated_at: now,
+    };
+    store.create_repo(repo("site")).await.expect("site");
+    let docs = store.create_repo(repo("docs")).await.expect("docs");
+    let taken = store
+        .update_repo(RepoRecord {
+            name: "site".into(),
+            ..docs.clone()
+        })
+        .await
+        .expect_err("the name is taken");
+    assert!(
+        matches!(&taken, ShakoError::Conflict(m) if m == "a record with that key already exists"),
+        "{taken:?}"
+    );
+    let kept = store
+        .get_repo_by_id(inst, org, docs.id)
+        .await
+        .expect("read")
+        .expect("docs");
+    assert_eq!(kept.name, "docs");
+
     let sealed = PgSecretStore::new(&store, inst, &kaisatsu_crypto::Kek::from_bytes([1; 32]))
         .expect("secret store");
     sealed.put_secret(org, "hook", "v1").await.expect("put");
@@ -447,6 +527,29 @@ async fn the_store_refuses_what_it_cannot_read_or_hold() {
     let err = store.hydrate(inst, unknown).await.expect_err("unreadable");
     assert!(
         storage_message(&err).starts_with("store log entry unreadable"),
+        "{err:?}"
+    );
+
+    // An entry that reads but that the tables refuse (another Organization's row, which the
+    // tenant's policy does not let it write) stops the replay with that error, not a skip.
+    let copied = OrgId::new();
+    sqlx::query(
+        "INSERT INTO shako.store_log (instance_id, org_id, op)
+         SELECT instance_id, $2, op FROM shako.store_log
+         WHERE instance_id = $3 AND org_id = $1 AND op ->> 'op' = 'upsert_commit_status'",
+    )
+    .bind(org.as_uuid())
+    .bind(copied.as_uuid())
+    .bind(inst.as_uuid())
+    .execute(&db.admin)
+    .await
+    .expect("copied log entry");
+    let err = store
+        .hydrate(inst, copied)
+        .await
+        .expect_err("refused by the table");
+    assert!(
+        !storage_message(&err).starts_with("store log entry unreadable"),
         "{err:?}"
     );
     db.drop_it().await;

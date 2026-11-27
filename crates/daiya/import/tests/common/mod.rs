@@ -16,6 +16,8 @@ use std::sync::Mutex;
 pub struct FailingStore {
     pub inner: MemoryStore,
     failing: Mutex<BTreeSet<&'static str>>,
+    /// `delete_datasource` answers "nothing deleted", as when the row went away in between.
+    gone: Mutex<bool>,
 }
 
 impl FailingStore {
@@ -23,12 +25,18 @@ impl FailingStore {
         Self {
             inner: MemoryStore::new(),
             failing: Mutex::new(BTreeSet::new()),
+            gone: Mutex::new(false),
         }
     }
 
     /// From now on `method` fails with a 500.
     pub fn fail(&self, method: &'static str) {
         self.failing.lock().unwrap().insert(method);
+    }
+
+    /// From now on `delete_datasource` deletes nothing and answers `false`.
+    pub fn deletes_find_nothing(&self) {
+        *self.gone.lock().unwrap() = true;
     }
 
     pub fn heal(&self) {
@@ -101,7 +109,19 @@ impl DaiyaStore for FailingStore {
     delegate!(get_datasource(org_id: OrgId, uid: &str) -> Option<DatasourceRecord>);
     delegate!(get_datasource_by_name(org_id: OrgId, name: &str) -> Option<DatasourceRecord>);
     delegate!(upsert_datasource(ds: DatasourceRecord) -> DatasourceRecord);
-    delegate!(delete_datasource(org_id: OrgId, uid: &str) -> bool);
+    fn delete_datasource(&self, org_id: OrgId, uid: &str) -> StoreFuture<'_, bool> {
+        if self.fails("delete_datasource") {
+            return Box::pin(async {
+                Err(CrError::Internal(
+                    "injected failure in delete_datasource".into(),
+                ))
+            });
+        }
+        if *self.gone.lock().unwrap() {
+            return Box::pin(async { Ok(false) });
+        }
+        self.inner.delete_datasource(org_id, uid)
+    }
     delegate!(list_library_panels(org_id: OrgId) -> Vec<LibraryPanelRecord>);
     delegate!(get_library_panel(org_id: OrgId, uid: &str) -> Option<LibraryPanelRecord>);
     delegate!(upsert_library_panel(panel: LibraryPanelRecord) -> LibraryPanelRecord);

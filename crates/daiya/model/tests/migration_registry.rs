@@ -473,6 +473,46 @@ fn v2beta1_documents_convert_with_layout_queries_and_library_panels() {
     assert_eq!(err.status_code(), 400);
 }
 
+/// A v2beta1 panel naming its visualization by `kind` (no `group`) and its query's datasource by
+/// `uid` (no `name`) converts like Grafana's; a query group without queries or transformations
+/// gives a panel with neither.
+#[test]
+fn v2beta1_reads_kind_and_uid_fallbacks_and_empty_query_groups() {
+    let v2 = json!({
+        "apiVersion": "dashboard.grafana.app/v2beta1",
+        "kind": "Dashboard",
+        "metadata": {"name": "fallbacks"},
+        "spec": {
+            "title": "Fallbacks",
+            "elements": {
+                "by-kind": {"kind": "Panel", "spec": {
+                    "id": 1,
+                    "vizConfig": {"kind": "gauge"},
+                    "data": {"kind": "QueryGroup", "spec": {"queries": [
+                        {"kind": "PanelQuery", "spec": {"refId": "A",
+                            "query": {"kind": "prometheus", "datasource": {"uid": "prom-uid"}, "spec": {"expr": "up"}}}}
+                    ]}}
+                }},
+                "no-queries": {"kind": "Panel", "spec": {
+                    "id": 2,
+                    "data": {"kind": "QueryGroup", "spec": {"transformations": [{"kind": "reduce", "spec": {"id": "reduce"}}]}}
+                }},
+                "empty-group": {"kind": "Panel", "spec": {"id": 3, "data": {"kind": "QueryGroup", "spec": {}}}}
+            }
+        }
+    });
+    let v1 = convert_v2beta1_to_v1(&v2).expect("converts");
+    let panels = v1["panels"].as_array().expect("panels");
+    let by_id = |id: u64| panels.iter().find(|p| p["id"] == id).expect("panel");
+    let gauge = by_id(1);
+    assert_eq!(gauge["type"], "gauge", "{v1}");
+    assert_eq!(gauge["targets"][0]["datasource"]["uid"], "prom-uid", "{v1}");
+    assert_eq!(by_id(2)["targets"], json!([]), "{v1}");
+    assert_eq!(by_id(2)["transformations"][0]["id"], "reduce", "{v1}");
+    assert_eq!(by_id(3)["targets"], json!([]), "{v1}");
+    assert!(by_id(3).get("transformations").is_none(), "{v1}");
+}
+
 /// A document every step 36..=42 changes: the chain from below 36 applies each step once, in order,
 /// exactly as running them by hand; from 36 it starts at 37 without a warning.
 #[test]

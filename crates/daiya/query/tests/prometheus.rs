@@ -210,7 +210,8 @@ async fn a_range_query_asks_query_range_on_the_aligned_grid_and_names_series() {
                 "data": { "resultType": "matrix", "result": [
                     { "metric": { "__name__": "up", "job": "api" },
                       "values": [[1700000000, "1"], [1700000015.5, "NaN"], [1700000030, "+Inf"], [1700000045, "x"]] },
-                    { "metric": { "job": "db" }, "values": [[1700000000, "0"], "broken", [1]] }
+                    { "metric": { "job": "db" }, "values": [[1700000000, "0"], "broken", [1]] },
+                    { "metric": { "job": "empty" } }
             ]}}),
         ),
     )])
@@ -246,7 +247,9 @@ async fn a_range_query_asks_query_range_on_the_aligned_grid_and_names_series() {
 
     let set = &sets[0];
     assert_eq!(set.ref_id, "A");
-    assert_eq!(set.frames.len(), 2);
+    assert_eq!(set.frames.len(), 3);
+    // A series without samples is a frame without values.
+    assert!(set.frames[2].fields[0].values.is_empty());
     let api = &set.frames[0];
     assert_eq!(api.name, "api");
     assert_eq!(api.ref_id.as_deref(), Some("A"));
@@ -397,7 +400,8 @@ async fn the_table_format_gives_one_frame_with_a_column_per_label() {
             &json!({ "status": "success", "data": { "resultType": "matrix", "result": [
                 { "metric": { "job": "a", "instance": "x" }, "values": [[1, "1"], [2, "2"]] },
                 { "metric": { "job": "b" }, "value": [3, "4"] },
-                { "metric": {} }
+                { "metric": {} },
+                { "value": [5, "6"] }
             ]}}),
         ),
     )])
@@ -414,12 +418,14 @@ async fn the_table_format_gives_one_frame_with_a_column_per_label() {
     assert_eq!(names, vec!["Time", "instance", "job", "Value #A"]);
     assert_eq!(
         frame.fields[0].values,
-        vec![json!(2000), json!(3000), json!(0)]
+        vec![json!(2000), json!(3000), json!(0), json!(5000)]
     );
     assert_eq!(
         frame.fields[1].values,
-        vec![json!("x"), Value::Null, Value::Null]
+        vec![json!("x"), Value::Null, Value::Null, Value::Null]
     );
+    // A result without labels is a row with every label column empty.
+    assert_eq!(frame.fields[3].f64_at(3), Some(6.0));
     assert_eq!(
         frame.fields[3].f64_at(0),
         Some(2.0),

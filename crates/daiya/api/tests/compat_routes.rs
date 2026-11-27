@@ -1174,6 +1174,15 @@ async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() 
         assert!(body.contains(part), "{part}: {body}");
     }
     assert!(body.find("Intro") < body.find("Nested"), "dashboard order");
+    // An own organization the directory does not hold still reads its own dashboards.
+    w.store.find_nothing("find_org");
+    let (st, unnamed) = page(Some("viewer"), "/d/page").await;
+    w.store.heal();
+    assert_eq!(st, StatusCode::OK, "{unnamed}");
+    assert!(
+        unnamed.as_str().unwrap().contains("<h2>Nested</h2>"),
+        "{unnamed}"
+    );
 
     // A dashboard whose stored JSON no longer reads draws no panel and no error text.
     let mut broken = w
@@ -1296,6 +1305,71 @@ async fn a_failing_export_is_an_error() {
         .await;
     w.store.heal();
     assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+}
+
+/// A dashboard saved but gone (or a store failing) before its answer is read is a 500 naming
+/// the dashboard; a dashboard gone before its delete is a 404 with no audit row.
+#[tokio::test]
+async fn a_dashboard_gone_between_steps_answers_what_happened() {
+    use daiya_model::DaiyaStore;
+    let w = world();
+    // The read after the save is the import's last one: fail it alone, whatever reads before it.
+    let mut failed_after_save = false;
+    for reads_before in 0..6 {
+        let uid = format!("flaky-{reads_before}");
+        w.store.fail_after("get_dashboard", reads_before);
+        let (st, body) = w
+            .call(
+                "POST",
+                "/api/dashboards/db",
+                Some("admin"),
+                Some(json!({ "dashboard": dashboard(&uid, "prom"), "overwrite": true })),
+            )
+            .await;
+        w.store.heal();
+        let saved = w.store.inner.get_dashboard(ORG, &uid).await.unwrap();
+        if st == StatusCode::INTERNAL_SERVER_ERROR && saved.is_some() {
+            failed_after_save = true;
+            break;
+        }
+        assert!(st.is_success() || st.is_server_error(), "{st}: {body}");
+    }
+    assert!(
+        failed_after_save,
+        "a failing read after the save answers 500"
+    );
+
+    w.store.find_nothing("get_dashboard");
+    let (st, body) = w
+        .call(
+            "POST",
+            "/api/dashboards/db",
+            Some("admin"),
+            Some(json!({ "dashboard": dashboard("vanished", "prom"), "overwrite": true })),
+        )
+        .await;
+    w.store.heal();
+    assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    // The cause stays in the log: the answer names no internals.
+    assert!(!body.to_string().contains("vanished"), "{body}");
+    assert!(
+        w.store
+            .inner
+            .get_dashboard(ORG, "vanished")
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    w.add_dashboard(dashboard("raced", "prom"), None).await;
+    let audits = w.store.inner.list_audit(ORG).await.unwrap().len();
+    w.store.find_nothing("delete_dashboard");
+    let (st, body) = w
+        .call("DELETE", "/api/dashboards/uid/raced", Some("admin"), None)
+        .await;
+    w.store.heal();
+    assert_eq!(st, StatusCode::NOT_FOUND, "{body}");
+    assert_eq!(w.store.inner.list_audit(ORG).await.unwrap().len(), audits);
 }
 
 /// The render route takes Grafana's `var-<name>` in place of the dashboard's current value, so

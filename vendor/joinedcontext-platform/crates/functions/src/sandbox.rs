@@ -7,7 +7,7 @@
 //! the gateway) by a timeout around the whole call.
 
 use std::collections::BTreeMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use rquickjs::function::Async;
@@ -257,7 +257,7 @@ async fn execute(invocation: Invocation, logs: Arc<Mutex<Vec<String>>>) -> Resul
                                 // requests in flight may overshoot it by their own answers; the
                                 // memory bound is IN_FLIGHT x ANSWER_LIMIT either way.
                                 let _permit = in_flight.acquire_owned().await;
-                                let left = *budget.lock().unwrap_or_else(|p| p.into_inner());
+                                let left = *budget.lock().unwrap_or_else(PoisonError::into_inner);
                                 let (answer, read) = endpoint::request_within(
                                     &host,
                                     &method,
@@ -266,7 +266,8 @@ async fn execute(invocation: Invocation, logs: Arc<Mutex<Vec<String>>>) -> Resul
                                     left.min(endpoint::ANSWER_LIMIT),
                                 )
                                 .await;
-                                let mut left = budget.lock().unwrap_or_else(|p| p.into_inner());
+                                let mut left =
+                                    budget.lock().unwrap_or_else(PoisonError::into_inner);
                                 *left = left.saturating_sub(read);
                                 rquickjs::Result::Ok(Json(answer))
                             }
@@ -277,7 +278,7 @@ async fn execute(invocation: Invocation, logs: Arc<Mutex<Vec<String>>>) -> Resul
             globals.set(
                 "__jc_log",
                 Function::new(ctx.clone(), move |line: String| {
-                    let mut logs = logs.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    let mut logs = logs.lock().unwrap_or_else(PoisonError::into_inner);
                     if logs.len() < LOG_LINES {
                         logs.push(line.chars().take(LOG_LINE_CHARS).collect());
                     }
@@ -328,7 +329,7 @@ impl<'js> rquickjs::IntoJs<'js> for Json {
 pub async fn run(invocation: Invocation) -> Outcome {
     let logs = Arc::new(Mutex::new(Vec::new()));
     let result = execute(invocation, logs.clone()).await;
-    let logs = std::mem::take(&mut *logs.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+    let logs = std::mem::take(&mut *logs.lock().unwrap_or_else(PoisonError::into_inner));
     let failed = |error: Failure| Outcome {
         status: 500,
         body: None,
@@ -576,5 +577,11 @@ export function createClient(config, transport) {
             location("    at <anonymous> (@jc/invoke:9:24)"),
             (None, None)
         );
+        // A frame whose line is no number is passed over for the next one.
+        assert_eq!(
+            location("    at f (@app/functions/f.ts:x:5)\n    at @app/functions/g.ts:7:1"),
+            (Some("@app/functions/g.ts".to_owned()), Some(7))
+        );
+        assert_eq!(location("    at f (@app/functions/f.ts:x:5)"), (None, None));
     }
 }

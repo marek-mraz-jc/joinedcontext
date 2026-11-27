@@ -487,12 +487,8 @@ pub async fn export_dashboard(store: &dyn DaiyaStore, org_id: OrgId, uid: &str) 
         .get_dashboard(org_id, uid)
         .await?
         .ok_or_else(|| CrError::NotFound(format!("Dashboard '{uid}' not found")))?;
-    let mut exported = CanonicalJson::export_dashboard_json(&record.data);
-    // Strip internal numeric version if original didn't set it or keep canonical schemaVersion 42
-    if let Some(obj) = exported.as_object_mut() {
-        obj.remove("id");
-    }
-    Ok(CanonicalJson::canonicalize(&exported))
+    // Canonical, without the numeric `id`, at schemaVersion 42.
+    Ok(CanonicalJson::export_dashboard_json(&record.data))
 }
 
 /// Diff entry in a [`PlanBundle`] (R2, §7.3).

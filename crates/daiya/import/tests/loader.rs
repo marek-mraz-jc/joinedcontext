@@ -91,6 +91,23 @@ async fn load_with(
 
 const PROM: &str = "apiVersion: 1\ndatasources:\n  - name: Prometheus\n    uid: prom\n    type: prometheus\n    url: http://prom:9090\n    isDefault: true\n";
 
+/// A datasource gone between the name lookup and the delete is not counted as deleted.
+#[tokio::test]
+async fn a_datasource_gone_before_its_delete_is_not_counted() {
+    let root = Root::new();
+    let store = FailingStore::new();
+    root.write("datasources/a.yaml", PROM);
+    assert_eq!(load(&store, &root.0).await.unwrap().datasources_upserted, 1);
+    root.write(
+        "datasources/a.yaml",
+        "apiVersion: 1\ndeleteDatasources:\n  - name: Prometheus\n",
+    );
+    store.deletes_find_nothing();
+    let report = load(&store, &root.0).await.unwrap();
+    assert_eq!(report.datasources_deleted, 0, "{report:?}");
+    assert_eq!(report.datasources_upserted, 0, "{report:?}");
+}
+
 #[tokio::test]
 async fn a_full_directory_loads_datasources_folders_and_dashboards_like_grafana() {
     let root = Root::new();

@@ -1579,6 +1579,22 @@ mod tests {
         );
     }
 
+    /// A key whose private part does not parse signs no registry token: an internal error
+    /// naming the signing, never a token.
+    #[test]
+    fn a_registry_token_is_not_minted_with_a_broken_key() {
+        let mut key = ShakoSigningKey::generate().expect("key");
+        key.pkcs8_der = b"not a pkcs8 key".to_vec();
+        let subject = Subject::authenticated("u1", "alice", vec![OrgId::from_u128(10)]);
+        let err = key
+            .mint_registry_token(&subject, OrgId::from_u128(10), "repository:o/a:pull", 60)
+            .expect_err("no token");
+        assert!(
+            matches!(&err, ShakoError::Internal(m) if m.starts_with("registry JWT sign failed")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn a_jwt_is_refused_for_each_broken_part_and_read_for_each_optional_claim() {
         let key = ShakoSigningKey::generate().expect("key");
@@ -1613,6 +1629,22 @@ mod tests {
             )
             .expect_err("no aud");
         assert_eq!(err.status_code(), 401);
+        // Another audience, alone or among others, an empty list, and the registry's audience
+        // for a shako token: each refused (the library checks first, the explicit check after).
+        for aud in [
+            json!("account"),
+            json!(["account", "portal"]),
+            json!([]),
+            json!("container_registry"),
+        ] {
+            let err = verifier
+                .verify(
+                    &sign(json!({"sub": "u", "aud": aud, "iss": iss, "exp": now + 60})),
+                    "shako",
+                )
+                .expect_err("another audience");
+            assert_eq!(err.status_code(), 401, "{aud}");
+        }
         refused(
             &sign(json!({"sub": "", "aud": "shako", "iss": iss, "exp": now + 60})),
             "JWT names no subject",

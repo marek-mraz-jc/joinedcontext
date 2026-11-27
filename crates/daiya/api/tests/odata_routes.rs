@@ -1215,6 +1215,7 @@ async fn filters_combine_compare_times_and_refuse_what_they_cannot_read() {
         ("updatedAt%20gt%202000-01-01", 2),
         ("updatedAt%20lt%202000-01-01", 0),
         ("updatedAt%20eq%20'soon'", 0),
+        ("version%20lt%200", 0),
         ("contains(title,'edge')", 1),
         ("startswith(title,'Board')", 2),
     ] {

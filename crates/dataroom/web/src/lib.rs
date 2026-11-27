@@ -431,6 +431,12 @@ impl UiLabels {
 /// Content Security Policy header with per-request nonce (`_csp` / `jc_csp_header` in
 /// `ours/ckan-theme/plugin.py` lines 1581-1606, D7).
 pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bool) -> String {
+    csp_header_with(nonce, domain, framable_map, "")
+}
+
+/// [`csp_header_for_domain`] with `extra` (origins, each after a space) added to the image,
+/// connect and frame sources.
+fn csp_header_with(nonce: &str, domain: Option<&str>, framable_map: bool, extra: &str) -> String {
     let ancestors = if framable_map { "*" } else { "'self'" };
     let own = match domain.filter(|d| {
         !d.is_empty()
@@ -441,7 +447,7 @@ pub fn csp_header_for_domain(nonce: &str, domain: Option<&str>, framable_map: bo
         None => String::new(),
     };
     format!(
-        "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data:{own}; connect-src 'self'{own}; frame-src 'self'{own}; font-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors {ancestors}; object-src 'none'; base-uri 'self'"
+        "default-src 'self'; script-src 'self' 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; img-src 'self' data:{own}{extra}; connect-src 'self'{own}{extra}; frame-src 'self'{own}{extra}; font-src 'self'; worker-src 'self'; manifest-src 'self'; form-action 'self'; frame-ancestors {ancestors}; object-src 'none'; base-uri 'self'"
     )
 }
 
@@ -455,7 +461,6 @@ pub fn csp_header_for_branding(
     framable_map: bool,
 ) -> String {
     let domain = (!branding.domain.is_empty()).then_some(branding.domain.as_str());
-    let mut csp = csp_header_for_domain(nonce, domain, framable_map);
     let mut extra = String::new();
     let named = dataroom_core::branding::Address::ALL
         .into_iter()
@@ -477,20 +482,7 @@ pub fn csp_header_for_branding(
             extra.push_str(origin);
         }
     }
-    if !extra.is_empty() {
-        for directive in [
-            "img-src 'self' data:",
-            "connect-src 'self'",
-            "frame-src 'self'",
-        ] {
-            let at = csp.find(directive).map(|i| i + directive.len());
-            if let Some(at) = at {
-                let end = at + csp[at..].find(';').unwrap_or(csp.len() - at);
-                csp.insert_str(end, &extra);
-            }
-        }
-    }
-    csp
+    csp_header_with(nonce, domain, framable_map, &extra)
 }
 
 pub fn csp_header(nonce: &str, framable_map: bool) -> String {

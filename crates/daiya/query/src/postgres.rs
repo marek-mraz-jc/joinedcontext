@@ -1691,11 +1691,8 @@ mod tests {
             "SELECT ((value)) FROM org_metrics_view",
             "SELECT * FROM org_metrics_view \"m\"",
         ] {
-            assert!(
-                validate_readonly_select("A", sql, &v).is_ok(),
-                "guard refused: {sql}: {:?}",
-                validate_readonly_select("A", sql, &v)
-            );
+            let checked = validate_readonly_select("A", sql, &v);
+            assert!(checked.is_ok(), "guard refused: {sql}: {checked:?}");
         }
     }
 

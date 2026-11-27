@@ -590,25 +590,26 @@ async fn answer_ckan_action(
                 .await
                 .ok()
                 .flatten();
-            let mut merged = dataset_to_ckan(
+            let stored = dataset_to_ckan(
                 &existing,
                 pub_rec.as_ref(),
                 &BTreeMap::new(),
                 &cat.default_language,
             );
-            if let (Some(target_obj), Some(patch_obj)) =
-                (merged.as_object_mut(), payload.as_object())
-            {
-                for (k, v) in patch_obj {
-                    target_obj.insert(k.clone(), v.clone());
-                }
-                // `visibility` outranks `private` in `dataset_from_ckan`: a patch that sets only
-                // `private` drops the stored `visibility` it contradicts.
-                if !patch_obj.contains_key("visibility") {
-                    if let Some(private) = patch_obj.get("private").and_then(Value::as_bool) {
-                        if private == (existing.visibility == Visibility::Public) {
-                            target_obj.remove("visibility");
-                        }
+            // The patch's members overwrite the stored ones (a later key wins in `collect`).
+            let mut merged: Map<String, Value> = stored
+                .as_object()
+                .into_iter()
+                .chain(payload.as_object())
+                .flatten()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            // `visibility` outranks `private` in `dataset_from_ckan`: a patch that sets only
+            // `private` drops the stored `visibility` it contradicts.
+            if payload.get("visibility").is_none() {
+                if let Some(private) = payload.get("private").and_then(Value::as_bool) {
+                    if private == (existing.visibility == Visibility::Public) {
+                        merged.remove("visibility");
                     }
                 }
             }

@@ -420,6 +420,9 @@ mod tests {
                     body.len()
                 );
                 let _ = sock.write_all(resp.as_bytes()).await;
+                if Arc::strong_count(&log) == 1 {
+                    break;
+                }
             }
         });
         (format!("http://127.0.0.1:{}/odata/v4", addr.port()), seen)
@@ -542,7 +545,7 @@ mod tests {
 
     #[tokio::test]
     async fn upstream_errors_bad_json_health_and_token_exchange() {
-        let (url, _) = mock(500, "boom").await;
+        let (url, _seen) = mock(500, "boom").await;
         let err = ds(&url)
             .query(&ctx(), &[q(json!({"entitySet": "S"}))])
             .await
@@ -660,5 +663,51 @@ mod tests {
         assert!(d.import(&json!("S")).is_err());
         let missing = d.import(&json!({"entitySet": "S"})).unwrap();
         assert_eq!(missing.query.ref_id, "A");
+        // A shown query exports without `hide`.
+        assert_eq!(
+            d.export(&missing.query),
+            json!({"refId": "A", "entitySet": "S"})
+        );
+    }
+
+    /// The service document keeps string members only, and a row that is no object adds no column.
+    #[test]
+    fn service_documents_and_rows_keep_only_what_they_can_read() {
+        let doc = service_document(
+            br#"{"value":[{"name":"S","kind":"EntitySet","url":"S"},{"name":"T","kind":7},{"kind":"x"}]}"#,
+        );
+        assert_eq!(
+            doc,
+            json!({"value": [{"name": "S", "kind": "EntitySet", "url": "S"}, {"name": "T"}]})
+        );
+        assert_eq!(service_document(b"not json"), json!({"value": []}));
+        let frame = odata_rows_to_frame("A", "S", &[json!(5), json!({"a": 1})]);
+        let names: Vec<&str> = frame.fields.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, vec!["a"]);
+        assert_eq!(frame.fields[0].values, vec![Value::Null, json!(1)]);
+    }
+
+    /// The mock server ends once the test let go of its request log.
+    #[tokio::test]
+    async fn the_mock_ends_once_its_log_is_gone() {
+        let (url, seen) = mock(200, "{}").await;
+        drop(seen);
+        let addr = url
+            .trim_start_matches("http://")
+            .split('/')
+            .next()
+            .expect("an address")
+            .to_owned();
+        let mut sock = tokio::net::TcpStream::connect(&addr)
+            .await
+            .expect("connects");
+        sock.write_all(b"GET / HTTP/1.1\r\n\r\n")
+            .await
+            .expect("writes");
+        let mut answer = Vec::new();
+        sock.read_to_end(&mut answer).await.expect("reads");
+        assert!(answer.starts_with(b"HTTP/1.1 200"));
+        tokio::task::yield_now().await;
+        assert!(tokio::net::TcpStream::connect(&addr).await.is_err());
     }
 }

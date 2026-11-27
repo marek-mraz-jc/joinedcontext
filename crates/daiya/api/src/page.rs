@@ -329,6 +329,49 @@ mod tests {
         )
     }
 
+    /// A panel the caller may not read names why, a panel that failed names only its title, and
+    /// both escape what the dashboard says.
+    #[test]
+    fn a_refused_or_failed_panel_says_so_and_escapes_its_title() {
+        let view = crate::render::PanelView {
+            dashboard_uid: "d".into(),
+            dashboard_title: "D".into(),
+            panel_id: 1,
+            panel_title: "<P>".into(),
+            panel_type: "timeseries".into(),
+            description: None,
+            grid_pos: None,
+            field_config: serde_json::Value::Null,
+            options: serde_json::Value::Null,
+            frame_sets: Vec::new(),
+            html_table: "<table>".into(),
+            access_denied_message: Some("No access to <ds>".into()),
+        };
+        let shown = panel_section("ignored", Ok(Ok(view)));
+        assert_eq!(
+            shown,
+            "<section><h2>&lt;P&gt;</h2><p>No access to &lt;ds&gt;</p></section>"
+        );
+        let failed = panel_section("<T>", Ok(Err(CrError::Internal("http://10.0.0.1".into()))));
+        assert_eq!(
+            failed,
+            "<section><h2>&lt;T&gt;</h2><p>This panel could not be read.</p></section>"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_panel_past_its_deadline_says_reload() {
+        let late = tokio::time::timeout(
+            std::time::Duration::ZERO,
+            std::future::pending::<CrResult<crate::render::PanelView>>(),
+        )
+        .await;
+        assert_eq!(
+            panel_section("<T>", late),
+            "<section><h2>&lt;T&gt;</h2><p>This panel took too long to read. Reload the page to try again.</p></section>"
+        );
+    }
+
     /// The host's reader reads every dashboard of its one organization, read-only; anything
     /// else (a write, another organization, another person, a subject that may write) is
     /// the inner authorizer's, which grants this reader nothing.
