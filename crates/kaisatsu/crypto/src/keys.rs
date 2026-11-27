@@ -192,6 +192,19 @@ pub struct PublicJwkSet {
 
 pub use kaisatsu_core::SIGNING_ALGORITHMS;
 
+/// The base64url `x` and `y` of an uncompressed P-256 point: 0x04 || X (32 bytes) || Y (32 bytes).
+fn p256_point_xy(pub_bytes: &[u8]) -> Result<(String, String)> {
+    if pub_bytes.len() != 65 || pub_bytes[0] != 0x04 {
+        return Err(KaisatsuError::Crypto(
+            "unexpected P-256 public key format".into(),
+        ));
+    }
+    Ok((
+        URL_SAFE_NO_PAD.encode(&pub_bytes[1..33]),
+        URL_SAFE_NO_PAD.encode(&pub_bytes[33..65]),
+    ))
+}
+
 pub struct KeyManager;
 
 impl KeyManager {
@@ -207,15 +220,7 @@ impl KeyManager {
             .map_err(crate::crypto_err("ECDSA P-256 generation failed"))?;
         let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
             .map_err(crate::crypto_err("ECDSA P-256 parse failed"))?;
-        let pub_bytes = pair.public_key().as_ref();
-        // Uncompressed P-256 point: 0x04 || X (32 bytes) || Y (32 bytes)
-        if pub_bytes.len() != 65 || pub_bytes[0] != 0x04 {
-            return Err(KaisatsuError::Crypto(
-                "unexpected P-256 public key format".into(),
-            ));
-        }
-        let x = URL_SAFE_NO_PAD.encode(&pub_bytes[1..33]);
-        let y = URL_SAFE_NO_PAD.encode(&pub_bytes[33..65]);
+        let (x, y) = p256_point_xy(pair.public_key().as_ref())?;
         let kid = format!("es256-{}", &crate::sha256_hex(&format!("{x}.{y}"))[..16]);
         let jwk = PublicJwk {
             kid: kid.clone(),
@@ -428,5 +433,29 @@ impl KeyManager {
             changed.insert(i);
         }
         changed.into_iter().map(|i| keys[i].clone()).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn p256_point_split_refuses_anything_but_an_uncompressed_65_byte_point() {
+        let mut point = [7u8; 65];
+        point[0] = 0x04;
+        let (x, y) = p256_point_xy(&point).expect("uncompressed point");
+        assert_eq!(x, URL_SAFE_NO_PAD.encode([7u8; 32]));
+        assert_eq!(y, URL_SAFE_NO_PAD.encode([7u8; 32]));
+        let mut compressed = point;
+        compressed[0] = 0x02;
+        for bad in [&[][..], &point[..33], &compressed[..], &[0x04u8; 66][..]] {
+            let err = p256_point_xy(bad).expect_err("not an uncompressed P-256 point");
+            assert!(
+                err.to_string()
+                    .contains("unexpected P-256 public key format"),
+                "{err}"
+            );
+        }
     }
 }

@@ -577,6 +577,13 @@ impl OperationRegistry {
         Self { ops }
     }
 
+    /// A registry of exactly `ops`: a service that offers fewer operations than [`Self::new`],
+    /// or other ones, under the same routes.
+    #[must_use]
+    pub fn from_operations(ops: Vec<OperationDef>) -> Self {
+        Self { ops }
+    }
+
     pub fn operations(&self) -> &[OperationDef] {
         &self.ops
     }
@@ -600,6 +607,30 @@ impl OperationRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A registry of chosen operations finds exactly those, by name and by OData name.
+    #[test]
+    fn a_registry_of_its_own_operations_finds_only_those() {
+        assert!(
+            OperationRegistry::from_operations(Vec::new())
+                .operations()
+                .is_empty()
+        );
+        assert!(
+            OperationRegistry::from_operations(Vec::new())
+                .find("allowed")
+                .is_none()
+        );
+        let allowed = OperationRegistry::new()
+            .find("allowed")
+            .expect("allowed")
+            .clone();
+        let one = OperationRegistry::from_operations(vec![allowed]);
+        assert_eq!(one.operations().len(), 1);
+        assert!(one.find("allowed").is_some());
+        assert!(one.find_odata("Allowed", None).is_some());
+        assert!(one.find("person_create").is_none());
+    }
 
     /// Every registry operation's OData face (W5): kind, name, binding (collection or one
     /// entity), parameters with their types and nullability, and the return type.

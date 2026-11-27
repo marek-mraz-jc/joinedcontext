@@ -61,12 +61,6 @@ impl From<KaisatsuError> for ODataError {
     }
 }
 
-impl From<odata_table::TableError> for ODataError {
-    fn from(e: odata_table::TableError) -> Self {
-        Self(KaisatsuError::from(e))
-    }
-}
-
 impl IntoResponse for ODataError {
     fn into_response(self) -> Response {
         if let KaisatsuError::Unauthorized(ref msg) = self.0
@@ -718,8 +712,10 @@ async fn odata_set_allowed(
         )
         .await
         .unwrap_or_default();
-    let table = odata_table::MemoryTable::new(info, ans.rows)?;
-    let dec = allowed(&table, &scope, op, key_val.as_ref()).await?;
+    let table = odata_table::MemoryTable::new(info, ans.rows).map_err(KaisatsuError::from)?;
+    let dec = allowed(&table, &scope, op, key_val.as_ref())
+        .await
+        .map_err(KaisatsuError::from)?;
     Ok(Json(dec.to_json()))
 }
 
