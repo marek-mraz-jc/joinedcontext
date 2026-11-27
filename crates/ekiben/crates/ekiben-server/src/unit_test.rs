@@ -1465,6 +1465,19 @@ tests:
                 .expect_err(extra);
             assert!(err.contains(want), "{extra}: {err}");
         }
+        // A label mock that replaced its component leaves no place for a label inside it.
+        write(
+            d,
+            "nested.yaml",
+            "pipeline:\n  processors:\n    - label: outer\n      branch:\n        processors:\n          - label: inner\n            noop: {}\n",
+        );
+        let nested = case(
+            "    target_processors: 'nested.yaml#/pipeline/processors'\n    mocks: {outer: plain, inner: {noop: {}}}\n",
+        );
+        let err = execute(&reg, &[nested], &target, &[])
+            .await
+            .expect_err("nested label mocks");
+        assert!(err.contains("failed to set mock 'inner'"), "{err}");
         write(d, "broken.blobl", "root = (");
         let err = execute(
             &reg,

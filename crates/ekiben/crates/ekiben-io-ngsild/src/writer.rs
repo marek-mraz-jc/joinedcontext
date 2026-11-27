@@ -211,6 +211,9 @@ impl Writer {
     }
 
     /// Writes the entities of `parts` and answers one [`Verdict`] per message, in order.
+    /// Indexing holds by construction: `verdicts` and `tallies` have one slot per part, an
+    /// `Entity::msg` is the index of the part it came from, and every member list indexes
+    /// `entities`.
     pub async fn write(&self, env: &CallEnv<'_>, parts: &[Part]) -> Vec<Verdict> {
         let mut verdicts: Vec<Verdict> = vec![Verdict::default(); parts.len()];
         let mut tallies: Vec<Tally> = (0..parts.len()).map(|_| Tally::default()).collect();
@@ -239,9 +242,7 @@ impl Writer {
             }
         }
         for e in &entities {
-            if let Some(t) = tallies.get_mut(e.msg) {
-                t.entities += 1;
-            }
+            tallies[e.msg].entities += 1;
         }
 
         // A temporal append addresses one entity per request; the batch operations pack.
@@ -387,9 +388,7 @@ impl Writer {
             }
             Ok(_) => {
                 for e in members.iter().filter_map(|i| entities.get(*i)) {
-                    if let Some(v) = verdicts.get_mut(e.msg) {
-                        v.written += 1;
-                    }
+                    verdicts[e.msg].written += 1;
                 }
                 metrics::incr(
                     env.metrics,
@@ -402,14 +401,13 @@ impl Writer {
             Err(Failure::Refused(answer)) => {
                 let text = problem_text(&answer);
                 for e in members.iter().filter_map(|i| entities.get(*i)) {
-                    if let Some(t) = tallies.get_mut(e.msg) {
-                        t.whole_refused += 1;
-                        t.whole_text.get_or_insert_with(|| text.clone());
-                        t.whole_members.push(Refusal {
-                            id: Value::String(e.id.clone().unwrap_or_default()),
-                            message: Value::String(text.clone()),
-                        });
-                    }
+                    let t = &mut tallies[e.msg];
+                    t.whole_refused += 1;
+                    t.whole_text.get_or_insert_with(|| text.clone());
+                    t.whole_members.push(Refusal {
+                        id: Value::String(e.id.clone().unwrap_or_default()),
+                        message: Value::String(text.clone()),
+                    });
                 }
                 metrics::incr(
                     env.metrics,
@@ -422,9 +420,7 @@ impl Writer {
             Err(failure) => {
                 let text = failure.text();
                 for m in messages_of(entities, members) {
-                    if let Some(v) = verdicts.get_mut(m) {
-                        v.failed.get_or_insert_with(|| text.clone());
-                    }
+                    verdicts[m].failed.get_or_insert_with(|| text.clone());
                 }
             }
         }
@@ -463,9 +459,7 @@ fn apply_multi_status(
                 answer.error_text
             );
             for m in messages_of(entities, members) {
-                if let Some(v) = verdicts.get_mut(m) {
-                    v.failed.get_or_insert_with(|| text.clone());
-                }
+                verdicts[m].failed.get_or_insert_with(|| text.clone());
             }
             return;
         }
@@ -487,9 +481,7 @@ fn apply_multi_status(
         match named {
             Some(idx) => {
                 refused.insert(idx);
-                if let Some(v) = entities.get(idx).and_then(|e| verdicts.get_mut(e.msg)) {
-                    v.refused.push(refusal);
-                }
+                verdicts[entities[idx].msg].refused.push(refusal);
             }
             None => {
                 let idless: Vec<usize> = members
@@ -504,9 +496,7 @@ fn apply_multi_status(
                     messages_of(entities, &idless)
                 };
                 for m in targets {
-                    if let Some(v) = verdicts.get_mut(m) {
-                        v.refused.push(refusal.clone());
-                    }
+                    verdicts[m].refused.push(refusal.clone());
                 }
             }
         }
@@ -516,10 +506,8 @@ fn apply_multi_status(
         if refused.contains(idx) {
             continue;
         }
-        if let Some(v) = entities.get(*idx).and_then(|e| verdicts.get_mut(e.msg)) {
-            v.written += 1;
-            written += 1;
-        }
+        verdicts[entities[*idx].msg].written += 1;
+        written += 1;
     }
     metrics::incr(env.metrics, env.label, metrics::WRITTEN, None, written);
     metrics::incr(

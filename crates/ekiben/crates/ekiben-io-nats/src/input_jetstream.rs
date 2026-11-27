@@ -481,6 +481,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_log_writer_keeps_what_it_is_given_across_a_flush() {
+        let mut logs = Logs::default();
+        logs.write_all(b"one ").expect("write");
+        logs.flush().expect("flush");
+        logs.write_all(b"two").expect("write");
+        assert_eq!(logs.text(), "one two");
+    }
+
     /// A message with an ADR-15 v2 reply subject carries its domain into `nats_domain`; `_` means
     /// none. An ack that cannot be sent (no reply subject) is logged; the server redelivers.
     #[tokio::test(flavor = "current_thread")]
