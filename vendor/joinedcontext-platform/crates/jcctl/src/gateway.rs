@@ -121,12 +121,12 @@ impl Gateway {
     /// `{base}/cs/{space}/ngsi-ld/v1/{tail}`, the space surface the gateway serves byte for
     /// byte (SP-03, CC-16).
     fn space_url(&self, space: &str, tail: &str) -> Result<Url, BrokerError> {
-        self.base
+        // A path-absolute reference joins onto any http(s) base (`new` refuses every other): the
+        // parser percent-encodes what the space holds, so no name fails to join.
+        Ok(self
+            .base
             .join(&format!("/cs/{space}/ngsi-ld/v1/{tail}"))
-            .map_err(|e| BrokerError::Unavailable {
-                url: self.base.to_string(),
-                message: format!("{space} is not a usable space name: {e}"),
-            })
+            .expect("an absolute path joins onto an http(s) base"))
     }
 
     /// What the gateway answered, as an error repeats it: the token redacted first, so an

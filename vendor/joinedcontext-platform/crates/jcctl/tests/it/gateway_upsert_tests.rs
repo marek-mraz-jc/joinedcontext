@@ -173,6 +173,45 @@ fn an_unreachable_host_is_unavailable_not_refused() {
     }
 }
 
+/// A retrieval answered `200` with something that is not an entity is a refusal that repeats the
+/// start of what came back, and one answered with a cut-off body is the platform unavailable.
+#[test]
+fn a_retrieval_answered_with_no_entity_or_a_cut_off_body_is_not_an_entity() {
+    let (base, _) = answering(200, "<html>upstream reset</html>");
+    let error = gateway(&base)
+        .entity("ovzdusie", "urn:ngsi-ld:Station:bb.sk:ovzdusie:1")
+        .expect_err("not JSON");
+    assert!(
+        matches!(&error, BrokerError::Refused { status: 200, message, .. } if message.contains("the answer is not an entity") && message.contains("upstream reset")),
+        "{error:?}"
+    );
+    assert!(!error.to_string().contains(TOKEN));
+
+    let (base, _) = answering(404, "");
+    assert_eq!(
+        gateway(&base).entity("ovzdusie", "urn:ngsi-ld:Station:bb.sk:ovzdusie:9"),
+        Ok(None)
+    );
+
+    // The answer promises 100 bytes, sends three and hangs up.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let port = listener.local_addr().expect("an address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let mut buffer = [0_u8; 4096];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\nConnection: close\r\n\r\nabc",
+            );
+        }
+    });
+    let cut = gateway(&format!("http://127.0.0.1:{port}"))
+        .entity("ovzdusie", "urn:ngsi-ld:Station:bb.sk:ovzdusie:1")
+        .expect_err("cut off");
+    assert!(matches!(cut, BrokerError::Unavailable { .. }), "{cut:?}");
+}
+
 /// CC-04: the token goes in the Authorization header and nowhere else; a refusal that echoes
 /// the request back does not carry it into the error.
 #[test]

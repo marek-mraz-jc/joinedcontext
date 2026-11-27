@@ -508,6 +508,112 @@ fn the_first_run_creates_the_dataset_over_http_and_the_second_writes_nothing() {
     );
 }
 
+/// A gateway that serves one Endpoint's DCAT record and model schema, and nothing else (every
+/// other path is a `404`, which the command reads as "not served").
+fn gateway_serving(slug: &'static str, record: Value) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let port = listener.local_addr().expect("a bound address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let request = read_request(&mut stream);
+            let path = request
+                .split_whitespace()
+                .nth(1)
+                .unwrap_or("/")
+                .split('?')
+                .next()
+                .unwrap_or("/")
+                .to_owned();
+            let (status, body) = if path == format!("/api/endpoint/{slug}/") {
+                (200, record.to_string())
+            } else if path == format!("/api/endpoint/{slug}/schema/v1/model.schema.json") {
+                (200, json!({ "type": "object" }).to_string())
+            } else {
+                (404, String::new())
+            };
+            let _ = stream.write_all(
+                format!(
+                    "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n\
+                     Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .as_bytes(),
+            );
+        }
+    });
+    format!("http://127.0.0.1:{port}")
+}
+
+/// EP-62: the command reads the record of a public Endpoint through the gateway and reports the
+/// Endpoint whose catalogue does not answer (an instance is https, here a closed port) by name,
+/// with the count, and exit 1; an instance whose token is not in the environment fails the same
+/// Endpoint before the gateway is asked.
+#[test]
+fn the_command_reports_an_endpoint_whose_catalogue_does_not_answer() {
+    use crate::common;
+    use std::process::Command;
+
+    let gateway = gateway_serving("zt4qm7ge2xdv6ksb3ncf5arw2y", record("Air quality"));
+    let repo = common::demo_repo("ckan-cli");
+    let instance_path = jc_core::registry::by_kind("CkanInstance")
+        .expect("a kind")
+        .repo_path("ovzdusie", "", "open-data");
+    common::write(
+        &repo,
+        &instance_path,
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: CkanInstance\nmetadata:\n  name: open-data\n  namespace: ovzdusie\nspec:\n  url: https://127.0.0.1:9\n  apiTokenRef: { name: ckan-open-data, key: apiToken }\n  organizationDefault: mesto-banska-bystrica\n",
+    );
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.org"])
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(out.status.success(), "git {args:?}: {out:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "reviewed"]);
+    git(&["update-ref", "refs/remotes/origin/main", "HEAD"]);
+
+    let variable = "JCCTL_CKAN_CLI_TOKEN";
+    let run = |extra: &[&str], token: Option<&str>| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_jcctl"));
+        command
+            .args(["publish", "ckan", "--repo-dir"])
+            .arg(&repo)
+            .args(["--project", "ovzdusie", "--host", &gateway])
+            .args(["--api-token-env", variable])
+            .args(extra)
+            .env_remove(variable);
+        if let Some(token) = token {
+            command.env(variable, token);
+        }
+        command.output().expect("jcctl runs")
+    };
+
+    for extra in [&[][..], &["--withdraw"][..]] {
+        let down = run(extra, Some(TOKEN));
+        assert_eq!(down.status.code(), Some(1), "{extra:?}: {down:?}");
+        let said = String::from_utf8_lossy(&down.stderr);
+        assert!(
+            said.contains("1 of 1 endpoints failed"),
+            "{extra:?}: {said}"
+        );
+        assert!(said.contains("public-air"), "{extra:?}: {said}");
+        assert!(!said.contains(TOKEN), "the token is never printed: {said}");
+    }
+
+    let no_token = run(&[], None);
+    assert_eq!(no_token.status.code(), Some(1), "{no_token:?}");
+    let said = String::from_utf8_lossy(&no_token.stderr);
+    assert!(said.contains("is not set or empty"), "{no_token:?}");
+    assert!(said.contains("1 of 1 endpoints failed"), "{no_token:?}");
+}
+
 /// EP-63: a changed record is one `package_update`, addressed by the id CKAN minted.
 #[test]
 fn a_changed_record_updates_the_dataset_by_its_id() {
@@ -898,4 +1004,27 @@ fn a_dead_datastore_resource_is_dropped_by_the_next_publish() {
     assert_eq!(run(&mut api), Outcome::Unchanged);
     let catalogue = catalogue.lock().expect("the catalogue");
     assert_eq!(catalogue.writes(), vec!["package_create", "package_update"]);
+}
+
+/// An answer whose body stops before its Content-Length is "broke off", naming the action.
+#[test]
+fn an_answer_cut_short_is_unavailable_and_names_the_action() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("a port");
+    let base = format!("http://{}", listener.local_addr().expect("an address"));
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            read_request(&mut stream);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\r\n{\"success\"",
+            );
+        }
+    });
+    let api = client(&base, TOKEN);
+    let error = api
+        .show("package_show", "kvalita-ovzdusia")
+        .expect_err("the body is cut");
+    assert!(
+        matches!(&error, CkanError::Unavailable(message) if message.starts_with("package_show broke off")),
+        "{error}"
+    );
 }

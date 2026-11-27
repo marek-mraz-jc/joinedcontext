@@ -227,6 +227,5 @@ fn registry_entry(repo_dir: &Path, slug: &str) -> Result<String, MigrateError> {
             "ref": "main",
         },
     });
-    serde_norway::to_string(&entry)
-        .map_err(|err| MigrateError::Refused(format!("{}: {err}", path.display())))
+    Ok(serde_norway::to_string(&entry).expect("a JSON value serializes"))
 }

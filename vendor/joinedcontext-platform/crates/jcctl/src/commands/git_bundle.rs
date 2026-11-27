@@ -195,14 +195,13 @@ pub fn export(
         "kind": "Project",
         "metadata": { "name": slug, "namespace": "org" },
         "spec": {
-            "organizationRef": serde_json::to_value(&own.spec.organization_ref)
-                .map_err(|err| refused(err.to_string()))?,
+            "organizationRef": own.spec.organization_ref,
             "repository": { "name": slug },
             "ref": "main",
         },
     });
     let entry_path = format!("projects/{slug}.yaml");
-    let entry_text = serde_norway::to_string(&entry).map_err(|err| refused(err.to_string()))?;
+    let entry_text = serde_norway::to_string(&entry).expect("a JSON value serializes");
     let written = out_dir.join(&entry_path);
     std::fs::create_dir_all(written.parent().unwrap_or(out_dir)).map_err(io(out_dir))?;
     std::fs::write(&written, &entry_text).map_err(io(&written))?;
@@ -237,7 +236,7 @@ pub fn export(
     };
     index.validate().map_err(|err| refused(err.to_string()))?;
     let index_path = out_dir.join(INDEX);
-    let yaml = serde_norway::to_string(&index).map_err(|err| refused(err.to_string()))?;
+    let yaml = serde_norway::to_string(&index).expect("a validated bundle index serializes");
     std::fs::write(&index_path, yaml).map_err(io(&index_path))?;
     Ok(index)
 }

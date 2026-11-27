@@ -110,9 +110,10 @@ impl HttpCkan {
             "{}/api/3/action/{action}",
             self.base.path().trim_end_matches('/')
         );
-        self.base
+        Ok(self
+            .base
             .join(&path)
-            .map_err(|e| CkanError::Unavailable(format!("action URL for {action}: {e}")))
+            .expect("an absolute path joins onto an http(s) base"))
     }
 
     /// Sends one request and reads the envelope CKAN wraps every answer in.
@@ -203,14 +204,21 @@ impl CkanApi for HttpCkan {
 /// holds no token, so the message is safe to show. The body of a request is never part
 /// of it.
 fn transport(action: &str, error: &reqwest::Error) -> String {
-    let kind = if error.is_timeout() {
+    format!(
+        "{action} {}: {error}",
+        failure_kind(error.is_timeout(), error.is_connect())
+    )
+}
+
+/// What went wrong with a request, in the words a publish report uses.
+fn failure_kind(timed_out: bool, connect: bool) -> &'static str {
+    if timed_out {
         "timed out"
-    } else if error.is_connect() {
+    } else if connect {
         "could not connect"
     } else {
         "failed"
-    };
-    format!("{action} {kind}: {error}")
+    }
 }
 
 /// What CKAN said in a failed envelope: the error's type and message, and every field it
@@ -321,5 +329,12 @@ mod tests {
             client.url("package_show").expect("an action URL").as_str(),
             "https://data.example.org/ckan/api/3/action/package_show"
         );
+    }
+
+    #[test]
+    fn a_failure_is_worded_as_a_timeout_a_connect_failure_or_a_plain_failure() {
+        assert_eq!(failure_kind(true, true), "timed out");
+        assert_eq!(failure_kind(false, true), "could not connect");
+        assert_eq!(failure_kind(false, false), "failed");
     }
 }

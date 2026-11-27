@@ -69,6 +69,36 @@ fn plan_of_layout_2_says_what_plan_of_layout_1_says() {
     assert!(String::from_utf8_lossy(&refused.stderr).contains("layout 1"));
 }
 
+/// CC-86, T-6709: a project the command was given no checkout for is a warning and its resources
+/// are absent; one whose own manifests are refused stops the command naming it; a registry that
+/// does not read stops it before anything is planned.
+#[test]
+fn plan_of_layout_2_names_a_missing_a_refused_and_an_unreadable_project() {
+    let (org, project) = layout_2("cli-plan-warn");
+    let missing = jcctl(&["plan", "--repo-dir", &text(&org)]);
+    assert_eq!(missing.status.code(), Some(0), "{missing:?}");
+    let said = String::from_utf8_lossy(&missing.stderr);
+    assert!(
+        said.contains("warning: project ovzdusie at main: no checkout was given"),
+        "{said}"
+    );
+
+    write(&project, "project.yaml", "kind: [not a project\n");
+    let pair = format!("ovzdusie={}", text(&project));
+    let refused = jcctl(&["plan", "--repo-dir", &text(&org), "--project-dir", &pair]);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let said = String::from_utf8_lossy(&refused.stderr);
+    assert!(said.contains("project ovzdusie is refused:"), "{said}");
+
+    write(&org, "projects/ovzdusie.yaml", "kind: [not an entry\n");
+    let unreadable = jcctl(&["plan", "--repo-dir", &text(&org), "--project-dir", &pair]);
+    assert_eq!(unreadable.status.code(), Some(1), "{unreadable:?}");
+    assert!(
+        String::from_utf8_lossy(&unreadable.stderr).contains("projects/ovzdusie.yaml"),
+        "{unreadable:?}"
+    );
+}
+
 /// CC-86, CC-90: `validate` takes the organization with its checkouts, and `validate
 /// --project` one project repository with a parameter value.
 #[test]

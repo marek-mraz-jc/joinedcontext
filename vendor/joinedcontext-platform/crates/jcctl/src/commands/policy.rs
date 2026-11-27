@@ -48,7 +48,7 @@ pub fn export(path: &Path) -> Result<String, String> {
         .validate()
         .map_err(|e| format!("{}: {e}", path.display()))?;
     let set = policy_odrl::render(&policy).map_err(|e| format!("{}: {e}", path.display()))?;
-    serde_json::to_string_pretty(&set).map_err(|e| e.to_string())
+    Ok(format!("{set:#}"))
 }
 
 /// The Policy manifest the ODRL `Set` says, formatted as `jcctl fmt` writes it; written to
@@ -59,9 +59,9 @@ pub fn import(options: &ImportOptions) -> Result<String, String> {
         serde_json::from_str(&read(&options.source)?).map_err(|e| format!("{source}: {e}"))?;
     let policy = policy_odrl::import(&document, &options.names)
         .map_err(|e| format!("{source}: refused at {e}"))?;
-    let yaml = policy.to_yaml().map_err(|e| e.to_string())?;
+    let yaml = policy.to_yaml().expect("a policy serializes");
     let yaml = crate::fmt::format_file(Path::new("policy.yaml"), &yaml)
-        .map_err(|e| format!("formatting the manifest: {e}"))?;
+        .expect("a serialized manifest formats");
     let Some(out) = &options.out else {
         return Ok(yaml);
     };

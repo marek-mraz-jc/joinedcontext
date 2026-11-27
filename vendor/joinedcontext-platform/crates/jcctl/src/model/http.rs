@@ -94,13 +94,13 @@ pub fn request(base: &str, path: &str, body: Option<&str>) -> Result<Response, H
         .to_socket_addrs()
         .map_err(|e| HttpError::Connect(format!("{host}:{port} does not resolve ({e})")))?
         .next()
-        .ok_or_else(|| HttpError::Connect(format!("{host}:{port} resolves to no address")))?;
+        .expect("a name that resolves has an address");
     let mut stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT)
         .map_err(|e| HttpError::Connect(format!("{host}:{port} ({e})")))?;
     stream
         .set_read_timeout(Some(IO_TIMEOUT))
         .and_then(|()| stream.set_write_timeout(Some(IO_TIMEOUT)))
-        .map_err(|e| HttpError::Io(e.to_string()))?;
+        .expect("a non-zero timeout is accepted");
 
     // `Connection: close` on purpose: the answer is then everything up to the end of the
     // stream, which is the one framing this client does not have to implement.

@@ -122,10 +122,10 @@ impl HttpBao {
             self.base.path().trim_end_matches('/'),
             path.trim_start_matches('/')
         );
-        self.base.join(&joined).map_err(|e| BaoError::Transport {
-            path: path.to_owned(),
-            message: format!("not a usable API path: {e}"),
-        })
+        Ok(self
+            .base
+            .join(&joined)
+            .expect("an absolute path joins onto an http(s) base"))
     }
 }
 

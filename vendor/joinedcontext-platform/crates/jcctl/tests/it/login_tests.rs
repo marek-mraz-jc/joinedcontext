@@ -303,6 +303,31 @@ fn the_issuer_must_be_https_except_on_loopback_and_carry_no_credentials() {
     }
 }
 
+/// An issuer address that parses but names no host is refused as such; a provider that refuses
+/// the device start with an OAuth `error` and no description is repeated by its code.
+#[test]
+fn an_issuer_without_a_host_is_refused_and_a_bare_oauth_error_is_repeated() {
+    let Err(LoginError::Address(said)) = issuer("mailto:someone@example.org") else {
+        unreachable!("a URL without a host is an address error");
+    };
+    assert!(said.contains("names no host"), "{said}");
+
+    let url = raw_stub(vec![http(400, r#"{"error":"invalid_request"}"#)]);
+    let path = target("bare-error");
+    let (result, _, _) = run(&url, &path);
+    assert_eq!(
+        result.expect_err("refused"),
+        LoginError::Refused("invalid_request".to_owned())
+    );
+    assert!(!path.exists());
+
+    let url = raw_stub(vec![http(400, r#"{"unrelated":true}"#)]);
+    let (result, _, _) = run(&url, &target("no-words"));
+    assert!(
+        matches!(result, Err(LoginError::Refused(m)) if m.starts_with("the provider refused to start")),
+    );
+}
+
 #[test]
 fn the_command_needs_an_issuer_and_takes_no_client_flags() {
     let run = |args: &[&str]| {

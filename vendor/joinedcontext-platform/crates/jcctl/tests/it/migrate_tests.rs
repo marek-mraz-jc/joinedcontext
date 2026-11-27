@@ -300,3 +300,22 @@ fn migrate_names_a_missing_git_an_unmakeable_target_and_an_unreadable_project() 
     let refused = migrate::run(&locked, &temp_dir("migrate-locked-out")).expect_err("unreadable");
     assert!(refused.to_string().contains("project.yaml"), "{refused}");
 }
+
+/// CC-85: a project whose own tree holds a file where the layout marker's folder goes fails the
+/// migration with the path it could not write, not with a half-made repository passed off as done.
+#[test]
+fn a_project_tree_that_blocks_the_layout_marker_is_an_error_naming_the_path() {
+    let source = layout_1("migrate-blocked-marker");
+    write(
+        &source,
+        "projects/doprava/.jc",
+        "a file where the folder goes\n",
+    );
+    commit(&source, "doprava: a file named .jc");
+    let refused = migrate::run(&source, &temp_dir("migrate-blocked-marker-out"))
+        .expect_err("the marker cannot be written");
+    assert!(
+        matches!(&refused, migrate::MigrateError::Io { path, .. } if path.ends_with(".jc/layout")),
+        "{refused}"
+    );
+}

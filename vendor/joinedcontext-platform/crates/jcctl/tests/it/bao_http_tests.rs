@@ -362,3 +362,37 @@ fn a_ca_file_that_is_missing_or_not_a_certificate_is_refused_before_any_connecti
     assert_eq!(message, "not a PEM certificate: no BEGIN CERTIFICATE block");
     assert!(!message.contains("AAAA"));
 }
+
+/// A login that cannot connect names the path; an answer cut short names the path it was reading;
+/// armour that rustls cannot read is refused where the file is read.
+#[test]
+fn a_login_that_cannot_connect_and_an_answer_cut_short_name_the_path() {
+    let mut api = HttpBao::new("http://127.0.0.1:1").expect("a client");
+    let error = api
+        .post("auth/jwt/login", &serde_json::json!({ "jwt": "x" }))
+        .expect_err("nothing answers");
+    assert!(matches!(error, BaoError::Transport { .. }), "{error}");
+    assert!(error.to_string().contains("auth/jwt/login"), "{error}");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("a loopback port");
+    let address = format!("http://{}", listener.local_addr().expect("an address"));
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { continue };
+            let _ = read_request(&mut stream);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 X\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\
+                  Connection: close\r\n\r\n{\"data\"",
+            );
+        }
+    });
+    let api = HttpBao::new(&address).expect("a client");
+    let error = api
+        .get("secret/data/city/mqtt", "s.token")
+        .expect_err("the body is cut");
+    assert!(matches!(error, BaoError::Transport { .. }), "{error}");
+    assert!(
+        error.to_string().contains("secret/data/city/mqtt"),
+        "{error}"
+    );
+}

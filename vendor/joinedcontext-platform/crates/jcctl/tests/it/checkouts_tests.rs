@@ -271,6 +271,127 @@ fn only_one_project_is_fetched_and_nothing_else_moves() {
     assert!(refused.contains("doprava"), "{refused}");
 }
 
+/// An external repository (CC-89) reads with the Secret its entry names, from the mounted
+/// directory the sidecar was given; a Secret without a password, and a mount that is absent, fail
+/// that project's fetch and nothing else.
+#[test]
+fn an_external_entry_is_fetched_with_the_secret_it_names() {
+    let (forge, _work, org, mut options) = setup("checkouts-external");
+    let projects = temp_dir("checkouts-external-projects");
+    let _ = &forge;
+    // An external repository is https alone, and never fetched here.
+    let url = "https://git.example.org/ovzdusie.git";
+    write(
+        &org,
+        "projects/ovzdusie.yaml",
+        &format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata: {{ name: ovzdusie, namespace: org }}\n\
+             spec:\n  organizationRef: banskabystrica\n  repository: {{ url: \"{url}\", secretRef: {{ name: region-git-ro }} }}\n  ref: main\n"
+        ),
+    );
+    let secrets = temp_dir("checkouts-external-secrets");
+    options.secrets_dir = Some(secrets.clone());
+
+    write(&secrets, "region-git-ro/username", "reader\n");
+    let no_password = sync(&org, &projects, &options).expect("a pass");
+    let said = no_password[0].result.as_ref().expect_err("no password");
+    assert!(said.contains("has no password"), "{said}");
+    assert!(!projects.join("ovzdusie").exists());
+
+    write(&secrets, "region-git-ro/password", "s3cr3t-value\n");
+    let secret = serde_json::from_value::<jc_core::envelope::SecretRef>(
+        serde_json::json!({ "name": "region-git-ro" }),
+    )
+    .expect("a secretRef");
+    let (user, _password) = jcctl::commands::checkouts::mounted_secret(Some(&secrets), &secret)
+        .expect("a mounted Secret reads");
+    assert_eq!(user, "reader");
+    let bad = serde_json::from_value::<jc_core::envelope::SecretRef>(
+        serde_json::json!({ "name": "Not A Name" }),
+    )
+    .expect("a secretRef");
+    let said = jcctl::commands::checkouts::mounted_secret(Some(&secrets), &bad)
+        .expect_err("not a Secret name");
+    assert!(said.contains("is not a Secret name"), "{said}");
+
+    options.secrets_dir = None;
+    let unmounted = sync(&org, &temp_dir("checkouts-external-bare"), &options).expect("a pass");
+    let said = unmounted[0].result.as_ref().expect_err("no mount");
+    assert!(said.contains("--secrets-dir"), "{said}");
+}
+
+/// A pass whose projects directory cannot be made, or whose lock file cannot be created, is an
+/// error naming the path, before any fetch.
+#[test]
+fn an_unusable_projects_directory_is_an_error_naming_it() {
+    let (_forge, _work, org, options) = setup("checkouts-unusable");
+    let base = temp_dir("checkouts-unusable-base");
+    std::fs::write(base.join("file"), "not a folder").expect("a file");
+    let under_file = base.join("file/projects");
+    let said = sync(&org, &under_file, &options).expect_err("a file where the folder goes");
+    assert!(said.contains("file/projects"), "{said}");
+
+    let projects = base.join("projects");
+    std::fs::create_dir_all(projects.join(".lock")).expect("a folder where the lock goes");
+    let said = sync(&org, &projects, &options).expect_err("the lock is a folder");
+    assert!(said.contains(".lock"), "{said}");
+}
+
+/// A pass without `--only` removes what the registry does not name: a stray folder, its mirror and
+/// its trees in the cache; a stray plain file is an error naming it; dot entries are left alone.
+#[test]
+fn a_full_pass_removes_a_stray_project_with_its_cache_and_leaves_dot_entries() {
+    let (_forge, _work, org, options) = setup("checkouts-stray");
+    let projects = temp_dir("checkouts-stray-projects");
+    sync(&org, &projects, &options).expect("a pass");
+    let cache = projects.join(".cache");
+    for kept in ["leftover.git", "leftover.tree-abc", "leftover-two.git"] {
+        std::fs::create_dir_all(cache.join(kept)).expect("cache entry");
+    }
+    std::fs::create_dir_all(projects.join("leftover")).expect("a stray project");
+    std::fs::create_dir_all(projects.join(".hidden")).expect("a dot entry");
+
+    let pass = sync(&org, &projects, &options).expect("a pass");
+    assert_eq!(pass.len(), 1);
+    assert!(!projects.join("leftover").exists(), "the stray folder goes");
+    assert!(!cache.join("leftover.git").exists());
+    assert!(!cache.join("leftover.tree-abc").exists());
+    assert!(
+        cache.join("leftover-two.git").exists(),
+        "another project's mirror stays"
+    );
+    assert!(projects.join(".hidden").exists(), "dot entries stay");
+    assert!(projects.join("ovzdusie").is_symlink());
+
+    std::fs::write(projects.join("stray-file"), "x").expect("a stray file");
+    let said = sync(&org, &projects, &options).expect_err("a file is not a project folder");
+    assert!(said.contains("stray-file"), "{said}");
+}
+
+/// A plain folder where the link goes is replaced by the link; one that cannot be removed leaves
+/// the old state and says why.
+#[cfg(unix)]
+#[test]
+fn a_plain_folder_where_the_link_goes_is_replaced_or_reported() {
+    use std::os::unix::fs::PermissionsExt;
+    let (_forge, _work, org, options) = setup("checkouts-plain");
+    let projects = temp_dir("checkouts-plain-projects");
+    std::fs::create_dir_all(projects.join("ovzdusie")).expect("a plain folder");
+    let pass = sync(&org, &projects, &options).expect("a pass");
+    assert!(pass[0].moved);
+    assert!(projects.join("ovzdusie").is_symlink());
+    assert!(projects.join("ovzdusie/project.yaml").is_file());
+
+    let stuck = temp_dir("checkouts-stuck-projects");
+    let locked = stuck.join("ovzdusie/inner");
+    std::fs::create_dir_all(locked.join("deep")).expect("a folder that cannot be emptied");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).expect("read-only");
+    let failed = sync(&org, &stuck, &options).expect("a pass");
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).expect("writable");
+    assert!(failed[0].result.is_err(), "{:?}", failed[0].result);
+    assert!(!failed[0].moved);
+}
+
 /// T-5650: a pass waits for the pass that holds `{projects}/.lock`, so the revocation's pass
 /// never fetches into a mirror the sidecar's loop is writing.
 #[test]

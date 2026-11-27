@@ -189,9 +189,14 @@ fn link(projects: &Path, slug: &str, tree: &Path) -> Result<bool, String> {
     std::os::unix::fs::symlink(relative, &next).map_err(|err| err.to_string())?;
     #[cfg(not(unix))]
     return Err("checkouts are linked on unix only".to_owned());
-    if target.is_dir() && !target.is_symlink() {
-        std::fs::remove_dir_all(&target).map_err(|err| err.to_string())?;
-    }
-    std::fs::rename(&next, &target).map_err(|err| err.to_string())?;
+    swap(&next, &target).map_err(|err| err.to_string())?;
     Ok(true)
+}
+
+/// Moves the new link over `target`; a plain directory an older pass left there goes first.
+fn swap(next: &Path, target: &Path) -> std::io::Result<()> {
+    if target.is_dir() && !target.is_symlink() {
+        std::fs::remove_dir_all(target)?;
+    }
+    std::fs::rename(next, target)
 }

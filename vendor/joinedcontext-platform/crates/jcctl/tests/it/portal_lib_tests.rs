@@ -316,3 +316,64 @@ fn an_unreachable_portal_names_its_address() {
         other => panic!("expected Unavailable, got {other:?}"),
     }
 }
+
+/// `diff -f` names a live manifest that does not read and a Portal that does not answer, per
+/// manifest, and still differs on neither.
+#[test]
+fn diff_file_reports_an_unreadable_live_manifest_and_a_portal_that_refuses() {
+    let targets = portal::targets(&manifest("air"), None).expect("one manifest");
+    let unreadable = stub(|_| http(200, r#"{"kind":7}"#));
+    let report = portal::diff_file(&client(&unreadable), &targets);
+    assert!(report.failed, "{:?}", report.lines);
+    assert!(
+        report.lines[0].starts_with("error: the live manifest does not read"),
+        "{:?}",
+        report.lines
+    );
+    let refusing = stub(|_| http(500, r#"{"message":"down"}"#));
+    let report = portal::diff_file(&client(&refusing), &targets);
+    assert!(report.failed, "{:?}", report.lines);
+    assert!(report.lines[0].starts_with("error: "), "{:?}", report.lines);
+}
+
+/// A Portal that refuses the proposal, or the dry run, or cuts its answer short, is reported per
+/// manifest: `apply` and `plan` name the failure and go on.
+#[test]
+fn apply_and_plan_report_a_refused_proposal_a_refused_dry_run_and_a_cut_answer() {
+    let targets = portal::targets(&manifest("air"), None).expect("one manifest");
+    let refusing = stub(|line| {
+        if line.starts_with("GET") {
+            http(404, r#"{"message":"none"}"#)
+        } else {
+            http(500, r#"{"message":"down"}"#)
+        }
+    });
+    let applied = portal::apply(&client(&refusing), &targets);
+    assert!(applied.failed, "{:?}", applied.lines);
+    assert!(
+        applied.lines[0].starts_with("error: "),
+        "{:?}",
+        applied.lines
+    );
+    let planned = portal::plan(&client(&refusing), &targets);
+    assert!(planned.failed, "{:?}", planned.lines);
+    assert!(
+        planned.lines[0].starts_with("error: "),
+        "{:?}",
+        planned.lines
+    );
+
+    // A body shorter than its Content-Length: the answer cannot be read to the end.
+    let cut = stub(|_| {
+        "HTTP/1.1 200 X\r\nContent-Type: application/json\r\nContent-Length: 500\r\n\
+         Connection: close\r\n\r\n{\"kind\""
+            .to_owned()
+    });
+    let report = portal::diff_file(&client(&cut), &targets);
+    assert!(report.failed, "{:?}", report.lines);
+    assert!(
+        report.lines[0].contains("the answer could not be read"),
+        "{:?}",
+        report.lines
+    );
+}
