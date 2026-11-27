@@ -67,8 +67,8 @@ impl Store {
             .execute(&mut *tx)
             .await?;
         for ((project, pipeline), saved) in statuses {
-            let status =
-                serde_json::to_value(saved).map_err(|err| sqlx::Error::Encode(Box::new(err)))?;
+            // sqlx encodes the JSON itself; a value that does not serialize is its Encode error.
+            let status = sqlx::types::Json(saved);
             sqlx::query(
                 "INSERT INTO pipeline_status (project, pipeline, status) VALUES ($1, $2, $3)",
             )

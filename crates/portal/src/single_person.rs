@@ -180,23 +180,23 @@ fn second_person_reason(people: usize) -> String {
 /// turned off here, with its reason and an audit line, before it is answered.
 pub async fn mode(state: &AppState, organization: &str) -> Result<ApprovalMode, ApiError> {
     let people = humans_with_a_role(state, organization).await?.len();
-    let row = match state.db.as_ref() {
-        Some(pool) => stored(pool, organization).await?,
-        None => None,
-    };
-    let (mut on, mut changed, mut off_reason) = row.unwrap_or((false, 0, None));
-    if on && people > 1 {
-        let reason = second_person_reason(people);
-        if let Some(pool) = state.db.as_ref() {
+    // Only a stored row turns the mode on, so a Portal without a database answers it off.
+    let (mut on, mut changed, mut off_reason) = (false, 0, None);
+    if let Some(pool) = state.db.as_ref() {
+        (on, changed, off_reason) = stored(pool, organization)
+            .await?
+            .unwrap_or((false, 0, None));
+        if on && people > 1 {
+            let reason = second_person_reason(people);
             let mut conn = pool.acquire().await.map_err(db)?;
             set(&mut conn, organization, false, "portal", Some(&reason))
                 .await
                 .map_err(db)?;
+            tracing::warn!(target: "audit", organization, people, "single-person approvals turned off: a second person holds a role");
+            on = false;
+            changed = crate::auth::session::now_unix();
+            off_reason = Some(reason);
         }
-        tracing::warn!(target: "audit", organization, people, "single-person approvals turned off: a second person holds a role");
-        on = false;
-        changed = crate::auth::session::now_unix();
-        off_reason = Some(reason);
     }
     Ok(ApprovalMode {
         organization: organization.to_owned(),

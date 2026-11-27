@@ -407,17 +407,18 @@ mod tests {
     /// counts still works after it.
     #[tokio::test]
     async fn a_poisoned_memory_store_still_counts() {
-        let store = UsageStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
-        if let Inner::Memory(memory) = &store.inner {
-            std::thread::scope(|scope| {
-                let _ = scope
-                    .spawn(|| {
-                        let _held = memory.write();
-                        panic!("poison the counts' lock on purpose");
-                    })
-                    .join();
-            });
-        }
+        let memory: RwLock<BTreeMap<Key, u64>> = RwLock::default();
+        std::thread::scope(|scope| {
+            let _ = scope
+                .spawn(|| {
+                    let _held = memory.write();
+                    panic!("poison the counts' lock on purpose");
+                })
+                .join();
+        });
+        let store = UsageStore {
+            inner: Inner::Memory(memory),
+        };
         assert!(matches!(&store.inner, Inner::Memory(memory) if memory.is_poisoned()));
         let today = date("2026-11-27");
         let key = (

@@ -858,6 +858,19 @@ mod tests {
         assert!(store.take("p", "never", &[1]).await.unwrap().is_empty());
     }
 
+    /// Panics a thread holding `lock`, and answers whether that poisoned it.
+    fn poison<T: Send + Sync>(lock: &RwLock<T>) -> bool {
+        std::thread::scope(|s| {
+            let _ = s
+                .spawn(|| {
+                    let _held = lock.write();
+                    panic!("poison the list");
+                })
+                .join();
+        });
+        lock.is_poisoned()
+    }
+
     /// A thread that panicked holding the in-memory list leaves it usable: every read and write
     /// goes on with what the list held.
     #[tokio::test]
@@ -867,19 +880,7 @@ mod tests {
             .reject("p", "a", &json!({"n": 1}), &reason("id", "id", None))
             .await
             .expect("kept");
-        let Inner::Memory(m) = &store.inner else {
-            panic!()
-        };
-        let map = m;
-        std::thread::scope(|s| {
-            let _ = s
-                .spawn(|| {
-                    let _held = map.write().unwrap();
-                    panic!("poison the list");
-                })
-                .join();
-        });
-        assert!(map.is_poisoned());
+        assert!(matches!(&store.inner, Inner::Memory(map) if poison(map)));
         store
             .reject("p", "a", &json!({"n": 2}), &reason("id", "id", None))
             .await

@@ -96,8 +96,7 @@ pub fn render(chapter: &str, page: &str, mounted: &BTreeSet<String>) -> Option<S
     }
     let file = Pages::get(&format!("{chapter}/{page}.md"))?;
     let text = std::str::from_utf8(&file.data).ok()?;
-    let (title, body) = split_front_matter(text);
-    let title = title.or_else(|| first_heading(body)).unwrap_or(page);
+    let (title, body) = titled(text, page);
     let hidden: Vec<(&str, &str)> = GATES
         .iter()
         .filter(|gate| !mounted.contains(&gate.surface))
@@ -297,6 +296,13 @@ fn split_front_matter(text: &str) -> (Option<&str>, &str) {
         .map(|title| title.trim().trim_matches(['"', '\'']))
         .filter(|title| !title.is_empty());
     (title, &rest[end + "\n---\n".len()..])
+}
+
+/// The page's title and body: the front matter's title, else its first `# ` heading, else the
+/// page's own name.
+fn titled<'a>(text: &'a str, page: &'a str) -> (&'a str, &'a str) {
+    let (title, body) = split_front_matter(text);
+    (title.or_else(|| first_heading(body)).unwrap_or(page), body)
 }
 
 fn first_heading(body: &str) -> Option<&str> {
@@ -702,6 +708,26 @@ mod tests {
         );
         assert_eq!(release_of(Some("  ")), crate::APP_VERSION);
         assert_eq!(release_of(None), crate::APP_VERSION);
+    }
+
+    /// A title comes from the front matter, else the first heading, else the page's name; a
+    /// front matter that never closes is body.
+    #[test]
+    fn a_page_without_a_front_matter_title_takes_its_heading_or_its_name() {
+        assert_eq!(
+            titled("---\ntitle: \"Kept\"\n---\n# Heading\n", "p"),
+            ("Kept", "# Heading\n")
+        );
+        assert_eq!(
+            titled("# Heading\nbody\n", "p"),
+            ("Heading", "# Heading\nbody\n")
+        );
+        assert_eq!(
+            titled("---\nlayout: x\n---\nplain\n", "p"),
+            ("p", "plain\n")
+        );
+        assert_eq!(titled("---\nunterminated", "p"), ("p", "---\nunterminated"));
+        assert_eq!(titled("", "p"), ("p", ""));
     }
 
     /// The derive's lookups: a folder or a file the includes do not name, a path outside the

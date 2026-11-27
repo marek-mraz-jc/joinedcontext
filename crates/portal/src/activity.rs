@@ -319,7 +319,8 @@ impl ActivityHub {
 /// sqlx is built with the `time` crate, the rest of the Portal speaks `jc_time`; the drafts store
 /// converts the same way.
 pub(crate) fn odt_to_ts(odt: time::OffsetDateTime) -> TimestampTz {
-    jiff::Timestamp::from_nanosecond(odt.unix_timestamp_nanos())
+    // `Timestamp::new` checks the range; `from_nanosecond` asserts inside jiff on a value past it.
+    jiff::Timestamp::new(odt.unix_timestamp(), odt.nanosecond() as i32)
         .map_or_else(|_| TimestampTz::now(), TimestampTz)
 }
 
@@ -975,6 +976,14 @@ mod tests {
             ts_to_odt(ordinary),
             time::macros::datetime!(2026-11-01 08:00 UTC)
         );
+    }
+
+    /// time reaches a day past jiff's end: such an instant reads as now, never a panic.
+    #[test]
+    fn an_instant_past_jiffs_range_reads_as_now() {
+        let before = TimestampTz::now();
+        let past = odt_to_ts(time::macros::datetime!(9999-12-31 23:00 UTC));
+        assert!(before <= past && past <= TimestampTz::now(), "{past:?}");
     }
 
     #[test]

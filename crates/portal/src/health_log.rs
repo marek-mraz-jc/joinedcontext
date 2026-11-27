@@ -1176,13 +1176,13 @@ mod tests {
                     .expect("record");
             }
         }
-        if let Inner::Memory(memory) = &store.inner {
-            assert_eq!(
-                memory.read().expect("lock").history.len(),
-                3,
-                "one point an hour"
-            );
-        }
+        assert!(
+            matches!(
+                &store.inner,
+                Inner::Memory(memory) if memory.read().expect("lock").history.len() == 3
+            ),
+            "one point an hour"
+        );
         let later = t0 + KEEP + jiff::SignedDuration::from_hours(24);
         store
             .record(later, vec![finding(Status::Ok)])

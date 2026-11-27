@@ -363,17 +363,33 @@ fn everything(issuer: &str, token_file: &std::path::Path, setup: &Setup) -> Conf
     if let Some(dir) = &setup.mount {
         config.service_account_dir = dir.clone();
     }
-    config.organization_hosts = vec![OrganizationHost {
-        organization: "ba".into(),
-        base: "https://portal.ba.example".parse().expect("url"),
-    }];
-    config.organization_realms = vec![RealmSetting {
-        organization: "ba".into(),
-        issuer: "https://idm.ba.example/realms/ba".parse().expect("url"),
-        jwks_url: "http://127.0.0.1:9/realms/ba/protocol/openid-connect/certs"
-            .parse()
-            .expect("url"),
-    }];
+    config.organization_hosts = vec![
+        OrganizationHost {
+            organization: "ba".into(),
+            base: "https://portal.ba.example".parse().expect("url"),
+        },
+        OrganizationHost {
+            organization: "zv".into(),
+            base: "https://portal.zv.example".parse().expect("url"),
+        },
+    ];
+    // `zv`'s issuer is no realm URL: its groups and App clients are not managed.
+    config.organization_realms = vec![
+        RealmSetting {
+            organization: "ba".into(),
+            issuer: "https://idm.ba.example/realms/ba".parse().expect("url"),
+            jwks_url: "http://127.0.0.1:9/realms/ba/protocol/openid-connect/certs"
+                .parse()
+                .expect("url"),
+        },
+        RealmSetting {
+            organization: "zv".into(),
+            issuer: "https://idm.zv.example/idp".parse().expect("url"),
+            jwks_url: "http://127.0.0.1:9/idp/protocol/openid-connect/certs"
+                .parse()
+                .expect("url"),
+        },
+    ];
     forge(&mut config);
     config
 }
@@ -539,6 +555,29 @@ async fn a_full_configuration_with_a_forge_wires_the_reconciler() {
         }
     }
     std::env::remove_var("JC_PORTAL_DNS01_ISSUER");
+
+    // No Keycloak admin client and no database, inside a cluster with a WASM host: the App
+    // clients are managed without their members, the WASM shards without their store keys.
+    let mut unadministered = everything(
+        &issuer,
+        &token,
+        &Setup {
+            capture: false,
+            wasm_host: true,
+            apps_db: APPS_DB,
+            store: STORE,
+            namespaces: true,
+            mount: Some(good.clone()),
+            db: false,
+            branding: None,
+        },
+    );
+    unadministered.keycloak_admin = None;
+    let state = AppState::from_config(unadministered)
+        .await
+        .expect("the Portal starts");
+    assert!(state.syncer.is_some() && state.db.is_none() && state.people.is_none());
+    assert!(state.kube.is_some(), "the builder's client");
 
     let mut alone = Config::for_tests();
     forge(&mut alone);

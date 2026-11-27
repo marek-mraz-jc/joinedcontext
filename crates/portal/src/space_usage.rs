@@ -492,7 +492,8 @@ mod tests {
             .expect("bind");
         let at = listener.local_addr().expect("address");
         tokio::spawn(async move {
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let mut request = [0_u8; 4096];
                 let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
             }

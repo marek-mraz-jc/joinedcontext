@@ -2176,7 +2176,11 @@ mod tests {
         );
         let text = serde_json::to_string_pretty(&stream).expect("json") + "\n";
         let update = std::env::var_os("JC_UPDATE_GOLDEN").is_some();
-        let _ = update.then(|| std::fs::write(golden, &text).expect("golden written"));
+        // JC_UPDATE_GOLDEN writes the golden; any other run writes a scratch copy beside the diff.
+        let pid = std::process::id();
+        let scratch = std::env::temp_dir().join(format!("jc-stream-golden-{pid}.json"));
+        let target = [scratch.as_path(), std::path::Path::new(golden)][usize::from(update)];
+        std::fs::write(target, &text).expect("golden written");
         assert_eq!(std::fs::read_to_string(golden).expect("golden"), text);
     }
 
@@ -3290,7 +3294,8 @@ mod tests {
         let seen = std::sync::Arc::clone(&hung_up);
         tokio::spawn(async move {
             let mut answered = false;
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let mut request = [0_u8; 8192];
                 let _ = socket.read(&mut request).await;
                 if answered {

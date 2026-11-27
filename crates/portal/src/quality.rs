@@ -531,8 +531,8 @@ impl Store {
         let Some(key) = crate::project_ids::key_of(db, &self.mirror, project).await? else {
             return Ok(());
         };
-        let report =
-            serde_json::to_value(&report).map_err(|err| sqlx::Error::Encode(Box::new(err)))?;
+        // sqlx encodes the JSON itself; a report that does not serialize is its Encode error.
+        let report = sqlx::types::Json(report);
         let mut tx = crate::db::tenant_tx(db, key).await?;
         sqlx::query(
             "INSERT INTO space_quality (project, space, report, new_rules) VALUES ($1, $2, $3, $4) \

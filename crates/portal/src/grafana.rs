@@ -1496,7 +1496,8 @@ mod tests {
         let address = listener.local_addr().expect("its address");
         tokio::spawn(async move {
             let mut script = script.into_iter();
-            while let Ok((mut socket, _)) = listener.accept().await {
+            loop {
+                let (mut socket, _) = listener.accept().await.expect("a connection");
                 let mut request = [0u8; 4096];
                 let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
                 if let Some(Some(reply)) = script.next() {
@@ -1523,15 +1524,16 @@ mod tests {
         )
     }
 
+    /// Whether `server` received a request for `wanted` within six seconds.
     async fn saw(server: &wiremock::MockServer, wanted: &str) -> bool {
-        for _ in 0..300 {
-            let seen = server.received_requests().await.unwrap_or_default();
-            if seen.iter().any(|request| request.url.path() == wanted) {
-                return true;
-            }
+        let (mut seen, mut tries) = (false, 0);
+        while !seen && tries < 300 {
+            tries += 1;
             tokio::time::sleep(Duration::from_millis(20)).await;
+            let received = server.received_requests().await.unwrap_or_default();
+            seen = received.iter().any(|request| request.url.path() == wanted);
         }
-        false
+        seen
     }
 
     #[tokio::test]

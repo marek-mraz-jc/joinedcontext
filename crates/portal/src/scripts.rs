@@ -685,14 +685,9 @@ mod tests {
         let spec: PipelineSpec = serde_json::from_value(routed("1.0.0")).expect("pipeline");
         let mut spec = spec;
         inline(&mirror, "helsinki", &mut spec).expect("inlined");
-        let route_step = match &spec.routes[0].steps[0] {
-            Step::Processor(p) => Some(p),
-            Step::Compute(_) => None,
-        };
-        assert_eq!(
-            route_step.expect("a processor").processor["javascript"]["code"],
-            V1
-        );
+        // The step is untagged: its JSON is the processor step the pin became.
+        let route_step = serde_json::to_value(&spec.routes[0].steps[0]).expect("a step");
+        assert_eq!(route_step["processor"]["javascript"]["code"], V1);
         let said = rendered(&mirror, routed("3.0.0")).expect_err("unknown version");
         assert!(
             said.starts_with("spec.routes[0].steps[0].scriptRef"),

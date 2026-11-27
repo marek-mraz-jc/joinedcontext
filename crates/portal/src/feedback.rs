@@ -256,14 +256,16 @@ mod tests {
 
     #[tokio::test]
     async fn a_poisoned_memory_store_still_keeps_lists_and_serves() {
-        let store = FeedbackStore::new(None);
-        if let Inner::Memory(rows) = &store.inner {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _guard = rows.write();
-                panic!("poison the lock on purpose");
-            }));
-            assert!(outcome.is_err());
-        }
+        let rows: RwLock<Vec<(Feedback, Option<Vec<u8>>)>> = RwLock::default();
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = rows.write();
+            panic!("poison the lock on purpose");
+        }));
+        assert!(outcome.is_err());
+        assert!(rows.is_poisoned());
+        let store = FeedbackStore {
+            inner: Inner::Memory(rows),
+        };
         let id = store
             .add(one("after the poison", Some(b"p")))
             .await

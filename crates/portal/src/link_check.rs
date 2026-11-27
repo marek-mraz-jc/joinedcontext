@@ -1165,10 +1165,7 @@ mod tests {
                     "/ok" => StatusCode::OK.into_response(),
                     "/gone" => StatusCode::NOT_FOUND.into_response(),
                     "/broken" => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-                    "/slow" => {
-                        tokio::time::sleep(StdDuration::from_secs(3)).await;
-                        StatusCode::OK.into_response()
-                    }
+                    "/slow" => std::future::pending::<axum::response::Response>().await,
                     "/no-head" if method == Method::HEAD => {
                         StatusCode::METHOD_NOT_ALLOWED.into_response()
                     }
