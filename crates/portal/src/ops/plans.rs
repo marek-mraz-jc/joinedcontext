@@ -2566,9 +2566,35 @@ mod tests {
         assert!(why.starts_with("autonomous:"), "{why}");
         // Allowed, it reaches the approval path, which has no forge to merge on here.
         state.mirror.upsert(policy(true));
-        let waiting = applied(state.clone(), connector).await;
+        let waiting = applied(state.clone(), connector.clone()).await;
         let why = waiting[0]["waits"].as_str().expect("waits");
         assert!(!why.starts_with("autonomous:"), "{why}");
+        // A row that opened no change (it carries no id) has nothing to approve.
+        let mut opened = vec![json!({ "error": "refused" })];
+        let waiting =
+            approve_autonomously(&state, &caller(None), "doprava", &connector, &mut opened).await;
+        assert!(waiting.is_empty(), "{waiting:?}");
+        assert_eq!(opened, [json!({ "error": "refused" })]);
+    }
+
+    /// T-5979: a notice the approvers' inbox cannot take is logged; the change stays opened and
+    /// the apply goes on (T-7921).
+    #[tokio::test]
+    async fn an_approvers_notice_that_cannot_be_written_leaves_the_apply_going() {
+        let mirror = crate::test_db::placed_mirror("doprava");
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_mirror(mirror.clone());
+        state.comments = std::sync::Arc::new(crate::entity_comments::CommentStore::new(
+            Some(crate::test_db::dead_pool()),
+            mirror,
+        ));
+        let opened = [json!({ "id": "chg-00000001" }), json!({ "error": "refused" })];
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            notify_approvers(&state, &caller(None), "doprava", "auto", &opened),
+        )
+        .await
+        .expect("the notice gives up instead of holding the apply");
     }
 
     /// T-6302: create or edit is judged from the forge, never from the client's `op`; a
