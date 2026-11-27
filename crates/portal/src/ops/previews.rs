@@ -169,10 +169,16 @@ fn files_under(root: &Path) -> BTreeMap<String, String> {
 /// `JC_ENVIRONMENT` names the overlay the branch is rendered with, the same one the reconciler
 /// applies for this installation (CC-73); unset renders the manifests as they are written.
 async fn render(state: &AppState, workspace: &Workspace) -> Result<Arc<Render>, ApiError> {
-    let shako = state
-        .forge_for(&workspace.project)
+    // The organization's forge, read once: a project repository's branch is read through it.
+    let organization = state
+        .shako
+        .as_deref()
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let shako: &crate::forge::ShakoClient = &shako;
+    let repository = state.mirror.repository_of(&workspace.project);
+    let project_forge = repository
+        .as_deref()
+        .map(|repository| organization.for_project(repository, &workspace.project));
+    let shako: &crate::forge::ShakoClient = project_forge.as_ref().unwrap_or(organization);
     let head = match shako.branch_head(&workspace.branch()).await {
         Ok(head) => format!("{head}\n{}", salt_of(workspace)),
         Err(crate::forge::GitError::NotFound) => {
@@ -187,8 +193,8 @@ async fn render(state: &AppState, workspace: &Workspace) -> Result<Arc<Render>, 
         return Ok(render);
     }
     let revision = head.split('\n').next().unwrap_or_default();
-    let staged = match state.mirror.repository_of(&workspace.project) {
-        Some(repository) => assembled(state, workspace, revision, &repository).await?,
+    let staged = match repository {
+        Some(repository) => assembled(organization, workspace, revision, &repository).await?,
         None => {
             let scratch = crate::reconciler::staging::stage(shako, revision)
                 .await
@@ -252,7 +258,7 @@ async fn render(state: &AppState, workspace: &Workspace) -> Result<Arc<Render>, 
 /// repository mounted at the workspace branch head, assembled as the mirror is; no other
 /// project travels. The staged checkouts are held until the render is read.
 async fn assembled(
-    state: &AppState,
+    organization: &crate::forge::ShakoClient,
     workspace: &Workspace,
     head: &str,
     repository: &str,
@@ -261,10 +267,6 @@ async fn assembled(
     let unstaged = |err: crate::reconciler::SyncError| {
         ApiError::Unavailable(format!("the branch did not stage: {err}"))
     };
-    let organization = state
-        .shako
-        .as_deref()
-        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
     let main = organization.default_branch().await?;
     let main_head = organization.branch_head(&main).await?;
     let org = stage(organization, &main_head).await.map_err(unstaged)?;
@@ -687,5 +689,45 @@ mod tests {
             Err(ApiError::Unavailable(why)) => assert!(why.contains("forge"), "{why}"),
             other => panic!("expected the forge's problem, got {other:?}"),
         }
+    }
+
+    /// CC-81: the gateway's list passes over a preview still starting and a running one with no
+    /// salt or author, and still answers; neither is rendered.
+    #[tokio::test]
+    async fn the_served_list_passes_over_a_starting_preview_and_one_without_a_salt() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        for name in ["air", "bus"] {
+            state
+                .workspaces
+                .create(crate::ops::workspaces::Opening {
+                    name,
+                    title: None,
+                    project: "helsinki",
+                    owner: "test-user",
+                    base_revision: "b",
+                    scope: crate::ops::workspaces::Scope::Project {},
+                    ttl_hours: 24,
+                })
+                .await
+                .expect("opened");
+        }
+        state
+            .workspaces
+            .start_preview(
+                "air",
+                crate::ops::workspaces::PreviewAccess {
+                    salt: "s".into(),
+                    author: "sub-test-user".into(),
+                },
+            )
+            .await
+            .expect("starting");
+        state
+            .workspaces
+            .set_preview_state("bus", PreviewState::Running)
+            .await
+            .expect("running");
+        let listed = served(&state).await.expect("listed");
+        assert!(listed.items.is_empty(), "nothing is served");
     }
 }

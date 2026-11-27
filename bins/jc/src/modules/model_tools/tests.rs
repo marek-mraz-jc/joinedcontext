@@ -1345,6 +1345,44 @@ enums:
     );
 }
 
+/// Spare definitions render: an enum with no permissible value yet, a class with no slot that
+/// is no Entity, and a slot usage that sets nothing.
+#[test]
+fn spare_definitions_render_every_artifact() {
+    let spare_enum = MODEL.replace("enums:\n", "enums:\n  Spare:\n    description: none yet\n");
+    let plain_class = MODEL.replace("classes:\n", "classes:\n  Note:\n    description: plain\n");
+    let empty_usage = MODEL.replace(
+        "    slots: [status, capacity]\n",
+        "    slots: [status, capacity]\n    slot_usage:\n      status:\n",
+    );
+    for model in [spare_enum, plain_class, empty_usage] {
+        let (status, out) = generate(&source(&model));
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(errors_of(&out), Vec::<String>::new(), "{model}");
+        for field in [
+            "brokerSchema",
+            "context",
+            "jsonSchema",
+            "example",
+            "typescript",
+        ] {
+            assert!(out.get(field).is_some(), "{field}: {out}");
+        }
+    }
+}
+
+/// Two classes each the other's parent specialise no Entity: no endpoint serves them.
+#[test]
+fn a_parent_cycle_is_no_entity() {
+    let model = MODEL.replace(
+        "classes:\n",
+        "classes:\n  Loop:\n    is_a: Back\n  Back:\n    is_a: Loop\n",
+    );
+    let (status, out) = generate(&source(&model));
+    assert_eq!(status, StatusCode::OK);
+    assert!(!errors_of(&out).is_empty(), "{out}");
+}
+
 #[test]
 fn usages_attributes_and_units_reach_each_artifact() {
     let model = MODEL

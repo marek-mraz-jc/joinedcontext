@@ -1,0 +1,1 @@
+{"endpoint":"bikes","action":"upsert","entities":[{"id":"urn:ngsi-ld:T:1","type":"T"}]}

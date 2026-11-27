@@ -951,6 +951,15 @@ mod tests {
         // A state directory under a regular file cannot be created.
         let e = private_dir(&file.join("state")).unwrap_err().to_string();
         assert!(e.contains("cannot create state dir"), "{e}");
+        // A directory that exists but whose mode nobody may change (procfs refuses a chmod of a
+        // process directory, root included) is named, not used as it is.
+        #[cfg(target_os = "linux")]
+        {
+            let e = private_dir(Path::new("/proc/self"))
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("cannot make /proc/self private"), "{e}");
+        }
         let e = Setup::prepare(&file.join("state"), &Module::ALL, &BTreeMap::new())
             .unwrap_err()
             .to_string();

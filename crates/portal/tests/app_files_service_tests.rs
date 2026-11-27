@@ -689,3 +689,122 @@ async fn a_keyed_project_writes_keyed_and_hands_out_the_old_key_it_still_reads()
         asked(&store, "PUT").await
     );
 }
+
+/// A store on loopback that answers the listing of `old.txt` and closes the connection on every
+/// other request, as a store that dies mid-call does.
+async fn dropping_store() -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("a port");
+    let addr = listener.local_addr().expect("addr");
+    let listing = format!(
+        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>{}old.txt</Key>\
+         <Size>4</Size><LastModified>2026-10-10T20:00:00.000Z</LastModified></Contents>\
+         </ListBucketResult>",
+        prefix()
+    );
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let listing = listing.clone();
+            tokio::spawn(async move {
+                let mut head = vec![0u8; 8192];
+                let read = socket.read(&mut head).await.unwrap_or(0);
+                let request = String::from_utf8_lossy(&head[..read]).into_owned();
+                if request.starts_with("GET /apps?") {
+                    let answer = format!(
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/xml\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{listing}",
+                        listing.len()
+                    );
+                    let _ = socket.write_all(answer.as_bytes()).await;
+                }
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
+/// A store that lists and then drops the connection of the type's HEAD or of the write is a
+/// 503 naming no part of the store, and nothing is reported stored.
+#[tokio::test]
+async fn a_store_that_drops_the_connection_mid_call_answers_503() {
+    let state = state_at(dropping_store().await, json!(["files"]));
+    let (status, body, text) = call(&state, "GET", "", Vec::new()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(body["detail"], "the file store did not answer");
+    let (status, body, text) = call(&state, "PUT", "/new.jpg", b"jpeg".to_vec()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(body["detail"], "the file store did not answer");
+}
+
+/// A `wasm` App's files are under the shard its status records, every other App's under 0.
+#[tokio::test]
+async fn an_apps_files_are_listed_under_the_shard_its_status_records() {
+    let store = store(4).await;
+    let state = state(&store, json!(["files"]));
+    let mut app = state.mirror.get(PROJECT, "App", APP).expect("the App");
+    app.status = Some(serde_json::from_value(json!({ "shard": 1 })).expect("a status"));
+    state.mirror.upsert(app);
+    let (status, _, text) = call(&state, "GET", "", Vec::new()).await;
+    assert_eq!(status, StatusCode::OK, "{text}");
+    let shard = format!("apps/1/{}/", app_id(PROJECT, APP));
+    let listed = store
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|request| request.method.as_str() == "GET" && request.url.path() == "/apps")
+        .any(|request| {
+            request
+                .url
+                .query_pairs()
+                .any(|(key, value)| key == "prefix" && value == shard)
+        });
+    assert!(listed, "the listing names shard 1's prefix");
+}
+
+/// For a keyed project a GET URL names the keyed key of a file the keyed prefix holds and of one
+/// the store does not list, and a store that cannot list is a 503.
+#[tokio::test]
+async fn a_keyed_projects_get_url_names_the_key_the_file_is_under() {
+    let store = store(4).await;
+    let state = common::on_database(state(&store, json!(["files"]))).await;
+    let pool = state.db.clone().expect("a pool");
+    common::keyed_project(&state, &pool, PROJECT, "helsinki").await;
+    let key = joinedcontext_portal::project_ids::key_of(&pool, &state.mirror, PROJECT)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    let keyed = joinedcontext_portal::apps::files::keyed_prefix(&key, &app_id(PROJECT, APP));
+    let listing = format!(
+        "<ListBucketResult><IsTruncated>false</IsTruncated><Contents><Key>{keyed}fresh.txt</Key>\
+         <Size>4</Size><LastModified>2026-10-10T20:00:00.000Z</LastModified></Contents>\
+         </ListBucketResult>"
+    );
+    Mock::given(method("GET"))
+        .and(path("/apps"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(listing))
+        .with_priority(1)
+        .mount(&store)
+        .await;
+    let get = json!({ "method": "GET" }).to_string().into_bytes();
+    for file in ["fresh.txt", "unlisted.txt"] {
+        let (status, body, text) = call(&state, "POST", &format!("/{file}:url"), get.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{file}: {text}");
+        assert!(
+            body["url"]
+                .as_str()
+                .is_some_and(|url| url.contains(&format!("/apps/{keyed}{file}?"))),
+            "{file}: {text}"
+        );
+    }
+    let failing = MockServer::start().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(500))
+        .mount(&failing)
+        .await;
+    let broken = state_at(failing.uri(), json!(["files"])).with_db(pool);
+    let (status, body, text) = call(&broken, "POST", "/fresh.txt:url", get).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert_eq!(body["detail"], "the file store did not answer");
+}

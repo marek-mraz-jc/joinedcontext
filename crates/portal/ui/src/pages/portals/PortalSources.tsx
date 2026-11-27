@@ -497,7 +497,7 @@ function RunLog({ queryKey, portal, source }: { queryKey: string[]; portal: stri
       searchLabel={t("grid.searchIn", { list: t("portals.runs.caption", { source }) })}
       rows={items}
       rowKey={(r) => r.id}
-      query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
+      query={{ isPending: false, isError: false, error: null }}
       name={{ id: "started", label: t("portals.runs.started"), text: (r) => when(r.startedAt) }}
       columns={[
         { id: "state", label: t("portals.runs.state"), filter: true, text: state, cell: (r) => <Badge tone={STATE_TONE[r.state] ?? "neutral"}>{state(r)}</Badge> },
@@ -770,7 +770,7 @@ export function PortalDatasetsTab({ name, spec, onSources }: { name: string; spe
         rows={items}
         rowKey={(d) => d.name}
         total={datasets.data.total}
-        query={{ isPending: false, isError: false, error: null, refetch: () => void datasets.refetch() }}
+        query={{ isPending: false, isError: false, error: null }}
         name={{
           id: "title",
           label: t("portals.datasets.title"),

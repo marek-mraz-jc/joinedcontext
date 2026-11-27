@@ -346,13 +346,12 @@ pub async fn import(
         crate::ops::record_import_check(state, identity, project, &subject).await?;
         let plan = GitImportPlan {
             repositories: planned,
-            parameters: serde_json::to_value(&own.spec.parameters)
-                .map_err(|e| ApiError::Internal(e.to_string()))?,
+            parameters: serde_json::to_value(&own.spec.parameters).map_err(ApiError::internal)?,
             models,
         };
         return Ok((
             StatusCode::OK,
-            serde_json::to_value(plan).map_err(|e| ApiError::Internal(e.to_string()))?,
+            serde_json::to_value(plan).map_err(ApiError::internal)?,
         ));
     }
     crate::ops::verdict_for_import(state, identity, project, &subject).await?;
@@ -397,7 +396,7 @@ pub async fn import(
             crate::ops::forget_import_check(state, identity, project).await;
             Ok((
                 StatusCode::ACCEPTED,
-                serde_json::to_value(change).map_err(|e| ApiError::Internal(e.to_string()))?,
+                serde_json::to_value(change).map_err(ApiError::internal)?,
             ))
         }
         // Both or neither (CC-85): what this import created goes again.

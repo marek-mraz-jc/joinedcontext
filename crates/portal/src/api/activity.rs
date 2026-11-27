@@ -229,12 +229,11 @@ pub async fn stream_activity(
                 {
                     return Some(None);
                 }
+                // An event is plain data, so it always serializes; `json_data` is this line.
+                let data = serde_json::to_string(&event).unwrap_or_default();
                 Some(Some(Ok(Event::default()
                     .event(event.kind.clone())
-                    .json_data(&event)
-                    .unwrap_or_else(|_| {
-                        Event::default().comment("unserializable")
-                    }))))
+                    .data(data))))
             },
         )
         .filter_map(|event| event);

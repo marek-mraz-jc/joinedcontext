@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { reasonOf } from "../../api/client";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import { Alert, Badge, Button, Card, CardHeader, ConfirmDialog } from "../../components/ui";
 import { operatorHosts, operatorKeys, proposeChange, sentence, stateTone, useOrganizationTitles, when } from "./operatorApi";
 import type { OperatorHost } from "./operatorApi";
@@ -94,7 +95,7 @@ export function OperatorHosts(): JSX.Element {
             key: "actions",
             label: t("operator.hosts.actions"),
             actions: true,
-            text: () => "",
+            text: noText,
             cell: (row) =>
               row.state === "removed" ? null : (
                 <Button size="sm" variant="secondary" onClick={() => setRemoving(row)}>

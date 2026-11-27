@@ -526,12 +526,40 @@ mod tests {
         })
         .await
         .expect("the log is trimmed beside the start");
-        let log = std::fs::read_to_string(log.path()).unwrap();
+        let text = std::fs::read_to_string(log.path()).unwrap();
         assert!(
-            log.contains("the manifests are blobs") && log.contains("copied=1"),
-            "{log}"
+            text.contains("the manifests are blobs") && text.contains("copied=1"),
+            "{text}"
         );
-        assert!(!log.contains("pw-jc_shako"), "no password is logged");
+        assert!(!text.contains("pw-jc_shako"), "no password is logged");
+
+        // A trim the server refuses leaves the log to the next start, and this one still serves.
+        sqlx::raw_sql(
+            "CREATE FUNCTION public.jc_refuse_trim() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN RAISE EXCEPTION 'the test refuses the trim'; END $$;
+             CREATE TRIGGER jc_refuse_trim BEFORE DELETE ON shako.store_log
+                 FOR EACH STATEMENT EXECUTE FUNCTION public.jc_refuse_trim();",
+        )
+        .execute(&in_db)
+        .await
+        .unwrap();
+        build_state(&cfg(&owner), &setup)
+            .await
+            .expect("a start whose trim is refused serves");
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while !std::fs::read_to_string(log.path())
+                .unwrap()
+                .contains("store log not trimmed")
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the refused trim is logged");
+        sqlx::raw_sql("DROP TRIGGER jc_refuse_trim ON shako.store_log")
+            .execute(&in_db)
+            .await
+            .unwrap();
 
         // A request login that passes row level security by refuses the start.
         sqlx::raw_sql("ALTER ROLE jc_shako_app BYPASSRLS")

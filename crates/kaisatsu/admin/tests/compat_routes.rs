@@ -2654,7 +2654,11 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
             "dev",
             "pi-2",
             &["auditor".into()],
-            &HashMap::from([("pi-app".to_string(), vec!["viewer".to_string()])]),
+            // `pi-gone` names a client deleted since: it has no mapping rows to move.
+            &HashMap::from([
+                ("pi-app".to_string(), vec!["viewer".to_string()]),
+                ("pi-gone".to_string(), vec!["reader".to_string()]),
+            ]),
         )
         .await
         .unwrap();
@@ -2729,6 +2733,7 @@ async fn partial_import_follows_if_resource_exists_for_every_resource() {
         1
     );
     assert_eq!(moved.client_roles["pi-app"], ["viewer"]);
+    assert_eq!(moved.client_roles["pi-gone"], ["reader"]);
     let groups = f.store.list_user_groups("dev", "pi-3").await.unwrap();
     assert_eq!(
         groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(),

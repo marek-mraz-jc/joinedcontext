@@ -860,12 +860,7 @@ async fn export_module(
     }
     for table in source.tables {
         if !source.folders.is_empty() {
-            let rows = export_folders(zip, &mut tx, source, table, options)
-                .await
-                .map_err(|e| match e {
-                    Exported::Db(e) => failed(e),
-                    Exported::Archive(e) => e,
-                })?;
+            let rows = export_folders(zip, &mut tx, source, table, options, &failed).await?;
             index.tables.insert(table.name.to_owned(), rows);
             continue;
         }
@@ -915,11 +910,6 @@ async fn export_module(
     Ok(index)
 }
 
-enum Exported {
-    Db(sqlx::Error),
-    Archive(ApiError),
-}
-
 /// Reads `table` once per project folder of `source`, under that folder's key, into
 /// `module/portal/project/<id>/<table>.jsonl`: a table keyed by project into each project's
 /// folder, a table of the Organization into its reserved project's. A table row-level security
@@ -931,12 +921,13 @@ async fn export_folders(
     source: &Source,
     table: &Table,
     options: zip::write::SimpleFileOptions,
-) -> Result<u64, Exported> {
+    failed: &impl Fn(sqlx::Error) -> ApiError,
+) -> Result<u64, ApiError> {
     let guarded: bool = sqlx::query_scalar("SELECT row_security_active($1::regclass)")
         .bind(quoted(table.name))
         .fetch_one(&mut *tx)
         .await
-        .map_err(Exported::Db)?;
+        .map_err(failed)?;
     let all = source.keys.get(table.keys).cloned().unwrap_or_default();
     let sql = select_of(source.schema, table);
     let mut rows = 0u64;
@@ -949,7 +940,7 @@ async fn export_folders(
         };
         crate::db::enter(&mut *tx, folder.key)
             .await
-            .map_err(Exported::Db)?;
+            .map_err(failed)?;
         zip.start_file(
             format!(
                 "{}{}.jsonl",
@@ -958,14 +949,14 @@ async fn export_folders(
             ),
             options,
         )
-        .map_err(|e| Exported::Archive(archive_error(e)))?;
+        .map_err(archive_error)?;
         let mut stream = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.clone()))
             .bind(&keys)
             .fetch(&mut *tx);
-        while let Some(line) = stream.try_next().await.map_err(Exported::Db)? {
+        while let Some(line) = stream.try_next().await.map_err(failed)? {
             zip.write_all(line.as_bytes())
                 .and_then(|()| zip.write_all(b"\n"))
-                .map_err(|e| Exported::Archive(archive_error(e)))?;
+                .map_err(archive_error)?;
             rows += 1;
         }
     }
@@ -1294,6 +1285,34 @@ mod tests {
         );
         std::fs::remove_file(dir.with_extension("age")).ok();
         std::fs::remove_file(&dir).ok();
+    }
+
+    /// A project registry the Portal cannot reach is said in words: no archive half read.
+    #[tokio::test]
+    async fn a_registry_that_does_not_answer_is_named() {
+        let lazy = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(200))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("lazy pool");
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_db(lazy);
+        let why = portal_source(&state, "hel").await.err().expect("refused");
+        assert!(
+            why.starts_with("the project registry could not be read: "),
+            "{why}"
+        );
+    }
+
+    /// A plain archive that cannot be read (a directory in its place) is refused, not sealed
+    /// half.
+    #[test]
+    fn a_plain_archive_that_cannot_be_read_is_refused() {
+        let dir = std::env::temp_dir().join(format!("data-encrypt-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let sealed = std::fs::File::create(dir.with_extension("age")).expect("sealed");
+        let recipient = age::x25519::Identity::generate().to_public();
+        assert!(encrypt(&[recipient], &dir, sealed).is_err());
+        std::fs::remove_file(dir.with_extension("age")).ok();
+        std::fs::remove_dir(&dir).ok();
     }
 
     /// The fingerprint ignores the whitespace around a pasted key and differs per key.

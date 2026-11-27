@@ -1888,9 +1888,7 @@ async fn remove(
     let held = crate::api::mutate::turn(&shako, &removal_branch(people)).await;
     let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &default_branch).await?;
     let path_of = |envelope: &ResourceEnvelope| -> Result<String, ApiError> {
-        let info = crate::resource::by_kind(&envelope.kind).ok_or_else(|| {
-            ApiError::Internal(format!("no catalogue entry for {}", envelope.kind))
-        })?;
+        let info = crate::api::mutate::catalogued(&envelope.kind)?;
         let namespace = envelope
             .metadata
             .namespace

@@ -108,6 +108,15 @@ describe("the space's data model", () => {
     expect(screen.queryByText(en.spaces.inside.noTypes.replace("{model}", "air"))).toBeNull();
   });
 
+  it("waits for the model list, and says why when it cannot be read, before it says there is no model", async () => {
+    const hang = (path: string): Response | Promise<Response> | undefined =>
+      path === "/api/v1/projects/helsinki/datamodels" ? new Promise<Response>(() => undefined) : answer([])(path);
+    await renderRoute({ path: "/projects/helsinki/spaces/ilma?tab=model", answer: hang });
+    const waiting = await section();
+    expect(waiting.getByRole("status")).toHaveTextContent(en.app.loading);
+    expect(waiting.queryByText(en.spaces.inside.modelEmpty)).toBeNull();
+  });
+
   it("offers Create and Import for this space when it has no model", async () => {
     await renderRoute({ path: "/projects/helsinki/spaces/ilma?tab=model", answer: answer([]) });
     const model = await section();

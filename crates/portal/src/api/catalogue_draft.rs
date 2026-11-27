@@ -10,7 +10,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use axum::extract::{Path, State};
 use axum::routing::post;
 use axum::{Json, Router};
-use jc_core::kinds::catalog::Catalog;
 use jc_core::kinds::Verb;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -329,16 +328,10 @@ fn drafted_catalog(known: &Known) -> Value {
             );
         }
     }
-    let catalog = Value::Object(catalog);
-    // Only what the manifest itself accepts is ever proposed: a member the table does not know
-    // is dropped here rather than failing the proposal the person makes from it.
-    match serde_json::from_value::<Catalog>(catalog.clone()) {
-        Ok(_) => catalog,
-        Err(err) => {
-            tracing::warn!(error = %err, "drafted catalogue block does not parse; proposing the licence alone");
-            json!({ "license": DEFAULT_LICENCE })
-        }
-    }
+    // Only what the manifest itself accepts is ever drafted: free text, the licence table's
+    // default and the themes of `DOMAIN_THEMES`, each a theme `spec.catalog` takes (the tests
+    // parse every one).
+    Value::Object(catalog)
 }
 
 /// A title as its manifest holds it (one string or a map per language), as a map.
@@ -510,6 +503,7 @@ pub fn router() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use jc_core::kinds::catalog::Catalog;
 
     /// EP-80 (T-7815): what the draft knows comes from the mirror: the space's language and
     /// model classes, the Organization's open-data contact (a contact without an e-mail is
@@ -848,5 +842,25 @@ slots:
         );
         assert!(texts(None, "sk").is_empty());
         assert!(texts(Some(&json!("  ")), "sk").is_empty());
+    }
+
+    /// T-7931: every theme the domain table drafts is one `spec.catalog` takes, so a draft of
+    /// every domain at once parses as the Endpoint's catalogue block.
+    #[test]
+    fn a_draft_of_every_domain_the_table_knows_is_a_valid_catalogue() {
+        let linkml: String = DOMAIN_THEMES
+            .iter()
+            .map(|(domain, _)| format!("# dataModel.{domain}\n"))
+            .collect();
+        let mut every = known();
+        every.linkml = Some(linkml);
+        let catalog = drafted_catalog(&every);
+        let themes: BTreeSet<&str> = DOMAIN_THEMES.iter().map(|(_, theme)| *theme).collect();
+        assert_eq!(
+            catalog["themes"].as_array().map(Vec::len),
+            Some(themes.len()),
+            "{catalog}"
+        );
+        serde_json::from_value::<Catalog>(catalog).expect("a valid spec.catalog");
     }
 }

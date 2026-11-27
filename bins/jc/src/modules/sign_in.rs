@@ -92,6 +92,11 @@ pub fn publish(set: Vec<SignIn>) -> bool {
     SIGN_IN.publish(set)
 }
 
+/// Held by every test that publishes a set, so one test's set never reaches another's follower
+/// between its own publish and its check.
+#[cfg(all(test, feature = "portal"))]
+pub(crate) static PUBLISH_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[cfg(all(test, feature = "portal"))]
 mod tests {
     use super::*;
@@ -170,6 +175,7 @@ mod tests {
     /// kaisatsu leaves its follower, which spawns the realm apply.
     #[tokio::test]
     async fn a_follower_gets_the_last_set_at_once_and_each_change_once() {
+        let _published = PUBLISH_LOCK.lock().await;
         let seen = Arc::new(Mutex::new(Vec::<usize>::new()));
         let one = vec![SignIn {
             organization: "hel".into(),

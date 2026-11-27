@@ -93,7 +93,7 @@ fn new_model_envelope(
         "metadata": { "name": name, "namespace": project },
         "spec": spec,
     }))
-    .map_err(|e| ApiError::Internal(format!("build DataModel manifest: {e}")))
+    .map_err(ApiError::internal)
 }
 
 /// Confines `spec.linkml`: rejects absolute paths, `..` segments, and paths outside `datamodels/`.
@@ -300,6 +300,11 @@ pub(crate) async fn importers_of(state: &AppState, name: &str) -> Vec<String> {
 }
 
 /// Reads the LinkML source from the forge for a DataModel in a project.
+/// The answer of a door that needs the forge on a Portal that has none.
+fn no_forge() -> ApiError {
+    ApiError::Unavailable("git forge is not configured".into())
+}
+
 pub async fn read_source(state: &AppState, project: &str, name: &str) -> Result<String, ApiError> {
     let envelope = state
         .mirror
@@ -318,9 +323,7 @@ pub async fn read_source(state: &AppState, project: &str, name: &str) -> Result<
 
     let confined = confine_linkml_path(linkml)?;
 
-    let shako = state
-        .forge_for(project)
-        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
+    let shako = state.forge_for(project).ok_or_else(no_forge)?;
     let shako: &crate::forge::ShakoClient = &shako;
 
     let default_branch = shako.default_branch().await?;
@@ -685,7 +688,8 @@ pub fn bump_version(current: &SemVer, severity: &str) -> Result<SemVer, ApiError
             patch.checked_add(1).ok_or_else(exhausted)?
         ),
     };
-    SemVer::new(&bumped).map_err(|e| ApiError::BadRequest(e.to_string()))
+    // Three counters joined by dots are a version, so the parse cannot refuse.
+    SemVer::new(&bumped).map_err(ApiError::internal)
 }
 
 /// A breaking change of a published model needs a new major version (DM-22); a model not yet
@@ -722,18 +726,18 @@ pub(crate) fn artifact_files(
     major: impl std::fmt::Display,
     artifacts: &Artifacts,
 ) -> Result<(GeneratedArtifacts, Vec<(String, String)>), ApiError> {
-    let pretty = |value: &Option<Value>, what: &str| {
+    let pretty = |value: &Option<Value>| {
         serde_json::to_string_pretty(value.as_ref().unwrap_or(&json!({})))
-            .map_err(|e| ApiError::Internal(format!("serialize {what}: {e}")))
+            .map_err(ApiError::internal)
     };
     let files = vec![
         (
             format!("json-schema/{name}.v{major}.json"),
-            pretty(&artifacts.json_schema, "json schema")?,
+            pretty(&artifacts.json_schema)?,
         ),
         (
             format!("context/{name}.v{major}.jsonld"),
-            pretty(&artifacts.context, "context")?,
+            pretty(&artifacts.context)?,
         ),
         (
             format!("docs/{name}.md"),
@@ -741,7 +745,7 @@ pub(crate) fn artifact_files(
         ),
         (
             format!("examples/{name}.example.jsonld"),
-            pretty(&artifacts.example, "example")?,
+            pretty(&artifacts.example)?,
         ),
     ];
     let at = |i: usize| Some(format!("./{}", files[i].0));
@@ -765,8 +769,7 @@ pub(crate) fn place_artifacts(
 ) -> Result<Vec<(String, String)>, ApiError> {
     let (artifacts_spec, files) = artifact_files(name, version.major(), artifacts)?;
     spec["version"] = Value::String(version.to_string());
-    spec["artifacts"] = serde_json::to_value(&artifacts_spec)
-        .map_err(|e| ApiError::Internal(format!("serialize artifacts: {e}")))?;
+    spec["artifacts"] = serde_json::to_value(&artifacts_spec).map_err(ApiError::internal)?;
     Ok(files)
 }
 
@@ -838,15 +841,15 @@ pub(crate) async fn check_source(
         )));
     }
 
-    // A model the mirror lacks has no published version a change could break (T-6268); one it
-    // holds is compared with its published source, so a forge that cannot read it now refuses
-    // the check instead of reading every slot as new (JC1-09).
+    // A model the mirror lacks has no published version a change could break (T-6268), and
+    // `read_source` answers it as not found; one it holds is compared with its published source,
+    // so a forge that cannot read it now refuses the check instead of reading every slot as new
+    // (JC1-09).
     let published = state.mirror.get(project, "DataModel", name).is_some();
     let published_source = match read_source(state, project, name).await {
         Ok(source) => Some(source),
         Err(ApiError::NotFound(_)) => None,
-        Err(err) if published => return Err(err),
-        Err(_) => None,
+        Err(err) => return Err(err),
     };
     let prev_val: Value = published_source
         .as_deref()
@@ -1003,7 +1006,7 @@ pub async fn put_source(
 
     // The whole manifest: a space-bound grant reads `spec.contextSpaceRef`, a constraint may read
     // `metadata` (F-POR1-002).
-    let target = serde_json::to_value(&envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let target = serde_json::to_value(&envelope).map_err(ApiError::internal)?;
     crate::permissions::for_request(&state, &user.0.identity, &project).check(
         "DataModel",
         jc_core::kinds::Verb::Propose,
@@ -1130,7 +1133,7 @@ pub async fn share_model(
         .ok_or_else(|| {
             ApiError::NotFound(format!("project '{project}' has no data model '{name}'"))
         })?;
-    let target = serde_json::to_value(&model).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let target = serde_json::to_value(&model).map_err(ApiError::internal)?;
     effective.check("DataModel", jc_core::kinds::Verb::Propose, Some(&target))?;
     let spec: DataModelSpec = serde_json::from_value(model.spec.clone())
         .map_err(|e| ApiError::Internal(format!("DataModel {name} does not read: {e}")))?;
@@ -1152,10 +1155,11 @@ pub async fn share_model(
         None => {
             let mut envelope = model.clone();
             envelope.metadata.namespace = Some(ORG_NAMESPACE.to_owned());
-            if let Some(spec) = envelope.spec.as_object_mut() {
+            // The spec read as a DataModelSpec above, so it is an object.
+            envelope.spec.as_object_mut().into_iter().for_each(|spec| {
                 spec.remove("contextSpaceRef");
                 spec.remove("origin");
-            }
+            });
             (envelope, Some(spec.version.to_string()))
         }
         Some(organization) => {
@@ -1205,9 +1209,7 @@ pub async fn share_model(
     )
     .await?;
 
-    let shako = state
-        .forge_for(&project)
-        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
+    let shako = state.forge_for(&project).ok_or_else(no_forge)?;
     let commit = shako.branch_head(&shako.default_branch().await?).await?;
     let origin = DataModelOrigin {
         project: project.clone(),
@@ -1217,8 +1219,7 @@ pub async fn share_model(
         commit,
     };
     let mut envelope = envelope;
-    envelope.spec["origin"] =
-        serde_json::to_value(&origin).map_err(|e| ApiError::Internal(e.to_string()))?;
+    envelope.spec["origin"] = serde_json::to_value(&origin).map_err(ApiError::internal)?;
     envelope.spec["lifecycle"] = json!("published");
 
     let from_space = origin
@@ -1298,9 +1299,7 @@ pub(crate) async fn propose_model(
     let (title, body) = (proposal.title.as_str(), proposal.body.as_str());
     let files = model_files(&proposal)?;
 
-    let shako = state
-        .forge_for(project)
-        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
+    let shako = state.forge_for(project).ok_or_else(no_forge)?;
     let shako: &crate::forge::ShakoClient = &shako;
 
     let default_branch = shako.default_branch().await?;
@@ -1356,9 +1355,7 @@ pub(crate) async fn propose_model_onto(
     let (project, name, lane) = (proposal.namespace, proposal.name, proposal.lane);
     let title = proposal.title.clone();
     let files = model_files(&proposal)?;
-    let shako = state
-        .forge_for(project)
-        .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
+    let shako = state.forge_for(project).ok_or_else(no_forge)?;
     let shako: &crate::forge::ShakoClient = &shako;
     let default_branch = shako.default_branch().await?;
     let operation = if proposal.creating {
@@ -1426,8 +1423,7 @@ fn model_files(proposal: &ModelProposal<'_>) -> Result<Vec<(String, String)>, Ap
     updated_envelope.spec = new_spec;
     updated_envelope.strip_status();
 
-    let manifest_yaml = serde_norway::to_string(&updated_envelope)
-        .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+    let manifest_yaml = serde_norway::to_string(&updated_envelope).map_err(ApiError::internal)?;
 
     let manifest_path = format!("{folder}/{name}.yaml");
     let source_path = format!("{folder}/{confined_linkml}");

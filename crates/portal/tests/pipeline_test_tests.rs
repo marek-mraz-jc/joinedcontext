@@ -1932,3 +1932,35 @@ async fn a_held_stream_the_runner_will_not_describe_is_409_and_kept() {
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
     assert!(asked(&runner, "DELETE").await.is_empty());
 }
+
+/// The script test through its operation answers what the REST door answers: each test's
+/// result in the order sent (T-7084).
+#[tokio::test]
+async fn the_script_test_operation_answers_each_tests_result() {
+    let body = json!({ "code": "bento.v0_msg_set_string('x')",
+                       "tests": [{ "name": "only", "input": {}, "expected": {} }] });
+    let scripts = mirror("raisio");
+    scripts.upsert(org(
+        "Role",
+        "pipeline-author",
+        json!({ "rules": [{ "kinds": ["Pipeline", "Script"], "verbs": ["propose"] }] }),
+    ));
+    let runner = common::runner().await;
+    let (create, delete) = runner_mocks(ResponseTemplate::new(200));
+    create.mount(&runner).await;
+    delete.mount(&runner).await;
+    let state = AppState::new(config(Some(&runner)), None).with_mirror(scripts);
+    let messages = [json!({ "input": "{}", "output": { "x": 1 }, "error": null })];
+    let ((status, answer), _) = tokio::join!(
+        send(
+            &state,
+            "dev@hel.fi",
+            "/api/v1/projects/raisio/ops/jc_script_test",
+            &body
+        ),
+        play_runner(&runner, &state, &messages),
+    );
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["results"][0]["name"], "only", "{answer}");
+    assert_eq!(answer["results"].as_array().map(Vec::len), Some(1));
+}

@@ -457,10 +457,8 @@ export function PipelineStudio({
     });
   }
 
+  // The test button is disabled until an endpoint is picked; an unknown one reads as no slug.
   async function runKpiTest() {
-    if (!kpiEndpoint) {
-      return;
-    }
     const chosenEndpoint = endpoints.find((e) => e.metadata.name === kpiEndpoint);
     const slug =
       typeof chosenEndpoint?.spec.slug === "string" ? (chosenEndpoint.spec.slug as string) : "";

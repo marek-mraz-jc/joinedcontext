@@ -22,6 +22,7 @@ import {
   Select,
 } from "../../components/ui";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { listManifests } from "../../api/odata";
 
@@ -353,7 +354,7 @@ export function OrganizationApplications(): JSX.Element {
       label: t("approvals.actions"),
       actions: true,
       align: "right",
-      text: () => "",
+      text: noText,
       cell: ({ project, app }) => {
         const name = app.metadata.name;
         const repository = repositoryOf(app);

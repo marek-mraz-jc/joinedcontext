@@ -70,6 +70,11 @@ const GRID_ROWS = [
   { name: "parking-occupancy", audience: "organization", calls: 87, space: "mobility" },
   { name: "street-works", audience: "public", calls: 0, space: "works" },
 ];
+type GridRow = (typeof GRID_ROWS)[number];
+// Both grid specimens share these, so the waiting one, which has no row to read, adds no code of its own.
+const gridRowKey = (row: GridRow): string => row.name;
+const GRID_NAME = { id: "name", label: "Name", text: (row: GridRow) => row.name };
+const GRID_AUDIENCE = { id: "audience", label: "Audience", filter: true, text: (row: GridRow) => row.audience };
 
 /**
  * A label of sixty characters, in German, where the words are longest. Every control is shown
@@ -345,7 +350,6 @@ export function Gallery(): JSX.Element {
                         key: "remove",
                         label: "Remove",
                         tone: "danger",
-                        onSelect: () => undefined,
                         disabledReason: "Your role in helsinki cannot delete this.",
                       },
                     ]}
@@ -385,11 +389,11 @@ export function Gallery(): JSX.Element {
             storageKey="gallery"
             searchLabel="Search endpoints"
             rows={GRID_ROWS}
-            rowKey={(row) => row.name}
-            query={{ isPending: false, isError: false, error: null, refetch: () => undefined }}
-            name={{ id: "name", label: "Name", text: (row) => row.name }}
+            rowKey={gridRowKey}
+            query={{ isPending: false, isError: false, error: null }}
+            name={GRID_NAME}
             columns={[
-              { id: "audience", label: "Audience", filter: true, text: (row) => row.audience },
+              GRID_AUDIENCE,
               { id: "calls", label: "Calls in 7 days", numeric: true, align: "right", text: (row) => String(row.calls) },
               { id: "space", label: "Context Space", hidden: true, text: (row) => row.space },
             ]}
@@ -401,11 +405,11 @@ export function Gallery(): JSX.Element {
             caption="Reading the endpoints"
             storageKey="gallery-waiting"
             searchLabel="Search endpoints"
-            rows={[] as typeof GRID_ROWS}
-            rowKey={(row) => row.name}
-            query={{ isPending: true, isError: false, error: null, refetch: () => undefined }}
-            name={{ id: "name", label: "Name", text: (row) => row.name }}
-            columns={[{ id: "audience", label: "Audience", text: (row) => row.audience }]}
+            rows={[] as GridRow[]}
+            rowKey={gridRowKey}
+            query={{ isPending: true, isError: false, error: null }}
+            name={GRID_NAME}
+            columns={[GRID_AUDIENCE]}
             empty={<EmptyState bare title="No endpoints yet" />}
           />
         </State>

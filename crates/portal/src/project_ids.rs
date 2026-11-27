@@ -686,7 +686,9 @@ static BRANCHES: std::sync::RwLock<Option<HashMap<String, BranchEntry>>> =
 pub const BRANCH_WATCH: std::time::Duration = std::time::Duration::from_secs(30);
 
 fn note_branch(name: &str, entry: BranchEntry) {
-    let mut table = BRANCHES.write().unwrap_or_else(|p| p.into_inner());
+    let mut table = BRANCHES
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     table
         .get_or_insert_with(HashMap::new)
         .insert(name.to_owned(), entry);
@@ -702,7 +704,9 @@ fn branch_entry(name: &str) -> Option<BranchEntry> {
 
 /// The state of the branch `name` now.
 pub fn branch_state(name: &str) -> BranchState {
-    let table = BRANCHES.read().unwrap_or_else(|p| p.into_inner());
+    let table = BRANCHES
+        .read()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let Some(table) = table.as_ref() else {
         return BranchState::Unread;
     };
@@ -736,7 +740,9 @@ pub async fn read_branches(pool: &PgPool) -> Result<(), sqlx::Error> {
             )
         })
         .collect();
-    *BRANCHES.write().unwrap_or_else(|p| p.into_inner()) = Some(table);
+    *BRANCHES
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(table);
     Ok(())
 }
 
@@ -1359,12 +1365,9 @@ mod backfill_loop_tests {
         spawn_backfill(state);
         let started = std::time::Instant::now();
         let mut keyed = None;
-        while started.elapsed() < Duration::from_secs(20) {
+        while keyed.is_none() && started.elapsed() < Duration::from_secs(20) {
             tokio::time::sleep(Duration::from_millis(100)).await;
             keyed = notified(&pool, &placed_project).await;
-            if keyed.is_some() {
-                break;
-            }
         }
         assert!(keyed.is_some(), "the placed project's row was keyed");
         assert_eq!(

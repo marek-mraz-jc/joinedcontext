@@ -1,0 +1,1 @@
+{"mark":"line","encoding":{"x":{"field":"observedAt","type":"temporal"},"y":{"field":"pm10","type":"quantitative"}},"data":{"query":{"endpoint":"air","type":"AirQualityObserved","attrs":["pm10"]}}}

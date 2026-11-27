@@ -78,10 +78,7 @@ fn load(dir: &Path) -> Docs {
         else {
             continue;
         };
-        for doc in serde_norway::Deserializer::from_str(&text) {
-            let Ok(value) = <Value as serde::Deserialize>::deserialize(doc) else {
-                continue;
-            };
+        for value in documents(&text, &path) {
             let (Some(kind), Some(name)) = (
                 value.get("kind").and_then(Value::as_str),
                 value.pointer("/metadata/name").and_then(Value::as_str),
@@ -413,4 +410,35 @@ fn written() -> Value {
             { "output": { "drop": {} } },
         ],
     }})
+}
+
+/// The YAML documents of one file up to the first malformed one. serde_norway's Deserializer
+/// yields that document's error again on every later step, so a `continue` past it never ends.
+fn documents(text: &str, path: &Path) -> Vec<Value> {
+    let mut out = Vec::new();
+    for doc in serde_norway::Deserializer::from_str(text) {
+        match <Value as serde::Deserialize>::deserialize(doc) {
+            Ok(value) => out.push(value),
+            Err(e) => {
+                eprintln!("{}: the rest of the file is skipped: {e}", path.display());
+                break;
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_malformed_document_ends_the_file_instead_of_spinning() {
+        let path = Path::new("seed.yaml");
+        let text = "kind: A\n---\nkind: [unclosed\n---\nkind: C\n";
+        let got = documents(text, path);
+        assert_eq!(got, vec![serde_json::json!({"kind": "A"})]);
+        assert!(documents("", path).iter().all(Value::is_null));
+        assert_eq!(documents("a: 1\n---\nb: 2\n", path).len(), 2);
+    }
 }

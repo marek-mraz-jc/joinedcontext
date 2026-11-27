@@ -124,17 +124,16 @@ pub(crate) fn stored_zip(entries: &[(String, Vec<u8>)]) -> Result<Vec<u8>, ApiEr
     let stored =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (path, bytes) in entries {
-        writer
-            .start_file(path, stored)
-            .map_err(|err| ApiError::Internal(format!("archive entry failed: {err}")))?;
-        writer
-            .write_all(bytes)
-            .map_err(|e| ApiError::Internal(format!("archive write failed: {e}")))?;
+        writer.start_file(path, stored).map_err(archive_failed)?;
+        writer.write_all(bytes).map_err(archive_failed)?;
     }
-    let cursor = writer
-        .finish()
-        .map_err(|err| ApiError::Internal(format!("archive did not close: {err}")))?;
+    let cursor = writer.finish().map_err(archive_failed)?;
     Ok(cursor.into_inner())
+}
+
+/// An archive entry the zip writer refused (a path given twice), as our 500.
+fn archive_failed(err: impl std::fmt::Display) -> ApiError {
+    ApiError::Internal(format!("archive entry failed: {err}"))
 }
 
 /// `total` plus `more` bytes, refused past what an import takes: an export no import reads back
@@ -220,8 +219,7 @@ pub async fn archive(
             "ref": "main",
         },
     });
-    let entry = serde_norway::to_string(&entry)
-        .map_err(|e| ApiError::Internal(format!("the registry entry did not serialise: {e}")))?;
+    let entry = serde_norway::to_string(&entry).map_err(ApiError::internal)?;
     entries.push((format!("projects/{project}.yaml"), entry.into_bytes()));
 
     // Every organization model the project imports travels with it, schema files only (MF-49).
@@ -268,8 +266,7 @@ pub async fn archive(
         // Two repositories under one name (an App named like its project) cannot be told apart
         // at the target.
         .map_err(|e| ApiError::Conflict(format!("the project cannot be exported as git: {e}")))?;
-    let index = serde_norway::to_string(&index)
-        .map_err(|e| ApiError::Internal(format!("the bundle index did not serialise: {e}")))?;
+    let index = serde_norway::to_string(&index).map_err(ApiError::internal)?;
     entries.push(("bundle.yaml".to_owned(), index.into_bytes()));
 
     Ok(Archive {

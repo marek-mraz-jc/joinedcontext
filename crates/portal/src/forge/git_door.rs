@@ -437,6 +437,31 @@ mod tests {
             assert_eq!(send(&state, garbled).await.0, StatusCode::BAD_REQUEST);
         }
 
+        /// An administrator who signed out holds a token that still verifies: the door refuses
+        /// it with the same 404 and the forge is never asked.
+        #[tokio::test]
+        async fn a_signed_out_administrators_token_is_the_same_404() {
+            let forge = MockServer::start().await;
+            let (state, signer) = portal(&forge.uri());
+            let admin = format!(
+                "Bearer {}",
+                token(&signer, "f:1:admin-signed-out", &["portal-approver"])
+            );
+            state
+                .revoke_subject("f:1:admin-signed-out", crate::auth::session::now_unix() + 5)
+                .await;
+            let uri = "/git/joinedcontext/configuration.git/info/refs?service=git-upload-pack";
+            assert_eq!(
+                send(&state, refs(uri, Some(&admin))).await.0,
+                StatusCode::NOT_FOUND
+            );
+            assert!(forge
+                .received_requests()
+                .await
+                .expect("recorded")
+                .is_empty());
+        }
+
         #[tokio::test]
         async fn every_refusal_is_the_same_404_and_never_reaches_the_forge() {
             let forge = MockServer::start().await;

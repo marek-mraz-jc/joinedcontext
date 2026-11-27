@@ -724,14 +724,8 @@ export function PipelineWorkbench({
   const targetModel = modelOfEndpoint(targetName);
   const modelText = useModelSource(project, targetModel);
   const parsed = useMemo<LinkmlModel | undefined>(() => {
-    if (!modelText) {
-      return undefined;
-    }
-    try {
-      return parseModel(modelText);
-    } catch {
-      return undefined;
-    }
+    // parseModel never throws: a source that does not read is EMPTY_MODEL (fuzzed in outside_input_fuzz).
+    return modelText ? parseModel(modelText) : undefined;
   }, [modelText]);
   const classNames = parsed?.classes.map((c) => c.name) ?? [];
   // The mapping file stands in for the Bloblang box while the pipeline has no compute step.

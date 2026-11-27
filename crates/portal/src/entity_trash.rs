@@ -259,15 +259,16 @@ mod tests {
     use serde_json::json;
 
     fn poisoned() -> TrashStore {
-        let store = TrashStore::new(None, std::sync::Arc::new(crate::store::Mirror::new()));
-        if let Inner::Memory(lock) = &store.inner {
-            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let _guard = lock.write();
-                panic!("poison the lock on purpose");
-            }));
-            assert!(outcome.is_err());
+        let lock: Memory = RwLock::new((0, HashMap::new()));
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = lock.write();
+            panic!("poison the lock on purpose");
+        }));
+        assert!(outcome.is_err());
+        assert!(lock.is_poisoned());
+        TrashStore {
+            inner: Inner::Memory(lock),
         }
-        store
     }
 
     #[tokio::test]

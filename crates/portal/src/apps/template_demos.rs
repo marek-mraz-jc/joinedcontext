@@ -202,25 +202,29 @@ mod tests {
     /// sandboxed page asks for it from an origin of none.
     #[tokio::test]
     async fn a_built_asset_is_served_with_its_type_to_any_origin() {
-        // Without the SDK's demos built into this binary there is no asset to serve.
-        let Some(name) = Demos::iter().find_map(|path| {
-            path.strip_prefix("assets/")
-                .filter(|name| name.ends_with(".js"))
-                .map(str::to_owned)
-        }) else {
-            crate::agents::kit::sdk_built_or_skip(false, "demos/assets/*.js");
-            return;
-        };
-        let response = asset(Path(name)).await;
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
-        assert!(response.headers()[header::CONTENT_TYPE]
-            .to_str()
-            .unwrap_or_default()
-            .contains("javascript"));
-        assert_eq!(
-            response.headers()[header::CONTENT_SECURITY_POLICY],
-            DEMO_CSP
-        );
+        // Without the SDK's demos built into this binary there is no asset to serve: skipped
+        // outside CI, a failure in it.
+        let names: Vec<String> = Demos::iter()
+            .filter_map(|path| {
+                path.strip_prefix("assets/")
+                    .filter(|name| name.ends_with(".js"))
+                    .map(str::to_owned)
+            })
+            .take(1)
+            .collect();
+        crate::agents::kit::sdk_built_or_skip(!names.is_empty(), "demos/assets/*.js");
+        for name in names {
+            let response = asset(Path(name)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+            assert!(response.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap_or_default()
+                .contains("javascript"));
+            assert_eq!(
+                response.headers()[header::CONTENT_SECURITY_POLICY],
+                DEMO_CSP
+            );
+        }
     }
 }

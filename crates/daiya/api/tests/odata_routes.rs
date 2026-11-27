@@ -1382,6 +1382,14 @@ async fn store_failures_are_errors_in_every_set_and_action() {
         w.store.heal();
         assert_eq!(st, StatusCode::INTERNAL_SERVER_ERROR, "{uri}: {answer}");
     }
+    // A row query the store refuses is the caller's 400, not a 500.
+    w.store.refuse("read_rows");
+    let (st, body) = w
+        .call("GET", "/odata/v4/Folders", Some("admin"), None)
+        .await;
+    w.store.heal();
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{body}");
+    assert!(body.to_string().contains("no such row query"), "{body}");
     w.store.fail("read_rows");
     let (st, answer) = w
         .call(

@@ -65,13 +65,16 @@ async fn serve_index(
     )
     .await;
     if let Some(token) = token.filter(|_| response.status().is_success()) {
-        for cookie in [
+        let cookies = [
             crate::auth::csrf::cookie(&token),
             crate::auth::csrf::legacy_app_cookie(&token),
-        ] {
-            if let Ok(value) = HeaderValue::from_str(&cookie.to_string()) {
-                response.headers_mut().append(header::SET_COOKIE, value);
-            }
+        ];
+        // A minted token is URL-safe base64, so each cookie is a header value.
+        for value in cookies
+            .iter()
+            .filter_map(|cookie| HeaderValue::from_str(&cookie.to_string()).ok())
+        {
+            response.headers_mut().append(header::SET_COOKIE, value);
         }
     }
     response
@@ -242,15 +245,18 @@ async fn serve(
     let basemap = crate::api::basemap::route_prefix(&state.config, &project);
     let policy =
         content_security_policy(&spec, portal_origin(&state).as_deref(), basemap.as_deref());
-    if let Ok(csp) = HeaderValue::from_str(&with_store(
+    // An App's file is never served without its policy: one no header can carry (a configured
+    // store origin with a line break) refuses the file instead.
+    let Ok(csp) = HeaderValue::from_str(&with_store(
         &policy,
         &spec,
         state.config.apps_store_origin.as_deref(),
-    )) {
-        response
-            .headers_mut()
-            .insert(header::CONTENT_SECURITY_POLICY, csp);
-    }
+    )) else {
+        return ApiError::Unavailable("the App's policy is no header".into()).into_response();
+    };
+    response
+        .headers_mut()
+        .insert(header::CONTENT_SECURITY_POLICY, csp);
     response
 }
 
@@ -697,7 +703,8 @@ pub fn report_unbuilt(
     });
     let mut names = Vec::new();
     for mut envelope in unbuilt {
-        if let Some(status) = envelope.status.as_mut() {
+        // Every one matched has a status (the filter above).
+        envelope.status.iter_mut().for_each(|status| {
             status.phase = crate::resource::Phase::Pending;
             status.conditions = vec![crate::reconciler::streams::make_condition(
                 "Ready",
@@ -706,7 +713,7 @@ pub fn report_unbuilt(
                 "published, but no build has been written back to status.build, so its host \
                  serves nothing; rebuild the App from its page (AP-13a)",
             )];
-        }
+        });
         transitions.keep(&mut envelope);
         names.push(envelope.metadata.name.clone());
         mirror.upsert(envelope);
@@ -936,6 +943,40 @@ pub fn router() -> Router<AppState> {
 
 #[cfg(test)]
 mod tests {
+
+    /// A digest no header can carry fails the answer's build: a 500, never a file without its
+    /// ETag; a recorded one is the ETag and a matching If-None-Match the 304.
+    #[test]
+    fn a_digest_no_header_can_carry_is_a_500_and_a_held_one_a_304() {
+        use axum::http::{header, HeaderMap, StatusCode};
+        let headers = HeaderMap::new();
+        let broken = file_response(
+            &headers,
+            "a.js",
+            "bad\ndigest",
+            (false, true),
+            b"x".to_vec(),
+        );
+        assert_eq!(broken.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let mut held = HeaderMap::new();
+        held.insert(
+            header::IF_NONE_MATCH,
+            "\"sha384-a\"".parse().expect("value"),
+        );
+        let unchanged = file_response(&held, "a.js", "sha384-a", (false, false), b"x".to_vec());
+        assert_eq!(unchanged.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(unchanged.headers()[header::ETAG], "\"sha384-a\"");
+        assert_eq!(unchanged.headers()[header::VARY], "Cookie");
+        let index = file_response(
+            &held,
+            "index.html",
+            "sha384-a",
+            (true, false),
+            b"x".to_vec(),
+        );
+        assert_eq!(index.status(), StatusCode::OK);
+        assert!(index.headers().get(header::ETAG).is_none());
+    }
 
     #[test]
     fn a_refused_manifest_is_logged_once_and_again_when_the_refusal_changes() {

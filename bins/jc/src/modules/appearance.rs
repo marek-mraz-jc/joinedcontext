@@ -266,6 +266,42 @@ mod tests {
         );
     }
 
+    /// Without a Portal in this process every Organization's look is jc's config: `follow`
+    /// hands it over once at the first look, and a later round that finds it unchanged calls
+    /// nothing; no names start no follower at all.
+    #[tokio::test(start_paused = true)]
+    async fn a_look_is_handed_over_once_and_an_unchanged_round_calls_nothing() {
+        use std::sync::{Arc, Mutex};
+        let seen = Arc::new(Mutex::new(Vec::<(String, u8, bool)>::new()));
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        let held = Arc::clone(&seen);
+        follow(
+            BTreeMap::from([("bbsk".to_owned(), 7u8)]),
+            &shutdown,
+            &tasks,
+            move |name, kept, look| {
+                held.lock().unwrap().push((name, kept, look.is_some()));
+                async {}
+            },
+        );
+        for _ in 0..3 {
+            tokio::time::sleep(FOLLOW_EVERY + Duration::from_secs(1)).await;
+        }
+        assert_eq!(*seen.lock().unwrap(), [("bbsk".to_owned(), 7, false)]);
+        assert_eq!(installation(), None, "no Portal runs in this process");
+        let idle = TaskTracker::new();
+        follow(
+            BTreeMap::<String, u8>::new(),
+            &shutdown,
+            &idle,
+            |_, _, _| async {},
+        );
+        assert!(idle.is_empty(), "no names, no follower");
+        shutdown.cancel();
+        tasks.close();
+        tasks.wait().await;
+    }
+
     /// A title is one string, or the page's language of a map, else English, else any; a
     /// missing title or one of another type is none.
     #[cfg(feature = "dataroom")]

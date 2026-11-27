@@ -4525,6 +4525,13 @@ mod tests {
                 "spec": { "subjects": [{ "user": "ana@hel.fi" }], "role": "r", "scope": scope } })
         };
         assert!(scopes_name_a_target(&mirror, &manifest(Some("dormant")), None).is_ok());
+        // A manifest that names no namespace is the organization's: the stored binding is found.
+        let mut bare = manifest(Some("dormant"));
+        bare["metadata"]
+            .as_object_mut()
+            .expect("an object")
+            .remove("namespace");
+        assert!(scopes_name_a_target(&mirror, &bare, None).is_ok());
         let (status, said) = refusal(scopes_name_a_target(&mirror, &manifest(None), None));
         assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
         assert!(said.contains("'ghost'"), "{said}");

@@ -38,8 +38,7 @@ async fn manifest(
     let forge = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
-    let info = resource::by_kind("App")
-        .ok_or_else(|| ApiError::Internal("the App kind is not registered".into()))?;
+    let info = crate::api::mutate::catalogued("App")?;
     let path = info.repo_path(project, "", name);
     let branch = forge.default_branch().await?;
     let head = forge.branch_head(&branch).await?;
@@ -55,8 +54,7 @@ async fn manifest(
         envelope.metadata.annotations.remove(key);
     }
     crate::api::export::strip_secret_values(&mut envelope.spec);
-    let text = serde_norway::to_string(&envelope)
-        .map_err(|err| ApiError::Internal(format!("the App did not serialise: {err}")))?;
+    let text = serde_norway::to_string(&envelope).map_err(ApiError::internal)?;
     Ok((envelope, text))
 }
 
@@ -157,8 +155,7 @@ pub async fn export_app(
     index
         .validate()
         .map_err(|err| ApiError::Internal(format!("the App's bundle index: {err}")))?;
-    let index = serde_norway::to_string(&index)
-        .map_err(|err| ApiError::Internal(format!("the bundle index did not serialise: {err}")))?;
+    let index = serde_norway::to_string(&index).map_err(ApiError::internal)?;
     entries.push(("bundle.yaml".to_owned(), index.into_bytes()));
 
     Ok((
@@ -238,10 +235,10 @@ fn check(bytes: &[u8]) -> Result<Checked, ApiError> {
             jc_core::API_VERSION
         )));
     }
-    if let Some(checked) = jc_core::registry::validate_yaml("App", &text) {
-        checked
-            .map_err(|err| ApiError::BadRequest(format!("app.yaml is not a valid App: {err}")))?;
-    }
+    // jc-core types the App kind, so the check always runs.
+    jc_core::registry::validate_yaml("App", &text)
+        .unwrap_or(Ok(()))
+        .map_err(|err| ApiError::BadRequest(format!("app.yaml is not a valid App: {err}")))?;
     Ok(Checked { index, files, app })
 }
 
@@ -330,7 +327,7 @@ pub async fn import(
         };
         return Ok((
             StatusCode::OK,
-            serde_json::to_value(plan).map_err(|e| ApiError::Internal(e.to_string()))?,
+            serde_json::to_value(plan).map_err(ApiError::internal)?,
         ));
     }
     crate::ops::verdict_for_import(state, identity, project, &subject).await?;
@@ -361,7 +358,7 @@ pub async fn import(
             crate::ops::forget_import_check(state, identity, project).await;
             Ok((
                 StatusCode::ACCEPTED,
-                serde_json::to_value(change).map_err(|e| ApiError::Internal(e.to_string()))?,
+                serde_json::to_value(change).map_err(ApiError::internal)?,
             ))
         }
         // Both or neither (CC-85): the repository this import created goes again.
@@ -434,11 +431,9 @@ async fn land(
         .and_then(Value::as_object_mut)
         .ok_or_else(|| ApiError::BadRequest("app.yaml names no source.git".into()))?;
     source.insert("url".to_owned(), Value::String(client.clone_url()));
-    let info = resource::by_kind("App")
-        .ok_or_else(|| ApiError::Internal("the App kind is not registered".into()))?;
+    let info = crate::api::mutate::catalogued("App")?;
     let path = info.repo_path(project, "", name);
-    let text = serde_norway::to_string(&app)
-        .map_err(|err| ApiError::Internal(format!("the App did not serialise: {err}")))?;
+    let text = serde_norway::to_string(&app).map_err(ApiError::internal)?;
 
     let report = ImportReport {
         created: vec![path.clone()],

@@ -109,7 +109,7 @@ pub async fn internal_diagnostics(
             )))
         }
     }
-    .map_err(|err| ApiError::Internal(err.to_string()))?;
+    .map_err(ApiError::internal)?;
     Ok(Json(body))
 }
 

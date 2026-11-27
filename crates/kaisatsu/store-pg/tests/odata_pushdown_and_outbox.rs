@@ -134,6 +134,66 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
     db.drop_db().await;
 }
 
+/// The keyset fallback of the expanded sets skips a stored document it cannot read (an
+/// Organization's domains, a client's or a client scope's mappers that are no list) and still
+/// answers every row it can.
+#[tokio::test]
+async fn the_fallback_scan_skips_a_document_it_cannot_read() {
+    let Some(db) = common::test_db("the_fallback_scan_skips_a_document_it_cannot_read").await
+    else {
+        return;
+    };
+    let pg: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed_store(&pg).await;
+    pg.upsert_organization(Organization {
+        id: "helsinki".into(),
+        realm_id: "dev".into(),
+        name: "helsinki".into(),
+        alias: "helsinki".into(),
+        enabled: true,
+        description: String::new(),
+        domains: Vec::new(),
+        attributes: HashMap::new(),
+        managed_by: None,
+    })
+    .await
+    .expect("org");
+    let admin = db.superuser_pool().await;
+    for table in ["organizations", "applications", "client_scopes"] {
+        let field = if table == "organizations" {
+            "domains"
+        } else {
+            "protocolMappers"
+        };
+        let changed = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "UPDATE kaisatsu.{table} SET doc = doc || '{{\"{field}\": 5}}'::jsonb \
+             WHERE realm_id = 'dev'"
+        )))
+        .execute(&admin)
+        .await
+        .expect(table);
+        assert!(changed.rows_affected() > 0, "{table} holds a row to break");
+    }
+    let service = kaisatsu_odata_service();
+    let csdl = Arc::new(service.model());
+    let edm = odata_url::EdmModel(&csdl);
+    let ctx = RequestCtx::new("dev", Principal::realm_admin("root"));
+    for set in ["OrganizationDomains", "ProtocolMappers"] {
+        let uri = format!("{set}?$count=true");
+        let odata_url::ODataUri::Resource { options, .. } =
+            odata_url::parse(&uri, &edm, &odata_url::Limits::strict()).expect(set)
+        else {
+            panic!("not a resource");
+        };
+        let page = pg
+            .query_entity_set(&ctx, &LocalAuthorizer, set, &options, 100)
+            .await
+            .expect(set);
+        assert_eq!(page.rows.len(), 0, "{set}: {:?}", page.rows);
+    }
+    db.drop_db().await;
+}
+
 /// K15: the pushdown runs inside the RLS transaction with the caller's organizations, so even a
 /// scope without row restrictions shows an org-scoped caller only its organizations' people.
 #[tokio::test]

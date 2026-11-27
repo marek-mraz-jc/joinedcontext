@@ -769,3 +769,198 @@ async fn the_converger_retires_a_wasm_app_only_after_its_export() {
     assert_eq!(outcome, Outcome::Deleted);
     assert_eq!(schema_left(&w, &id).await, 0, "dropped after the export");
 }
+
+// ---- the database failing under a publish or a retire ----
+
+/// An apps database that does not answer: a lazy pool on a port nothing listens on.
+fn dead_apps_db() -> joinedcontext_portal::apps::apps_db::AppsDb {
+    let connect: sqlx::postgres::PgConnectOptions = "postgres://nobody@127.0.0.1:1/none"
+        .parse()
+        .expect("options");
+    joinedcontext_portal::apps::apps_db::AppsDb {
+        admin: sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(500))
+            .connect_lazy_with(connect.clone()),
+        connect,
+        shards: 2,
+    }
+}
+
+/// A retire whose apps database does not answer stops at once with the error, nothing exported.
+#[tokio::test]
+async fn a_retire_on_a_database_that_does_not_answer_stops_with_its_error() {
+    let store = store_with_one_file(0, "none", 200).await;
+    let wasm = {
+        let client = joinedcontext_portal::artifact_store::Client::new(
+            joinedcontext_portal::artifact_store::Settings {
+                endpoint: store.uri(),
+                bucket: "jc-artifacts".into(),
+                region: "us-east-1".into(),
+                root_access_key: "root".into(),
+                root_secret_key: "root-secret".into(),
+            },
+        )
+        .expect("store client");
+        joinedcontext_portal::apps::wasm_apps::WasmApps {
+            db: dead_apps_db(),
+            store: std::sync::Arc::new(client),
+            bucket: "apps".into(),
+            keys: None,
+        }
+    };
+    let err = wasm
+        .retire("p-dead", "notes", "20261008T120000Z")
+        .await
+        .expect_err("no database, no retire");
+    assert!(!err.is_empty());
+    assert!(
+        store
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "nothing exported"
+    );
+}
+
+/// A publish whose schema cannot be provisioned after the App was placed returns that error:
+/// the App is placed and has no status yet.
+#[tokio::test]
+async fn a_publish_whose_provision_fails_returns_its_error() {
+    const COMPONENT: &[u8] = &[0x00, 0x61, 0x73, 0x6d, 0x0d, 0x00, 0x01, 0x00, 0x42];
+    let w = world("noprovision").await;
+    sqlx::query("DROP FUNCTION jc_apps.provision")
+        .execute(&w.superuser)
+        .await
+        .expect("provision gone");
+    let project = w.project("p-noprovision");
+    let store = store_with_one_file(0, "none", 200).await;
+    let why = wasm_apps(&w, &store)
+        .publish(&project, "notes", &bundle_of(COMPONENT), &[])
+        .await
+        .expect_err("no provision, no publish");
+    assert!(why.contains("provision"), "{why}");
+    let id = app_id(&project, "notes");
+    assert!(w.db.shard_of(&id).await.expect("shard").is_some(), "placed");
+}
+
+/// A schema the Portal's login cannot export (a table it may not read) stops the retire before
+/// anything is dropped, naming the export.
+#[tokio::test]
+async fn a_schema_that_cannot_be_exported_stops_the_retire() {
+    let w = world("noexport").await;
+    let project = w.project("p-noexport");
+    let (id, shard) = published(&w, &project, "notes").await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TABLE app_{id}.unreadable (x int)"
+    )))
+    .execute(&w.superuser)
+    .await
+    .expect("a table the Portal may not read");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "REVOKE ALL ON app_{id}.unreadable FROM PUBLIC"
+    )))
+    .execute(&w.superuser)
+    .await
+    .expect("revoked");
+    let store = store_with_one_file(shard, &id, 200).await;
+    let err = wasm_apps(&w, &store)
+        .retire(&project, "notes", "20261008T120000Z")
+        .await
+        .expect_err("no export, no retire");
+    assert!(err.starts_with("the schema could not be exported"), "{err}");
+    assert_eq!(schema_left(&w, &id).await, 1);
+}
+
+/// A retire whose drop fails after both exports were written returns the database's error, and
+/// the App's files stay, since they go only after the drop.
+#[tokio::test]
+async fn a_retire_whose_drop_fails_keeps_the_files() {
+    let w = world("nodrop").await;
+    let project = w.project("p-nodrop");
+    let (id, shard) = published(&w, &project, "notes").await;
+    sqlx::query("DROP FUNCTION jc_apps.retire")
+        .execute(&w.superuser)
+        .await
+        .expect("retire gone");
+    let store = store_with_one_file(shard, &id, 200).await;
+    let err = wasm_apps(&w, &store)
+        .retire(&project, "notes", "20261008T120000Z")
+        .await
+        .expect_err("no drop, no retire");
+    assert!(err.contains("retire"), "{err}");
+    let deleted = store
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "DELETE")
+        .count();
+    assert_eq!(deleted, 0, "the files stay");
+}
+
+/// With the Portal's project registry, a keyed project's files are exported from its keyed
+/// prefix after the old one; a registry that does not answer stops the retire before the drop.
+#[tokio::test]
+async fn a_keyed_projects_files_are_exported_from_both_prefixes() {
+    let portal = joinedcontext_portal::db::connect(
+        &std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to the Portal's test database"),
+    )
+    .await
+    .expect("connect + migrate");
+    let w = world("keyed").await;
+    let project = w.project("p-keyed");
+    let (id, shard) = published(&w, &project, "notes").await;
+    let state = joinedcontext_portal::state::AppState::new(
+        joinedcontext_portal::config::Config::for_tests(),
+        None,
+    );
+    common::keyed_project(&state, &portal, &project, "helsinki").await;
+    let key = joinedcontext_portal::project_ids::key_of(&portal, &state.mirror, &project)
+        .await
+        .expect("the registry")
+        .expect("a keyed project");
+    let keyed = joinedcontext_portal::apps::files::keyed_prefix(&key, &id);
+
+    let dead = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(500))
+        .connect_lazy_with(
+            "postgres://nobody@127.0.0.1:1/none"
+                .parse::<sqlx::postgres::PgConnectOptions>()
+                .expect("options"),
+        );
+    let store = store_with_one_file(shard, &id, 200).await;
+    let mut wasm = wasm_apps(&w, &store);
+    wasm.keys = Some(dead);
+    let err = wasm
+        .retire(&project, "notes", "20261008T120000Z")
+        .await
+        .expect_err("no registry, no retire");
+    assert!(
+        err.starts_with("the project key could not be read"),
+        "{err}"
+    );
+    assert_eq!(schema_left(&w, &id).await, 1, "nothing dropped");
+
+    wasm.keys = Some(portal);
+    wasm.retire(&project, "notes", "20261008T130000Z")
+        .await
+        .expect("retired");
+    let listed: Vec<String> = store
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET")
+        .flat_map(|r| {
+            r.url
+                .query_pairs()
+                .filter(|(key, _)| key == "prefix")
+                .map(|(_, value)| value.into_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(listed.contains(&keyed), "{listed:?}");
+    assert_eq!(schema_left(&w, &id).await, 0);
+}

@@ -743,10 +743,9 @@ mod tests {
         .await
         .expect("an Organization of the registry");
         let mirror = Mirror::new();
-        for row in organizations(&scratch.pool).await.expect("the registry") {
-            if row.state == "active" {
-                organization(&mirror, &row.name);
-            }
+        let rows = organizations(&scratch.pool).await.expect("the registry");
+        for row in rows.iter().filter(|row| row.state == "active") {
+            organization(&mirror, &row.name);
         }
         let drift = report_drift(&scratch.pool, &mirror).await;
         scratch.remove().await;

@@ -834,6 +834,40 @@ mod tests {
         );
     }
 
+    /// A token is at hand but the OpenBao address is no URL, or carries credentials: refused
+    /// before any request, naming the first reference.
+    #[test]
+    fn an_openbao_address_that_is_no_url_or_carries_credentials_is_unresolved() {
+        let token = std::env::temp_dir().join(format!("jc-bao-token-{}", std::process::id()));
+        std::fs::write(&token, "a-service-account-jwt\n").expect("the token file");
+        let reference = SecretRef {
+            name: "feed".to_owned(),
+            key: Some("password".to_owned()),
+            env_var: Some("FEED_PASSWORD".to_owned()),
+        };
+        let refusal = |address: &str| {
+            Resolver::new(Backend::OpenBao {
+                address: address.to_owned(),
+                role: "portal".to_owned(),
+                jwt_path: token.clone(),
+            })
+            .environment(Path::new("/nonexistent"), std::slice::from_ref(&reference))
+            .expect_err("refused before a request")
+        };
+        let malformed = refusal("not a url");
+        let credentialed = refusal("https://user:secret@bao.example");
+        let _ = std::fs::remove_file(&token);
+        assert!(
+            matches!(&malformed, SecretError::Unresolved { name, reason }
+                if name == "feed" && reason.contains("is not a URL")),
+            "{malformed}"
+        );
+        assert!(
+            matches!(&credentialed, SecretError::Unresolved { name, .. } if name == "feed"),
+            "{credentialed}"
+        );
+    }
+
     #[test]
     fn a_secrets_folder_of_an_invalid_project_names_the_first_reference_or_none() {
         let reference = SecretRef {

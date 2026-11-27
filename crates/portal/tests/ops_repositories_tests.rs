@@ -912,3 +912,126 @@ async fn a_forge_answer_short_of_a_field_reads_its_default_and_a_broken_one_is_a
         );
     }
 }
+
+/// The configuration's README read, with its root tree answered as `readme`: a README too large
+/// to show and one the forge does not hand out are both left out of the repository's page.
+async fn readme_of(readme: Value, file: Option<u16>) -> (StatusCode, Value) {
+    let (server, state) = world().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/odata/Repositories('{CONFIG_ID}')/Tree")))
+        .and(query_param("Ref", "main"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Sha": ROOT, "Tree": [readme] })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    if let Some(status) = file {
+        Mock::given(method("GET"))
+            .and(path(format!("/odata/Repositories('{CONFIG_ID}')/File")))
+            .and(query_param("Path", "README.md"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({ "message": "m" })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let got = doors::call(
+        "jc_repository_get",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config" }),
+    )
+    .await;
+    (got.status, got.body)
+}
+
+#[tokio::test]
+async fn a_readme_too_large_or_not_handed_out_is_left_out() {
+    let large = json!({ "Path": "README.md", "Mode": "100644", "Type": "blob", "Size": 9_000_000, "Sha": "r" });
+    let (status, body) = readme_of(large, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("readme").is_none(), "{body}");
+    let small =
+        json!({ "Path": "README.md", "Mode": "100644", "Type": "blob", "Size": 10, "Sha": "r" });
+    let (status, body) = readme_of(small, Some(404)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.get("readme").is_none(), "{body}");
+}
+
+/// A pull request of an application's repository is no Change of the project: it names none.
+#[tokio::test]
+async fn an_application_pull_request_names_no_change() {
+    let (server, state) = world().await;
+    get(
+        &server,
+        &format!("/odata/PullRequests('{APP_ID}:3')"),
+        json!({
+            "Number": 3, "Title": "Build", "State": "open", "Merged": false, "Author": "jc-portal",
+            "Head": "agent/x", "Base": "main", "Body": "b",
+        }),
+    )
+    .await;
+    let got = doors::call(
+        "jc_repository_pull",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie_dash", "number": 3 }),
+    )
+    .await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
+    assert_eq!(got.body["number"], 3, "{}", got.text());
+    assert!(got.body.get("change").is_none(), "{}", got.text());
+}
+
+/// The applications kept in an organization of their own are read there as well (PF-106); a
+/// read the activity log cannot record still answers.
+#[tokio::test]
+async fn the_applications_organization_is_read_and_an_unrecorded_read_still_answers() {
+    let (server, _) = world().await;
+    let vars = [
+        ("JC_SHAKO_URL", server.uri()),
+        ("JC_SHAKO_OWNER", "test-owner".to_owned()),
+        ("JC_SHAKO_REPO", "test-repo".to_owned()),
+        ("JC_SHAKO_TOKEN", "token-xyz".to_owned()),
+        ("JC_SHAKO_APPS_OWNER", "city-apps".to_owned()),
+        ("JC_SHAKO_APPS_TOKEN", "apps-token".to_owned()),
+    ];
+    let client = ShakoClient::from_env(|key| {
+        vars.iter()
+            .find(|(name, _)| *name == key)
+            .map(|(_, value)| value.clone())
+    })
+    .expect("a forge configuration")
+    .expect("a forge");
+    let mut state =
+        doors::state_with(AppState::new(Config::for_tests(), None).with_shako(Arc::new(client)));
+    state.mirror.set_layout(2);
+    state.mirror.set_repositories(BTreeMap::from([(
+        PROJECT.to_owned(),
+        "ovzdusie-config".to_owned(),
+    )]));
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(std::time::Duration::from_millis(50))
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    state.activity =
+        joinedcontext_portal::activity::ActivityStore::new(Some(pool), Arc::clone(&state.mirror));
+    let got = doors::call("jc_repository_list", &session(steward()), &state, json!({})).await;
+    assert_eq!(got.status, StatusCode::OK, "{}", got.text());
+    assert!(got.text().contains("ovzdusie-config"), "{}", got.text());
+    let requests = server.received_requests().await.expect("requests");
+    let listings = requests
+        .iter()
+        .filter(|r| r.url.path() == "/odata/Repositories")
+        .count();
+    assert!(listings >= 2, "both organizations listed: {listings}");
+    let read = doors::call(
+        "jc_repository_get",
+        &session(steward()),
+        &state,
+        json!({ "repository": "ovzdusie-config" }),
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text());
+    assert_eq!(read.body["readme"]["text"], XSS, "{}", read.text());
+}

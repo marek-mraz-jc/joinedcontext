@@ -905,4 +905,94 @@ mod tests {
             "{missing:?}"
         );
     }
+
+    /// AG-11: a removal asked through MCP opens a change request and waits for an approver; only a
+    /// person at the Portal's own form removes at once.
+    #[tokio::test]
+    async fn a_removal_through_mcp_waits_for_an_approver() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+        Mock::given(method("GET"))
+            .and(path(repo))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({ "DefaultBranch": "main" })),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "sha-space-123",
+                "Content": "YXBpVmVyc2lvbjogeW91"
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CreateBranch")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{repo}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Tree": [{ "Path": "projects/ovzdusie/spaces/mobility/space.yaml", "Type": "blob" }],
+                "Truncated": false
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.CommitFiles")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "Sha": "c1" })))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/Shako.OpenPullRequest")))
+            .respond_with(ResponseTemplate::new(201).set_body_json(json!({
+                "Number": 55,
+                "HtmlUrl": "https://shako.example.sk/pulls/55",
+                "State": "open",
+                "Mergeable": true,
+                "Merged": false
+            })))
+            .mount(&server)
+            .await;
+        let forge = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("url"),
+            "test-owner",
+            "test-repo",
+            "t",
+        )
+        .expect("client");
+        let state = state().with_shako(std::sync::Arc::new(forge));
+        state.mirror.upsert(super::super::testkit::envelope(
+            "ContextSpace",
+            "mobility",
+            "ovzdusie",
+            json!({ "isSandbox": true }),
+        ));
+        let agent = person_via(person("ana", &["portal-approver"]), super::super::Via::Mcp);
+        let delete = super::super::find("jc_resource_delete").expect("registered");
+        let answer = (delete.run)(
+            &agent,
+            &state,
+            "ovzdusie",
+            json!({ "kind": "ContextSpace", "name": "mobility", "confirm": "mobility" }),
+        )
+        .await
+        .expect("a change request");
+        assert_eq!(answer["changeId"], "chg-00000037", "{answer}");
+        assert_eq!(
+            answer["url"], "https://shako.example.sk/pulls/55",
+            "{answer}"
+        );
+        let requests = server.received_requests().await.expect("requests");
+        assert!(
+            !requests.iter().any(|r| r.url.path().contains("Merge")),
+            "nothing merged: an approver decides"
+        );
+    }
 }

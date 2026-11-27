@@ -1,0 +1,2 @@
+<https://data.example/api/items?page=2>; rel="next"
+{"value":[{"id":1},{"id":2}],"@odata.count":5}

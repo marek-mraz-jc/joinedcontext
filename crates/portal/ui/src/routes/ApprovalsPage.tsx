@@ -9,6 +9,7 @@ import { listChanges, listOutside } from "../api/odata";
 import { useAdministers } from "../api/permissions";
 import { useAuth } from "../auth/AuthProvider";
 import { AdminGrid } from "../components/grid/AdminGrid";
+import { noText } from "../components/grid/noText";
 import type { DataColumn } from "../components/grid/AdminGrid";
 import { ApprovalsHistory } from "./ApprovalsHistory";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
@@ -132,7 +133,7 @@ export function ApprovalsPage({ project }: { project: string }): JSX.Element {
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (proposal) => (

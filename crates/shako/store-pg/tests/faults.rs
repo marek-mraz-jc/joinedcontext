@@ -462,7 +462,37 @@ async fn the_store_refuses_what_it_cannot_read_or_hold() {
         target_url: String::new(),
         updated_at: now,
     };
-    store.upsert_commit_status(status).await.expect("status");
+    store
+        .upsert_commit_status(status.clone())
+        .await
+        .expect("status");
+
+    // A write the table drops (a BEFORE trigger answering NULL) stores no row: an error, and
+    // the status written before stays as it was.
+    sqlx::raw_sql(
+        "CREATE FUNCTION shako.drop_lost() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN IF NEW.context = 'lost' THEN RETURN NULL; END IF; RETURN NEW; END $$;
+         CREATE TRIGGER drop_lost BEFORE INSERT OR UPDATE ON shako.commit_status
+             FOR EACH ROW EXECUTE FUNCTION shako.drop_lost();",
+    )
+    .execute(&db.admin)
+    .await
+    .expect("trigger");
+    let lost = store
+        .upsert_commit_status(CommitStatusRecord {
+            id: uuid::Uuid::now_v7(),
+            context: "lost".into(),
+            ..status.clone()
+        })
+        .await
+        .expect_err("no row stored");
+    assert_eq!(storage_message(&lost), "a write stored no row");
+    let statuses = store
+        .list_commit_statuses(inst, org, status.repo_id, &status.sha)
+        .await
+        .expect("statuses");
+    assert_eq!(statuses.len(), 1, "{statuses:?}");
+    assert_eq!(statuses[0].context, "ci");
 
     // A repository renamed onto a name the Organization already holds: a conflict naming no
     // record, and the renamed one keeps its name.

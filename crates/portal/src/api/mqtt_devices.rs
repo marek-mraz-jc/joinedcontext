@@ -117,7 +117,7 @@ fn broker(
 }
 
 fn as_value(env: &ResourceEnvelope) -> Result<Value, ApiError> {
-    serde_json::to_value(env).map_err(|e| ApiError::Internal(e.to_string()))
+    serde_json::to_value(env).map_err(ApiError::internal)
 }
 
 fn issuer(state: &AppState) -> Option<String> {
@@ -272,13 +272,11 @@ fn lane_of(plural: &str, name: &str, outcome: ProposeOutcome) -> Result<Lane, Ap
 }
 
 fn file(kind: &str, project: &str, manifest: &Value) -> Result<(String, String), ApiError> {
-    let info = resource::by_kind(kind)
-        .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {kind}")))?;
+    let info = crate::api::mutate::catalogued(kind)?;
     let name = manifest["metadata"]["name"].as_str().unwrap_or_default();
     let path =
         resource::repository_path(info, project, None, name).map_err(ApiError::BadRequest)?;
-    let content = serde_norway::to_string(manifest)
-        .map_err(|e| ApiError::Internal(format!("the {kind} did not serialise: {e}")))?;
+    let content = serde_norway::to_string(manifest).map_err(ApiError::internal)?;
     Ok((path, content))
 }
 

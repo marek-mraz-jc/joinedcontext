@@ -342,8 +342,8 @@ function isLive(endpoint: Manifest | null): boolean {
   return (endpoint?.status?.phase ?? "").toLowerCase() === "live";
 }
 
-/** `schema` without `allowedProjects`: the manifest refuses the list outside `project-list`. */
-function withoutBurst(schema: JsonSchema): JsonSchema {
+/** `schema` without the burst of its rate limits; a schema with no rate limits comes back as it is. */
+export function withoutBurst(schema: JsonSchema): JsonSchema {
   const rateLimits = schema.properties?.rateLimits as JsonSchema | undefined;
   if (!rateLimits?.properties) {
     return schema;
@@ -353,6 +353,7 @@ function withoutBurst(schema: JsonSchema): JsonSchema {
   return { ...schema, properties: { ...schema.properties, rateLimits: { ...rateLimits, properties: kept } } };
 }
 
+/** `schema` without `allowedProjects`: the manifest refuses the list outside `project-list`. */
 function withoutAllowedProjects(schema: JsonSchema): JsonSchema {
   const properties = Object.fromEntries(
     Object.entries(schema.properties ?? {}).filter(([key]) => key !== "allowedProjects"),

@@ -280,4 +280,26 @@ mod tests {
             json!({ "scanned": false })
         );
     }
+
+    /// Without a pipeline named, the audit reads every Pipeline that writes the space: none
+    /// here, so it answers empty rows rather than a 404.
+    #[tokio::test]
+    async fn an_audit_of_every_pipeline_of_a_space_answers_its_rows() {
+        let state = state();
+        state
+            .mirror
+            .upsert(envelope("ContextSpace", "air", "helsinki", json!({})));
+        let op = find(GOVERNANCE).expect("listed");
+        let audit = call(
+            op,
+            &admin(&state),
+            &state,
+            "helsinki",
+            json!({ "space": "air", "aspect": "temporalAudit" }),
+        )
+        .await
+        .expect("an audit");
+        assert_eq!(audit["rows"], json!([]), "{audit}");
+        assert_eq!(audit["unread"], json!([]), "{audit}");
+    }
 }

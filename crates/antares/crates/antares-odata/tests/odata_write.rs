@@ -318,6 +318,24 @@ async fn odata_upsert_on_absent_and_on_hidden_id_answer_the_same_404() {
     }
 }
 
+/// A write names its Entity by a literal key: it takes no query option, so a parameter alias
+/// in its key is never defined and names no Entity; the write answers 404 and changes nothing.
+#[tokio::test(flavor = "multi_thread")]
+async fn odata_a_write_by_an_aliased_key_names_no_entity() {
+    let (_b, app) = city().await.expect("broker");
+    for (method, body) in [
+        (Method::PATCH, Some(r#"{"speed": 2}"#)),
+        (Method::DELETE, None),
+    ] {
+        let target = "Car(@k)";
+        let (status, answer) = odata(&app, method.clone(), target, body).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method}: {answer}");
+    }
+    let (status, car) = stored(&app, "urn:ngsi-ld:Car:1").await;
+    assert_eq!(status, StatusCode::OK, "{car}");
+    assert_eq!(car[format!("{CITY}speed")]["value"], 1.0, "{car}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn odata_deep_insert_is_501() {
     let (_b, app) = city().await.expect("broker");

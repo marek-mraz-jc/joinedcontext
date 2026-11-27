@@ -6741,3 +6741,53 @@ async fn a_continuation_holds_inherited_endpoints_to_its_profile() {
     assert_eq!(status, StatusCode::FORBIDDEN, "{problem}");
     assert!(problem.to_string().contains("helsinki-bikes"), "{problem}");
 }
+
+/// T-7931: a workspace the kube API refuses to schedule fails the run with the refusal, says so
+/// on the run's stream, and answers 503 naming the scheduling; no ticket is handed out.
+#[tokio::test]
+async fn a_workspace_the_cluster_refuses_fails_the_run_and_answers_503() {
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let api = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "kind": "Status" })))
+        .mount(&api)
+        .await;
+    let config = config();
+    let (mut state, _, _) = with_state(mirror(Some(builder_profile_spec())), &config);
+    state.kube = Some(Arc::new(
+        joinedcontext_portal::apps::kube::KubeClient::with_token(&api.uri(), "kube-token")
+            .expect("a kube client"),
+    ));
+    let app = server::app(state.clone());
+    let cookie = session_cookie(&config, STEWARD, &["portal-approver"]);
+    let (status, problem) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/agent-runs"),
+        Some(create_body()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{problem}");
+    assert!(
+        problem
+            .to_string()
+            .contains("the workspace could not be scheduled"),
+        "{problem}"
+    );
+    let runs = state.agents.list_runs(PROJECT, 10).await.expect("the runs");
+    assert_eq!(runs.len(), 1, "the run is kept, failed");
+    assert_eq!(runs[0].status, "failed");
+    let events = state
+        .agents
+        .events_since(&runs[0].id, 0)
+        .await
+        .expect("the run's events");
+    assert!(
+        events
+            .iter()
+            .any(|e| e.kind == "status" && e.payload["status"] == "failed"),
+        "the failure is on the run's stream"
+    );
+}

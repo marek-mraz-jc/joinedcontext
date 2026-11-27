@@ -74,26 +74,25 @@ pub fn page_of(
     let limit = input.limit.unwrap_or(CHANGES).clamp(1, MAX_CHANGES);
     let mut more = items.len() > limit;
     items.truncate(limit);
-    let mut items = items
+    let mut items: Vec<Value> = items
         .into_iter()
-        .map(|change| serde_json::to_value(change).map(&shown))
-        .collect::<Result<Vec<_>, _>>()?;
+        .map(|change| shown(json!(change)))
+        .collect();
     let kept = bounds::fitting(&items, bounds::PAGE_BYTES);
     more |= kept < items.len();
     items.truncate(kept);
     let next = more
         .then(|| items.last()?.pointer("/metadata/name").cloned())
         .flatten();
-    let mut page = serde_json::to_value(ChangeList::new(Vec::new()))?;
-    if let Some(map) = page.as_object_mut() {
-        map.insert("items".into(), Value::Array(items));
-        // The merge requests that are no Change are told once, on the first page.
-        if input.cursor.is_none() && !outside.is_empty() {
-            map.insert("outside".into(), serde_json::to_value(outside)?);
-        }
-        if let Some(next) = next {
-            map.insert("next".into(), next);
-        }
+    // A ChangeList is a JSON object, so each member below lands in it.
+    let mut page = json!(ChangeList::new(Vec::new()));
+    page["items"] = Value::Array(items);
+    // The merge requests that are no Change are told once, on the first page.
+    if input.cursor.is_none() && !outside.is_empty() {
+        page["outside"] = json!(outside);
+    }
+    if let Some(next) = next {
+        page["next"] = next;
     }
     Ok(page)
 }
@@ -283,7 +282,7 @@ pub fn operations() -> Vec<Operation> {
                     let list =
                         changes::change_history_readable(state, &caller.identity, project, &query)
                             .await?;
-                    Ok(serde_json::to_value(list)?)
+                    Ok(json!(list))
                 })
             },
         },
@@ -347,4 +346,102 @@ pub fn operations() -> Vec<Operation> {
             },
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::testkit::{admin, state};
+    use super::*;
+    use crate::api::changes::OutsideMergeRequest;
+
+    fn outside_list() -> ChangeList {
+        ChangeList {
+            outside: vec![OutsideMergeRequest {
+                number: 9,
+                url: "https://forge.test/pulls/9".into(),
+                author: "fork".into(),
+                reason: "opened from a fork".into(),
+            }],
+            ..ChangeList::new(Vec::new())
+        }
+    }
+
+    /// The merge requests that are no Change are told on the first page alone; a cursor naming
+    /// a change no longer listed is refused at `cursor`.
+    #[test]
+    fn the_outside_merge_requests_are_told_on_the_first_page() {
+        let page = page_of(outside_list(), &ChangeListInput::default(), |v| v).expect("a page");
+        assert_eq!(page["items"], json!([]));
+        assert_eq!(page["outside"][0]["number"], 9);
+        assert!(page.get("next").is_none(), "{page}");
+        let later = ChangeListInput {
+            limit: None,
+            cursor: Some("chg-00000001".into()),
+        };
+        let refused = page_of(outside_list(), &later, |v| v).expect_err("an unknown cursor");
+        assert!(
+            matches!(&refused, OpError::InvalidInput { path, message } if path == "cursor" && message.contains("'chg-00000001' is no longer")),
+            "{refused:?}"
+        );
+    }
+
+    /// A document with no name gets no approval link; one with a name gets its page.
+    #[test]
+    fn an_approval_url_needs_the_change_name() {
+        let state = state();
+        assert_eq!(with_approval_url(&state, "doprava", json!({})), json!({}));
+        assert_eq!(
+            with_approval_url(&state, "doprava", json!("text")),
+            json!("text")
+        );
+        let named = with_approval_url(
+            &state,
+            "doprava",
+            json!({ "metadata": { "name": "chg-00000002" } }),
+        );
+        assert!(
+            named["url"]
+                .as_str()
+                .is_some_and(|url| url.ends_with("/projects/doprava/approvals/chg-00000002")),
+            "{named}"
+        );
+    }
+
+    /// The history of a project whose forge holds no closed change is an empty list; page 0 is
+    /// refused, and a Portal without a forge says so.
+    #[tokio::test]
+    async fn the_history_of_a_forge_without_closed_changes_is_empty() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/odata/Repositories(Owner='o',Name='r')/PullRequests"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&server)
+            .await;
+        let forge =
+            crate::forge::ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t")
+                .expect("client");
+        let state = state().with_shako(std::sync::Arc::new(forge));
+        let op = super::super::find("jc_change_history").expect("registered");
+        let list = (op.run)(&admin(&state), &state, "doprava", json!({}))
+            .await
+            .expect("a history");
+        assert_eq!(list["items"], json!([]));
+        assert!(list.get("next").is_none(), "{list}");
+        let zero = (op.run)(&admin(&state), &state, "doprava", json!({ "page": 0 })).await;
+        assert!(
+            matches!(&zero, Err(OpError::Api(crate::error::ApiError::BadRequest(why))) if why == "page counts from 1"),
+            "{zero:?}"
+        );
+        let bare = super::super::testkit::state();
+        let none = (op.run)(&admin(&bare), &bare, "doprava", json!({})).await;
+        assert!(
+            matches!(
+                &none,
+                Err(OpError::Api(crate::error::ApiError::Unavailable(_)))
+            ),
+            "{none:?}"
+        );
+    }
 }

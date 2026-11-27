@@ -313,17 +313,28 @@ async fn prepare(spec: &Spec, rows: Vec<Map<String, Value>>) -> Result<Prepared,
         }
     })
     .await
-    .map_err(|err| OpError::Api(stopped(err)))
+    .map_err(stopped)
+    .map_err(OpError::Api)
 }
 
 /// The PNG of `tiles` within `deadline` in a blocking thread ([`chart::montage`]); `limited`
 /// past it, and a picture past 2 MiB refused at `at`.
 async fn paint(tiles: Vec<chart::Tile>, deadline: Instant, at: &str) -> Result<Vec<u8>, OpError> {
+    paint_under(tiles, deadline, at, MAX_PNG).await
+}
+
+/// [`paint`] with the largest picture `cap` bytes.
+async fn paint_under(
+    tiles: Vec<chart::Tile>,
+    deadline: Instant,
+    at: &str,
+    cap: usize,
+) -> Result<Vec<u8>, OpError> {
     let png = tokio::task::spawn_blocking(move || chart::montage(&tiles, deadline))
         .await
         .map_err(stopped)?
         .map_err(|chart::Limited| limited())?;
-    if png.len() > MAX_PNG {
+    if png.len() > cap {
         return Err(invalid(
             at,
             "the picture is larger than 2 MiB; ask for a smaller width and height",
@@ -797,10 +808,9 @@ async fn proposed_by_caller(
         .spec
         .get("contextSpaceRef")
         .and_then(crate::resource::reference_name);
-    let Ok(path) = crate::resource::repository_path(info, project, space, &dashboard.metadata.name)
-    else {
-        return false;
-    };
+    // A Dashboard's path names no space (`projects/{project}/dashboards/{name}.yaml`), so it is
+    // always one: no `repository_path` refusal to answer.
+    let path = info.repo_path(project, space.unwrap_or_default(), &dashboard.metadata.name);
     let Ok(branch) = forge.default_branch().await else {
         return false;
     };
@@ -2811,5 +2821,54 @@ mod tests {
             matches!(&err, OpError::Api(ApiError::TooManyRequests(t)) if t.starts_with("limited")),
             "{err:?}"
         );
+    }
+
+    /// A picture past its cap is refused at the member that sizes it; one under it is the PNG.
+    #[tokio::test]
+    async fn a_picture_past_its_cap_is_refused_at_its_member() {
+        let tiles = || {
+            vec![
+                chart::Tile::Error {
+                    width: 200,
+                    height: 60,
+                    text: "one".into(),
+                },
+                chart::Tile::Error {
+                    width: 200,
+                    height: 60,
+                    text: "two".into(),
+                },
+            ]
+        };
+        let deadline = Instant::now() + TIME_CAP;
+        let refused = paint_under(tiles(), deadline, "/width", 16).await;
+        assert!(
+            matches!(&refused, Err(OpError::InvalidInput { path, message }) if path == "/width" && message.contains("2 MiB")),
+            "{refused:?}"
+        );
+        let png = paint(tiles(), deadline, "/width").await.expect("a picture");
+        assert!(png.starts_with(b"\x89PNG"), "a PNG");
+    }
+
+    /// A chart read whose geo-query is half given, or that asks for no rows, is refused under the
+    /// chart's own query member.
+    #[test]
+    fn a_chart_query_the_data_query_refuses_is_refused_under_its_member() {
+        for (query, at) in [
+            (
+                json!({ "endpoint": "air", "type": "AirQualityObserved", "georel": "near;maxDistance==500" }),
+                "/data/query/georel",
+            ),
+            (
+                json!({ "endpoint": "air", "type": "AirQualityObserved", "limit": 0 }),
+                "/data/query/limit",
+            ),
+        ] {
+            let refused = query_of(&query, "/data/query");
+            assert!(
+                matches!(&refused, Err(OpError::InvalidInput { path, .. }) if path == at),
+                "{query}: {refused:?}"
+            );
+        }
     }
 }

@@ -1121,6 +1121,48 @@ async fn a_taken_port_is_reported() {
     assert!(matches!(err, StartError::Bind { .. }), "{err}");
 }
 
+/// A Portal without the gateway beside it builds alone once it is ready: no late gateway waits.
+#[tokio::test]
+async fn a_portal_without_the_gateway_starts_and_stops() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    cfg.roles = vec![Module::Kaisatsu, Module::Portal];
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("started");
+    running.portal_ready().await;
+    let (path, needle) = probe(Module::Portal);
+    let (status, body) = get(running.addr, "city.test", &format!("/portal{path}")).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.contains(needle), "{body}");
+    running.stop().await.expect("clean stop");
+}
+
+/// A Portal whose shako runs in another container reaches it through a loopback forwarder
+/// that jc serves beside its own listeners, and the forwarder stops with jc.
+#[tokio::test]
+async fn a_remote_shako_is_served_through_a_forwarder() {
+    let _serial = ONE_JC_AT_A_TIME.lock().await;
+    let fx = fixture();
+    let mut cfg = config(&fx, MountMode::Slug, BTreeMap::new());
+    cfg.roles = vec![Module::Kaisatsu, Module::Portal];
+    let secret = fx._dir.path().join("remote-client-secret");
+    std::fs::write(&secret, "remote-secret-for-tests\n").unwrap();
+    cfg.remote = Some(jc::config::RemoteSection {
+        token_url: "http://127.0.0.1:9/token".into(),
+        client_id: "portal".into(),
+        client_secret_file: Some(secret),
+        modules: BTreeMap::new(),
+    });
+    cfg.remote_modules = BTreeMap::from([(Module::Shako, "https://git.city.test".to_owned())]);
+    let running = jc::start(&cfg, CancellationToken::new())
+        .await
+        .expect("started");
+    running.portal_ready().await;
+    running.stop().await.expect("clean stop");
+}
+
 #[tokio::test]
 async fn an_admin_listener_without_a_readable_token_is_refused() {
     let _serial = ONE_JC_AT_A_TIME.lock().await;

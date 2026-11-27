@@ -39,6 +39,20 @@ impl Api {
         }
     }
 
+    /// The same service on a store that fails or loses the calls a test names.
+    async fn with_faults() -> (Self, std::sync::Arc<fault_store::FaultStore>) {
+        let kek = Kek::generate_for_tests();
+        let store = std::sync::Arc::new(kaisatsu_store_memory::MemoryStore::new(kek.clone()));
+        let faults = fault_store::FaultStore::new(store.clone());
+        let state = setup_dev_realm_on(faults.clone(), kek).await;
+        let mount = Mount::new("kaisatsu", "https", "idm.dev.example.test", "").unwrap();
+        let api = Self {
+            app: router(state, mount.clone()).layer(Extension(mount)),
+            store,
+        };
+        (api, faults)
+    }
+
     async fn token_in(&self, realm: &str, sub: &str, extra: Value) -> String {
         let keys = self.store.list_signing_keys(realm).await.unwrap();
         let key = keys.iter().find(|k| k.status == "ACTIVE").unwrap();
@@ -406,7 +420,6 @@ async fn set_routes_with_the_mount() {
         "unknown operation",
     )
     .await;
-
     // A key read on a set the service does not have.
     let (st, _, raw) = api
         .call(Method::GET, &format!("{BASE}/Nowhere('x')"), &admin, None)
@@ -426,6 +439,17 @@ async fn set_routes_with_the_mount() {
         )
         .await;
     assert_eq!(st, StatusCode::NOT_FOUND, "{raw}");
+    // A body that is no object changes nothing: the person reads back as stored.
+    let (st, row, raw) = api
+        .call(
+            Method::PATCH,
+            &format!("{BASE}/People('{STEWARD}')"),
+            &admin,
+            Some(json!([])),
+        )
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+    assert_eq!(row["id"], STEWARD, "{raw}");
 
     // MCP with the mount: initialize answers.
     let (st, rpc, raw) = api
@@ -438,6 +462,142 @@ async fn set_routes_with_the_mount() {
         .await;
     assert_eq!(st, StatusCode::OK, "{raw}");
     assert_eq!(rpc["result"]["serverInfo"]["name"], "kaisatsu-mcp");
+}
+
+/// One call per position of `method` among the store reads the call makes: the read at that
+/// position finds nothing, as when another request deleted the row between two reads. Each
+/// answer is `"<status> <body>"`.
+async fn answers_with_one_read_lost(
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+    store_method: &'static str,
+    positions: u32,
+) -> Vec<String> {
+    let mut answers = Vec::new();
+    for skip in 0..positions {
+        let (api, faults) = Api::with_faults().await;
+        let admin = api.admin().await;
+        faults.empty(store_method, skip, 1);
+        let (st, _, raw) = api.call(method.clone(), uri, &admin, body.clone()).await;
+        answers.push(format!("{} {raw}", st.as_u16()));
+    }
+    answers
+}
+
+/// A realm, group or person another request removed between the route's first read and its
+/// next one answers what went missing, and a membership list that fails costs the caller no
+/// right the token gives.
+#[tokio::test]
+async fn admin_routes_answer_a_row_lost_between_two_reads() {
+    let smtp = answers_with_one_read_lost(
+        Method::GET,
+        "/admin/realms/dev/smtp-server",
+        None,
+        "get_realm",
+        6,
+    )
+    .await;
+    assert!(
+        smtp.iter()
+            .any(|a| a.starts_with("404") && a.contains("realm not found")),
+        "{smtp:?}"
+    );
+
+    let actions = answers_with_one_read_lost(
+        Method::POST,
+        &format!("{BASE}/People('{STEWARD}')/SendRequiredActions"),
+        Some(json!({ "actions": ["UPDATE_PASSWORD"] })),
+        "get_realm",
+        8,
+    )
+    .await;
+    assert!(
+        actions
+            .iter()
+            .any(|a| a.starts_with("404") && a.contains("realm not found")),
+        "{actions:?}"
+    );
+
+    let import = answers_with_one_read_lost(
+        Method::POST,
+        "/admin/realms/dev/partialImport",
+        Some(json!({ "ifResourceExists": "SKIP",
+                     "users": [{ "username": "pi-lost", "groups": ["/platform-readers"] }] })),
+        "get_group_by_path",
+        4,
+    )
+    .await;
+    assert!(
+        import
+            .iter()
+            .any(|a| a.starts_with("404") && a.contains("Group /platform-readers not found")),
+        "{import:?}"
+    );
+
+    let scim = answers_with_one_read_lost(
+        Method::POST,
+        "/api/v1/realms/dev/scim/v2/Users",
+        Some(
+            json!({ "schemas": ["urn:ietf:params:scim:schemas:core:2.0:User"],
+                     "userName": "scim-lost" }),
+        ),
+        "get_user_by_id",
+        6,
+    )
+    .await;
+    assert!(scim.iter().any(|a| a.starts_with("500")), "{scim:?}");
+    assert!(
+        scim.iter().all(|a| !a.contains("vanished")),
+        "a storage error names no internals: {scim:?}"
+    );
+
+    let (api, faults) = Api::with_faults().await;
+    let admin = api.admin().await;
+    faults.fail_always("list_memberships_for_person");
+    let (st, _, raw) = api
+        .call(Method::GET, "/admin/realms/dev/smtp-server", &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::NOT_FOUND, "{raw}");
+    assert!(raw.contains("no SMTP server"), "{raw}");
+}
+
+/// A group the realm file holds, gone when its person joins it, stops the apply with 404.
+#[tokio::test]
+async fn a_realm_file_whose_group_is_gone_when_its_person_joins_it_is_refused() {
+    let file = json!({ "realm": "lost-group", "enabled": true,
+                       "groups": [{ "name": "team" }],
+                       "users": [{ "username": "joiner", "enabled": true, "groups": ["/team"] }] });
+    let opts = kaisatsu_import::ApplyOptions {
+        mode: kaisatsu_import::ApplyMode::NoDelete,
+        dry_run: false,
+        allow_literal_secrets: false,
+        secrets_dir: None,
+        outbound_private_hosts: Vec::new(),
+        env_vars: Default::default(),
+    };
+    let mut answers = Vec::new();
+    for skip in 0..4 {
+        let store = std::sync::Arc::new(kaisatsu_store_memory::MemoryStore::new(
+            Kek::generate_for_tests(),
+        ));
+        let faults = fault_store::FaultStore::new(store);
+        faults.empty("get_group_by_path", skip, 1);
+        let dyn_store: std::sync::Arc<dyn Store> = faults;
+        let res = kaisatsu_import::apply_realm_files(
+            &dyn_store,
+            &[("lost.json".into(), file.clone())],
+            &opts,
+        )
+        .await;
+        answers.push(res.map(|_| String::new()).unwrap_or_else(|e| e.to_string()));
+    }
+    assert!(
+        answers
+            .iter()
+            .any(|a| a.contains("user 'joiner': group '/team' does not exist")),
+        "{answers:?}"
+    );
 }
 
 #[tokio::test]

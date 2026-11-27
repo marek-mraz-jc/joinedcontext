@@ -38,6 +38,7 @@ import {
 } from "./knowledge";
 import type { DocumentRow, InclusionCounts, PageRow } from "./knowledge";
 import { AdminGrid } from "../../components/grid/AdminGrid";
+import { noText } from "../../components/grid/noText";
 import type { DataColumn } from "../../components/grid/AdminGrid";
 import { useUrlParam } from "../../navigation/urlState";
 import { UploadedFiles } from "./UploadedFiles";
@@ -450,7 +451,7 @@ function Documents({
       label: t("approvals.actions"),
       actions: true,
       align: "right",
-      text: () => "",
+      text: noText,
       cell: (row) => (
         <Button
           variant="ghost"

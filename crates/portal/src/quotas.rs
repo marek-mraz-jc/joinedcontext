@@ -720,9 +720,7 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(&path).expect("readable");
-            let Ok(doc) = serde_norway::from_str::<Value>(&text) else {
-                continue;
-            };
+            let doc = serde_norway::from_str::<Value>(&text).expect("every seed file parses");
             let (Some(kind), Some(name), Some(namespace)) = (
                 doc["kind"].as_str(),
                 doc["metadata"]["name"].as_str(),

@@ -25,10 +25,6 @@ pub(crate) const ITEMS: &[(&str, &str, file::Make)] = &[
     #[cfg(feature = "tabular")]
     ("csv", antares_export::csv::MEDIA_TYPE, file::csv),
 ];
-/// Without a file feature `items` writes no file: an `f=` stays among the pairs and is refused
-/// like any other unknown parameter.
-#[cfg(not(any(feature = "parquet", feature = "tabular")))]
-pub(crate) const ITEMS: &[(&str, &str, ())] = &[];
 
 /// The files `/collections` writes of every collection the view shows.
 #[cfg(feature = "tabular")]
@@ -39,8 +35,41 @@ pub(crate) const BUNDLES: &[(&str, &str)] = &[];
 /// The `f` values of a file of one collection, refused on `/collections`.
 #[cfg(feature = "tabular")]
 pub(crate) const ONE_TYPE: &[&str] = &["csv", "parquet"];
+
+/// The `f` value and media type of each file `items` writes in this build. Without a file
+/// feature `items` writes no file: an `f=` stays among the pairs and is refused like any other
+/// unknown parameter.
+#[cfg(any(feature = "parquet", feature = "tabular"))]
+pub(crate) fn offered() -> Vec<(&'static str, &'static str)> {
+    ITEMS
+        .iter()
+        .map(|(name, media, _)| (*name, *media))
+        .collect()
+}
+#[cfg(not(any(feature = "parquet", feature = "tabular")))]
+pub(crate) fn offered() -> Vec<(&'static str, &'static str)> {
+    Vec::new()
+}
+
+/// The `f` value of each file `items` writes in this build.
+#[cfg(any(feature = "parquet", feature = "tabular"))]
+pub(crate) fn encodings() -> Vec<&'static str> {
+    ITEMS.iter().map(|(name, ..)| *name).collect()
+}
+#[cfg(not(any(feature = "parquet", feature = "tabular")))]
+pub(crate) fn encodings() -> Vec<&'static str> {
+    Vec::new()
+}
+
+/// The `f` value of each file `/collections` writes in this build.
+#[cfg(feature = "tabular")]
+pub(crate) fn bundled() -> Vec<&'static str> {
+    BUNDLES.iter().map(|(name, _)| *name).collect()
+}
 #[cfg(not(feature = "tabular"))]
-pub(crate) const ONE_TYPE: &[&str] = &[];
+pub(crate) fn bundled() -> Vec<&'static str> {
+    Vec::new()
+}
 
 /// Whether the request asks for one of `offered` (`f` value, media type) by `f` or by its
 /// `Accept`, and its pairs without the `f` that asked.
@@ -996,10 +1025,7 @@ mod tests {
 
     #[test]
     fn f_asks_for_a_file_only_in_a_build_that_writes_it() {
-        let mut offered = Vec::new();
-        for (name, media, ..) in ITEMS {
-            offered.push((*name, *media));
-        }
+        let offered = offered();
         let asked_for = asked(&HeaderMap::new(), pairs(&[("f", "parquet")]), &offered);
         assert_eq!(asked_for.file.is_some(), cfg!(feature = "parquet"));
         assert_eq!(asked_for.pairs.is_empty(), asked_for.file.is_some());

@@ -851,3 +851,108 @@ async fn no_address_subject_or_relay_reaches_a_log_line() {
         assert!(!logs.contains(leaked), "{leaked} in the log: {logs}");
     }
 }
+
+/// The admin token of the process's realm, for the tests that read people.
+async fn admin_token_answered() {
+    Mock::given(method("POST"))
+        .and(path("/realms/banskabystrica/protocol/openid-connect/token"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "access_token": "admin", "token_type": "Bearer", "expires_in": 300
+        })))
+        .mount(common::REALM.server)
+        .await;
+}
+
+fn with_people(mut state: AppState) -> AppState {
+    state.people = joinedcontext_portal::people::People::new(
+        &common::REALM.issuer,
+        "portal-admin".into(),
+        joinedcontext_portal::config::ClientAuth::Secret("secret".into()),
+    )
+    .map(Arc::new);
+    state
+}
+
+/// A realm whose answer about a person cannot be read is the realm unreachable: a 503, and no
+/// message leaves.
+#[tokio::test]
+async fn a_person_the_realm_answers_garbled_is_a_503_and_sends_nothing() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("garbled");
+    let state = with_people(state(&url, db, &project, app(json!(["email"]), json!({}))).await);
+    admin_token_answered().await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/banskabystrica/users/garbled-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not a person"))
+        .mount(common::REALM.server)
+        .await;
+    let message = json!({ "to": ["garbled-1"], "subject": "Defect", "text": "Hlavná 4" });
+    let (status, _, text) = send(&state, message).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(text.contains("unreachable"), "{text}");
+    assert!(delivered(&inbox).is_empty());
+}
+
+/// With several Organizations, a realm whose answer about a person's groups cannot be read is
+/// the realm unreachable: a 503, never a guess that the person is inside.
+#[tokio::test]
+async fn groups_the_realm_answers_garbled_are_a_503_and_send_nothing() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("garbled-groups");
+    let state = with_people(state(&url, db, &project, app(json!(["email"]), json!({}))).await);
+    let mut helsinki = organization(Some(json!(["identity", "data", "email"])));
+    helsinki.spec["installation"] = json!(true);
+    state.mirror.upsert(helsinki);
+    state.mirror.upsert(envelope(
+        "Organization",
+        "zilina",
+        "org",
+        json!({ "domain": "zilina.sk", "locales": ["en"], "defaultLocale": "en" }),
+    ));
+    admin_token_answered().await;
+    Mock::given(method("GET"))
+        .and(path("/admin/realms/banskabystrica/users/garbled-groups-1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "garbled-groups-1", "username": "gia@hel.fi", "email": "gia@hel.fi",
+            "enabled": true, "emailVerified": true
+        })))
+        .mount(common::REALM.server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(
+            "/admin/realms/banskabystrica/users/garbled-groups-1/groups",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not a list"))
+        .mount(common::REALM.server)
+        .await;
+    let message = json!({ "to": ["garbled-groups-1"], "subject": "Defect", "text": "Hlavná 4" });
+    let (status, _, text) = send(&state, message).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{text}");
+    assert!(delivered(&inbox).is_empty());
+}
+
+/// A public App opens for everyone, but its services are a person's: a send without a token is
+/// a 401 and nothing leaves.
+#[tokio::test]
+async fn a_public_apps_send_without_a_person_is_a_401() {
+    let Some(db) = database().await else { return };
+    let (url, inbox) = relay().await;
+    let project = project("public");
+    let mut spec = app(json!(["email"]), json!({}));
+    spec["visibility"] = json!("public");
+    let state = state(&url, db, &project, spec).await;
+    let request = Request::builder()
+        .method("POST")
+        .uri(format!("/apps/{APP}/api/services/email/send"))
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(to_me("Defect").to_string()))
+        .expect("a request");
+    let response = joinedcontext_portal::server::app(state)
+        .oneshot(request)
+        .await
+        .expect("a response");
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(delivered(&inbox).is_empty());
+}

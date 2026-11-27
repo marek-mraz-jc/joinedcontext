@@ -1335,6 +1335,54 @@ mod tests {
         }
     }
 
+    /// A pipeline's requests into two projects, each read in its own key, come back as one
+    /// list, newest first; another pipeline's are not in it.
+    #[tokio::test]
+    async fn a_pipelines_requests_across_projects_are_listed_newest_first() {
+        let url = database_url();
+        let pool = crate::db::connect(&url).await.expect("connect and migrate");
+        let asking = format!("arq{}", jc_types::ProjectId::mint().path_segment());
+        let older_project = format!("ar{}", jc_types::ProjectId::mint().path_segment());
+        let newer_project = format!("ar{}", jc_types::ProjectId::mint().path_segment());
+        keyed(&pool, &older_project).await;
+        keyed(&pool, &newer_project).await;
+        let at = |project: &str, requested_at: OffsetDateTime, pipeline: &str| AccessRequest {
+            project: asking.clone(),
+            requester: Requester::Pipeline(pipeline.to_owned()),
+            requested_at,
+            ..stored(project, &new_id(), Operations::Read)
+        };
+        let older = at(
+            &older_project,
+            time::macros::datetime!(2026-10-20 19:40 UTC),
+            "air-index",
+        );
+        let newer = at(
+            &newer_project,
+            time::macros::datetime!(2026-10-21 08:00 UTC),
+            "air-index",
+        );
+        let other = at(
+            &newer_project,
+            time::macros::datetime!(2026-10-22 08:00 UTC),
+            "noise-index",
+        );
+        for request in [&older, &newer, &other] {
+            assert!(insert(&pool, request).await.expect("stored"));
+        }
+        let listed = outgoing(&pool, &asking, "air-index")
+            .await
+            .expect("the pipeline's requests");
+        assert_eq!(
+            listed.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            [newer.id.as_str(), older.id.as_str()]
+        );
+        assert!(outgoing(&pool, &asking, "no-such-pipeline")
+            .await
+            .expect("an empty list")
+            .is_empty());
+    }
+
     #[tokio::test]
     async fn a_decision_is_taken_back_to_the_request_as_it_was_and_only_by_its_decider() {
         let url = database_url();

@@ -304,6 +304,11 @@ impl WasmPluginAdapter {
     }
 }
 
+/// What the host hands the guest, as JSON: a value that does not serialise is the guest's error.
+pub(crate) fn guest_json(v: &(impl serde::Serialize + ?Sized)) -> Result<String, DsError> {
+    serde_json::to_string(v).map_err(|e| DsError::Wasm(e.to_string()))
+}
+
 impl Datasource for WasmPluginAdapter {
     fn kind(&self) -> &'static str {
         self.kind
@@ -317,10 +322,7 @@ impl Datasource for WasmPluginAdapter {
         Box::pin(async move {
             let _permits = self.permits()?;
 
-            let req_json = match serde_json::to_string(queries) {
-                Ok(json) => json,
-                Err(e) => return Err(DsError::Wasm(e.to_string())),
-            };
+            let req_json = guest_json(queries)?;
             self.check_limits(req_json.len())?;
 
             let imports = WasmHostImports {
@@ -384,10 +386,7 @@ impl Datasource for WasmPluginAdapter {
         r: ResourceReq,
     ) -> DsFuture<'a, Result<ResourceResp, DsError>> {
         Box::pin(async move {
-            let params_json = match serde_json::to_string(&r.params) {
-                Ok(json) => json,
-                Err(e) => return Err(DsError::Wasm(e.to_string())),
-            };
+            let params_json = guest_json(&r.params)?;
             self.check_limits(params_json.len() + r.path.len())?;
             let _permits = self.permits()?;
             let imports = WasmHostImports {

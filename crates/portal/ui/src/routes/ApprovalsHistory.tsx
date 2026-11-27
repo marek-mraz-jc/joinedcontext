@@ -11,6 +11,7 @@ import { changeSentence, landed } from "./changeWords";
 import { ChangedFields } from "../components/ResourceHistory";
 import { download } from "../pages/models/diagramExport";
 import { AdminGrid } from "../components/grid/AdminGrid";
+import { noText } from "../components/grid/noText";
 import type { DataColumn } from "../components/grid/AdminGrid";
 import { LifecycleBadge } from "../components/status/LifecycleBadge";
 import {
@@ -215,7 +216,7 @@ export function ApprovalsHistory({
     {
       key: "actions",
       label: t("approvals.actions"),
-      text: () => "",
+      text: noText,
       actions: true,
       align: "right",
       cell: (change) => (

@@ -1308,3 +1308,91 @@ async fn validate_only_checks_a_draft_in_a_workspace_and_writes_nothing() {
     let after = writes(server.received_requests().await.unwrap_or_default());
     assert_eq!(after, before, "validate_only wrote to the forge");
 }
+
+/// CC-80: an update of a workspace whose branch the forge no longer has takes and merges
+/// nothing, moves the base to main's head, and compares as a workspace that changed nothing.
+#[tokio::test]
+async fn an_update_of_a_branch_the_forge_lost_takes_nothing() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    let updated = send(
+        &state,
+        steward(),
+        "POST",
+        &format!("{WS}/air-v2/update"),
+        Some(json!({})),
+    )
+    .await;
+    assert_eq!(updated.status, StatusCode::OK, "{}", updated.text);
+    let answer = body(&updated.text);
+    assert_eq!(answer["taken"], json!([]), "{answer}");
+    assert_eq!(answer["merged"], json!([]), "{answer}");
+    assert!(
+        calls(&server, "POST", "/Shako.CommitFiles")
+            .await
+            .is_empty(),
+        "nothing written"
+    );
+}
+
+/// A manifest file the workspace's branch lists but the forge does not hand out is no change
+/// a comparison can name.
+#[tokio::test]
+async fn a_manifest_the_branch_lists_but_the_forge_does_not_hand_out_is_no_change() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    const LOST: &str = "projects/ovzdusie/spaces/lost/space.yaml";
+    tree(&server, "workspace/air-v2", &[(LOST, "l1")]).await;
+    tree(&server, "base1", &[]).await;
+    tree(&server, "main", &[]).await;
+    let comparison = ops::workspaces::compare(&steward(), &state, PROJECT, "air-v2")
+        .await
+        .expect("a comparison");
+    assert!(comparison.files.is_empty(), "{comparison:?}");
+    assert!(comparison.conflicts.is_empty(), "{comparison:?}");
+}
+
+/// The merged manifest is checked as its owner's proposal: an owner who reads the project and
+/// may propose nothing is refused at the check, and nothing is written.
+#[tokio::test]
+async fn a_merge_the_owner_may_not_propose_is_refused_and_writes_nothing() {
+    let (server, state) = world().await;
+    state
+        .workspaces
+        .create(Opening {
+            name: "air-v2",
+            title: None,
+            project: PROJECT,
+            owner: "vera@hel.fi",
+            base_revision: "base1",
+            scope: Scope::Project {},
+            ttl_hours: 24,
+        })
+        .await
+        .expect("opened");
+    // The workspace changed the ttl, main the locale: the fields merge without a question.
+    changed(&server, &space("fi", 10), "s-main").await;
+    let refused = ops::workspaces::update_from_main(
+        &viewer(),
+        &state,
+        PROJECT,
+        "air-v2",
+        ops::workspaces::UpdateRequest::default(),
+    )
+    .await;
+    assert!(
+        matches!(
+            &refused,
+            Err(OpError::Api(joinedcontext_portal::error::ApiError::Denied(
+                _
+            )))
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        calls(&server, "POST", "/Shako.CommitFiles")
+            .await
+            .is_empty(),
+        "nothing written"
+    );
+}

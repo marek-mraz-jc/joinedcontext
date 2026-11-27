@@ -362,6 +362,12 @@ mod tests {
             }),
             "password"
         );
+        // Settings that pass name no field: the answer is the saved configuration.
+        assert!(
+            field(write("a.org")).starts_with("Ok("),
+            "{}",
+            field(write("a.org"))
+        );
     }
 
     #[test]

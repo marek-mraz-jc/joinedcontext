@@ -138,11 +138,10 @@ pub(super) fn with_pages(state: &crate::state::AppState, mut run: Value) -> Valu
         .as_str()
         .filter(|path| path.starts_with('/'))
         .map(|path| format!("{base}{path}"));
-    if let Some(doc) = run.as_object_mut() {
-        doc.insert("url".into(), json!(url));
-        if let Some(preview) = preview {
-            doc.insert("previewUrl".into(), json!(preview));
-        }
+    // A run naming its project and id is an object, so both members index into it.
+    run["url"] = json!(url);
+    if let Some(preview) = preview {
+        run["previewUrl"] = json!(preview);
     }
     run
 }
@@ -613,5 +612,108 @@ mod tests {
         let schema = (op.output)();
         let validator = jsonschema::validator_for(&schema).expect("schema");
         assert!(validator.is_valid(&answer), "{answer}");
+    }
+
+    /// A Portal that runs agents in this process, holding the builder profile and the Endpoint
+    /// a run reads through.
+    fn runner() -> crate::state::AppState {
+        let mut config = crate::config::Config::for_tests();
+        config.agent_settings = Some(crate::config::AgentSettings {
+            namespace: None,
+            portal_namespace: String::new(),
+            proxy_base: "http://127.0.0.1:9".into(),
+            run_ttl_secs: 1200,
+            approval_ttl_secs: 604_800,
+        });
+        let state = crate::state::AppState::new(config, None);
+        state.mirror.upsert(super::super::testkit::envelope(
+            "AgentProfile",
+            "app-builder",
+            crate::permissions::ORG_NAMESPACE,
+            json!({
+                "role": "builder",
+                "runtime": {
+                    "image": "ghcr.io/all-hands-ai/agent-server:v1.4.0",
+                    "digest": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+                },
+                "model": { "provider": "anthropic", "name": "claude-sonnet-5", "maxTokensPerRun": 400000 },
+                "limits": {
+                    "stepsPerRun": 120, "wallClock": "PT20M", "concurrentRunsPerOrganization": 2,
+                    "requestsPerMinute": 60, "maxResponseBytes": 2097152
+                },
+                "egress": { "allowedHosts": ["registry.npmjs.org"] },
+                "tools": ["shell", "npm", "git"],
+                "workspace": { "cpu": "1", "memory": "2Gi", "ephemeralStorage": "4Gi" }
+            }),
+        ));
+        state.mirror.upsert(super::super::testkit::envelope(
+            "Endpoint",
+            "helsinki-bikes",
+            "helsinki",
+            json!({
+                "slug": "si6epqkx364lprho5uaigutk274r5grb",
+                "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" },
+                "audience": "project"
+            }),
+        ));
+        state
+    }
+
+    /// A person at the Portal starting a run outside a cluster keeps the workspace ticket they
+    /// drive it with; the answer names the run's page.
+    #[tokio::test]
+    async fn a_person_starting_a_run_keeps_its_ticket() {
+        let state = runner();
+        let person = super::super::testkit::admin(&state);
+        let create = super::super::find("jc_run_create").expect("registered");
+        let created = (create.run)(
+            &person,
+            &state,
+            "helsinki",
+            json!({
+                "appName": "city-bikes-overview",
+                "endpointName": "helsinki-bikes",
+                "appClass": "ui-rust",
+                "visibility": "project",
+                "prompt": "a live bike availability dashboard",
+                "dataNeeds": [{
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "helsinki" },
+                    "types": ["BikeHireDockingStation"],
+                    "attrs": ["name", "location"],
+                    "operations": ["queryEntity", "retrieveEntity"]
+                }]
+            }),
+        )
+        .await
+        .expect("a run");
+        assert!(created["ticket"].is_string(), "{created}");
+        assert!(
+            created["url"]
+                .as_str()
+                .is_some_and(|url| url.contains("/projects/helsinki/apps?run=")),
+            "{created}"
+        );
+    }
+
+    /// A person cancels a run of their project: the run answers cancelled.
+    #[tokio::test]
+    async fn a_person_cancels_a_run() {
+        let state = runner();
+        let run = crate::agents::store::tests::run("run-c", "helsinki", "2026-11-25T10:00:00Z");
+        state.agents.create_run(&run).await.expect("stored");
+        let person = super::super::testkit::admin(&state);
+        let cancel = super::super::find("jc_run_cancel").expect("registered");
+        let cancelled = (cancel.run)(&person, &state, "helsinki", json!({ "id": "run-c" }))
+            .await
+            .expect("cancelled");
+        assert_eq!(cancelled["status"], "cancelled", "{cancelled}");
+        let unknown = (cancel.run)(&person, &state, "helsinki", json!({ "id": "run-x" })).await;
+        assert!(
+            matches!(
+                &unknown,
+                Err(OpError::Api(crate::error::ApiError::NotFound(_)))
+            ),
+            "{unknown:?}"
+        );
     }
 }

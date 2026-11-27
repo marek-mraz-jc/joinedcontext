@@ -592,7 +592,8 @@ pub async fn create_run(
         title: None,
         endpoint_name: run_endpoints[0].name.clone(),
         endpoint_slug,
-        endpoints: serde_json::to_value(&run_endpoints).unwrap_or_else(|_| serde_json::json!([])),
+        endpoints: serde_json::to_value(&run_endpoints)
+            .unwrap_or(serde_json::Value::Array(Vec::new())),
         profile: profile.name.clone(),
         kind: request.kind.clone(),
         unattended,
@@ -1521,8 +1522,7 @@ pub async fn post_preview_observation(
             request.version
         )));
     }
-    let mut payload = serde_json::to_value(&request)
-        .map_err(|err| ApiError::Internal(format!("the observation did not serialise: {err}")))?;
+    let mut payload = serde_json::to_value(&request).map_err(ApiError::internal)?;
     payload["reportedBy"] = serde_json::json!(user.0.identity.username);
     publish_event(&state, &id, "preview_observation", payload).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -1949,6 +1949,13 @@ pub(crate) enum Caller {
     Run(String),
 }
 
+/// A Portal built without the SDK's server module cannot run a function at all.
+fn without_sdk_server() -> InvokeError {
+    InvokeError::Unavailable(
+        "this Portal was built without the SDK server module (sdk/dist/functions-server.js)".into(),
+    )
+}
+
 /// Sends one invocation to `jc-functions` with the Portal's audience-bound token: `modules` by
 /// import name, the `entry` whose default export runs, the request, the SDK's configuration and
 /// the caller's own token, which is the only credential the function's data calls carry
@@ -1972,12 +1979,7 @@ pub(crate) async fn invoke(
             "this Portal has no Keycloak client to authenticate to jc-functions with".into(),
         )
     })?;
-    let server = kit::functions_server().ok_or_else(|| {
-        InvokeError::Unavailable(
-            "this Portal was built without the SDK server module (sdk/dist/functions-server.js)"
-                .into(),
-        )
-    })?;
+    let server = kit::functions_server().ok_or_else(without_sdk_server)?;
     let service = oidc
         .service_token()
         .await
@@ -2178,7 +2180,7 @@ pub async fn publish_run(
         Some(_) => crate::change::Operation::Update,
         None => crate::change::Operation::Create,
     };
-    let outcome = crate::api::mutate::propose_with_identity(
+    let change = crate::api::mutate::propose_with_identity(
         &user.0.identity,
         &state,
         &project,
@@ -2188,12 +2190,8 @@ pub async fn publish_run(
         false,
         manifest,
     )
-    .await?;
-    let crate::api::mutate::ProposeOutcome::Change(change) = outcome else {
-        return Err(ApiError::Internal(
-            "publishing proposed a dry run instead of a Change".into(),
-        ));
-    };
+    .await?
+    .into_change()?;
     // The run remembers its Change, so its page shows it and approves it in place (AP-71).
     // A Change number past what the store keeps is not remembered; the Change is still made.
     if let Some(number) = crate::api::changes::parse_change_id(&change.metadata.name)
@@ -2822,23 +2820,13 @@ fn code_preview(
     if let Some(doc) = cached {
         return Ok(preview_response(&etag, &doc.1, doc.0.clone()));
     }
-    let document =
-        preview::document(files, &run.app_name, &config, route.as_deref()).map_err(|refusal| {
-            match refusal {
-                preview::Refusal::NoRuntime => ApiError::Unavailable(
-                    "this Portal was built without the SDK runtime (sdk/dist/runtime is empty)"
-                        .into(),
-                ),
-                preview::Refusal::Problems(problems) => ApiError::Invalid {
-                    detail: format!(
-                        "the run's files do not build a preview: {} problem(s)",
-                        problems.len()
-                    ),
-                    errors: problems.iter().map(ToString::to_string).collect(),
-                },
-            }
-        })?;
-    if let Ok(mut kept) = RENDERED.lock() {
+    let document = preview::document(files, &run.app_name, &config, route.as_deref())
+        .map_err(preview_refused)?;
+    {
+        // A cache another thread poisoned still holds whole entries: each is pushed in one step.
+        let mut kept = RENDERED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         kept.push_back((
             etag.clone(),
             std::sync::Arc::new((document.html.clone(), document.csp.clone())),
@@ -2848,6 +2836,23 @@ fn code_preview(
         }
     }
     Ok(preview_response(&etag, &document.csp, document.html))
+}
+
+/// Why a run's files give no preview, as an answer: a Portal built without the SDK runtime is
+/// unavailable, files that do not build are invalid with each problem.
+fn preview_refused(refusal: preview::Refusal) -> ApiError {
+    match refusal {
+        preview::Refusal::NoRuntime => ApiError::Unavailable(
+            "this Portal was built without the SDK runtime (sdk/dist/runtime is empty)".into(),
+        ),
+        preview::Refusal::Problems(problems) => ApiError::Invalid {
+            detail: format!(
+                "the run's files do not build a preview: {} problem(s)",
+                problems.len()
+            ),
+            errors: problems.iter().map(ToString::to_string).collect(),
+        },
+    }
 }
 
 /// A rendered preview: the page, its script policy, and a validator instead of `no-store`.
@@ -3405,6 +3410,36 @@ mod invocation_tests {
         assert!(matches!(
             status_error(StatusChangeError::Unknown),
             ApiError::NotFound(why) if why == "no such run"
+        ));
+    }
+
+    /// T-7931: a Portal built without the SDK runtime or its server module is unavailable for a
+    /// preview and a function, each saying which part is missing; files that do not build are
+    /// invalid with one entry per problem.
+    #[test]
+    fn a_missing_sdk_part_is_unavailable_and_a_problem_is_invalid() {
+        use super::{preview_refused, without_sdk_server, InvokeError};
+        use crate::agents::preview::Refusal;
+        use crate::agents::transpile::Problem;
+        use crate::error::ApiError;
+        assert!(matches!(
+            preview_refused(Refusal::NoRuntime),
+            ApiError::Unavailable(why) if why.contains("sdk/dist/runtime")
+        ));
+        let problem = Problem {
+            file: "src/App.tsx".into(),
+            line: 3,
+            column: 7,
+            message: "unexpected token".into(),
+        };
+        assert!(matches!(
+            preview_refused(Refusal::Problems(vec![problem])),
+            ApiError::Invalid { detail, errors }
+                if detail.ends_with("1 problem(s)") && errors == ["src/App.tsx:3:7: unexpected token"]
+        ));
+        assert!(matches!(
+            without_sdk_server(),
+            InvokeError::Unavailable(why) if why.contains("functions-server.js")
         ));
     }
 }

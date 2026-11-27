@@ -878,6 +878,39 @@ mod tests {
         qb.sql().as_str().to_owned()
     }
 
+    /// `ne` binds as `<>`; a comparison with null, an array or an object matches nothing
+    /// (FALSE, never a cast of the literal); a property path that names nothing is refused.
+    #[test]
+    fn a_compare_pushes_ne_as_not_equal_and_a_non_scalar_literal_as_false() {
+        let info = info("People");
+        let compile = |op: CompareOp, value: Value| {
+            let mut qb = QueryBuilder::<Postgres>::new("");
+            let cond = Cond::Compare {
+                path: vec!["username".to_owned()],
+                op,
+                value,
+            };
+            PgScopedTable::push_cond(&info, &mut qb, &cond).expect("filter");
+            qb.sql().as_str().to_owned()
+        };
+        assert!(compile(CompareOp::Ne, Value::from("anna")).contains(" <> "));
+        for literal in [
+            Value::Null,
+            serde_json::json!([1]),
+            serde_json::json!({"a": 1}),
+        ] {
+            assert_eq!(
+                compile(CompareOp::Gt, literal.clone()),
+                "FALSE",
+                "{literal}"
+            );
+        }
+        assert!(matches!(
+            PgScopedTable::check_property(&info, &[]),
+            Err(TableError::UnknownProperty(p)) if p.is_empty()
+        ));
+    }
+
     /// Every plain set pushes its query down to its own table, scoped to the bound realm; the
     /// keyset fallback returns the same rows but stops at `MAX_FALLBACK_SCAN_ROWS`, so a set
     /// that lost its subquery would silently cut a large realm short.

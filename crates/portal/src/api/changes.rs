@@ -477,7 +477,7 @@ fn may_approve(
         .or(data.base_envelope.as_ref())
         .map(serde_json::to_value)
         .transpose()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::internal)?;
     crate::permissions::for_request(state, identity, project).check(
         gate_kind(&data.kind),
         jc_core::kinds::Verb::Approve,
@@ -2297,10 +2297,7 @@ async fn approve_every_file(
                 })
             });
             let target = match owner {
-                Some(manifest) => Some(
-                    serde_json::to_value(manifest)
-                        .map_err(|e| ApiError::Internal(e.to_string()))?,
-                ),
+                Some(manifest) => Some(serde_json::to_value(manifest).map_err(ApiError::internal)?),
                 None => crate::api::import::space_in_path(&file.path)
                     .map(|space| serde_json::json!({ "spec": { "contextSpaceRef": space } })),
             };
@@ -2324,8 +2321,7 @@ async fn approve_every_file(
                 file.path
             )));
         }
-        let manifest =
-            serde_json::to_value(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let manifest = serde_json::to_value(envelope).map_err(ApiError::internal)?;
         effective.check(
             &envelope.kind,
             jc_core::kinds::Verb::Approve,
@@ -2374,7 +2370,7 @@ async fn approve_every_file(
                 .get(namespace, &envelope.kind, &envelope.metadata.name)
                 .map(serde_json::to_value)
                 .transpose()
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::internal)?;
             crate::permissions::within_own_rights(
                 state,
                 identity,
@@ -2437,8 +2433,7 @@ fn judge_at_approval(
                 .map_err(|e| ApiError::Conflict(crate::judge::reason(&e)))?;
             // A binding's scope names an Organization or project that is there, or one this
             // Change creates (T-6806).
-            let manifest =
-                serde_json::to_value(e).map_err(|e| ApiError::Internal(e.to_string()))?;
+            let manifest = serde_json::to_value(e).map_err(ApiError::internal)?;
             crate::permissions::scopes_name_a_target(&state.mirror, &manifest, None)
         })
     })
@@ -2669,7 +2664,7 @@ pub async fn approve_change_as(
                 .as_ref()
                 .map(serde_json::to_value)
                 .transpose()
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::internal)?;
             crate::permissions::for_request(state, identity, project).check(
                 &data.kind,
                 jc_core::kinds::Verb::Delete,
@@ -2687,14 +2682,13 @@ pub async fn approve_change_as(
                 )?;
             }
         } else if let Some(head) = &data.head_envelope {
-            let manifest =
-                serde_json::to_value(head).map_err(|e| ApiError::Internal(e.to_string()))?;
+            let manifest = serde_json::to_value(head).map_err(ApiError::internal)?;
             let base = data
                 .base_envelope
                 .as_ref()
                 .map(serde_json::to_value)
                 .transpose()
-                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                .map_err(ApiError::internal)?;
             crate::permissions::within_own_rights(
                 state,
                 identity,
@@ -3553,6 +3547,8 @@ mod tests {
             "projects/p/spaces/air/entities/seed/deeper/s.json",
             "projects/p/spaces/air/pipelines/seed/s.json",
             "projects/p/spaces/air/entities/seed/.json",
+            "projects/p/apps/air/entities/seed/s.json",
+            "seed.json",
         ] {
             assert!(seed_envelope(other, "{}").is_none(), "{other}");
         }

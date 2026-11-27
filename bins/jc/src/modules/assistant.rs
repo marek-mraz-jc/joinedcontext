@@ -273,6 +273,7 @@ async fn migrate_and_connect(db: &crate::pg::DatabaseSection) -> Result<sqlx::Pg
         .run(&owner)
         .await
         .map_err(|e| format!("the assistant's migrations did not run: {e}"))?;
+    let grant_failed = |e: sqlx::Error| format!("the assistant's request login grant: {e}");
     let grant: String = sqlx::query_scalar(
         "SELECT format('GRANT USAGE ON SCHEMA public TO %1$I; \
          GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO %1$I; \
@@ -282,11 +283,11 @@ async fn migrate_and_connect(db: &crate::pg::DatabaseSection) -> Result<sqlx::Pg
     .bind(db.app_role()?)
     .fetch_one(&owner)
     .await
-    .map_err(|e| format!("the assistant's request login grant: {e}"))?;
+    .map_err(grant_failed)?;
     sqlx::raw_sql(sqlx::AssertSqlSafe(grant))
         .execute(&owner)
         .await
-        .map_err(|e| format!("the assistant's request login grant: {e}"))?;
+        .map_err(grant_failed)?;
     owner.close().await;
     let pool = assistant::host::pool_options()
         .max_connections(db.max_connections())
@@ -1001,6 +1002,110 @@ mod tests {
         assert_eq!(table["JC_PORTAL_BASE"], "http://127.0.0.1:40125");
     }
 
+    /// Without the gateway in this jc the assistant reads no checkout of its own; without
+    /// shako the proxy names no forge; an Organization with its own sign-in host gets its realm
+    /// in the proxy's table.
+    #[test]
+    fn an_absent_sibling_leaves_its_settings_out_and_an_own_sign_in_host_names_its_realm() {
+        let (_cfg, mut siblings, setup, _d) = fixture();
+        assert!(vars(&siblings, &setup, None, None).contains_key("JC_ASSISTANT_REPO_DIR"));
+        let text = "base_host = \"city.example\"\n\
+            [[organizations]]\nname = \"bbsk\"\ncatalogue_id = \"00000000-0000-7000-8000-0000000000a1\"\n\
+            hosts = { portal = \"smartcity.bbsk.sk\", idm = \"idm.bbsk.sk\" }\n";
+        let file = crate::config::Config::parse_file(Path::new("jc.toml"), text).unwrap();
+        let orgs = crate::config::Config::merge(Cli::default(), file)
+            .unwrap()
+            .organizations;
+        let none = |_: &str| None;
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &orgs, &none);
+        let realms: Vec<agent_proxy::config::OrganizationRealm> =
+            serde_json::from_str(&table["JC_OIDC_ORGANIZATION_REALMS"]).unwrap();
+        assert_eq!(realms[0].issuer, "https://idm.bbsk.sk/realms/bbsk");
+        assert!(table.contains_key("JC_FORGE_BASE"));
+        siblings.remove(Module::Gateway);
+        siblings.remove(Module::Shako);
+        let filled = vars(&siblings, &setup, None, None);
+        assert!(!filled.contains_key("JC_ASSISTANT_REPO_DIR"), "{filled:?}");
+        assert!(
+            !filled.contains_key("JC_ASSISTANT_PROJECTS_DIR"),
+            "{filled:?}"
+        );
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &[], &none);
+        assert!(!table.contains_key("JC_FORGE_BASE"), "{table:?}");
+        assert!(!table.contains_key("JC_GATEWAY_BASE"), "{table:?}");
+        assert!(!table.contains_key("JC_OIDC_ORGANIZATION_REALMS"));
+    }
+
+    /// The proxy refuses a model base that is no URL before it binds; without shako it holds no
+    /// forge token; and a sign-in set it cannot read keeps the realms it holds.
+    #[cfg(feature = "portal")]
+    #[tokio::test]
+    async fn the_proxy_refuses_a_bad_model_base_and_keeps_its_realms_on_a_bad_set() {
+        let _published = crate::modules::sign_in::PUBLISH_LOCK.lock().await;
+        let (_cfg, siblings, _setup, _d) = fixture();
+        let key = jc_secret::Secret::new("model-key-not-secret".to_owned());
+        let dir = tempfile::tempdir().unwrap();
+        let roles = [Module::Kaisatsu, Module::Assistant, Module::Portal];
+        let setup = Setup::prepare(dir.path(), &roles, &BTreeMap::new()).unwrap();
+        assert!(setup.value(Secret::ShakoToken).is_none());
+        let bad = |k: &str| (k == "JC_MODEL_BASE").then(|| "not a url".to_owned());
+        let Err(why) = proxy(&siblings, &setup, &[], &bad, &key).await else {
+            panic!("a model base that is no URL built a proxy");
+        };
+        assert!(why.contains("the model proxy is not configured"), "{why}");
+        let none = |_: &str| None;
+        let built = proxy(&siblings, &setup, &[], &none, &key)
+            .await
+            .expect("the proxy builds without shako");
+        let logs = Captured::default();
+        let writer = logs.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
+        let twice = |host: &str| crate::modules::sign_in::SignIn {
+            organization: "bbsk".into(),
+            host: host.into(),
+            portals: Vec::new(),
+        };
+        tracing::subscriber::with_default(subscriber, || {
+            crate::modules::sign_in::publish(vec![twice("idm.bbsk.sk"), twice("idm2.bbsk.sk")]);
+            crate::modules::sign_in::publish(Vec::new());
+        });
+        let mut sink = logs.clone();
+        std::io::Write::flush(&mut sink).unwrap();
+        let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            logged.contains("assistant: Organization realms kept"),
+            "{logged}"
+        );
+        assert!(
+            logged.contains("assistant: Organization realms replaced"),
+            "{logged}"
+        );
+        assert!(built.listener.local_addr().unwrap().ip().is_loopback());
+    }
+
+    /// An operator's own proxy and gateway: `jc` builds no proxy and dials no listener of its
+    /// own, and the first missing piece still stops the start.
+    #[tokio::test]
+    async fn an_operators_proxy_builds_none_and_a_missing_piece_stops_the_start() {
+        let (cfg, siblings, setup, _d) = fixture();
+        let secrets = crate::config::Secrets::load_from(&cfg, &BTreeMap::new()).unwrap();
+        let env = |k: &str| match k {
+            "JC_ASSISTANT_PROXY_URL" => Some("http://127.0.0.1:9".to_owned()),
+            "JC_ASSISTANT_GATEWAY_URL" => Some("http://gateway.example".to_owned()),
+            _ => None,
+        };
+        let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
+        let Err(why) = try_start(&cfg, &setup, &siblings, &secrets, &env, &shutdown, &tasks).await
+        else {
+            panic!("a start without the embedding model went on");
+        };
+        assert!(why.contains("JC_ASSISTANT_MODEL_DIR"), "{why}");
+        assert!(tasks.is_empty(), "nothing was spawned");
+    }
+
     #[tokio::test]
     async fn without_a_model_key_the_module_is_off_and_leaves_the_siblings() {
         let (cfg, mut siblings, setup, _d) = fixture();
@@ -1045,6 +1150,26 @@ mod tests {
         };
         let why = missing(&cfg, &siblings, &setup, &found).unwrap();
         assert!(why.contains("ONNX Runtime"), "{why}");
+        let model_only = |k: &str| found(k).filter(|_| k == "JC_ASSISTANT_MODEL_DIR");
+        let why = missing(&cfg, &siblings, &setup, &model_only).unwrap();
+        assert!(
+            why.contains("ORT_DYLIB_PATH (ONNX Runtime) is unset"),
+            "{why}"
+        );
+        let gone = |k: &str| {
+            (k == "JC_ASSISTANT_MODEL_DIR").then(|| dir.path().join("gone").display().to_string())
+        };
+        let why = missing(&cfg, &siblings, &setup, &gone).unwrap();
+        assert!(why.contains("does not exist"), "{why}");
+        // Neither the model nor ONNX Runtime named: the in-process embedder does not load.
+        let Err(why) = embedder(&none).await else {
+            panic!("an embedder without its model loaded");
+        };
+        assert!(why.contains("is unset"), "{why}");
+        let bare_dir = tempfile::tempdir().unwrap();
+        let bare = Setup::prepare(bare_dir.path(), &[], &BTreeMap::new()).unwrap();
+        let why = missing(&cfg, &siblings, &bare, &found).unwrap();
+        assert!(why.starts_with("setup holds no"), "{why}");
         std::fs::write(&ort, b"").unwrap();
         let why = missing(&cfg, &siblings, &setup, &found).unwrap();
         assert!(why.contains("[assistant.database]"), "{why}");
@@ -1407,11 +1532,41 @@ mod tests {
         std::fs::write(&key_file, &marker).unwrap();
         cfg.assistant.model_key_file = Some(key_file);
         let secrets = crate::config::Secrets::load_from(&cfg, &BTreeMap::new()).unwrap();
-        let env = move |k: &str| match k {
-            "JC_ASSISTANT_MODEL_DIR" => Some(model_dir.clone()),
-            "ORT_DYLIB_PATH" => Some(ort.clone()),
-            _ => None,
+        // The real ONNX Runtime over a directory that holds no model is named.
+        let empty_model = dir.path().join("empty-model");
+        std::fs::create_dir(&empty_model).unwrap();
+        let pick = |model: String, runtime: String| {
+            move |k: &str| match k {
+                "JC_ASSISTANT_MODEL_DIR" => Some(model.clone()),
+                "ORT_DYLIB_PATH" => Some(runtime.clone()),
+                _ => None,
+            }
         };
+        let empty = empty_model.display().to_string();
+        let Err(why) = embedder(&pick(empty, ort.clone())).await else {
+            panic!("an empty directory loaded as the embedding model");
+        };
+        assert!(
+            why.starts_with("the embedding model is not usable"),
+            "{why}"
+        );
+        // An operator's Portal address the chat cannot link to stops the start after the store
+        // is migrated, before anything serves.
+        let model = pick(model_dir.clone(), ort.clone());
+        let bad_portal = move |k: &str| match k {
+            "JC_ASSISTANT_PROXY_URL" => Some("http://127.0.0.1:9".to_owned()),
+            "JC_ASSISTANT_PORTAL_URL" => Some("https://portal/x".to_owned()),
+            other => model(other),
+        };
+        let (stop, held) = (CancellationToken::new(), TaskTracker::new());
+        let Err(why) =
+            try_start(&cfg, &setup, &siblings, &secrets, &bad_portal, &stop, &held).await
+        else {
+            panic!("a Portal address the chat cannot use started the assistant");
+        };
+        assert!(why.starts_with("the Portal address is not usable"), "{why}");
+        assert!(held.is_empty(), "nothing was spawned");
+        let env = pick(model_dir, ort);
 
         let logs = Captured::default();
         let writer = logs.clone();
@@ -1422,7 +1577,7 @@ mod tests {
             .finish();
         let _guard = tracing::subscriber::set_default(subscriber);
         let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
-        let public = start(
+        let started = start(
             &cfg,
             &setup,
             &mut siblings,
@@ -1431,11 +1586,11 @@ mod tests {
             &shutdown,
             &tasks,
         )
-        .await
-        .unwrap_or_else(|| {
-            let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
-            panic!("off: {logged}")
-        });
+        .await;
+        let mut sink = logs.clone();
+        std::io::Write::flush(&mut sink).unwrap();
+        let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        let public = started.ok_or(logged).expect("the module is on");
 
         // The Portal and the dataroom see it.
         let internal = siblings.get(Module::Assistant).unwrap().internal.clone();

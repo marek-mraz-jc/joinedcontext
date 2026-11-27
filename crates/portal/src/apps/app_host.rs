@@ -37,7 +37,7 @@
 
 use axum::body::Body;
 use axum::extract::{Request, State};
-use axum::http::{header, HeaderMap, HeaderName, HeaderValue, StatusCode, Uri};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use jc_core::kinds::AppClass;
@@ -408,20 +408,19 @@ async fn forward(
             );
         }
     };
-    let mut response = Response::builder().status(answer.status().as_u16());
-    for (key, value) in answer.headers() {
-        if !DROPPED.contains(&key.as_str()) {
-            if let (Ok(key), Ok(value)) = (
-                HeaderName::from_bytes(key.as_str().as_bytes()),
-                HeaderValue::from_bytes(value.as_bytes()),
-            ) {
-                response = response.header(key, value);
-            }
-        }
-    }
+    // reqwest answers with the `http` types axum uses, so the upstream's headers are handed on
+    // as they are, the hop-by-hop ones and its cookies dropped.
+    let status = answer.status();
+    let headers: HeaderMap = answer
+        .headers()
+        .iter()
+        .filter(|(key, _)| !DROPPED.contains(&key.as_str()))
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect();
+    let mut response = Response::new(Body::from_stream(answer.bytes_stream()));
+    *response.status_mut() = status;
+    *response.headers_mut() = headers;
     response
-        .body(Body::from_stream(answer.bytes_stream()))
-        .unwrap_or_else(|_| StatusCode::BAD_GATEWAY.into_response())
 }
 
 /// The App's own login on its host.
@@ -503,6 +502,17 @@ mod login {
         }
     }
 
+    /// `with` applied to what `store` holds; `None` once a panic poisoned it.
+    fn held<T, R>(store: &Mutex<T>, with: impl FnOnce(&mut T) -> R) -> Option<R> {
+        store.lock().ok().map(|mut guard| with(&mut guard))
+    }
+
+    thread_local! {
+        /// The logins and sessions held at most, as this thread's calls see it: MAX_HELD, lower
+        /// only while a test fills the store.
+        static HELD_AT_MOST: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_HELD) };
+    }
+
     fn keep<T>(
         map: &mut HashMap<String, T>,
         until: impl Fn(&T) -> i64,
@@ -510,10 +520,11 @@ mod login {
         value: T,
     ) -> bool {
         let now = now_unix();
-        if map.len() >= MAX_HELD {
+        let most = HELD_AT_MOST.with(std::cell::Cell::get);
+        if map.len() >= most {
             map.retain(|_, held| until(held) > now);
         }
-        if map.len() >= MAX_HELD {
+        if map.len() >= most {
             return false;
         }
         map.insert(key, value);
@@ -626,9 +637,9 @@ mod login {
             .and_then(|v| v["value"].as_str().map(str::to_owned))
             .filter(|v| !v.is_empty())
             .ok_or("the realm answered no secret for the client")?;
-        if let Ok(mut map) = SECRETS.lock() {
-            map.insert(key, (value.clone(), now + SECRET_SECS));
-        }
+        held(&SECRETS, |map| {
+            map.insert(key, (value.clone(), now + SECRET_SECS))
+        });
         Ok(value)
     }
 
@@ -812,11 +823,11 @@ mod login {
     /// `/logout`: the session ends here and at the realm, and the browser lands on the App's start.
     pub(super) fn logout(state: &AppState, req: &Request, name: &str) -> Response {
         if let Some(id) = cookie_of(req.headers(), &cookie_name(name)) {
-            if let Ok(mut map) = SESSIONS.lock() {
+            held(&SESSIONS, |map| {
                 if map.get(&id).is_some_and(|s| s.app == name) {
                     map.remove(&id);
                 }
-            }
+            });
         }
         let target = match (app_oidc(state, name), origin(state, name)) {
             (Some(oidc), Some(origin)) => {
@@ -872,6 +883,23 @@ mod login {
     #[cfg(test)]
     pub(super) fn held_for_test(id: &str) -> bool {
         SESSIONS.lock().unwrap().contains_key(id)
+    }
+
+    /// Holds at most `most` logins and sessions on this thread until the guard drops.
+    #[cfg(test)]
+    pub(super) fn held_at_most_for_test(most: usize) -> HeldAtMost {
+        HELD_AT_MOST.with(|held| held.set(most));
+        HeldAtMost
+    }
+
+    #[cfg(test)]
+    pub(super) struct HeldAtMost;
+
+    #[cfg(test)]
+    impl Drop for HeldAtMost {
+        fn drop(&mut self) {
+            HELD_AT_MOST.with(|held| held.set(MAX_HELD));
+        }
     }
 
     #[cfg(test)]
@@ -1697,6 +1725,48 @@ mod tests {
         // And a sign-in cannot start: 503, not a redirect to nowhere.
         let response = get(&state, "bikes.apps.example.org", "/login", &[]).await;
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// A store full of live logins refuses the next sign-in, and one full of live sessions the
+    /// session the realm just answered for: each a 503 with no cookie, the live session kept.
+    #[tokio::test]
+    async fn a_full_store_refuses_the_next_sign_in_and_the_next_session() {
+        let realm = Realm::start().await;
+        realm
+            .knows_the_client(serde_json::json!({ "value": "s3" }), 1)
+            .await;
+        let token = realm.token("app-bikes");
+        realm
+            .answers(
+                "authorization_code",
+                200,
+                serde_json::json!({ "access_token": token, "expires_in": 60 }),
+            )
+            .await;
+        let (csrf, cookie) = realm.started("/stations").await;
+        super::login::insert_for_test("sid-full-store", "bikes", "t");
+        let full = super::login::held_at_most_for_test(0);
+        let refused = get(&realm.state, "bikes.apps.example.org", "/login", &[]).await;
+        assert_eq!(refused.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(set_cookies(&refused).is_empty());
+        let callback = format!("/callback?code=the-code&state={csrf}");
+        let response = get(
+            &realm.state,
+            "bikes.apps.example.org",
+            &callback,
+            &[("cookie", &cookie)],
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(set_cookies(&response).is_empty());
+        drop(full);
+        assert!(
+            super::login::held_for_test("sid-full-store"),
+            "a live session is never dropped to make room"
+        );
+        // With room again the next sign-in starts.
+        let (_, again) = realm.started("/").await;
+        assert!(again.starts_with("__Host-jc_app_login_bikes="));
     }
 
     /// `/logout` ends this App's session alone, here and at the realm, and lands on the App.

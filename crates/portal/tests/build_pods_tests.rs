@@ -1763,3 +1763,142 @@ async fn a_build_that_failed_or_left_no_sbom_publishes_nothing() {
     assert!(text.contains("no sbom"), "{text}");
     assert!(published(&server).await.is_empty());
 }
+
+/// In a cluster the passes start; outside one, or with a mount nobody can read, none does and
+/// nothing is asked of the cluster or the forge.
+#[tokio::test]
+async fn the_passes_start_in_a_cluster_and_never_outside_one_or_on_an_unreadable_mount() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let forge = state.shako.clone().expect("a forge");
+    let follower = Arc::new(
+        joinedcontext_portal::reconciler::Syncer::new(forge.clone(), state.mirror.clone())
+            .with_leadership(Arc::new(joinedcontext_portal::reconciler::Leadership::new(
+                db.clone(),
+                7653,
+            ))),
+    );
+    let lane = state.config.build_pods.clone().expect("lane");
+    let spawn = |kube| {
+        joinedcontext_portal::apps::build_pods::spawn_on(
+            kube,
+            forge.clone(),
+            db.clone(),
+            follower.clone(),
+            state.mirror.clone(),
+            lane.clone(),
+        )
+    };
+    let passes = spawn(Ok(Some(kube(&server)))).expect("the passes run in a cluster");
+    passes.abort();
+    assert!(spawn(Ok(None)).is_none(), "no cluster, no passes");
+    let unreadable = joinedcontext_portal::apps::kube::KubeError::Client("unreadable".into());
+    assert!(
+        spawn(Err(unreadable)).is_none(),
+        "an unreadable mount, no passes"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    assert!(
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty(),
+        "a follower asks nothing of the cluster or the forge"
+    );
+}
+
+/// A build another replica started between this pass's read and its own start (the update
+/// finds no pending row) is left to that replica: no Job, no token Secret, and the row as the
+/// other replica wrote it.
+#[tokio::test]
+async fn a_build_another_replica_started_first_gets_no_second_job() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    cluster(&server, json!([])).await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let id = build_records::enqueue(
+        &db,
+        PROJECT,
+        "bikes",
+        COMMIT,
+        Class::Node,
+        Trigger::Push,
+        None,
+    )
+    .await
+    .expect("queued");
+    let job = format!("build-bikes-{id}");
+    job_appears(&server, &job).await;
+    // The other replica's start: this pass's update of the pending row changes nothing.
+    for statement in [
+        "CREATE SCHEMA jc_test",
+        "CREATE FUNCTION jc_test.started_elsewhere() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RETURN NULL; END $$",
+        "CREATE TRIGGER started_elsewhere BEFORE UPDATE ON app_builds FOR EACH ROW \
+         WHEN (NEW.state = 'running') EXECUTE FUNCTION jc_test.started_elsewhere()",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect("the race");
+    }
+    let pass = dispatch_once(
+        &kube(&server),
+        &db,
+        &state.mirror,
+        state.config.build_pods.as_ref().expect("lane"),
+    )
+    .await
+    .expect("the pass");
+    assert_eq!(pass.started, std::slice::from_ref(&job));
+    let patched: Vec<String> = applied(&server).await.into_iter().map(|(p, _)| p).collect();
+    assert!(
+        !patched.iter().any(|p| p.ends_with(&job)),
+        "no Job and no Secret: {patched:?}"
+    );
+    let pending = build_records::in_state(&db, "pending").await.expect("read");
+    assert!(pending.iter().any(|build| build.id == id), "still pending");
+}
+
+/// A leader whose passes go well from the first runs one after another, and with nothing queued
+/// none of them starts a Job.
+#[tokio::test]
+async fn a_leaders_good_passes_run_on_and_start_nothing_while_nothing_is_queued() {
+    let db = db_or_skip!();
+    let work = Work::new();
+    let server = MockServer::start().await;
+    cluster(&server, json!([])).await;
+    Mock::given(method("GET"))
+        .and(path(repo("bikes")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let state = state(&server, &db, work.path(), &[app_manifest("bikes", None)]);
+    let forge = state.shako.clone().expect("a forge");
+    let leader = Arc::new(joinedcontext_portal::reconciler::Syncer::new(
+        forge.clone(),
+        state.mirror.clone(),
+    ));
+    let passes = joinedcontext_portal::apps::build_pods::spawn_passes(
+        kube(&server),
+        forge,
+        db.clone(),
+        leader,
+        state.mirror.clone(),
+        state.config.build_pods.clone().expect("lane"),
+        std::time::Duration::from_millis(20),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    passes.abort();
+    let requests = server.received_requests().await.unwrap_or_default();
+    let lists = requests
+        .iter()
+        .filter(|r| r.method.as_str() == "GET" && r.url.path().ends_with("/jobs"))
+        .count();
+    assert!(lists >= 2, "the passes ran on: {lists}");
+    assert!(
+        !requests.iter().any(|r| r.method.as_str() == "PATCH"),
+        "nothing applied"
+    );
+}

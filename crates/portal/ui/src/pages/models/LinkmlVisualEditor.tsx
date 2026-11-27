@@ -188,11 +188,9 @@ export function LinkmlVisualEditor({
     setIriError(null);
   };
 
+  // The form calls this only with a name typed: its submit checks and its button is disabled.
   const addClass = () => {
     const name = newClass.trim();
-    if (!name) {
-      return;
-    }
     if (run({ op: "addClass", name, ...newTypeParent(model) })) {
       setSelectedClass(name);
       setNewClass("");

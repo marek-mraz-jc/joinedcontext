@@ -157,6 +157,21 @@ pub(crate) fn listing_read(url: &Url, capture: &str) -> Result<Value, ApiError> 
         ),
         ANSWER_BYTES, FETCH_FAILED
     );
+    one_read(
+        capture,
+        json!([
+            { "http": { "url": url.as_str(), "verb": "GET", "timeout": "5s", "retries": 0,
+                        "headers": { "Accept": "application/json, application/xml;q=0.9" } } },
+            { "mapping": envelope },
+            { "catch": [] },
+        ]),
+    )
+}
+
+/// The runner configuration of a one-read probe (a listing, a paging guess): one empty message
+/// through `processors`, every result posted to `capture`. The probe spec and its sample are
+/// constants, so the two refusals below name a harness this Portal itself broke.
+pub(crate) fn one_read(capture: &str, processors: Value) -> Result<Value, ApiError> {
     let probe: PipelineSpec = serde_json::from_value(json!({
         "class": "auto",
         "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
@@ -173,12 +188,7 @@ pub(crate) fn listing_read(url: &Url, capture: &str) -> Result<Value, ApiError> 
         harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
     config["input"] =
         json!({ "generate": { "count": 1, "interval": "", "mapping": "root = \"\"" } });
-    config["pipeline"] = json!({ "processors": [
-        { "http": { "url": url.as_str(), "verb": "GET", "timeout": "5s", "retries": 0,
-                    "headers": { "Accept": "application/json, application/xml;q=0.9" } } },
-        { "mapping": envelope },
-        { "catch": [] },
-    ] });
+    config["pipeline"] = json!({ "processors": processors });
     Ok(config)
 }
 
@@ -299,7 +309,8 @@ pub fn choices(
             "id",
             "title",
         ),
-        HttpPresetKind::SensorThings => {
+        // A WFS answered above, from its XML capabilities.
+        HttpPresetKind::SensorThings | HttpPresetKind::Wfs => {
             pick(
                 Some(answer["value"].as_array().ok_or(
                     "the answer has no Things; check the URL names a SensorThings service",
@@ -308,7 +319,6 @@ pub fn choices(
                 "name",
             )
         }
-        HttpPresetKind::Wfs => Vec::new(),
     };
     let cut = found.len() > MAX_CHOICES;
     found.truncate(MAX_CHOICES);
@@ -684,6 +694,44 @@ mod tests {
         assert!(found.choices.is_empty());
         assert!(found.skipped.is_some());
         assert_eq!(found.field, "organization");
+    }
+
+    /// A layer or table with an id and no name is listed under its id.
+    #[test]
+    fn a_choice_without_a_label_is_labelled_by_its_value() {
+        let answer = json!({ "layers": [{ "id": 3 }, { "name": "no id" }], "tables": [{ "id": "t1", "name": "Trees" }] });
+        let (found, cut) = choices(HttpPresetKind::ArcgisFeature, &answer, true).expect("choices");
+        assert_eq!(found, [choice("3", "3"), choice("t1", "Trees")]);
+        assert!(!cut);
+    }
+
+    /// A runner that takes the listing's stream and never answers is a discovery that says why,
+    /// with no choices, never a hang or an error of the operation.
+    #[tokio::test]
+    async fn a_listing_the_runner_never_answers_is_skipped_with_the_reason() {
+        use wiremock::matchers::path_regex;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let runner = MockServer::start().await;
+        Mock::given(path_regex(".*"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&runner)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_runner_url = Some(format!("{}/{{project}}", runner.uri()));
+        config.pipeline_test_capture_url = Some("http://portal-internal:9090".into());
+        let state = crate::state::AppState::new(config, None);
+        let tool = super::super::find("jc_datasource_discover").expect("registered");
+        let found = (tool.run)(
+            &crate::ops::testkit::admin(&state),
+            &state,
+            "discover-silent",
+            json!({ "kind": "ckan", "url": "https://data.example/api/3/action/package_search" }),
+        )
+        .await
+        .expect("a discovery");
+        assert_eq!(found["choices"], json!([]), "{found}");
+        assert!(found["skipped"].is_string(), "{found}");
+        assert_eq!(found["field"], "organization", "{found}");
     }
 
     /// A WFS that answers JSON is no capabilities document; a read that answered no sample says the

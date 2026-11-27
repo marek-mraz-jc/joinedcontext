@@ -195,13 +195,7 @@ impl Surface for Ogc {
 
     fn version_info(&self) -> Value {
         // T-4465, T-4477: the files `items` and `/collections` write in this build.
-        let (mut encodings, mut bundles) = (Vec::new(), Vec::new());
-        for (name, ..) in export::ITEMS {
-            encodings.push(*name);
-        }
-        for (name, ..) in export::BUNDLES {
-            bundles.push(*name);
-        }
+        let (encodings, bundles) = (export::encodings(), export::bundled());
         json!({
             "endpoint": format!("{PREFIX}/{{view}}/ogc/features"),
             "conformsTo": CONFORMANCE,
@@ -413,17 +407,19 @@ fn negotiate(rest: &[&str], headers: &HeaderMap, uri: &axum::http::Uri) -> Resul
     let before = pairs.len();
     pairs.retain(|(n, v)| !(n == "f" && matches!(v.as_str(), "json" | "geojson")));
     let json = pairs.len() < before;
-    let one_type = |(n, v): &(String, String)| n == "f" && export::ONE_TYPE.contains(&v.as_str());
-    if matches!(rest, ["collections"]) && pairs.iter().any(one_type) {
+    // only a build that writes files has a file of one collection to refuse on `/collections`
+    #[cfg(feature = "tabular")]
+    if matches!(rest, ["collections"])
+        && pairs
+            .iter()
+            .any(|(n, v)| n == "f" && export::ONE_TYPE.contains(&v.as_str()))
+    {
         return Err(Problem(
             StatusCode::BAD_REQUEST,
             "a CSV or Parquet file holds one collection: ask its items, or f=zip here for several",
         ));
     }
-    let mut items = Vec::new();
-    for (name, media, ..) in export::ITEMS {
-        items.push((*name, *media));
-    }
+    let items = export::offered();
     let asked = match rest {
         ["collections", _, "items"] => export::asked(headers, pairs, &items),
         ["collections"] => export::asked(headers, pairs, export::BUNDLES),
@@ -705,6 +701,19 @@ fn takes(headers: &HeaderMap, media: &str) -> bool {
 
 use antares_ops::percent::decoded as decode;
 
+/// The `alternate` link of each file `items` writes in this build, at `this` with its `f`.
+#[cfg(any(feature = "parquet", feature = "tabular"))]
+fn alternates(this: &str, separator: char) -> Vec<Value> {
+    export::offered()
+        .into_iter()
+        .map(|(name, media)| link("alternate", media, &format!("{this}{separator}f={name}")))
+        .collect()
+}
+#[cfg(not(any(feature = "parquet", feature = "tabular")))]
+fn alternates(_: &str, _: char) -> Vec<Value> {
+    Vec::new()
+}
+
 /// The link object of Part 1 (`rel`, `type`, `href`, Req 29).
 fn link(rel: &str, media: &str, href: &str) -> Value {
     json!({"rel": rel, "type": media, "href": href})
@@ -939,14 +948,10 @@ impl Here<'_> {
             .chain([String::from("next=")])
             .collect();
         let separator = if this.contains('?') { '&' } else { '?' };
-        let mut after: Vec<_> = profile_link(c, profile).into_iter().collect();
-        for (name, media, ..) in export::ITEMS {
-            after.push(link(
-                "alternate",
-                media,
-                &format!("{this}{separator}f={name}"),
-            ));
-        }
+        let after: Vec<_> = profile_link(c, profile)
+            .into_iter()
+            .chain(alternates(&this, separator))
+            .collect();
         Close {
             // C17: when the answer was made, a response time and no Entity time; whole
             // seconds, so a HEAD states the length of the GET.

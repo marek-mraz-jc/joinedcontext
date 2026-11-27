@@ -869,6 +869,10 @@ mod tests {
             Some(("p".to_owned(), "a".to_owned()))
         );
         assert_eq!(mirror.client_account("c-2"), None);
+        // A listing recorded over the poisoned lock replaces the one before.
+        mirror.set_workload_clients(BTreeMap::from([("c-2".to_owned(), "p/b".to_owned())]));
+        assert_eq!(mirror.client_id("p", "b"), "c-2");
+        assert_eq!(mirror.client_account("c-1"), None);
         mirror.hold_removals(true);
         assert!(mirror.hold_removal("Group", "g"));
         assert_eq!(mirror.held_back(), vec!["Group g".to_owned()]);

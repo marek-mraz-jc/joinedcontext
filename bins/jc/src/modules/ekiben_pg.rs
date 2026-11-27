@@ -494,6 +494,35 @@ mod tests {
         migrate(&owner, "jc_ekpg_app").await.unwrap();
         verify_boot_rls(&app).await.unwrap();
         let admin = db.as_admin().await;
+        // A request login whose search path finds another `pg_class` before the catalog's: the
+        // table check fails with the server's reason.
+        sqlx::raw_sql(
+            "CREATE SCHEMA jc_ekpg_shadow;
+             CREATE TABLE jc_ekpg_shadow.pg_class (x int);
+             GRANT USAGE ON SCHEMA jc_ekpg_shadow TO PUBLIC;
+             GRANT SELECT ON jc_ekpg_shadow.pg_class TO PUBLIC;",
+        )
+        .execute(&admin)
+        .await
+        .unwrap();
+        let shadowed = PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(
+                db.base
+                    .clone()
+                    .database(&db.name)
+                    .username("jc_ekpg_app")
+                    .password("pw-jc_ekpg_app-7820")
+                    .options([("search_path", "jc_ekpg_shadow,pg_catalog")]),
+            )
+            .await
+            .unwrap();
+        let e = verify_boot_rls(&shadowed).await.unwrap_err();
+        assert!(
+            e.starts_with("boot check: ") && e.contains("relname"),
+            "{e}"
+        );
+        shadowed.close().await;
         let e = verify_boot_rls(&admin).await.unwrap_err();
         assert!(e.contains("has SUPERUSER or BYPASSRLS"), "{e}");
         assert!(PgStreams::open(admin.clone()).await.is_err());

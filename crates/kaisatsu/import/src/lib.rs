@@ -2324,3 +2324,19 @@ pub async fn export_realm(
     }
     Ok(out)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_object_that_does_not_serialize_is_a_storage_error_and_a_bad_member_a_400() {
+        let e = serde_json::from_str::<u8>("not json").expect_err("not a number");
+        let text = e.to_string();
+        assert!(matches!(storage(e), KaisatsuError::Storage(msg) if msg == text));
+        assert!(matches!(
+            bad_request("bad member"),
+            KaisatsuError::BadRequest(msg) if msg == "bad member"
+        ));
+    }
+}

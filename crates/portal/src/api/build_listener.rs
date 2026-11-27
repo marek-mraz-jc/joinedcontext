@@ -282,10 +282,7 @@ async fn finish(
         )));
     }
     let concluded = tokio::spawn(conclude(state, db, settings, build, report));
-    concluded
-        .await
-        .map(Json)
-        .map_err(|err| ApiError::Internal(format!("the build's conclusion stopped: {err}")))
+    concluded.await.map(Json).map_err(ApiError::internal)
 }
 
 /// Ends a frozen build: published and written, or failed with the reason.
@@ -370,11 +367,8 @@ pub fn digest_of(artifact: &[u8], image: bool) -> Result<String, String> {
         return Ok(format!("sha256:{:x}", Sha256::digest(artifact)));
     }
     let mut archive = tar::Archive::new(artifact);
-    for entry in archive
-        .entries()
-        .map_err(|e| format!("the image is not a tar: {e}"))?
-    {
-        let mut entry = entry.map_err(|e| format!("the image is not a tar: {e}"))?;
+    for entry in archive.entries().map_err(not_a_tar)? {
+        let mut entry = entry.map_err(not_a_tar)?;
         let path = entry
             .path()
             .map(|p| p.to_string_lossy().trim_start_matches("./").to_owned());
@@ -382,7 +376,7 @@ pub fn digest_of(artifact: &[u8], image: bool) -> Result<String, String> {
             continue;
         }
         let mut text = Vec::new();
-        std::io::Read::read_to_end(&mut entry, &mut text).map_err(|e| e.to_string())?;
+        std::io::Read::read_to_end(&mut entry, &mut text).map_err(not_a_tar)?;
         let index: Value =
             serde_json::from_slice(&text).map_err(|e| format!("index.json is not JSON: {e}"))?;
         return match index["manifests"].as_array().map(Vec::as_slice) {
@@ -394,6 +388,16 @@ pub fn digest_of(artifact: &[u8], image: bool) -> Result<String, String> {
         };
     }
     Err("the image layout has no index.json".to_owned())
+}
+
+/// An image whose archive does not read, as the build's failure.
+fn not_a_tar(err: std::io::Error) -> String {
+    format!("the image is not a tar: {err}")
+}
+
+/// An error as the words a failed build records.
+fn said(err: impl std::fmt::Display) -> String {
+    err.to_string()
 }
 
 /// Hashes the frozen uploads, then checks, publishes and writes `status.build` through the
@@ -431,7 +435,7 @@ async fn publish(
     let artifact = read(name)?;
     let sbom = read("sbom")?;
     let digest = digest_of(&artifact, image)?;
-    let mut body = serde_json::to_value(&app).map_err(|e| e.to_string())?;
+    let mut body = serde_json::to_value(&app).map_err(said)?;
     body["status"] = json!({ "build": {
         "digest": digest,
         "commit": build.commit,
@@ -521,6 +525,9 @@ mod tests {
             Err("index.json names no digest".to_owned())
         );
         assert!(digest_of(&layout("{"), true).is_err_and(|e| e.contains("not JSON")));
+        let refused = digest_of(b"not a tar", true).expect_err("no tar");
+        assert!(refused.starts_with("the image is not a tar"), "{refused}");
+        assert_eq!(said("the build stopped"), "the build stopped");
     }
 
     /// An image layout whose index.json follows other files is read; one with none is refused.

@@ -626,3 +626,41 @@ async fn the_served_list_leaves_out_a_preview_whose_files_no_longer_load() {
             .collect::<Vec<_>>()
     );
 }
+
+/// A branch that holds no `projects/` directory renders as it is, with nothing to leave out;
+/// a blank `JC_ENVIRONMENT` renders with no overlay (T-7931).
+#[tokio::test]
+async fn a_branch_without_projects_renders_with_nothing_left_out() {
+    // Blank is what an unset overlay reads as, so no other test sees a change.
+    std::env::set_var("JC_ENVIRONMENT", " ");
+    let server = forge().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Branches('workspace%2Fair-v2')")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "HeadSha": HEAD })))
+        .mount(&server)
+        .await;
+    let all = files();
+    mount_tree(&server, REPO, HEAD, &all[..1]).await;
+    let state = doors::state_with(state_on(&server));
+    open(&state, "air-v2", "jana").await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_ne!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.body["endpoints"]
+            .as_array()
+            .is_none_or(|endpoints| endpoints.is_empty()),
+        "{}",
+        started.text()
+    );
+}

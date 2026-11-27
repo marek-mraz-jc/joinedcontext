@@ -114,6 +114,25 @@ describe("LinkmlGraphView edges (T-7706)", () => {
     expect(screen.queryByTestId("diagram-connecting")).toBeNull();
   });
 
+  it("draws no line onto a class the diagram leaves out, the model's Any helper", () => {
+    const helper = `name: odd
+classes:
+  Any:
+    class_uri: linkml:Any
+  Station:
+    is_a: Any
+    slots: []
+  Sensor:
+    is_a: Station
+    slots: []
+`;
+    const { container } = renderPart(<LinkmlGraphView source={helper} />);
+    expect(screen.getByRole("button", { name: en.models.graph.openClass.replace("{name}", "Station") })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: en.models.graph.openClass.replace("{name}", "Any") })).toBeNull();
+    // Sensor's line to Station is drawn; Station's to Any is not, and the drawing does not break.
+    expect(container.querySelectorAll("svg path, svg line, svg polyline").length).toBeGreaterThan(0);
+  });
+
   it("draws an inheritance line onto the class itself and skips one onto a class that is not in the model", () => {
     renderPart(<LinkmlGraphView source={SELF} />);
     expect(screen.getByRole("button", { name: en.models.graph.openClass.replace("{name}", "Loop") })).toBeInTheDocument();

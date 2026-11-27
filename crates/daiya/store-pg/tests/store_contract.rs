@@ -224,6 +224,30 @@ async fn a_public_token_resolves_through_the_lookup_and_no_setting_widens_rls() 
     assert_eq!((pd.org_id, dash.org_id), (org, org));
     assert!(!pd.show_query_text);
 
+    // An index row whose organization holds no public dashboard of that hash (a row removed
+    // between the lookup and the read) finds nothing, not another organization's row.
+    let stale = sha256_hex(format!("stale-{token}").as_bytes());
+    sqlx::query("INSERT INTO daiya_public_token (access_token_hash, org_id) VALUES ($1, $2)")
+        .bind(&stale)
+        .bind(OrgId::generate().0)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    let found = db.app.get_public_dashboard_by_token_hash(&stale).await;
+    sqlx::query("DELETE FROM daiya_public_token WHERE access_token_hash = $1")
+        .bind(&stale)
+        .execute(&db.admin)
+        .await
+        .unwrap();
+    assert!(found.unwrap().is_none());
+    assert!(
+        db.app
+            .get_public_dashboard_by_token_hash("no-such-hash")
+            .await
+            .unwrap()
+            .is_none()
+    );
+
     // A second public dashboard for the same dashboard is a conflict, not a 500.
     let dup = db
         .app
