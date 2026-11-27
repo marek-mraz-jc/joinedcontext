@@ -55,8 +55,10 @@ fn each_missing_or_empty_required_variable_refuses_the_start_by_name() {
         "JC_FUNCTIONS_CALLER",
         "JC_GATEWAY_URL",
     ] {
+        // No JC_FUNCTIONS_BIND either: the default address is read, and the start is refused
+        // before anything binds it.
         let mut vars = complete("127.0.0.1:0");
-        vars.retain(|(k, _)| *k != name);
+        vars.retain(|(k, _)| *k != name && *k != "JC_FUNCTIONS_BIND");
         assert!(
             refused(&vars).contains(&format!("{name} is not set")),
             "{name} absent"
