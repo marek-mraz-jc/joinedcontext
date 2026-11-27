@@ -1757,11 +1757,232 @@ mod tests {
         }
     }
 
-    fn code(answer: Option<Answer>) -> Option<i64> {
+    fn json_of(answer: Option<Answer>) -> Option<Value> {
         match answer {
-            Some(Answer::Json(value)) => value["error"]["code"].as_i64(),
+            Some(Answer::Json(value)) => Some(value),
             _ => None,
         }
+    }
+
+    fn code(answer: Option<Answer>) -> Option<i64> {
+        json_of(answer).and_then(|value| value["error"]["code"].as_i64())
+    }
+
+    /// One JSON-RPC message to `hub`, its JSON answer.
+    async fn asked(hub: &Hub, message: Value) -> Value {
+        json_of(Some(hub.answer(message).await)).expect("a JSON-RPC answer")
+    }
+
+    /// JSON-RPC 2.0 §4.1, §5.1: a notification is no answer, a message without `jsonrpc` is
+    /// -32600, `ping` is answered and an unknown method is -32601.
+    #[tokio::test]
+    async fn the_hub_answers_the_envelope_of_any_message() {
+        let hub = hub(true);
+        let notified = hub
+            .answer(json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await;
+        assert!(matches!(notified, Answer::Notification));
+        assert_eq!(code(Some(notified)), None);
+        let invalid = asked(&hub, json!({"id": 1, "method": "ping"})).await;
+        assert_eq!(invalid["error"]["code"], -32600);
+        let pong = asked(&hub, json!({"jsonrpc": "2.0", "id": 2, "method": "ping"})).await;
+        assert_eq!(pong["result"], json!({}));
+        let unknown = asked(&hub, json!({"jsonrpc": "2.0", "id": 3, "method": "dance"})).await;
+        assert_eq!(unknown["error"]["code"], -32601);
+        let initialized = asked(
+            &hub,
+            json!({"jsonrpc": "2.0", "id": 4, "method": "initialize", "params": {}}),
+        )
+        .await;
+        assert!(
+            initialized["result"]["instructions"].is_string(),
+            "{initialized}"
+        );
+    }
+
+    fn call(name: &str, arguments: Value) -> Value {
+        json!({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+            "params": {"name": name, "arguments": arguments}})
+    }
+
+    fn tool_text(answer: &Value) -> &str {
+        answer["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+    }
+
+    /// The hub's own tools refuse arguments of the wrong shape as tool errors.
+    #[tokio::test]
+    async fn the_hubs_own_tools_refuse_misshapen_arguments() {
+        let hub = hub(false);
+        let lang = asked(&hub, call("list_endpoints", json!({"lang": 5}))).await;
+        assert!(tool_text(&lang).contains("`lang`"), "{lang}");
+        let unnamed = asked(&hub, call("get_endpoint", json!({}))).await;
+        assert!(
+            tool_text(&unnamed).contains("`endpoint` names"),
+            "{unnamed}"
+        );
+        let kind = asked(
+            &hub,
+            call(
+                "get_endpoint",
+                json!({"endpoint": "a", "detail": "attributes", "type": 5}),
+            ),
+        )
+        .await;
+        assert!(tool_text(&kind).contains("one entity type name"), "{kind}");
+    }
+
+    /// T-5642: a card the broker cannot give is a tool error, not a missing resource.
+    #[tokio::test]
+    async fn a_card_the_broker_cannot_give_is_a_tool_error() {
+        let mut hub = hub(true);
+        let endpoint = listed("aaaaaaaaaaaaaaaaaaaaaaaaaa");
+        hub.reach = Arc::from(vec![(endpoint, Subject::anonymous())]);
+        let read = asked(
+            &hub,
+            json!({"jsonrpc": "2.0", "id": 5, "method": "resources/read",
+                "params": {"uri": "card://aaaaaaaaaaaaaaaaaaaaaaaaaa"}}),
+        )
+        .await;
+        assert_eq!(read["result"]["isError"], json!(true), "{read}");
+    }
+
+    /// T-4261: an anonymous read the broker does not answer within the member deadline is a
+    /// tool error, not a stream held open.
+    #[tokio::test(flavor = "current_thread", start_paused = true)]
+    async fn an_anonymous_read_past_the_deadline_is_a_tool_error() {
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(url),
+            Box::new(crate::pdp::PolicyPdp),
+            "example.org",
+        );
+        let slug = "aaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let mut hub = hub(true);
+        hub.gateway = Arc::new(gateway);
+        hub.reach = Arc::from(vec![(listed(slug), Subject::anonymous())]);
+        let answer = asked(
+            &hub,
+            call(
+                "query_entities",
+                json!({"endpoint": slug, "type": "AirQualityObserved"}),
+            ),
+        )
+        .await;
+        assert!(tool_text(&answer).contains("ten seconds"), "{answer}");
+    }
+
+    /// The message route: a body past the cap is a parse error, a notification is 202, and a
+    /// bearer token without a realm is 401
+    /// with the protected resource's metadata named.
+    #[tokio::test]
+    async fn the_message_route_refuses_before_it_answers() {
+        let post = |authorization: Option<&str>, body: Body| {
+            let mut request = Request::new(body);
+            if let Some(value) = authorization {
+                request.headers_mut().insert(
+                    AUTHORIZATION,
+                    HeaderValue::from_str(value).expect("a header value"),
+                );
+            }
+            request
+        };
+        let gateway = || hub(true).gateway;
+        let big = Body::from(vec![b' '; MAX_BODY + 1]);
+        let answer = message(State(gateway()), post(None, big)).await;
+        let bytes = axum::body::to_bytes(answer.into_body(), MAX_BODY)
+            .await
+            .expect("a body");
+        assert!(String::from_utf8_lossy(&bytes).contains("-32700"));
+        let note = Body::from(r#"{"jsonrpc": "2.0", "method": "notifications/initialized"}"#);
+        let answer = message(State(gateway()), post(None, note)).await;
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        let bearer = message(State(gateway()), post(Some("Bearer abc"), Body::empty())).await;
+        assert_eq!(bearer.status(), StatusCode::UNAUTHORIZED);
+        assert!(bearer
+            .headers()
+            .contains_key(axum::http::header::WWW_AUTHENTICATE));
+    }
+
+    /// T-4528: the reaches kept are cleared when they reach their bound, then the new one kept.
+    #[test]
+    fn the_kept_reaches_are_cleared_at_their_bound() {
+        let gateway = hub(true).gateway;
+        {
+            let mut reaches = gateway.reaches.lock().expect("reaches");
+            for n in 0..KEPT {
+                let kept = Kept {
+                    table: gateway.resolver.table(),
+                    accounts: gateway.accounts.load_full(),
+                    at: Instant::now(),
+                    reach: Arc::from(Vec::new()),
+                };
+                reaches.insert(format!("caller {n}"), Arc::new(kept));
+            }
+        }
+        assert!(reached(&gateway, &HeaderMap::new(), None, None).is_ok());
+        assert_eq!(gateway.reaches.lock().expect("reaches").len(), 1);
+    }
+
+    /// T-4528: a data space token keeps no reach; a token's clients key it in order.
+    #[test]
+    fn a_reach_is_kept_by_everything_but_a_tokens_lifetime() {
+        let claims = |extra: Value| -> Claims {
+            let mut claims = json!({"sub": "jana", "iss": "https://realm.test", "exp": 1});
+            claims
+                .as_object_mut()
+                .expect("an object")
+                .extend(extra.as_object().cloned().unwrap_or_default());
+            serde_json::from_value(claims).expect("claims")
+        };
+        let transfer = claims(json!({"agreementId": "a-1"}));
+        assert_eq!(kept_as(Some(&transfer), None, None), None);
+        let clients =
+            claims(json!({"resource_access": {"b": {"roles": ["y", "x"]}, "a": {"roles": []}}}));
+        let key = kept_as(Some(&clients), None, None).expect("a key");
+        assert!(key.find("\"a\"") < key.find("\"b\""), "{key}");
+        assert!(key.contains("[\"x\", \"y\"]"), "{key}");
+    }
+
+    /// A filter on a member that is no list or text, or an unknown filter, matches nothing.
+    #[test]
+    fn a_filter_on_an_odd_member_matches_nothing() {
+        let entry = json!({"types": 5, "attributes": {"A": [1], "B": "b", "C": 3}});
+        assert!(!matches(&entry, "type", "a"));
+        assert!(matches(&entry, "attribute", "b"));
+        assert!(!matches(&entry, "attribute", "3"));
+        assert!(!matches(&entry, "colour", "b"));
+    }
+
+    /// EP-78, T-6569: a described Endpoint names its period, publisher and open data page, and
+    /// a listing row shows the period.
+    #[test]
+    fn a_described_endpoint_names_its_period_publisher_and_page() {
+        let mut endpoint = (*listed("aaaaaaaaaaaaaaaaaaaaaaaaaa")).clone();
+        endpoint.catalog = Some(Arc::new(
+            serde_json::from_value(json!({
+                "publisher": {"name": {"en": "City"}},
+                "temporal": {"start": "2020-01-01"},
+            }))
+            .expect("a catalog"),
+        ));
+        endpoint.page = Some("https://opendata.example/dataset/air".to_owned());
+        let gateway = hub(true).gateway;
+        let entry = described(&gateway, &endpoint, &Subject::anonymous(), false);
+        assert_eq!(entry["publisher"]["en"], "City", "{entry}");
+        assert_eq!(entry["page"], "https://opendata.example/dataset/air");
+        let text = lines(&[entry], &json!({"total": 1}));
+        assert!(text.contains("2020-01-01.."), "{text}");
     }
 
     /// T-5508, T-4168: an anonymous write is refused before routing, whichever Endpoint it
@@ -1792,9 +2013,7 @@ mod tests {
                 .resolved(&id, slug)
                 .err()
                 .map(|answer| *answer);
-            let Some(Answer::Json(answer)) = outside else {
-                panic!("anonymous {anonymous}: no JSON-RPC answer");
-            };
+            let answer = json_of(outside).expect("a JSON-RPC answer");
             assert_eq!(answer["result"]["isError"], json!(true), "{answer}");
             assert_eq!(answer["result"]["content"][0]["text"], json!(OUTSIDE_REACH));
         }
