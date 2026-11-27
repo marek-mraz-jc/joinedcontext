@@ -296,4 +296,99 @@ mod tests {
         assert_eq!(covering, ["bare", "own"]);
         assert!(mcp_servers(&state, "helsinki", &[]).is_empty());
     }
+
+    /// T-7917 (EP-103): a person's exploration lists their Keycloak consents beside what they
+    /// reach; the same question for a group asks the realm for none.
+    #[tokio::test]
+    async fn a_person_explored_is_shown_their_consents_and_a_group_none() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let realm = MockServer::start().await;
+        let on = |verb: &'static str, at: &'static str, body: Value| {
+            Mock::given(method(verb))
+                .and(path(at))
+                .respond_with(ResponseTemplate::new(200).set_body_json(body))
+        };
+        on(
+            "POST",
+            "/realms/hel/protocol/openid-connect/token",
+            json!({ "access_token": "t" }),
+        )
+        .mount(&realm)
+        .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1",
+            json!({ "id": "u1", "username": "jana", "enabled": true }),
+        )
+        .mount(&realm)
+        .await;
+        on("GET", "/admin/realms/hel/users/u1/groups", json!([]))
+            .mount(&realm)
+            .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1/role-mappings/realm/composite",
+            json!([]),
+        )
+        .mount(&realm)
+        .await;
+        on(
+            "GET",
+            "/admin/realms/hel/users/u1/consents",
+            json!([{ "clientId": "hub", "grantedClientScopes": ["openid"], "createdDate": 1 }]),
+        )
+        .mount(&realm)
+        .await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.people = crate::people::People::new(
+            &format!("{}/realms/hel", realm.uri()),
+            "portal".into(),
+            crate::auth::client_auth::ClientAuth::Secret("s".into()),
+        )
+        .map(std::sync::Arc::new);
+        assert!(state.people.is_some(), "a realm URL");
+        let admin = || {
+            CurrentUser(crate::auth::session::Session {
+                identity: crate::auth::Identity {
+                    client: None,
+                    subject: "sub-admin".to_owned(),
+                    username: "admin".to_owned(),
+                    email: None,
+                    name: None,
+                    roles: Vec::new(),
+                    groups: vec!["portal-approver".to_owned()],
+                    second_factor: false,
+                },
+                expires_at: 9_999_999_999,
+                issued_at: 0,
+                signed_in_at: None,
+                stepped_up_at: None,
+                id_token: "t".to_owned(),
+                access_expires_at: 9_999_999_999,
+                refresh_token: None,
+            })
+        };
+        let ask = |who: Value| {
+            let request: ExploreRequest =
+                serde_json::from_value(json!({ "subject": who })).expect("a request");
+            explore_access(
+                admin(),
+                State(state.clone()),
+                Path("helsinki".to_owned()),
+                Ok(Json(request)),
+            )
+        };
+        let person = ask(json!({ "kind": "person", "id": "u1" }))
+            .await
+            .expect("a person explored")
+            .0;
+        assert_eq!(person.consents.len(), 1);
+        assert_eq!(person.consents[0].client_id, "hub");
+        let group = ask(json!({ "kind": "group", "name": "analysts" }))
+            .await
+            .expect("a group explored")
+            .0;
+        assert!(group.consents.is_empty());
+    }
 }

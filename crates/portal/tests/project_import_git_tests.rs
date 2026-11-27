@@ -1154,21 +1154,9 @@ async fn an_application_whose_repository_name_is_too_long_is_refused_before_anyt
     let (server, state) = world().await;
     let project = "p".repeat(40);
     let file = archive_with_app(&"a".repeat(63));
-    let answer = import_into(
-        &state,
-        person("jana"),
-        &project,
-        "?format=git",
-        &file,
-        &[],
-    )
-    .await;
+    let answer = import_into(&state, person("jana"), &project, "?format=git", &file, &[]).await;
     assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
-    assert!(
-        answer.text.contains("characters long"),
-        "{}",
-        answer.text
-    );
+    assert!(answer.text.contains("characters long"), "{}", answer.text);
     nothing_created(&server).await;
 }
 
@@ -1186,13 +1174,17 @@ async fn a_repository_that_appeared_during_the_import_is_not_adopted() {
     let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(
-        answer.text.contains("appeared in the forge during the import"),
+        answer
+            .text
+            .contains("appeared in the forge during the import"),
         "{}",
         answer.text
     );
-    assert!(sent(&server, "POST", "/test-owner/doprava.git/git-receive-pack")
-        .await
-        .is_empty());
+    assert!(
+        sent(&server, "POST", "/test-owner/doprava.git/git-receive-pack")
+            .await
+            .is_empty()
+    );
 }
 
 /// T-7917, MF-45: a branch the forge refuses (`ng refs/heads/main`) stops the import and removes
@@ -1223,8 +1215,10 @@ async fn a_tag_the_forge_refuses_is_reported_and_the_import_lands() {
     assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
     let requests = server.received_requests().await.expect("requests");
     assert!(
-        requests.iter().any(|request| String::from_utf8_lossy(&request.body)
-            .contains("doprava: refs/tags/v1.0.0 missing commit")),
+        requests
+            .iter()
+            .any(|request| String::from_utf8_lossy(&request.body)
+                .contains("doprava: refs/tags/v1.0.0 missing commit")),
         "the Change's report names the refused tag"
     );
     assert!(sent(&server, "DELETE", NEW).await.is_empty());

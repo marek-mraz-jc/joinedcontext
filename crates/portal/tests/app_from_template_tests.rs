@@ -458,3 +458,31 @@ async fn a_failed_landing_removes_its_repository_and_a_removal_that_fails_is_onl
         answer.text
     );
 }
+
+/// T-7917: a landing that fails with the forge able to delete leaves no repository behind.
+#[tokio::test]
+async fn a_failed_landing_with_a_working_forge_leaves_nothing_behind() {
+    let (server, state) = world().await;
+    at(
+        "POST",
+        &format!("{LANDED}/Shako.CommitFiles"),
+        500,
+        json!({ "message": "disk full" }),
+    )
+    .with_priority(1)
+    .mount(&server)
+    .await;
+    let answer = create(
+        &state,
+        "ema",
+        json!({ "name": "bike-finder", "endpointName": "bikes" }),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert_eq!(sent(&server, "DELETE", LANDED).await.len(), 1);
+}

@@ -4923,12 +4923,32 @@ async fn an_evaluator_refusal_answers_its_status_on_every_read_that_runs_it() {
         "/api/v1/spaces?$filter=contains(name,1)",
     ] {
         let answer = odata(&state, mode, "root", uri).await;
-        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{uri}: {}", answer.text);
-        assert!(answer.text.contains("takes a string"), "{uri}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("takes a string"),
+            "{uri}: {}",
+            answer.text
+        );
     }
     let reference = odata(&state, mode, "root", "/api/v1/projects/$ref").await;
-    assert_eq!(reference.status, StatusCode::NOT_IMPLEMENTED, "{}", reference.text);
-    let key = odata(&state, mode, "root", "/api/v1/projects(name='helsinki',x='y')").await;
+    assert_eq!(
+        reference.status,
+        StatusCode::NOT_IMPLEMENTED,
+        "{}",
+        reference.text
+    );
+    let key = odata(
+        &state,
+        mode,
+        "root",
+        "/api/v1/projects(name='helsinki',x='y')",
+    )
+    .await;
     assert_eq!(key.status, StatusCode::BAD_REQUEST, "{}", key.text);
 }
 
@@ -4957,7 +4977,11 @@ async fn the_metadata_document_answers_in_the_format_asked() {
     )
     .await;
     assert_eq!(accepted.status, StatusCode::OK, "{}", accepted.text);
-    assert!(serde_json::from_str::<Value>(&accepted.text).is_ok(), "{}", accepted.text);
+    assert!(
+        serde_json::from_str::<Value>(&accepted.text).is_ok(),
+        "{}",
+        accepted.text
+    );
     let xml = odata(&state, mode, "root", "/api/v1/$metadata").await;
     assert!(xml.text.trim_start().starts_with('<'), "{}", xml.text);
 }
@@ -4974,7 +4998,12 @@ async fn a_read_of_changes_without_a_forge_is_a_failure_not_an_empty_list() {
         "/api/v1/projects('helsinki')?$expand=changes",
     ] {
         let answer = odata(&state, mode, "root", uri).await;
-        assert!(answer.status.is_server_error(), "{uri}: {} {}", answer.status, answer.text);
+        assert!(
+            answer.status.is_server_error(),
+            "{uri}: {} {}",
+            answer.status,
+            answer.text
+        );
     }
 }
 
@@ -4988,8 +5017,17 @@ async fn the_count_of_an_organization_set_refuses_a_filter_it_cannot_run() {
         "/api/v1/organizationRoles/$count?$filter=contains(name,1)",
     ] {
         let answer = odata(&state, Mode::Path("hel"), "root", uri).await;
-        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{uri}: {}", answer.text);
-        assert!(answer.text.contains("takes a string"), "{uri}: {}", answer.text);
+        assert_eq!(
+            answer.status,
+            StatusCode::BAD_REQUEST,
+            "{uri}: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("takes a string"),
+            "{uri}: {}",
+            answer.text
+        );
     }
 }
 
@@ -5025,7 +5063,10 @@ async fn a_constrained_grant_on_bindings_lists_only_the_members_it_lets_through(
     assert_eq!(rows.status, StatusCode::OK, "{}", rows.text);
     let users = names(&rows.json(), "user");
     assert!(users.contains(&"u-111".to_owned()), "{users:?}");
-    assert!(!users.contains(&"u-222".to_owned()), "the editor binding is constrained out: {users:?}");
+    assert!(
+        !users.contains(&"u-222".to_owned()),
+        "the editor binding is constrained out: {users:?}"
+    );
 }
 
 /// T-7918: a person the realm knows by id alone has no name and no e-mail: both are null for a
@@ -5077,7 +5118,12 @@ async fn a_member_the_realm_knows_without_a_name_has_a_null_name_and_email() {
     .await;
     assert_eq!(rows.status, StatusCode::OK, "{}", rows.text);
     let body = rows.json();
-    assert_eq!(body["value"].as_array().map(Vec::len), Some(1), "{}", rows.text);
+    assert_eq!(
+        body["value"].as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        rows.text
+    );
     assert_eq!(body["value"][0]["name"], Value::Null, "{}", rows.text);
     assert_eq!(body["value"][0]["email"], Value::Null, "{}", rows.text);
 }
@@ -5093,10 +5139,23 @@ async fn an_action_without_what_it_needs_is_refused_and_an_orphan_project_still_
         .get("helsinki", "ContextSpace", "air")
         .expect("air")
         .etag();
-    let propose = "/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.propose_update";
-    let bare = act(&state, "hel-editor", propose, Some(&etag), json!({ "dryRun": true })).await;
+    let propose =
+        "/api/v1/spaces(project='helsinki',name='air')/JoinedContext.Portal.propose_update";
+    let bare = act(
+        &state,
+        "hel-editor",
+        propose,
+        Some(&etag),
+        json!({ "dryRun": true }),
+    )
+    .await;
     assert_eq!(bare.status, StatusCode::BAD_REQUEST, "{}", bare.text);
-    assert!(bare.text.contains("takes the whole manifest or a merge patch"), "{}", bare.text);
+    assert!(
+        bare.text
+            .contains("takes the whole manifest or a merge patch"),
+        "{}",
+        bare.text
+    );
 
     let cookie = cookies(&state.config, person("hel-editor", &[]), "hel").await;
     let empty = raw_sent(
@@ -5108,12 +5167,108 @@ async fn an_action_without_what_it_needs_is_refused_and_an_orphan_project_still_
         None,
     )
     .await;
-    assert!(empty.status.is_client_error(), "{} {}", empty.status, empty.text);
+    assert!(
+        empty.status.is_client_error(),
+        "{} {}",
+        empty.status,
+        empty.text
+    );
 
     state
         .mirror
         .upsert(envelope("ContextSpace", "lone", "orphan", json!({})));
-    let orphan = odata(&state, Mode::Path("hel"), "root", "/api/v1/projects('orphan')").await;
+    let orphan = odata(
+        &state,
+        Mode::Path("hel"),
+        "root",
+        "/api/v1/projects('orphan')",
+    )
+    .await;
     assert_eq!(orphan.status, StatusCode::OK, "{}", orphan.text);
-    assert!(orphan.headers.get(header::ETAG).is_some(), "{:?}", orphan.headers);
+    assert!(
+        orphan.headers.get(header::ETAG).is_some(),
+        "{:?}",
+        orphan.headers
+    );
+}
+
+/// T-7918: a compound key whose name is a number is looked up as its text, so it finds no row
+/// (404) rather than failing; the signed next link of an expansion that also selects reads the
+/// next page.
+#[tokio::test]
+async fn a_numeric_name_finds_no_row_and_a_selecting_expansion_link_reads_the_next_page() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "Project",
+        "tampere",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    let mode = Mode::Path("hel");
+    let numeric = odata(
+        &state,
+        mode,
+        "root",
+        "/api/v1/spaces(project='helsinki',name=1)",
+    )
+    .await;
+    assert_eq!(numeric.status, StatusCode::NOT_FOUND, "{}", numeric.text);
+
+    let cookie = cookies(&state.config, person("root", &[ROOTS]), "hel").await;
+    let paged = [("prefer", "odata.maxpagesize=1"), ("OData-Version", "4.0")];
+    let first = send(
+        &state,
+        Mode::Host("hel"),
+        &cookie,
+        "/api/v1/projects?$select=name&$expand=spaces",
+        &paged,
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
+    let next = first.json()["@odata.nextLink"]
+        .as_str()
+        .expect("nextLink")
+        .to_owned();
+    let path = next
+        .strip_prefix("https://portal.hel.example")
+        .expect("the registry's host")
+        .to_owned();
+    // The next link verifies and reads the next project. It carries no `$expand` (a defect
+    // listed in chyby.md), so the second page is the selected names alone.
+    let second = send(&state, Mode::Host("hel"), &cookie, &path, &paged).await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text);
+    let rows = second.json()["value"].as_array().cloned().expect("rows");
+    assert_eq!(rows.len(), 1, "{}", second.text);
+    assert_ne!(
+        rows[0]["name"],
+        first.json()["value"][0]["name"],
+        "another project"
+    );
+}
+
+/// T-7918: `$expand` is a project's; on a kind, a member set or an Organization set, or below a
+/// project's navigation, it is refused as a client error, and a navigation the project lacks is
+/// not found or refused, never served.
+#[tokio::test]
+async fn an_expansion_off_a_project_is_refused_wherever_it_is_asked() {
+    let state = state();
+    let mode = Mode::Path("hel");
+    for uri in [
+        "/api/v1/spaces?$expand=endpoints",
+        "/api/v1/members?$expand=endpoints",
+        "/api/v1/organizationRoles?$expand=endpoints",
+        "/api/v1/projects('helsinki')/spaces?$expand=endpoints",
+        "/api/v1/projects('helsinki')/nothings",
+        "/api/v1/projects?$expand=nothings",
+        "/api/v1/nothings(project='helsinki',name='x')/JoinedContext.Portal.propose_update",
+        "/api/v1/projects('helsinki')/nothings('x')/JoinedContext.Portal.propose_update",
+    ] {
+        let answer = odata(&state, mode, "root", uri).await;
+        assert!(
+            answer.status.is_client_error(),
+            "{uri}: {} {}",
+            answer.status,
+            answer.text
+        );
+    }
 }

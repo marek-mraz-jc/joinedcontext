@@ -1001,8 +1001,7 @@ async fn propose_at(
         .get(project, "App", name)
         .ok_or_else(|| ApiError::NotFound(format!("app '{name}' not found")))?;
     manifest.strip_status();
-    let mut manifest = serde_json::to_value(manifest)
-        .map_err(|err| ApiError::Internal(format!("the App did not serialise: {err}")))?;
+    let mut manifest = serde_json::to_value(manifest).map_err(ApiError::internal)?;
     let Some(git_ref) = manifest.pointer_mut("/spec/source/git/ref") else {
         return Err(ApiError::Conflict(NOT_ON_FORGE.into()));
     };
@@ -1018,6 +1017,11 @@ async fn propose_at(
         manifest,
     )
     .await?;
+    change_of(outcome)
+}
+
+/// The Change a proposal opened; any other outcome is ours to report.
+fn change_of(outcome: ProposeOutcome) -> Result<Change, ApiError> {
     match outcome {
         ProposeOutcome::Change(change) => Ok(change),
         _ => Err(ApiError::Internal(
@@ -1128,7 +1132,7 @@ mod tests {
         let config = serde_json::json!({ "grid": { "source": "s", "type": "T",
             "columns": [{ "attr": "a", "width": 120 }] } });
         let found = check(&config, &before, &known);
-        assert!(!found.iter().any(|f| f.contains("width")), "{found:?}");
+        assert!(!found.join("\n").contains("width"), "{found:?}");
         let zero = serde_json::json!({ "grid": { "source": "s", "type": "T",
             "columns": [{ "attr": "a", "width": 0 }] } });
         let found = check(&zero, &before, &known);
@@ -1160,6 +1164,22 @@ mod tests {
         ] {
             assert!(readable_attributes(&state, &user, "helsinki", &app, "T").is_empty());
         }
+    }
+
+    /// T-7917: a proposal that commits to a plan's branch instead of opening a Change is reported
+    /// as ours, not handed back as a Change.
+    #[test]
+    fn an_outcome_that_is_no_change_is_an_internal_error() {
+        let bundled = ProposeOutcome::Bundled(crate::api::mutate::BundledCommit {
+            path: "projects/helsinki/apps/board.yaml".into(),
+            lane: crate::change::Lane::Green,
+            waits_on: Vec::new(),
+        });
+        let refused = change_of(bundled);
+        assert!(
+            matches!(&refused, Err(ApiError::Internal(why)) if why.contains("other than a Change")),
+            "{refused:?}"
+        );
     }
 
     /// Each malformed part of a dashboard file is refused at its own path, beside the cases the

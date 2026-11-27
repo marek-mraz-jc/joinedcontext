@@ -374,12 +374,21 @@ async fn mapping_steps(
         Ok(mapping) => mapping,
         Err(steps) => return steps,
     };
-    let endpoint = match crate::record_check::check_trace(state, project, &manifest, &trace.mapping)
-    {
+    let endpoint = endpoint_of(crate::record_check::check_trace(
+        state,
+        project,
+        &manifest,
+        &trace.mapping,
+    ));
+    vec![mapping, endpoint]
+}
+
+/// The endpoint step of a record check: what it found, or why it could not run.
+fn endpoint_of(checked: Result<crate::record_check::Checked, ApiError>) -> Step {
+    match checked {
         Ok(checked) => endpoint_step(&checked),
         Err(error) => Step::new("endpoint", Outcome::Unchecked, why(&error)),
-    };
-    vec![mapping, endpoint]
+    }
 }
 
 /// The mapping step of a run, or both steps when the run left no record to check: a failure
@@ -1112,5 +1121,105 @@ mod tests {
         );
         assert_eq!(partial.connected, None);
         assert!(!partial.refusals_read);
+    }
+
+    /// T-7917: a record check that could not run leaves the endpoint step `unchecked` with its
+    /// sentence.
+    #[test]
+    fn a_record_check_that_could_not_run_leaves_the_endpoint_unchecked() {
+        let step = endpoint_of(Err(ApiError::BadRequest(
+            "records: at most 1 at a time".into(),
+        )));
+        assert_eq!(step.step, "endpoint");
+        assert_eq!(step.outcome, Outcome::Unchecked);
+        assert!(step.reason.contains("at most 1"), "{}", step.reason);
+    }
+
+    fn reader(name: &str) -> Identity {
+        Identity {
+            client: None,
+            subject: format!("sub-{name}"),
+            username: name.into(),
+            email: Some(format!("{name}@hel.fi")),
+            name: None,
+            roles: Vec::new(),
+            groups: Vec::new(),
+            second_factor: false,
+        }
+    }
+
+    fn broker_world() -> AppState {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let org = crate::permissions::ORG_NAMESPACE;
+        let put = |kind: &str, name: &str, namespace: &str, spec: Value| {
+            state.mirror.upsert(ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.into(),
+                kind: kind.into(),
+                metadata: crate::resource::ObjectMeta::new(name, namespace),
+                spec,
+                status: None,
+            });
+        };
+        put("Project", "helsinki", org, serde_json::json!({}));
+        put(
+            "MqttBroker",
+            "cameras",
+            "helsinki",
+            serde_json::json!({ "roles": [
+                { "name": "camera", "serviceAccounts": ["cam-west"], "publish": ["cameras/${clientid}/#"] }
+            ]}),
+        );
+        put(
+            "Role",
+            "reader",
+            org,
+            serde_json::json!({ "rules": [{ "kinds": ["MqttBroker", "Project"], "verbs": ["read"] }] }),
+        );
+        put(
+            "RoleBinding",
+            "ana-reads",
+            org,
+            serde_json::json!({ "subjects": [{ "user": "ana@hel.fi" }], "role": "reader",
+                                "scope": { "project": "helsinki" } }),
+        );
+        state
+    }
+
+    /// T-7917: the watch of an instance that names no gateway and no brokers namespace answers
+    /// with both reasons and no connection count; an account the broker does not name is a 422;
+    /// a stranger finds no broker.
+    #[tokio::test]
+    async fn the_watch_of_an_instance_without_gateway_or_brokers_says_why() {
+        let state = broker_world();
+        let query = |account: Option<&str>| WatchQuery {
+            since: None,
+            account: account.map(str::to_owned),
+        };
+        let watched_all = watched(&state, &reader("ana"), "helsinki", "cameras", query(None))
+            .await
+            .expect("a watch");
+        assert!(!watched_all.refusals_read);
+        assert_eq!(watched_all.connected, None);
+        let reason = watched_all.reason.expect("a reason");
+        assert!(reason.contains("JC_PORTAL_GATEWAY_URL"), "{reason}");
+        assert!(reason.contains("JC_PORTAL_MQTT_NAMESPACE"), "{reason}");
+
+        let wrong = watched(
+            &state,
+            &reader("ana"),
+            "helsinki",
+            "cameras",
+            query(Some("nobody")),
+        )
+        .await;
+        assert!(
+            matches!(wrong, Err(ApiError::Unprocessable { .. })),
+            "{wrong:?}"
+        );
+        let stranger = watched(&state, &reader("eve"), "helsinki", "cameras", query(None)).await;
+        assert!(
+            matches!(stranger, Err(ApiError::NotFound(_))),
+            "{stranger:?}"
+        );
     }
 }

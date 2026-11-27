@@ -3804,7 +3804,12 @@ mod tests {
     fn hel_state() -> AppState {
         let state = AppState::new(crate::config::Config::for_tests(), None);
         for (kind, name, namespace, spec) in [
-            ("Organization", "hel", ORG_NAMESPACE, json!({ "installation": true })),
+            (
+                "Organization",
+                "hel",
+                ORG_NAMESPACE,
+                json!({ "installation": true }),
+            ),
             ("ContextSpace", "air", "helsinki", json!({})),
         ] {
             state
@@ -3841,8 +3846,14 @@ mod tests {
     async fn a_model_that_does_not_write_is_an_error_and_a_schemaless_document_is_left_alone() {
         let mut broken = (*ORG.public).clone();
         broken.schemas[0].namespace = "not a namespace!".into();
-        assert!(metadata_xml(&broken).is_err(), "an invalid namespace is not written");
-        assert!(metadata_json(&broken).is_err(), "an invalid namespace is not written");
+        assert!(
+            metadata_xml(&broken).is_err(),
+            "an invalid namespace is not written"
+        );
+        assert!(
+            metadata_json(&broken).is_err(),
+            "an invalid namespace is not written"
+        );
         let other = Model {
             version: odata_csdl::CsdlVersion::V4_01,
             references: Vec::new(),
@@ -3850,7 +3861,10 @@ mod tests {
         };
         let json = metadata_json(&other).expect("written");
         assert!(!json.contains(NAMESPACE), "{json}");
-        assert!(!json.contains("Person"), "no singletons without the service: {json}");
+        assert!(
+            !json.contains("Person"),
+            "no singletons without the service: {json}"
+        );
         let none: Offered<'_> = (&[], &[]);
         assert_eq!(
             json_for("{}", &Rights::default(), &BTreeSet::new(), none),
@@ -3860,8 +3874,14 @@ mod tests {
         let answer = unwritten("secret cause");
         assert_eq!(answer.status(), StatusCode::INTERNAL_SERVER_ERROR);
         let text = text_of(answer).await;
-        assert!(text.contains("the service model could not be written"), "{text}");
-        assert!(!text.contains("secret cause"), "the cause stays in the log: {text}");
+        assert!(
+            text.contains("the service model could not be written"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("secret cause"),
+            "the cause stays in the log: {text}"
+        );
     }
 
     /// T-7918: a read refuses a set the model lacks (404); a project the caller may not list a
@@ -3924,8 +3944,16 @@ mod tests {
         );
         read.fill("spaces", &mut manifests).await.expect("filled");
         assert_eq!(manifests.rows[0], json!(1), "a row that is no object stays");
-        assert_eq!(manifests.rows[1]["spec"], json!({}), "the mirror's manifest");
-        assert_eq!(manifests.rows[2]["spec"], Value::Null, "no manifest, no spec");
+        assert_eq!(
+            manifests.rows[1]["spec"],
+            json!({}),
+            "the mirror's manifest"
+        );
+        assert_eq!(
+            manifests.rows[2]["spec"],
+            Value::Null,
+            "no manifest, no spec"
+        );
 
         let mut change = asking(&["files"], &["helsinki/c-1"], vec![json!({})]);
         let refused = read
@@ -3951,7 +3979,9 @@ mod tests {
         assert!(text.contains("holds at most 50 Workspaces"), "{text}");
 
         let mut scope = asking(&["scope"], &["helsinki/w"], vec![json!({})]);
-        read.fill("workspaces", &mut scope).await.expect("scope reads no Workspace");
+        read.fill("workspaces", &mut scope)
+            .await
+            .expect("scope reads no Workspace");
         assert_eq!(scope.rows, vec![json!({})]);
 
         let mut skipped = asking(
@@ -3959,7 +3989,9 @@ mod tests {
             &["helsinki/w", "no-project-in-the-key"],
             vec![json!(1), json!({})],
         );
-        read.fill("workspaces", &mut skipped).await.expect("skipped");
+        read.fill("workspaces", &mut skipped)
+            .await
+            .expect("skipped");
         assert_eq!(skipped.rows, vec![json!(1), json!({})]);
 
         let mut unread = asking(&["changes"], &["helsinki/w"], vec![json!({})]);
@@ -3979,25 +4011,66 @@ mod tests {
         let state = hel_state();
         let admin = user_of(&["portal-approver"]);
         let read = read_by(&state, &admin);
-        let rows = |set: &str| vec![json!({ ROW_KEY: "helsinki/a", PROJECT: "helsinki", "name": "a", "set": set })];
+        let rows = |set: &str| {
+            vec![json!({ ROW_KEY: "helsinki/a", PROJECT: "helsinki", "name": "a", "set": set })]
+        };
         let plain = QueryOptions::default();
         let status = |response: &Response| response.status();
 
-        let unknown = by_key(&read, "nothings", rows("x"), json!("helsinki/a"), &plain, "nothings", "x").await;
+        let unknown = by_key(
+            &read,
+            "nothings",
+            rows("x"),
+            json!("helsinki/a"),
+            &plain,
+            "nothings",
+            "x",
+        )
+        .await;
         assert_eq!(status(&unknown), StatusCode::NOT_FOUND);
-        let not_a_key = by_key(&read, "spaces", rows("x"), json!(true), &plain, "spaces", "space").await;
+        let not_a_key = by_key(
+            &read,
+            "spaces",
+            rows("x"),
+            json!(true),
+            &plain,
+            "spaces",
+            "space",
+        )
+        .await;
         assert_eq!(status(&not_a_key), StatusCode::BAD_REQUEST);
         let nested = QueryOptions {
-            select: Some(vec![odata_url::SelectItem::Path(vec!["spec".into(), "title".into()])]),
+            select: Some(vec![odata_url::SelectItem::Path(vec![
+                "spec".into(),
+                "title".into(),
+            ])]),
             ..QueryOptions::default()
         };
-        let refused = by_key(&read, "spaces", rows("x"), json!("helsinki/a"), &nested, "spaces", "space").await;
+        let refused = by_key(
+            &read,
+            "spaces",
+            rows("x"),
+            json!("helsinki/a"),
+            &nested,
+            "spaces",
+            "space",
+        )
+        .await;
         assert_eq!(status(&refused), StatusCode::NOT_IMPLEMENTED);
         let detail = QueryOptions {
             select: Some(vec![odata_url::SelectItem::Path(vec!["changes".into()])]),
             ..QueryOptions::default()
         };
-        let unfilled = by_key(&read, "workspaces", rows("x"), json!("helsinki/a"), &detail, "workspaces", "Workspace").await;
+        let unfilled = by_key(
+            &read,
+            "workspaces",
+            rows("x"),
+            json!("helsinki/a"),
+            &detail,
+            "workspaces",
+            "Workspace",
+        )
+        .await;
         assert!(!status(&unfilled).is_success(), "{}", status(&unfilled));
     }
 
@@ -4051,7 +4124,11 @@ mod tests {
             "jc_project_create",
         )
         .await;
-        assert!(!bare.status().is_success(), "a creation with no name: {}", bare.status());
+        assert!(
+            !bare.status().is_success(),
+            "a creation with no name: {}",
+            bare.status()
+        );
         let list = operation_action(
             call_of(&state, Front::Portal, &headers, b"[1]"),
             "projects('helsinki')",
@@ -4060,7 +4137,10 @@ mod tests {
         .await;
         assert_eq!(list.status(), StatusCode::BAD_REQUEST);
         let text = text_of(list).await;
-        assert!(text.contains("an action's parameters are a JSON object"), "{text}");
+        assert!(
+            text.contains("an action's parameters are a JSON object"),
+            "{text}"
+        );
     }
 
     /// T-7918: a Portal door answers a person's session only; one the service does not have is a
@@ -4099,10 +4179,16 @@ mod tests {
         let function = portal_door(person(b""), ORGANIZATION, "portal_nope()", "", true).await;
         assert_eq!(function.status(), StatusCode::NOT_FOUND);
         let text = text_of(function).await;
-        assert!(text.contains("the service has no function portal_nope"), "{text}");
+        assert!(
+            text.contains("the service has no function portal_nope"),
+            "{text}"
+        );
         let action = portal_door(person(b""), ORGANIZATION, "portal_nope", "", false).await;
         let text = text_of(action).await;
-        assert!(text.contains("the service has no action portal_nope"), "{text}");
+        assert!(
+            text.contains("the service has no action portal_nope"),
+            "{text}"
+        );
         let wrong_form = portal_door(
             person(b""),
             ORGANIZATION,
@@ -4111,7 +4197,11 @@ mod tests {
             true,
         )
         .await;
-        assert_eq!(wrong_form.status(), StatusCode::NOT_FOUND, "an action is no function");
+        assert_eq!(
+            wrong_form.status(),
+            StatusCode::NOT_FOUND,
+            "an action is no function"
+        );
 
         let unknown_parameter = portal_door(
             person(br#"{"bogus":1}"#),
@@ -4125,7 +4215,8 @@ mod tests {
         let text = text_of(unknown_parameter).await;
         assert!(text.contains("has no parameter bogus"), "{text}");
 
-        let misbound = portal_door(person(b"{}"), ORGANIZATION, "portal_secret_set", "", false).await;
+        let misbound =
+            portal_door(person(b"{}"), ORGANIZATION, "portal_secret_set", "", false).await;
         assert_eq!(misbound.status(), StatusCode::NOT_FOUND);
         let text = text_of(misbound).await;
         assert!(text.contains("is bound to a project"), "{text}");
@@ -4159,7 +4250,10 @@ mod tests {
             .expect("12000 rows are more than a read covers");
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
-        assert!(text.contains("narrow it with $filter on a project"), "{text}");
+        assert!(
+            text.contains("narrow it with $filter on a project"),
+            "{text}"
+        );
 
         let mut rows = vec![json!({}), json!({})];
         let names = [json!({ "name": "helsinki" }), json!({ "name": "tampere" })];
@@ -4184,7 +4278,9 @@ mod tests {
         let text = text_of(*refused).await;
         assert!(text.contains(ORG_ROLES), "{text}");
 
-        let subjects: Vec<Value> = (0..=MAX_ROWS).map(|i| json!({ "user": format!("u{i}") })).collect();
+        let subjects: Vec<Value> = (0..=MAX_ROWS)
+            .map(|i| json!({ "user": format!("u{i}") }))
+            .collect();
         m.upsert(crate::ops::testkit::envelope(
             "RoleBinding",
             "everyone",
@@ -4198,5 +4294,40 @@ mod tests {
         assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
         let text = text_of(*refused).await;
         assert!(text.contains(MEMBERS), "{text}");
+    }
+
+    /// T-7918: an Organization set the model lacks is a 404; rows that fit no table are refused
+    /// by the read; an expansion skips a project row whose name is missing and leaves a row that
+    /// is no object as it was; an operation the registry lacks is not found.
+    #[tokio::test]
+    async fn a_read_refuses_an_unknown_set_and_rows_that_fit_no_table() {
+        let state = hel_state();
+        let admin = user_of(&["portal-approver"]);
+        let read = read_by(&state, &admin);
+        let refused = org_rows(&read, "nothings").err().expect("no such set");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        let refused = read
+            .table("spaces", vec![json!(1)], &QueryOptions::default())
+            .err()
+            .expect("a row that is no object");
+        assert!(!refused.status().is_success());
+
+        let spaces = kind("spaces").expect("spaces");
+        let mut rows = vec![json!({}), json!(1)];
+        let names = [json!({}), json!({ "name": "helsinki" })];
+        expand(&read, &mut rows, &names, &[spaces])
+            .await
+            .expect("expanded");
+        assert_eq!(rows[0], json!({}), "a row with no name is skipped");
+        assert_eq!(rows[1], json!(1), "a row that is no object stays");
+
+        let headers = HeaderMap::new();
+        let unknown = operation_action(
+            call_of(&state, Front::Portal, &headers, b"{}"),
+            "projects('helsinki')",
+            "jc_not_registered",
+        )
+        .await;
+        assert!(unknown.status().is_client_error(), "{}", unknown.status());
     }
 }

@@ -2979,7 +2979,15 @@ mod upload_gate_tests {
             conflict_policy: policy,
             ..Default::default()
         };
-        plan_import(&items, state, &caller(), project, project, "bb.sk", &options)
+        plan_import(
+            &items,
+            state,
+            &caller(),
+            project,
+            project,
+            "bb.sk",
+            &options,
+        )
     }
 
     /// A zip whose entries are stored, so a byte of the body can be flipped in place.
@@ -3047,7 +3055,10 @@ mod upload_gate_tests {
         let incoming = parse_archive(&bytes).expect("the readable manifest parses");
         assert_eq!(incoming.len(), 1, "only b.yaml is a file of the project");
         assert_eq!(
-            incoming[0].envelope.as_ref().map(|e| e.metadata.name.as_str()),
+            incoming[0]
+                .envelope
+                .as_ref()
+                .map(|e| e.metadata.name.as_str()),
             Some("ovzdusie")
         );
     }
@@ -3147,13 +3158,32 @@ mod upload_gate_tests {
         assert_eq!(bare.spec, json!({ "note": "x" }));
     }
 
+    /// T-7918: a typed reference to a project-scoped kind in a namespace that is neither the
+    /// bundle's source nor the organization's keeps the namespace it names.
+    #[test]
+    fn a_typed_reference_naming_a_third_namespace_keeps_it() {
+        let mut reference = envelope(
+            "SharedSpaceReference",
+            "ref",
+            Some("helsinki"),
+            json!({ "endpointRef": { "kind": "Endpoint", "name": "e", "namespace": "doprava" } }),
+        );
+        remap(&mut reference, "helsinki", "bb", "bb.sk", &BTreeSet::new());
+        assert_eq!(reference.spec["endpointRef"]["namespace"], "doprava");
+    }
+
     /// T-7917, CC-82, R6: a Policy with no assigner is left as it is, one whose assigner is
     /// already this organization's is not reported, and a structured assigner is carried as its
     /// JSON text into the report.
     #[test]
     fn a_policys_assigner_is_rewritten_only_where_it_is_another_organizations() {
         let mut policies = vec![
-            envelope("Policy", "bare", Some("helsinki"), json!({ "operations": [] })),
+            envelope(
+                "Policy",
+                "bare",
+                Some("helsinki"),
+                json!({ "operations": [] }),
+            ),
             envelope(
                 "Policy",
                 "mine",
@@ -3237,7 +3267,12 @@ mod upload_gate_tests {
     fn a_rename_whose_name_is_taken_is_numbered_until_one_is_free() {
         let state = state_holding(vec![
             envelope("ContextSpace", "ovzdusie", Some("banska"), json!({})),
-            envelope("ContextSpace", "ovzdusie-helsinki", Some("banska"), json!({})),
+            envelope(
+                "ContextSpace",
+                "ovzdusie-helsinki",
+                Some("banska"),
+                json!({}),
+            ),
         ]);
         let items = vec![incoming(envelope(
             "ContextSpace",
@@ -3309,8 +3344,8 @@ mod upload_gate_tests {
             Some("org"),
             json!({ "members": [{ "role": "steward" }, { "user": "ada" }] }),
         ))];
-        let (report, files) = plan(&state, "helsinki", items, ConflictPolicy::Fail)
-            .expect("the group plans");
+        let (report, files) =
+            plan(&state, "helsinki", items, ConflictPolicy::Fail).expect("the group plans");
         assert_eq!(report.created, ["stewards"]);
         assert_eq!(files.len(), 1);
         assert_eq!(report.needs.len(), 1, "{:?}", report.needs);
@@ -3395,9 +3430,21 @@ mod upload_gate_tests {
     fn a_native_file_belongs_only_to_the_manifest_of_its_directory() {
         let manifest = "projects/p/pipelines/aq/pipeline.yaml";
         assert!(!owns_native("bento.yaml", manifest, "aq"));
-        assert!(!owns_native("projects/p/pipelines/aq/bento.yaml", "pipeline.yaml", "aq"));
-        assert!(owns_native("projects/p/pipelines/aq/bento.yaml", manifest, "aq"));
-        assert!(!owns_native("projects/p/pipelines/other/bento.yaml", manifest, "aq"));
+        assert!(!owns_native(
+            "projects/p/pipelines/aq/bento.yaml",
+            "pipeline.yaml",
+            "aq"
+        ));
+        assert!(owns_native(
+            "projects/p/pipelines/aq/bento.yaml",
+            manifest,
+            "aq"
+        ));
+        assert!(!owns_native(
+            "projects/p/pipelines/other/bento.yaml",
+            manifest,
+            "aq"
+        ));
     }
 
     /// T-7917, MF-22: a path with no `projects/` root lands under the project, and one from
@@ -3436,7 +3483,10 @@ mod upload_gate_tests {
             &caller(),
             "helsinki",
             report,
-            vec![("projects/helsinki/pipelines/aq/bento.yaml".into(), "x".into())],
+            vec![(
+                "projects/helsinki/pipelines/aq/bento.yaml".into(),
+                "x".into(),
+            )],
             None,
         )
         .await

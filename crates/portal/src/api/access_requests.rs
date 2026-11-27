@@ -432,9 +432,9 @@ pub(crate) async fn file_request(
 /// whether a typed name exists (T-4946).
 fn outgoing(request: &AccessRequest, at: OffsetDateTime) -> Value {
     let mut view = request.view(at);
-    if let Some(fields) = view.as_object_mut() {
-        fields.remove("space");
-    }
+    let _space = view
+        .as_object_mut()
+        .and_then(|fields| fields.remove("space"));
     view
 }
 
@@ -1227,7 +1227,7 @@ mod tests {
             "Endpoint",
             "air-write",
             "helsinki",
-            json!({ "contextSpaceRef": "air", "slug": "airslug", "audience": "project" }),
+            json!({ "contextSpaceRef": "air", "slug": "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm", "audience": "project" }),
         );
         put(
             mirror,
@@ -1352,7 +1352,10 @@ mod tests {
         .await;
         assert!(not_a_store_fault(&answer), "{answer:?}");
         let claimed = stored(&state, &second).await;
-        assert_eq!(claimed.state, "approved", "the reopening failed, the claim stays");
+        assert_eq!(
+            claimed.state, "approved",
+            "the reopening failed, the claim stays"
+        );
         assert_eq!(claimed.decided_by.as_deref(), Some("olli"));
         scratch.remove().await;
     }
@@ -1412,7 +1415,10 @@ mod tests {
         .await;
         assert!(not_a_store_fault(&answer), "{answer:?}");
         let stuck = stored(&state, &second).await;
-        assert_eq!(stuck.state, "revoked", "taking it back failed, the claim stays");
+        assert_eq!(
+            stuck.state, "revoked",
+            "taking it back failed, the claim stays"
+        );
         scratch.remove().await;
     }
 
@@ -1424,7 +1430,13 @@ mod tests {
             .with_mirror(crate::test_db::placed_mirror("helsinki"))
             .with_db(crate::test_db::dead_pool());
         let mut live = state.activity_events.subscribe("helsinki").await;
-        record(&state, &user("olli"), &request_of("stations"), "approved access").await;
+        record(
+            &state,
+            &user("olli"),
+            &request_of("stations"),
+            "approved access",
+        )
+        .await;
         assert!(matches!(
             live.try_recv(),
             Err(tokio::sync::broadcast::error::TryRecvError::Empty)
@@ -1466,7 +1478,7 @@ mod tests {
             "Endpoint",
             "air-write",
             "helsinki",
-            json!({ "contextSpaceRef": "air", "slug": "airslug", "audience": "organization" }),
+            json!({ "contextSpaceRef": "air", "slug": "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm", "audience": "organization" }),
         );
         let ask = || NewRequest {
             endpoint: EndpointName {
@@ -1529,7 +1541,13 @@ mod tests {
 
         let state = AppState::new(crate::config::Config::for_tests(), None);
         let org = crate::permissions::ORG_NAMESPACE;
-        put(&state.mirror, "Organization", "hel", org, json!({ "domain": "hel.fi" }));
+        put(
+            &state.mirror,
+            "Organization",
+            "hel",
+            org,
+            json!({ "domain": "hel.fi" }),
+        );
         put(
             &state.mirror,
             "Project",
@@ -1556,5 +1574,173 @@ mod tests {
             served(&state, json!({ "spec": { "policyRefs": [other.clone()] } })),
             [other, grant]
         );
+    }
+
+    /// A forge that takes every write of a proposal, as the integration suite's does.
+    async fn forge() -> wiremock::MockServer {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        const REPO: &str = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+        let server = MockServer::start().await;
+        let ok = |status: u16, body: Value| ResponseTemplate::new(status).set_body_json(body);
+        for (verb, route, answer, priority) in [
+            (
+                "GET",
+                REPO.to_owned(),
+                ok(200, json!({ "DefaultBranch": "main" })),
+                5,
+            ),
+            (
+                "GET",
+                "/odata/Me()".to_owned(),
+                ok(200, json!({ "Login": "jc-portal" })),
+                5,
+            ),
+            (
+                "POST",
+                format!("{REPO}/Shako.CreateBranch"),
+                ok(201, json!({})),
+                5,
+            ),
+            (
+                "POST",
+                format!("{REPO}/Shako.CommitFiles"),
+                ok(201, json!({ "Sha": "commit-1" })),
+                5,
+            ),
+            (
+                "POST",
+                format!("{REPO}/Shako.OpenPullRequest"),
+                ok(
+                    201,
+                    json!({ "Number": 9, "HtmlUrl": "https://shako.example/pulls/9",
+                            "State": "open", "Mergeable": true, "Merged": false }),
+                ),
+                5,
+            ),
+            (
+                "GET",
+                format!("{REPO}/Shako.File(Path=@p,Ref=@r)"),
+                ok(404, json!({ "message": "no" })),
+                9,
+            ),
+            (
+                "GET",
+                format!("{REPO}/PullRequests"),
+                ok(200, json!({ "value": [] })),
+                9,
+            ),
+            (
+                "GET",
+                format!("{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"),
+                ok(200, json!({ "Tree": [], "Truncated": false })),
+                9,
+            ),
+        ] {
+            Mock::given(method(verb))
+                .and(path(route))
+                .respond_with(answer)
+                .with_priority(priority)
+                .mount(&server)
+                .await;
+        }
+        server
+    }
+
+    /// Helsinki's world on a scratch database and a forge, `olli` owning the air space and
+    /// allowed to propose and approve its Policies.
+    async fn on_forge() -> (wiremock::MockServer, crate::test_db::Scratch, AppState) {
+        let server = forge().await;
+        let scratch = crate::test_db::scratch().await;
+        let mirror = scratch.placed("helsinki").await;
+        crate::project_ids::key(&scratch.pool, "somewhere", "helsinki")
+            .await
+            .expect("key")
+            .expect("a keyed project");
+        owner_of_air(&mirror);
+        let org = crate::permissions::ORG_NAMESPACE;
+        put(
+            &mirror,
+            "Role",
+            "air-owner",
+            org,
+            json!({ "rules": [{ "kinds": ["ContextSpace", "Endpoint", "Policy", "Group"],
+                                "verbs": ["read", "propose", "approve"] }] }),
+        );
+        put(
+            &mirror,
+            "RoleBinding",
+            "olli-air-owner",
+            org,
+            json!({ "subjects": [{ "user": "olli@hel.fi" }], "role": "air-owner",
+                    "scope": { "project": "helsinki" } }),
+        );
+        let client = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("mock url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("client");
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_identity = true;
+        let state = AppState::new(config, None)
+            .with_mirror(mirror)
+            .with_db(scratch.pool.clone())
+            .with_shako(std::sync::Arc::new(client));
+        (server, scratch, state)
+    }
+
+    /// T-7917: an approval whose proposal the forge takes answers 202 with the Change and keeps
+    /// the Change's name on the request; a revoke does the same and ends the request.
+    #[tokio::test]
+    async fn an_approval_and_a_revoke_the_forge_takes_keep_their_change() {
+        let (_server, scratch, state) = on_forge().await;
+        let approving = pending(&state, "stations").await;
+        let answer = approve_request(
+            user("olli"),
+            State(state.clone()),
+            Path(("helsinki".into(), approving.id.clone())),
+        )
+        .await
+        .expect("an approval");
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        let kept = stored(&state, &approving).await;
+        assert_eq!(kept.state, "approved");
+        assert!(kept.change.is_some(), "the Change's name is kept: {kept:?}");
+
+        let ending = pending(&state, "sensors").await;
+        assert!(requests::decide(
+            pool(&state).expect("a pool"),
+            &ending,
+            ("pending", "approved"),
+            "ana",
+            None,
+            None
+        )
+        .await
+        .expect("approved earlier"));
+        put(
+            &state.mirror,
+            "Policy",
+            &ending.policy_name(),
+            "helsinki",
+            json!({ "contextSpaceRef": "air", "assigner": "did:web:hel.fi",
+                    "assignee": { "kind": "serviceAccount", "id": ending.account() },
+                    "operations": ["retrieveOps"] }),
+        );
+        let answer = revoke_request(
+            user("olli"),
+            State(state.clone()),
+            Path(("helsinki".into(), ending.id.clone())),
+            Ok(Json(Decision {
+                reason: "the project ended".into(),
+            })),
+        )
+        .await
+        .expect("a revoke");
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+        assert_eq!(stored(&state, &ending).await.state, "revoked");
+        scratch.remove().await;
     }
 }

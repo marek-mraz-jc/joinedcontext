@@ -452,7 +452,9 @@ mod tests {
     #[tokio::test]
     async fn a_stranger_is_denied_with_the_administrators_hint() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
-        state.mirror.upsert(organization_manifest(serde_json::json!({})));
+        state
+            .mirror
+            .upsert(organization_manifest(serde_json::json!({})));
         let mut user = administrator();
         user.0.identity.groups.clear();
         let error = organization(&state, &user).expect_err("denied");
@@ -467,11 +469,12 @@ mod tests {
     #[tokio::test]
     async fn a_manifest_without_a_spec_is_not_proposed() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
-        let manifest: crate::resource::ResourceEnvelope = serde_json::from_value(serde_json::json!({
-            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Organization",
-            "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE },
-        }))
-        .expect("a manifest without spec");
+        let manifest: crate::resource::ResourceEnvelope =
+            serde_json::from_value(serde_json::json!({
+                "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Organization",
+                "metadata": { "name": "bbsk", "namespace": ORG_NAMESPACE },
+            }))
+            .expect("a manifest without spec");
         let user = administrator();
         let error = propose(&state, &user, "bbsk", manifest, Vec::new())
             .await
@@ -498,7 +501,10 @@ mod tests {
         assert_eq!(listed.organization, "bbsk");
         assert_eq!(listed.languages, vec!["de".to_owned(), "en".to_owned()]);
         assert_eq!(listed.pages.len(), PAGES.len() * 2);
-        assert!(listed.pages.iter().all(|p| !p.title.is_empty()), "{listed:?}");
+        assert!(
+            listed.pages.iter().all(|p| !p.title.is_empty()),
+            "{listed:?}"
+        );
         let terms = listed
             .pages
             .iter()

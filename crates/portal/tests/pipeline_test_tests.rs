@@ -1897,16 +1897,12 @@ async fn a_delete_the_runner_never_answers_is_said_as_a_runner_error() {
     let state = AppState::new(config(Some(&runner)), None).with_mirror(mirror(project));
     let (status, body) = post(&state, "dev@hel.fi", project, &request("root = this")).await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    let said = body["errors"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .any(|e| {
-            e["stage"] == "runner"
-                && e["message"]
-                    .as_str()
-                    .is_some_and(|m| m.contains("could not be deleted"))
-        });
+    let said = body["errors"].as_array().into_iter().flatten().any(|e| {
+        e["stage"] == "runner"
+            && e["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("could not be deleted"))
+    });
     assert!(said, "{body}");
 }
 

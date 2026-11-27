@@ -51,19 +51,21 @@ async fn world_with(dashboard: Option<Value>) -> (MockServer, AppState) {
     let server = forge().await;
     mount_repository(&server, PROJECT).await;
     mount_repository(&server, APP_REPO).await;
-    let text = serde_json::to_string_pretty(&dashboard.clone().unwrap_or(Value::Null)).expect("json") + "\n";
+    let text = serde_json::to_string_pretty(&dashboard.clone().unwrap_or(Value::Null))
+        .expect("json")
+        + "\n";
     if dashboard.is_some() {
-    Mock::given(method("GET"))
-        .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
-        .and(query_param("@p", "'src/dashboard.json'"))
-        .and(query_param("@r", "'main'"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "Sha": "d1",
-            "Content": STANDARD.encode(text)
-        })))
-        .with_priority(1)
-        .mount(&server)
-        .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{APP_REPO}/Shako.File(Path=@p,Ref=@r)")))
+            .and(query_param("@p", "'src/dashboard.json'"))
+            .and(query_param("@r", "'main'"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "d1",
+                "Content": STANDARD.encode(text)
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
     }
 
     let state = state_on(&server);
@@ -664,7 +666,12 @@ async fn a_forge_that_does_not_name_the_default_branch_is_a_503() {
     let (server, state) = world().await;
     refuse(&server, "GET", APP_REPO.to_owned()).await;
     let read = send(&state, person("ema"), "GET", ROUTE, None).await;
-    assert_eq!(read.status, StatusCode::SERVICE_UNAVAILABLE, "{}", read.text);
+    assert_eq!(
+        read.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        read.text
+    );
     let edit = send(
         &state,
         person("ema"),
@@ -673,7 +680,12 @@ async fn a_forge_that_does_not_name_the_default_branch_is_a_503() {
         Some(json!({ "config": edited() })),
     )
     .await;
-    assert_eq!(edit.status, StatusCode::SERVICE_UNAVAILABLE, "{}", edit.text);
+    assert_eq!(
+        edit.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        edit.text
+    );
 }
 
 /// T-7917: a forge that refuses the branch, or the commit, is a 503 naming the App, and no
@@ -691,7 +703,12 @@ async fn a_forge_that_refuses_the_branch_or_the_commit_is_a_503_and_proposes_not
             Some(json!({ "config": edited() })),
         )
         .await;
-        assert_eq!(edit.status, StatusCode::SERVICE_UNAVAILABLE, "{route}: {}", edit.text);
+        assert_eq!(
+            edit.status,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "{route}: {}",
+            edit.text
+        );
         assert!(edit.text.contains("board"), "{route}: {}", edit.text);
         let project_writes = writes(&server)
             .await
@@ -716,7 +733,12 @@ async fn a_config_over_the_file_cap_is_a_422() {
         Some(json!({ "config": config })),
     )
     .await;
-    assert_eq!(answer.status, StatusCode::UNPROCESSABLE_ENTITY, "{}", answer.text);
+    assert_eq!(
+        answer.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        answer.text
+    );
     assert!(answer.text.contains("holds at most"), "{}", answer.text);
     assert_eq!(writes(&server).await, Vec::<String>::new());
 }
@@ -725,7 +747,10 @@ async fn a_config_over_the_file_cap_is_a_422() {
 #[tokio::test]
 async fn an_app_that_names_no_git_ref_cannot_be_proposed_at_a_commit() {
     let (_server, state) = world().await;
-    let mut app = state.mirror.get("sharing", "App", "board").expect("the App");
+    let mut app = state
+        .mirror
+        .get("sharing", "App", "board")
+        .expect("the App");
     app.spec["source"]["git"]
         .as_object_mut()
         .expect("git source")
@@ -757,7 +782,10 @@ async fn a_type_the_space_holds_no_model_for_reads_no_attributes() {
 #[tokio::test]
 async fn an_approved_edit_is_left_alone_when_the_forge_cannot_list_or_merge() {
     let (server, state) = world().await;
-    let mut approved = state.mirror.get("sharing", "App", "board").expect("the App");
+    let mut approved = state
+        .mirror
+        .get("sharing", "App", "board")
+        .expect("the App");
     approved.spec["source"]["git"]["ref"] = json!("bbb");
 
     // No forge at all.
@@ -792,7 +820,12 @@ async fn an_approved_edit_is_left_alone_when_the_forge_cannot_list_or_merge() {
         .with_priority(1)
         .mount(&server)
         .await;
-    refuse(&server, "POST", format!("{APP_REPO}/PullRequests(6)/Shako.Merge")).await;
+    refuse(
+        &server,
+        "POST",
+        format!("{APP_REPO}/PullRequests(6)/Shako.Merge"),
+    )
+    .await;
     joinedcontext_portal::api::app_dashboard::merge_approved_edit(
         &state,
         "sharing",

@@ -340,6 +340,24 @@ pub async fn delete_resource(
     }
 }
 
+/// The entities a space holds at its broker, its tenant named under `names`: the reason when the
+/// space has no tenant yet or the broker cannot count.
+async fn space_entities(
+    state: &AppState,
+    project: &str,
+    name: &str,
+    names: context_gateway::store::TenantNames,
+) -> Result<crate::space_usage::SpaceUsage, String> {
+    let tenant = crate::spaces::tenant_as(&state.mirror, project, name, names)?;
+    state
+        .space_usage
+        .usage(
+            &crate::spaces::broker(&state.mirror, project, name),
+            &tenant,
+        )
+        .await
+}
+
 /// What leaves with `kind`/`name` once its removal is approved (T-3247): read for the dry run
 /// only, so the person sees it before they type the name. A count the store cannot give is left
 /// out rather than guessed; nothing here is a reason to refuse.
@@ -358,18 +376,14 @@ async fn goes_with(
     };
     let mut found = Vec::new();
     match kind {
-        "ContextSpace" => match match crate::spaces::tenant(&state.mirror, project, name) {
-            Ok(tenant) => {
-                state
-                    .space_usage
-                    .usage(
-                        &crate::spaces::broker(&state.mirror, project, name),
-                        &tenant,
-                    )
-                    .await
-            }
-            Err(reason) => Err(reason),
-        } {
+        "ContextSpace" => match space_entities(
+            state,
+            project,
+            name,
+            context_gateway::store::TenantNames::from_env(),
+        )
+        .await
+        {
             Ok(usage) if usage.entities > 0 => {
                 found.push(consequence("entities", usage.entities, Vec::new()));
             }
@@ -1470,5 +1484,23 @@ mod tests {
         )
         .await;
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    /// T-7918: a space with no tenant name yet (the project has no id in the registry under
+    /// `project-key` naming) is counted as nothing and the dry run still answers: the reason is
+    /// the broker-side warning, never a refusal.
+    #[tokio::test]
+    async fn a_space_without_a_tenant_name_goes_with_nothing_named() {
+        let state = AppState::new(Config::for_tests(), None);
+        let reason = space_entities(
+            &state,
+            "no-such-project-7918",
+            "air",
+            context_gateway::store::TenantNames::ProjectKey,
+        )
+        .await
+        .expect_err("no id in the registry");
+        assert!(reason.contains("no-such-project-7918"), "{reason}");
+        assert!(reason.contains("has no broker tenant yet"), "{reason}");
     }
 }

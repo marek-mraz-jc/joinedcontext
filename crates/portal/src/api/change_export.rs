@@ -200,9 +200,18 @@ mod tests {
         ]);
         let lines: Vec<&str> = rows.lines().collect();
         assert_eq!(lines.len(), 4, "{rows}");
-        assert!(lines[1].starts_with("2026-10-01T09:00:00Z,chg-00000001,Merged,"), "{rows}");
-        assert!(lines[2].starts_with("2026-10-01T09:00:00Z,chg-00000002,Merged,"), "{rows}");
-        assert!(lines[3].starts_with("2026-10-02T10:00:00Z,chg-00000003,Merged,"), "{rows}");
+        assert!(
+            lines[1].starts_with("2026-10-01T09:00:00Z,chg-00000001,Merged,"),
+            "{rows}"
+        );
+        assert!(
+            lines[2].starts_with("2026-10-01T09:00:00Z,chg-00000002,Merged,"),
+            "{rows}"
+        );
+        assert!(
+            lines[3].starts_with("2026-10-02T10:00:00Z,chg-00000003,Merged,"),
+            "{rows}"
+        );
         assert!(!rows.contains("jana@hel.fi"), "{rows}");
     }
 

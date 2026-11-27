@@ -1038,9 +1038,9 @@ mod tests {
     fn runner_headers(state: &mut AppState) -> HeaderMap {
         let (verifier, sign) = crate::auth::bearer::test_verifier(ISSUER, "portal-api", "k1");
         state.bearer = Some(Arc::new(verifier));
-        let client =
-            crate::auth::internal::pipeline_clients(&state.mirror, "ovzdusie", "stations")[0]
-                .clone();
+        let client = crate::auth::internal::pipeline_clients(&state.mirror, "ovzdusie", "stations")
+            [0]
+        .clone();
         let now = crate::auth::session::now_unix();
         let token = sign(&json!({
             "iss": ISSUER, "typ": "Bearer", "aud": "portal-internal", "sub": "svc",

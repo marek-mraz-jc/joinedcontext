@@ -811,7 +811,8 @@ mod tests {
             header::AUTHORIZATION,
             header::HeaderValue::from_static("Bearer x"),
         );
-        let batch = json!({ "resourceLogs": [{ "scopeLogs": [{ "logRecords": [record(vec![])] }] }] });
+        let batch =
+            json!({ "resourceLogs": [{ "scopeLogs": [{ "logRecords": [record(vec![])] }] }] });
         let kept = ingest_activity(
             pia(),
             Some(axum::Extension(TokenClient(COLLECTOR_CLIENT.into()))),

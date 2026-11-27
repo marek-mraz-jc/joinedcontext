@@ -581,6 +581,33 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .expect("a runtime");
+        // Every write of the store fails the same way, whatever the caller asked.
+        let spec: PortalSpec = serde_json::from_value(
+            serde_json::json!({ "organizationRef": "bbsk", "path": "skoly" }),
+        )
+        .expect("a portal spec");
+        let failed = |answer: Result<(), FileRefusal>| {
+            assert!(
+                matches!(answer, Err(FileRefusal::Desk(DeskError::Failed(_)))),
+                "a write of a failing store succeeded"
+            );
+        };
+        failed(
+            runtime
+                .block_on(Broken.upload(&spec, "a", "n.csv", Vec::new()))
+                .map(|_| ()),
+        );
+        failed(
+            runtime
+                .block_on(Broken.rename(&spec, "a", "f-1", "m.csv"))
+                .map(|_| ()),
+        );
+        failed(
+            runtime
+                .block_on(Broken.replace(&spec, "a", "f-1", Vec::new()))
+                .map(|_| ()),
+        );
+        failed(runtime.block_on(Broken.delete(&spec, "a", "f-1")));
         let listed = runtime.block_on(list_portal_files(
             administrator(None),
             State(state.clone()),

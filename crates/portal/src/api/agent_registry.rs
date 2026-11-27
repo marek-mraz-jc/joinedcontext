@@ -495,7 +495,7 @@ mod tests {
             .expect("the namespace's agents");
         // An agent kind lives in no space, so a grant bound to one space reads none of them.
         assert!(!reads, "a space-scoped grant reads no agent kind");
-        assert!(items.is_empty(), "{:?}", items.iter().map(|i| &i.name).collect::<Vec<_>>());
+        assert_eq!(items.len(), 0, "no server is listed");
     }
 
     #[test]

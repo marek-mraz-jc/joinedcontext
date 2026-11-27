@@ -809,6 +809,18 @@ mod tests {
         let Json(listed) = list_portal_hosts(administrator(), State(state))
             .await
             .expect("listed");
+        // No database: the registry is empty, and an audit row names the client address.
+        let bare = world(None);
+        let Json(none) = list_portal_hosts(administrator(), State(bare))
+            .await
+            .expect("listed");
+        assert!(none.items[0].sites.is_empty());
+        let addr = std::net::IpAddr::from([192, 0, 2, 7]);
+        assert_eq!(
+            source(Some(Extension(jc_router::ClientAddr(addr)))).as_deref(),
+            Some("192.0.2.7")
+        );
+        assert_eq!(source(None), None);
         let address = |name: &str| {
             listed
                 .items

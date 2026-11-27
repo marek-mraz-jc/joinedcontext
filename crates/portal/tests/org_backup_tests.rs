@@ -3987,12 +3987,11 @@ async fn a_bucket_that_fails_a_download_is_unavailable_at_either_key() {
     world.bucket.lock().expect("bucket").fail.clear();
 
     // An id of no version at today's key is asked of the old key, whose bucket answers 500.
-    world
-        .bucket
-        .lock()
-        .expect("bucket")
-        .fail
-        .push(("GET".into(), "jc/alfa/configuration/".into(), 500));
+    world.bucket.lock().expect("bucket").fail.push((
+        "GET".into(),
+        "jc/alfa/configuration/".into(),
+        500,
+    ));
     let unknown = send(
         &world.state,
         person("ada"),
@@ -4093,7 +4092,7 @@ async fn a_plan_skips_what_it_cannot_place_and_lists_new_manifests_as_created() 
     plant(&world, &key, "crafted", |files, index| {
         let new = ALFA_ENDPOINT
             .replace("alfa-air", "alfa-new")
-            .replace("alfaairslug", "alfanewslug");
+            .replace("alfaairslug", "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm");
         files.insert(
             "projects/alfa-city/spaces/air/endpoints/alfa-new.yaml".into(),
             new.clone(),
@@ -4193,10 +4192,16 @@ async fn a_plan_lists_the_bundles_people_the_realm_no_longer_holds() {
         .and_then(|groups| groups.iter().find(|g| g["name"] == "organization/people"))
         .cloned()
         .expect("the people group");
-    assert_eq!(people["created"], json!(["bea <bea@alfa.example>"]), "{plan}");
+    assert_eq!(
+        people["created"],
+        json!(["bea <bea@alfa.example>"]),
+        "{plan}"
+    );
     assert_eq!(people["unchanged"], 1, "{plan}");
     assert!(
-        people["note"].as_str().is_some_and(|n| n.contains("by hand")),
+        people["note"]
+            .as_str()
+            .is_some_and(|n| n.contains("by hand")),
         "{plan}"
     );
     assert_eq!(plan["changes"], 0, "people are never a change: {plan}");
@@ -4445,9 +4450,15 @@ async fn an_approval_pushed_out_of_the_newest_requests_answers_not_found() {
                 erasures_replayed: 0,
             };
             for n in 0..21 {
-                org_backup::restore::request(&state, "alfa", &person(&format!("zed{n}")), &plan, "")
-                    .await
-                    .expect("a newer request");
+                org_backup::restore::request(
+                    &state,
+                    "alfa",
+                    &person(&format!("zed{n}")),
+                    &plan,
+                    "",
+                )
+                .await
+                .expect("a newer request");
             }
         })
     });
@@ -4460,4 +4471,107 @@ async fn an_approval_pushed_out_of_the_newest_requests_answers_not_found() {
             .await
             .expect("drafts");
     assert_eq!(drafts, ["alfa-draft"], "the restore was applied first");
+}
+
+// ---- T-7918, cycle 2 -----------------------------------------------------------------------------
+
+/// An applied restore of a project whose bundle holds a manifest it lacks proposes one Change for
+/// it (the import's own dry run first, then the import), and a bundle with no Organization-level
+/// manifests plans no `organization` group at all.
+#[tokio::test]
+async fn an_applied_restore_proposes_one_change_for_the_project_that_drifted() {
+    let world = world("alfa", "Enabled").await;
+    saved_and_run(&world, "ada").await;
+    let key = key_of(&world, "alfa", "configuration").await;
+    plant(&world, &key, "drifted", |files, index| {
+        let own = |path: &str| {
+            path.starts_with("projects/alfa-city/") || path.starts_with("organization/")
+        };
+        files.retain(|path, _| !own(path));
+        let new = ALFA_ENDPOINT
+            .replace("alfa-air", "alfa-new")
+            .replace("alfaairslug", "6o6a3ktnmfe27pvmf5vxhvylcgcos2lm")
+            .replace("  publish:\n    apiKey: \"jc_alfa_literal_api_key\"\n", "");
+        let path = "projects/alfa-city/spaces/air/endpoints/alfa-new.yaml";
+        files.insert(path.into(), new);
+        let items = index["items"].as_array_mut().expect("items");
+        items.retain(|item| item["path"].as_str().is_some_and(|p| !own(p)));
+        items.push(json!({ "kind": "Endpoint", "id": "alfa-new", "path": path, "revision": HEAD }));
+    });
+    // The space the new Endpoint names, and a forge that takes the Change.
+    world.state.mirror.upsert(common::envelope(
+        "ContextSpace",
+        "air",
+        "alfa-city",
+        json!({ "isSandbox": false }),
+    ));
+    common::mount_repository(&world._forge, "/odata/Repositories(Owner='jc',Name='org')").await;
+
+    let applied = restore(&world, "drifted", true).await;
+    assert_eq!(applied.status, StatusCode::OK, "{}", applied.text);
+    let plan = body(&applied);
+    let groups = plan["groups"].as_array().expect("groups");
+    assert!(
+        groups.iter().all(|g| g["name"] != "organization"),
+        "no Organization-level manifest, no group: {plan}"
+    );
+    let project = groups
+        .iter()
+        .find(|g| g["name"] == "alfa-city")
+        .expect("the project's group");
+    assert_eq!(project["created"], json!(["Endpoint/alfa-new"]), "{plan}");
+    assert_eq!(project["change"]["kind"], "Change", "{plan}");
+    let branches: Vec<String> = world
+        ._forge
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|r| r.method.as_str() == "POST" && r.url.path().ends_with("Shako.CreateBranch"))
+        .map(|r| String::from_utf8_lossy(&r.body).into_owned())
+        .collect();
+    assert_eq!(
+        branches.len(),
+        1,
+        "one Change for the project: {branches:?}"
+    );
+}
+
+/// A target that disappears between its save and its read back (another replica deleted it) is
+/// a 500 that says the saved target is gone, never an empty 200.
+#[tokio::test]
+async fn a_target_lost_between_its_save_and_its_read_is_an_internal_error() {
+    let Some(db) = seeded_portal_db().await else {
+        return;
+    };
+    sqlx::query(
+        "CREATE FUNCTION drop_the_target() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN DELETE FROM organization_backup_targets \
+            WHERE organization = NEW.organization AND kind = NEW.kind; RETURN NULL; END $$",
+    )
+    .execute(&db)
+    .await
+    .expect("a function");
+    sqlx::query(
+        "CREATE TRIGGER drop_the_target AFTER INSERT ON organization_backup_targets \
+         FOR EACH ROW EXECUTE FUNCTION drop_the_target()",
+    )
+    .execute(&db)
+    .await
+    .expect("a trigger");
+    let world = world_with("alfa", "Enabled", Some(db)).await;
+    let saved = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(target(&world.endpoint)),
+    )
+    .await;
+    assert_eq!(
+        saved.status,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "{}",
+        saved.text
+    );
 }

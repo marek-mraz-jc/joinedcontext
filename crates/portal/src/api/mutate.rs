@@ -2040,10 +2040,8 @@ fn app_grants(
                 ApiError::BadRequest(format!("the App's {} is not valid: {e}", raw.kind))
             })?;
         }
-        let info = resource::by_kind(&raw.kind).ok_or(ApiError::Internal(format!(
-            "no catalogue entry for {}",
-            raw.kind
-        )))?;
+        let info = resource::by_kind(&raw.kind)
+            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", raw.kind)))?;
         let path = resolve_repo_path(&env, info, project)?;
         kept.insert((raw.kind.clone(), env.metadata.name.clone()));
         let yaml = serde_norway::to_string(&env).map_err(ApiError::internal)?;
@@ -2054,10 +2052,8 @@ fn app_grants(
         if kept.contains(&(held.kind.clone(), held.metadata.name.clone())) {
             continue;
         }
-        let info = resource::by_kind(&held.kind).ok_or(ApiError::Internal(format!(
-            "no catalogue entry for {}",
-            held.kind
-        )))?;
+        let info = resource::by_kind(&held.kind)
+            .ok_or_else(|| ApiError::Internal(format!("no catalogue entry for {}", held.kind)))?;
         out.removed.push(resolve_repo_path(&held, info, project)?);
         out.review.push(plan::FieldChange {
             path: format!("grants.{}", held.metadata.name),
@@ -2076,7 +2072,7 @@ fn group_files(
     grants: &mut AppGrants,
 ) -> Result<(), ApiError> {
     let info = resource::by_kind("Group")
-        .ok_or(ApiError::Internal("no catalogue entry for Group".into()))?;
+        .ok_or_else(|| ApiError::Internal("no catalogue entry for Group".into()))?;
     for group in &groups.written {
         let yaml = serde_norway::to_string(group).map_err(ApiError::internal)?;
         grants
@@ -3000,16 +2996,14 @@ pub(crate) fn check_representation_shape(spec: &Value) -> Result<(), ApiError> {
         .into_iter()
         .map(|gap| format!("spec.representations.ical: {gap}"))
         .chain(
-            // Without a model these fail on nothing: jc-core returns `Err` only for a model
-            // that is not YAML, and none is passed.
             feed_gaps(&representations.feed, None)
-                .unwrap_or_default()
+                .map_err(|e| unprocessable(vec![format!("spec.representations.feed: {e}")]))?
                 .into_iter()
                 .map(|gap| format!("spec.representations.feed: {gap}")),
         )
         .chain(
             widget_gaps(&representations.widget, None)
-                .unwrap_or_default()
+                .map_err(|e| unprocessable(vec![format!("spec.representations.widget: {e}")]))?
                 .into_iter()
                 .map(|gap| format!("spec.representations.widget: {gap}")),
         )
@@ -3315,9 +3309,8 @@ async fn propose_draft(
         // MCP and the assistant reach, instead of a 400 in the form alone (T-0842).
         (_, false) => "jc_resource_propose",
     };
-    let op = crate::ops::find(name).ok_or(ApiError::Internal(format!(
-        "operation '{name}' is not registered"
-    )))?;
+    let op = crate::ops::find(name)
+        .ok_or_else(|| ApiError::Internal(format!("operation '{name}' is not registered")))?;
     let caller = crate::ops::Caller {
         bearer: None,
         identity: user.0.identity,
@@ -3642,13 +3635,10 @@ fn keep_languages(sent: &mut Option<jc_core::i18n::Text>, stored: Option<&jc_cor
         return;
     };
     let mut kept = map.clone();
-    // The key came out of the map, which validated it on load, so the insert cannot refuse it;
-    // were it to, what the person sent stays.
-    let merged = kept
-        .insert(&locale, text.clone())
-        .ok()
-        .map(|()| Text::Localized(kept));
-    *sent = merged.or(sent.take());
+    // The key came out of the map itself, so the insert cannot refuse it.
+    if kept.insert(&locale, text.clone()).is_ok() {
+        *sent = Some(Text::Localized(kept));
+    }
 }
 
 #[cfg(test)]
@@ -4533,17 +4523,19 @@ mod tests {
             }
         };
         for dry_run in [true, false] {
-            match answer(Front::Bearer, dry_run).await {
-                Err(ApiError::Unprocessable { errors, .. }) => {
-                    let first = errors.first().map(String::as_str).unwrap_or_default();
-                    assert!(first.starts_with("spec.slug: "), "{errors:?}");
-                    assert!(!first.contains("aaaa"), "{errors:?}");
-                }
-                other => panic!(
-                    "expected 422 at spec.slug, got {:?}",
-                    other.map(|r| r.status())
-                ),
-            }
+            let refused = answer(Front::Bearer, dry_run)
+                .await
+                .expect_err("a typed slug from a bearer is refused");
+            assert!(
+                matches!(&refused, ApiError::Unprocessable { .. }),
+                "expected 422 at spec.slug: {refused:?}"
+            );
+            let ApiError::Unprocessable { errors, .. } = refused else {
+                return;
+            };
+            let first = errors.first().map(String::as_str).unwrap_or_default();
+            assert!(first.starts_with("spec.slug: "), "{errors:?}");
+            assert!(!first.contains("aaaa"), "{errors:?}");
         }
         assert!(
             !matches!(
@@ -6092,6 +6084,11 @@ mod tests {
 
     /// A forge that takes every write a proposal makes: the branch, the files, the pull request.
     async fn forge_state() -> (AppState, wiremock::MockServer) {
+        forge_with(201, json!({ "value": [] })).await
+    }
+
+    /// [`forge_state`] whose branch create answers `branch` and whose open pull requests are `pulls`.
+    async fn forge_with(branch: u16, pulls: Value) -> (AppState, wiremock::MockServer) {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
         let server = MockServer::start().await;
@@ -6104,7 +6101,7 @@ mod tests {
             .await;
         Mock::given(method("POST"))
             .and(path(format!("{FORGE}/Shako.CreateBranch")))
-            .respond_with(ResponseTemplate::new(201).set_body_json(json!({})))
+            .respond_with(ResponseTemplate::new(branch).set_body_json(json!({})))
             .mount(&server)
             .await;
         Mock::given(method("POST"))
@@ -6122,7 +6119,7 @@ mod tests {
             .await;
         Mock::given(method("GET"))
             .and(path(format!("{FORGE}/PullRequests")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(pulls))
             .mount(&server)
             .await;
         Mock::given(method("GET"))
@@ -6813,6 +6810,273 @@ mod tests {
         assert!(
             matches!(err, ApiError::NotFound(_) | ApiError::Denied(_)),
             "{err:?}"
+        );
+    }
+    // ---- T-7917 cycle 2: the doors a plan, a workspace, a bearer and an App's grants reach ----
+
+    fn participant_body(name: &str) -> Value {
+        json!({
+            "apiVersion": resource::API_VERSION,
+            "kind": "DataSpaceParticipant",
+            "metadata": { "name": name, "namespace": "org" },
+            "spec": {
+                "did": "did:web:banskabystrica.sk",
+                "credentialIssuer": "https://auth.banskabystrica.sk/realms/organization",
+                "connectorUrl": "https://dsp.banskabystrica.sk/",
+                "engine": "rainbow"
+            }
+        })
+    }
+
+    /// T-7917 (T-2855): a kind filed once, created where main holds no file at its path, is
+    /// written and proposed.
+    #[tokio::test]
+    async fn a_filed_once_kind_is_created_where_main_holds_no_file() {
+        let (state, _forge) = forge_state().await;
+        let answer = propose(
+            &dummy_user(),
+            &state,
+            "org",
+            "dataspaceparticipants",
+            None,
+            Operation::Create,
+            false,
+            participant_body("first"),
+        )
+        .await
+        .expect("a Change");
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+    }
+
+    /// T-7917 (CC-87): a Project of its own repository is proposed on its own, outside a
+    /// workspace and a plan of several changes.
+    #[tokio::test]
+    async fn a_project_of_its_own_repository_is_never_proposed_in_a_workspace_or_a_plan() {
+        let (state, _forge) = forge_state().await;
+        state.mirror.set_layout(2);
+        state
+            .mirror
+            .set_repositories(std::collections::BTreeMap::from([(
+                "zilina".to_owned(),
+                "zilina-config".to_owned(),
+            )]));
+        state.mirror.upsert(organization(
+            "hel",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        let mut project = manifest("Project", "zilina", json!({ "organizationRef": "hel" }));
+        project.metadata.namespace = Some(crate::permissions::ORG_NAMESPACE.into());
+        state.mirror.upsert(project.clone());
+        let body = serde_json::to_value(&project).expect("a body");
+        let identity = dummy_user().0.identity;
+
+        let in_plan = propose_gated_onto(
+            &identity,
+            &state,
+            crate::permissions::ORG_NAMESPACE,
+            "projects",
+            Some("zilina"),
+            Operation::Update,
+            body.clone(),
+            "portal/plan-1",
+        )
+        .await
+        .expect_err("a plan");
+        let in_workspace = propose_gated_in(
+            &identity,
+            &state,
+            crate::permissions::ORG_NAMESPACE,
+            "projects",
+            Some("zilina"),
+            Operation::Update,
+            body,
+            Some("w1"),
+        )
+        .await
+        .err()
+        .expect("a workspace");
+        for refused in [in_plan, in_workspace] {
+            assert!(
+                matches!(&refused, ApiError::BadRequest(message)
+                    if message.contains("lives in its own repository")),
+                "{refused:?}"
+            );
+        }
+    }
+
+    /// T-7917 (AP-73): a build write with no status in the manifest commits none.
+    #[test]
+    fn a_build_write_of_a_manifest_without_status_commits_none() {
+        let envelope = manifest("App", "bikes", json!({}));
+        let yaml = manifest_yaml(&envelope, true, None).expect("a build write");
+        assert!(!yaml.contains("status"), "{yaml}");
+    }
+
+    fn generated_policy(name: &str, project: &str, assignee: &str) -> ResourceEnvelope {
+        let mut held = ResourceEnvelope {
+            api_version: resource::API_VERSION.into(),
+            kind: "Policy".into(),
+            metadata: ObjectMeta::new(name, project),
+            spec: json!({
+                "contextSpaceRef": "bikes",
+                "assignee": { "kind": "serviceAccount", "id": assignee }
+            }),
+            status: None,
+        };
+        held.metadata.annotations.insert(
+            jc_core::annotations::GENERATED_BY.to_owned(),
+            crate::apps::reconciler::GENERATOR.to_owned(),
+        );
+        held
+    }
+
+    /// T-7917 (AP-18, AP-96): an App that grants nothing any more has its generated grants taken
+    /// away, each named in the plan.
+    #[test]
+    fn a_drafted_app_takes_its_generated_grants_away() {
+        let state = AppState::new(Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(generated_policy("by-account", "helsinki", "app-bikes"));
+        let mut draft = bikes_app();
+        draft.spec["lifecycle"] = json!("draft");
+        let grants = app_grants(&state, "helsinki", &draft).expect("a draft grants nothing");
+        assert!(grants.uploads.is_empty(), "{:?}", grants.uploads);
+        assert_eq!(grants.removed.len(), 1, "{:?}", grants.removed);
+        assert_eq!(grants.review[0].path, "grants.by-account");
+    }
+
+    /// T-7917 (AP-118): the default groups of an App are written and removed as files, each with
+    /// its review line, and a group removed with members says so.
+    #[test]
+    fn the_default_groups_of_an_app_are_files_with_a_review_line_each() {
+        let group = |name: &str| manifest("Group", name, json!({}));
+        let groups = crate::apps::default_groups::DefaultGroups {
+            written: vec![group("bikes-viewer")],
+            removed: vec![group("bikes-old")],
+            warnings: vec!["two people lose the role with it".to_owned()],
+        };
+        let mut grants = AppGrants::default();
+        group_files(&groups, "ovzdusie", &mut grants).expect("the files");
+        assert_eq!(grants.uploads.len(), 1);
+        assert_eq!(grants.removed.len(), 1);
+        let paths: Vec<&str> = grants.review.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "groups.bikes-viewer",
+                "groups.bikes-old",
+                "warnings.groups.0"
+            ]
+        );
+    }
+
+    /// T-7917 (AP-96): an App proposed as a draft removes the grants it once generated: the file
+    /// is looked for on the branch, and one the branch does not hold is left alone.
+    #[tokio::test]
+    async fn a_drafted_app_proposed_to_a_forge_removes_its_old_grants() {
+        let (state, _forge) = forge_state().await;
+        state.mirror.upsert(manifest(
+            "ContextSpace",
+            "ovzdusie",
+            json!({ "isSandbox": true }),
+        ));
+        let mut held = generated_policy("old-grant", "ovzdusie", "app-air-map");
+        held.spec["contextSpaceRef"] = json!("ovzdusie");
+        state.mirror.upsert(held);
+        let app = json!({
+            "apiVersion": resource::API_VERSION,
+            "kind": "App",
+            "metadata": { "name": "air-map", "namespace": "ovzdusie" },
+            "spec": {
+                "kind": "static",
+                "source": { "path": "apps/air-map" },
+                "build": { "node": "22" },
+                "dataNeeds": [{
+                    "contextSpaceRef": { "kind": "ContextSpace", "name": "ovzdusie" },
+                    "types": ["AirQualityObserved"],
+                    "operations": ["queryEntity"],
+                }],
+                "visibility": "project",
+                "lifecycle": "draft",
+            },
+        });
+        let answer = propose(
+            &dummy_user(),
+            &state,
+            "ovzdusie",
+            "apps",
+            None,
+            Operation::Create,
+            false,
+            app,
+        )
+        .await
+        .expect("a Change");
+        assert_eq!(answer.status(), StatusCode::ACCEPTED);
+    }
+    /// T-7917: a replacement that names a draft takes the draft's door as a creation does.
+    #[tokio::test]
+    async fn a_replacement_that_names_a_draft_takes_the_drafts_door() {
+        let state = AppState::new(Config::for_tests(), None);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        );
+        let mut body = space_body("mobility");
+        body["draft"] = json!({ "kind": "ContextSpace", "name": "mobility" });
+        let answer = replace(
+            dummy_user(),
+            Front::Portal,
+            State(state),
+            Path((
+                "ovzdusie".to_owned(),
+                "spaces".to_owned(),
+                "mobility".to_owned(),
+            )),
+            Query(DryRunQuery::default()),
+            headers,
+            Bytes::from(body.to_string()),
+        )
+        .await
+        .expect("the draft's operation answers");
+        assert!(!answer.status().is_success(), "{}", answer.status());
+    }
+
+    /// T-7917 (PL-111): an Endpoint that names other Policies than a write Policy of its space
+    /// leaves that write unmade, and the finding names the Endpoint's own `contextSpaceRef`
+    /// where no single `policyRef` is to change.
+    #[test]
+    fn an_endpoint_naming_other_policies_is_told_where_to_change_the_binding() {
+        let state = AppState::new(Config::for_tests(), None);
+        state.mirror.upsert(organization(
+            "hel",
+            json!({ "domain": "hel.fi", "installation": true }),
+        ));
+        state
+            .mirror
+            .upsert(manifest("ContextSpace", "ovzdusie", json!({})));
+        state.mirror.upsert(manifest(
+            "Policy",
+            "air-write",
+            space_policy(
+                "{ \"kind\": \"serviceAccount\", \"id\": \"sensors\" }",
+                &["upsertBatch"],
+            ),
+        ));
+        let mut spec = public_air(None);
+        spec["policyRefs"] = json!(["urn:ngsi-ld:Policy:hel.fi:ovzdusie-ovzdusie:other"]);
+        let endpoint = manifest("Endpoint", "air", spec);
+        let errors = refusal(check_unmade_writes(
+            &crate::judge::Ground::of(&state),
+            "ovzdusie",
+            Operation::Create,
+            &endpoint,
+        ));
+        assert!(
+            errors[0].starts_with("spec.contextSpaceRef: Policy "),
+            "{errors:?}"
         );
     }
 }

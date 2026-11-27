@@ -507,7 +507,10 @@ async fn a_non_installation_organization_lists_no_configuration_repository() {
         .collect();
     assert!(!names.contains(&"org"), "{names:?}");
     assert!(names.contains(&"bravo-town"), "{names:?}");
-    assert!(names.iter().all(|n| n.starts_with("bravo-town")), "{names:?}");
+    assert!(
+        names.iter().all(|n| n.starts_with("bravo-town")),
+        "{names:?}"
+    );
 }
 
 /// T-7918: a repository the mirror names but the forge lost (404) is left out of the list, and

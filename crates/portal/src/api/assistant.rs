@@ -1994,6 +1994,16 @@ mod tests {
         .expect("continued");
         assert_eq!(kept.run.continues.as_deref(), Some("parent-run-1"));
         assert!(kept.run.endpoint_name.is_empty());
+        // A continuation that names its own endpoints keeps those, not its parent's.
+        let (_, named) = converse(
+            &state,
+            admin(),
+            json!({ "message": "And the bikes?", "continues": "parent-run-1",
+                    "endpointNames": ["helsinki-bikes"] }),
+        )
+        .await
+        .expect("continued with an endpoint");
+        assert_eq!(named.run.endpoint_name, "helsinki-bikes");
 
         // Ana may converse (propose here) but approves nothing, so another person's run is not
         // visible to her.

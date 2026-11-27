@@ -646,7 +646,11 @@ async fn a_cached_tile_past_its_lifetime_is_fetched_again() {
         let (status, _, body) = call_app(&app, TILE).await;
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.len(), 12);
-        assert_eq!(calls.load(Ordering::SeqCst), fetched, "a stale tile is no hit");
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            fetched,
+            "a stale tile is no hit"
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -669,7 +673,11 @@ async fn a_cached_tile_from_the_future_is_fetched_again() {
     let (status, _, body) = call_app(&app, TILE).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body.len(), 12);
-    assert_eq!(calls.load(Ordering::SeqCst), 2, "the future tile was served");
+    assert_eq!(
+        calls.load(Ordering::SeqCst),
+        2,
+        "the future tile was served"
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

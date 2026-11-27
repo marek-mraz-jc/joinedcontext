@@ -794,7 +794,11 @@ mod tests {
             ("granted", None)
         );
         assert_eq!(
-            mark(&state, "helsinki", &json!({ "policies": ["mixed", "unknown"] })),
+            mark(
+                &state,
+                "helsinki",
+                &json!({ "policies": ["mixed", "unknown"] })
+            ),
             ("group", Some("traffic-analysts".to_owned()))
         );
     }
@@ -814,7 +818,11 @@ mod tests {
         .await
         .expect("anonymous catalogue");
         assert_eq!(
-            anonymous.datasets.iter().map(|d| d.name.as_str()).collect::<Vec<_>>(),
+            anonymous
+                .datasets
+                .iter()
+                .map(|d| d.name.as_str())
+                .collect::<Vec<_>>(),
             ["bikes"]
         );
         assert_eq!(anonymous.unanswered, 0);
@@ -828,14 +836,14 @@ mod tests {
         .expect_err("not the public");
         assert!(matches!(broken, ApiError::Internal(_)), "{broken:?}");
 
-        let Json(member) = get_readable(
-            Ok(CurrentUser(session(""))),
-            HeaderMap::new(),
-            State(state),
-        )
-        .await
-        .expect("member catalogue");
+        let Json(member) =
+            get_readable(Ok(CurrentUser(session(""))), HeaderMap::new(), State(state))
+                .await
+                .expect("member catalogue");
         assert!(member.unanswered >= 1, "{member:?}");
-        assert!(member.datasets.iter().all(|d| d.name == "bikes"), "{member:?}");
+        assert!(
+            member.datasets.iter().all(|d| d.name == "bikes"),
+            "{member:?}"
+        );
     }
 }

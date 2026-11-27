@@ -2784,9 +2784,7 @@ async fn a_body_past_the_import_limit_is_refused_unread() {
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "{problem}");
     assert!(
-        problem
-            .to_string()
-            .contains("the upload could not be read"),
+        problem.to_string().contains("the upload could not be read"),
         "{problem}"
     );
     assert!(written(&server).await.is_empty());

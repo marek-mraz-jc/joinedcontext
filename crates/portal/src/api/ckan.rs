@@ -617,7 +617,13 @@ mod tests {
                 { "type": "Ready", "status": "False", "reason": "X", "message": "not this one" }
             ] }),
         );
-        let rows = refused_publications(vec![silent, other], &[], "bratislava", &instances, &settings);
+        let rows = refused_publications(
+            vec![silent, other],
+            &[],
+            "bratislava",
+            &instances,
+            &settings,
+        );
         assert_eq!(rows.len(), 2, "{rows:?}");
         for row in &rows {
             assert_eq!(
@@ -690,11 +696,18 @@ mod tests {
         .await
         .expect("status");
         assert_eq!(status.instances.len(), 1);
-        assert_eq!(status.instances[0].url, "http://opendata.ba.localhost:42141");
-        let denied = get_status(State(state), session(Vec::new()), Path("bratislava".to_owned()))
-            .await
-            .err()
-            .expect("refused");
+        assert_eq!(
+            status.instances[0].url,
+            "http://opendata.ba.localhost:42141"
+        );
+        let denied = get_status(
+            State(state),
+            session(Vec::new()),
+            Path("bratislava".to_owned()),
+        )
+        .await
+        .err()
+        .expect("refused");
         assert!(matches!(denied, ApiError::NotFound(_)), "{denied:?}");
     }
 }

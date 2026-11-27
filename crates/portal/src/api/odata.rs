@@ -1513,7 +1513,12 @@ mod tests {
             "bad-name": { "type": "string" },
         } } } } });
         let fields = scalar_fields(&schema, "name");
-        let kind = |name: &str| fields.iter().find(|f| f.name == name).map(|f| f.kind.clone());
+        let kind = |name: &str| {
+            fields
+                .iter()
+                .find(|f| f.name == name)
+                .map(|f| f.kind.clone())
+        };
         assert_eq!(kind("name"), Some(FieldKind::String));
         assert_eq!(kind("at"), Some(FieldKind::DateTime));
         assert_eq!(kind("count"), Some(FieldKind::Integer));
@@ -1558,8 +1563,7 @@ mod tests {
             Ok::<Value, Response>(match input["cursor"].as_str() {
                 None => json!({ "items": [{ "name": "a" }], "next": "c1" }),
                 Some("c1") => json!({ "items": [{ "name": "b" }], "nextCursor": "c2" }),
-                Some("c2") => json!({ "items": [], "next": "c3" }),
-                Some(_) => json!({ "items": [{ "name": "never" }] }),
+                Some(_) => json!({ "items": [], "next": "c3" }),
             })
         };
         let rows = collect_pages(&list_set("x", Some("cursor")), vec![json!({})], call)
@@ -1569,7 +1573,11 @@ mod tests {
         let once = collect_pages(&list_set("x", None), vec![json!({})], call)
             .await
             .expect("rows");
-        assert_eq!(once, vec![json!({ "name": "a" })], "no cursor member, one page");
+        assert_eq!(
+            once,
+            vec![json!({ "name": "a" })],
+            "no cursor member, one page"
+        );
         let null_next = |_: Value| async {
             Ok::<Value, Response>(json!({ "items": [{ "name": "a" }], "next": null }))
         };
@@ -1588,7 +1596,11 @@ mod tests {
     #[tokio::test]
     async fn a_set_over_the_row_cap_and_a_refused_page_are_answered_not_cut() {
         let page = |input: Value| async move {
-            let n = if input["cursor"].is_null() { 6_000 } else { 5_000 };
+            let n = if input["cursor"].is_null() {
+                6_000
+            } else {
+                5_000
+            };
             let items: Vec<Value> = (0..n).map(|i| json!({ "name": format!("r{i}") })).collect();
             Ok::<Value, Response>(json!({ "items": items, "next": "more" }))
         };
@@ -1616,9 +1628,14 @@ mod tests {
             crate::ops::testkit::person("pia", &[]),
             crate::ops::Via::Session,
         );
-        let refused = items_of(&list_set("jc_no_such_list", None), &caller, &state, "helsinki")
-            .await
-            .expect_err("not registered");
+        let refused = items_of(
+            &list_set("jc_no_such_list", None),
+            &caller,
+            &state,
+            "helsinki",
+        )
+        .await
+        .expect_err("not registered");
         assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
         // The answer is a 500 that names no internals; the operation name stays in the log.
         assert!(!body_text(*refused).await.contains("jc_no_such_list"));
@@ -1712,7 +1729,9 @@ mod tests {
         )
         .await
         .expect_err("not readable");
-        assert!(matches!(&error, ApiError::NotFound(m) if m.contains("project 'helsinki' not found")));
+        assert!(
+            matches!(&error, ApiError::NotFound(m) if m.contains("project 'helsinki' not found"))
+        );
 
         let empty = invoke_action(
             session_of(&["portal-approver"]),
@@ -1722,10 +1741,7 @@ mod tests {
             Bytes::new(),
         )
         .await;
-        let refused = match empty {
-            Ok(response) => response.status(),
-            Err(error) => error.into_response().status(),
-        };
+        let refused = empty.expect("an answered refusal").status();
         assert!(
             refused.is_client_error(),
             "an empty input proposes nothing: {refused}"
@@ -1747,7 +1763,10 @@ mod tests {
     fn a_write_on_the_metadata_document_is_not_allowed() {
         let uri: axum::http::Uri = "/api/v1/projects/p/odata/$metadata".parse().expect("uri");
         let Refusal(status, code, text) = row_key(&uri, "p").expect_err("no row");
-        assert_eq!((status, code), (StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed"));
+        assert_eq!(
+            (status, code),
+            (StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed")
+        );
         assert!(text.contains("endpointList('air-counters')"), "{text}");
     }
 
@@ -1757,7 +1776,13 @@ mod tests {
     #[tokio::test]
     async fn a_write_without_the_endpoint_list_is_not_found_and_an_if_match_is_forwarded() {
         let state = AppState::new(crate::config::Config::for_tests(), None);
-        crate::ops::testkit::grant(&state, "pipeline-readers", "helsinki", &["Pipeline"], &["read"]);
+        crate::ops::testkit::grant(
+            &state,
+            "pipeline-readers",
+            "helsinki",
+            &["Pipeline"],
+            &["read"],
+        );
         let uri: axum::http::Uri = "/api/v1/projects/helsinki/odata/endpointList('air')"
             .parse()
             .expect("uri");
@@ -1807,13 +1832,14 @@ mod tests {
             Bytes::from_static(br#"{"mcp":false}"#),
         )
         .await;
-        let status = match outcome {
-            Ok(response) => response.status(),
-            Err(error) => error.into_response().status(),
-        };
+        let status = outcome.err().expect("a refusal").into_response().status();
         assert!(
-            ![StatusCode::FORBIDDEN, StatusCode::NOT_FOUND, StatusCode::BAD_REQUEST]
-                .contains(&status),
+            ![
+                StatusCode::FORBIDDEN,
+                StatusCode::NOT_FOUND,
+                StatusCode::BAD_REQUEST
+            ]
+            .contains(&status),
             "the key was found, allowed and read: {status}"
         );
     }
@@ -1847,11 +1873,9 @@ mod tests {
     /// cannot be read, is an internal error naming which.
     #[tokio::test]
     async fn a_red_check_proposes_nothing_and_a_broken_check_answer_is_internal() {
-        let proposals = std::sync::atomic::AtomicUsize::new(0);
+        let asked = std::sync::Mutex::new(Vec::new());
         let red = |dry: Option<String>| {
-            if dry.is_none() {
-                proposals.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            }
+            asked.lock().expect("asked").push(dry);
             std::future::ready(Ok::<Response, ApiError>(json_response(json!({
                 "valid": false,
                 "verdict": { "findings": [
@@ -1871,12 +1895,17 @@ mod tests {
         let bare = |_: Option<String>| {
             std::future::ready(Ok::<Response, ApiError>(json_response(json!({}))))
         };
-        let error = check_then_propose("air", bare).await.expect_err("no verdict");
+        let error = check_then_propose("air", bare)
+            .await
+            .expect_err("no verdict");
         assert!(
             matches!(&error, ApiError::Unprocessable { errors, .. } if errors.is_empty()),
             "{error:?}"
         );
-        assert_eq!(proposals.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(
+            asked.lock().expect("asked").iter().all(Option::is_some),
+            "only the dry run was asked, never the proposal"
+        );
 
         let text = |_: Option<String>| {
             std::future::ready(Ok::<Response, ApiError>(Response::new(
@@ -1896,10 +1925,52 @@ mod tests {
                 axum::body::Body::from_stream(stream),
             )))
         };
-        let error = check_then_propose("air", cut).await.expect_err("unreadable");
+        let error = check_then_propose("air", cut)
+            .await
+            .expect_err("unreadable");
         assert!(
             matches!(&error, ApiError::Internal(m) if m.contains("the check's answer was not read")),
             "{error:?}"
         );
+    }
+
+    /// T-7918: a row's `metadata` and `status` objects are lifted to the top and a top-level
+    /// member wins; a scalar `status` is the row's own; a row that is no object is returned as is.
+    #[test]
+    fn a_rows_nested_members_are_lifted_and_the_top_level_wins() {
+        let lifted = flat(json!({
+            "name": "top",
+            "metadata": { "name": "nested", "title": "T", "labels": 1 },
+            "status": { "phase": "Live", "title": "other" },
+        }));
+        assert_eq!(
+            lifted,
+            json!({ "name": "top", "title": "T", "labels": 1, "phase": "Live" })
+        );
+        assert_eq!(
+            flat(json!({ "status": "open" })),
+            json!({ "status": "open" })
+        );
+        assert_eq!(flat(json!(3)), json!(3));
+    }
+
+    /// T-7918: the `$metadata` handler answers the written document to a reader of the project
+    /// and 404 to anyone else.
+    #[tokio::test]
+    async fn the_metadata_handler_answers_a_reader_and_hides_the_project_from_others() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let served = metadata(
+            session_of(&["portal-approver"]),
+            State(state.clone()),
+            Path("helsinki".to_owned()),
+        )
+        .await
+        .expect("a reader");
+        assert_eq!(served.status(), StatusCode::OK);
+        let hidden = metadata(session_of(&[]), State(state), Path("helsinki".to_owned()))
+            .await
+            .err()
+            .expect("a stranger");
+        assert!(matches!(hidden, ApiError::NotFound(_)), "{hidden:?}");
     }
 }

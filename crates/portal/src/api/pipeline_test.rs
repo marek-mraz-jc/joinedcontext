@@ -220,8 +220,12 @@ fn spec_of(pipeline: &Value, project: &str) -> Result<PipelineSpec, ApiError> {
             "spec is not a valid Pipeline: {refused}"
         )));
     }
-    serde_json::from_value(pipeline["spec"].clone())
-        .map_err(|e| ApiError::BadRequest(format!("spec is not a valid Pipeline: {e}")))
+    serde_json::from_value(pipeline["spec"].clone()).map_err(not_a_pipeline)
+}
+
+/// The refusal of a spec the registry let through but the Pipeline type does not read.
+fn not_a_pipeline(err: impl std::fmt::Display) -> ApiError {
+    ApiError::BadRequest(format!("spec is not a valid Pipeline: {err}"))
 }
 
 /// How long a test waits for what the harness posts, and how much it keeps.
@@ -1889,20 +1893,22 @@ mod tests {
             spec: json!({ "contextSpaceRef": "helsinki", "slug": "helsinkislug" }),
             status: None,
         });
-        state.model_schemas.replace(std::collections::HashMap::from([(
-            ("helsinki".to_owned(), "helsinki".to_owned()),
-            std::sync::Arc::new(crate::pipeline_validation::ModelSchema::compile(
-                "helsinki",
-                "1.0.0",
-                &json!({ "definitions": { "BikeHireDockingStation": {
-                    "additionalProperties": false,
-                    "properties": { "id": { "type": "string" },
-                        "name": { "type": "string", "x-ngsi-ld-kind": "Property" } }
-                }}}),
-                &["BikeHireDockingStation".to_owned()],
-                false,
-            )),
-        )]));
+        state
+            .model_schemas
+            .replace(std::collections::HashMap::from([(
+                ("helsinki".to_owned(), "helsinki".to_owned()),
+                std::sync::Arc::new(crate::pipeline_validation::ModelSchema::compile(
+                    "helsinki",
+                    "1.0.0",
+                    &json!({ "definitions": { "BikeHireDockingStation": {
+                        "additionalProperties": false,
+                        "properties": { "id": { "type": "string" },
+                            "name": { "type": "string", "x-ngsi-ld-kind": "Property" } }
+                    }}}),
+                    &["BikeHireDockingStation".to_owned()],
+                    false,
+                )),
+            )]));
 
         let none = spec_json(json!({}));
         assert_eq!(
@@ -1919,12 +1925,32 @@ mod tests {
             .expect("the attribute step");
         assert_eq!(step["label"], "attributes");
 
+        // A space with no model of its own resolves no unit and still gets its step.
+        state
+            .model_schemas
+            .replace(std::collections::HashMap::new());
+        let unmodelled = attributes_of(&state, "helsinki", &ruled, "stations")
+            .expect("a step")
+            .expect("the attribute step");
+        assert_eq!(unmodelled["label"], "attributes");
+
         let bad = spec_json(json!({ "attributes": [{
             "type": "Bike", "rules": [{ "names": ["not a slot"], "observedAt": "now" }]
         }] }));
         let refused = attributes_of(&state, "helsinki", &bad, "stations");
         assert!(
             matches!(&refused, Err(ApiError::BadRequest(why)) if why.starts_with("spec.attributes:")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a spec the Pipeline type does not read is a 400 naming that.
+    #[test]
+    fn a_spec_the_pipeline_type_does_not_read_is_a_400() {
+        let err = serde_json::from_str::<u8>("\"x\"").expect_err("not a number");
+        let refused = not_a_pipeline(err);
+        assert!(
+            matches!(&refused, ApiError::BadRequest(why) if why.starts_with("spec is not a valid Pipeline:")),
             "{refused:?}"
         );
     }
@@ -1949,13 +1975,15 @@ mod tests {
             "{refused:?}"
         );
 
-        let ending = spec_json(json!({ "lifetime": [{ "type": "Bus", "entity": { "rolling": "PT10M" } }] }));
+        let ending =
+            spec_json(json!({ "lifetime": [{ "type": "Bus", "entity": { "rolling": "PT10M" } }] }));
         let refused = with_lifetime(&mut json!({}), &ending, None);
         assert!(
             matches!(&refused, Err(ApiError::Internal(why)) if why.contains("no processors")),
             "{refused:?}"
         );
-        let mut without_envelope = json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } });
+        let mut without_envelope =
+            json!({ "pipeline": { "processors": [{ "mapping": "root = this" }] } });
         let refused = with_lifetime(&mut without_envelope, &ending, None);
         assert!(
             matches!(&refused, Err(ApiError::Internal(why)) if why.contains("no envelope step")),

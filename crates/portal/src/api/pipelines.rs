@@ -431,13 +431,12 @@ pub(crate) async fn read_bento(
     pipeline: &crate::resource::ResourceEnvelope,
 ) -> Result<String, ApiError> {
     let info = crate::resource::by_kind("Pipeline")
-        .ok_or(ApiError::Internal("kind Pipeline is not registered".into()))?;
+        .ok_or_else(|| ApiError::Internal("kind Pipeline is not registered".into()))?;
     let manifest = crate::api::mutate::resolve_repo_path(pipeline, info, project)?;
-    let path = manifest
-        .rsplit_once('/')
-        .map_or("bento.yaml".to_owned(), |(folder, _)| {
-            format!("{folder}/bento.yaml")
-        });
+    let path = match manifest.rsplit_once('/') {
+        Some((folder, _)) => format!("{folder}/bento.yaml"),
+        None => "bento.yaml".to_owned(),
+    };
     let shako = state
         .forge_for(project)
         .ok_or_else(|| ApiError::Unavailable("git forge is not configured".into()))?;
@@ -2565,6 +2564,39 @@ uptime_seconds 900
         said(RunNow::Running("r7".into()), "is running (r7)");
         said(RunNow::Held, "is held: its last run ran past its cap");
         said(RunNow::NotQueued, "does not run from the queue");
+    }
+
+    /// T-7917 (T-4349): a run outside the schedule of a pipeline the queue does not hold is a 409
+    /// naming why, as the queue's own refusal says it.
+    #[tokio::test]
+    async fn a_run_of_a_pipeline_the_queue_does_not_hold_is_a_409() {
+        let state = replay_world(None, None);
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://127.0.0.1:1".parse().expect("a url"),
+                "o",
+                "r",
+                "token",
+            )
+            .expect("a forge client"),
+        );
+        let deployer =
+            std::sync::Arc::new(crate::reconciler::StreamDeployer::new("http://127.0.0.1:1"));
+        let syncer = crate::reconciler::Syncer::new(shako, std::sync::Arc::clone(&state.mirror))
+            .with_streams(deployer);
+        let state = state.with_syncer(std::sync::Arc::new(syncer));
+        let refused = post_run(
+            admin(),
+            State(state),
+            Path(("helsinki".to_owned(), "stations".to_owned())),
+        )
+        .await
+        .expect_err("nothing is queued");
+        assert!(
+            matches!(&refused, ApiError::Conflict(message)
+                if message.contains("does not run from the queue")),
+            "{refused:?}"
+        );
     }
 
     /// T-7917: a bucket whose predecessor counts NaN has no interpolation to make: its own bound

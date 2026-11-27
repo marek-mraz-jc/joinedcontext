@@ -580,10 +580,12 @@ mod tests {
     }
 
     fn conflict(refused: Result<(String, DataSourceSpec), ApiError>) -> String {
-        match refused {
-            Err(ApiError::Conflict(why)) => why,
-            other => format!("not a conflict: {:?}", other.map(|(name, _)| name)),
-        }
+        let refused = refused.map(|(name, _)| name).expect_err("a refusal");
+        assert!(
+            matches!(refused, ApiError::Conflict(_)),
+            "not a conflict: {refused:?}"
+        );
+        format!("{refused:?}")
     }
 
     /// T-7917: the check reads a saved http DataSource of this project only; each other case is a
@@ -595,10 +597,16 @@ mod tests {
         let feed = json!({ "dataSourceRef": { "kind": "DataSource", "name": "feed" } });
 
         let none = conflict(read_source(&state, "helsinki", &reading(Value::Null)));
-        assert!(none.contains("reads no DataSource of this project"), "{none}");
+        assert!(
+            none.contains("reads no DataSource of this project"),
+            "{none}"
+        );
         let other = json!({ "dataSourceRef": { "kind": "DataSource", "name": "feed", "namespace": "espoo" } });
         let foreign = conflict(read_source(&state, "helsinki", &reading(other)));
-        assert!(foreign.contains("reads no DataSource of this project"), "{foreign}");
+        assert!(
+            foreign.contains("reads no DataSource of this project"),
+            "{foreign}"
+        );
 
         let unsaved = conflict(read_source(&state, "helsinki", &reading(feed.clone())));
         assert!(
@@ -614,7 +622,8 @@ mod tests {
             &state,
             json!({ "type": "http", "http": { "url": "https://data.example.org/stations" } }),
         );
-        let (name, source) = read_source(&state, "helsinki", &reading(feed)).expect("an http source");
+        let (name, source) =
+            read_source(&state, "helsinki", &reading(feed)).expect("an http source");
         assert_eq!(name, "feed");
         assert!(matches!(source.source_type, DataSourceType::Http));
     }

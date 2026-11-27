@@ -38,9 +38,8 @@ pub async fn domain_verifications(
     let items = gate_states(state.db.as_ref(), &organizations)
         .await
         .map_err(|e| ApiError::Internal(format!("the domain verifications were not read: {e}")))?;
-    let body = serde_json::to_vec(&Items { items }).map_err(|e| {
-        ApiError::Internal(format!("the domain verifications did not serialise: {e}"))
-    })?;
+    // Plain strings and enums: serialising them cannot fail.
+    let body = serde_json::to_vec(&Items { items }).map_err(ApiError::internal)?;
     Ok(super::polled_json(&headers, body))
 }
 

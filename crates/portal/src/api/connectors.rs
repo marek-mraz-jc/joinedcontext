@@ -2558,7 +2558,24 @@ mod tests {
             unpaired.expect("nothing to disconnect"),
             StatusCode::NO_CONTENT
         );
+        state
+            .connectors
+            .record(
+                &made.id,
+                Call {
+                    at: jc_time::TimestampTz::now(),
+                    subject: "f:1:ana".into(),
+                    client: Some("mcp-local".into()),
+                    tool: "jc_resource_list".into(),
+                    target: None,
+                    verdict: "allowed".into(),
+                    duration_ms: 1,
+                },
+            )
+            .await
+            .expect("a call");
         let audit = state.connectors.calls(&made.id).await.expect("audit");
+        assert!(!audit.is_empty());
         assert!(
             audit.iter().all(|c| c.tool != "tab/disconnect"),
             "{audit:?}"
