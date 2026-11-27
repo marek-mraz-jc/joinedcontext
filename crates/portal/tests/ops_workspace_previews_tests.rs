@@ -402,11 +402,24 @@ async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
         .mount(&server)
         .await;
     let all = files();
-    mount_tree(&server, REPO, "main1", &all[..2]).await;
-    let inside: Vec<(&str, String)> = all[2..]
-        .iter()
-        .map(|(p, c)| (p.trim_start_matches("projects/ovzdusie/"), c.clone()))
-        .collect();
+    let layout = ("2\n").to_owned();
+    let entry = all[1].1.replace(
+        "  organizationRef: bb\n",
+        "  organizationRef: bb\n  repository:\n    name: ovzdusie-data\n  ref: main\n",
+    );
+    let organization = vec![
+        (".jc/layout", layout.clone()),
+        (all[0].0, all[0].1.clone()),
+        ("projects/ovzdusie.yaml", entry),
+    ];
+    mount_tree(&server, REPO, "main1", &organization).await;
+    let mut inside: Vec<(&str, String)> =
+        vec![(".jc/layout", layout), ("project.yaml", all[1].1.clone())];
+    inside.extend(
+        all[2..]
+            .iter()
+            .map(|(p, c)| (p.trim_start_matches("projects/ovzdusie/"), c.clone())),
+    );
     if project_tree {
         mount_tree(&server, PROJECT_REPO, HEAD, &inside).await;
     } else {
@@ -442,12 +455,8 @@ async fn a_preview_of_a_project_repository_assembles_it_with_the_organization() 
         named("air-v2"),
     )
     .await;
-    assert!(
-        started.status == StatusCode::OK || started.text().contains("does not assemble"),
-        "{}: {}",
-        started.status,
-        started.text()
-    );
+    assert_eq!(StatusCode::OK, started.status, "{}", started.text());
+    assert_eq!("running", started.body["state"], "{}", started.text());
     let asked: Vec<String> = server
         .received_requests()
         .await

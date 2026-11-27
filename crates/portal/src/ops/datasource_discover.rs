@@ -686,14 +686,14 @@ mod tests {
         assert_eq!(found.field, "organization");
     }
 
-    /// A WFS that answers JSON lists no FeatureType; a read that answered no sample says the
+    /// A WFS that answers JSON is no capabilities document; a read that answered no sample says the
     /// service answered nothing; the operation itself refuses a caller who may not propose a
     /// DataSource before anything is fetched.
     #[tokio::test]
     async fn a_json_wfs_lists_nothing_and_an_empty_read_says_so() {
         let found = choices(HttpPresetKind::Wfs, &json!({ "types": [] }), true);
         assert!(
-            matches!(&found, Ok((none, false)) if none.is_empty()),
+            matches!(&found, Err(why) if why.contains("WFS capabilities document")),
             "{found:?}"
         );
         let url = Url::parse("https://data.example/api/3/action/organization_list").expect("url");

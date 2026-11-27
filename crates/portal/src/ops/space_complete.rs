@@ -852,20 +852,15 @@ pub async fn run(
             .pointer("/metadata/name")
             .and_then(Value::as_str)
             .unwrap_or("source");
-        let stored = put_draft(caller, state, project, "DataSource", name, m.clone()).await?;
-
-        let v = Some(
-            datasource_verdict(caller, state, project, &m, input.url.is_some(), ds_findings).await,
-        );
-        let final_v = if let Some(verdict) = v {
-            store
-                .set_verdict(project, "DataSource", name, verdict)
-                .await
-                .map_err(ops::drafts::draft_error)?
-                .verdict
-        } else {
-            stored.verdict
-        };
+        put_draft(caller, state, project, "DataSource", name, m.clone()).await?;
+        let verdict =
+            datasource_verdict(caller, state, project, &m, input.url.is_some(), ds_findings).await;
+        // The verdict is always checked here, so the stored draft's own is replaced.
+        let final_v = store
+            .set_verdict(project, "DataSource", name, verdict)
+            .await
+            .map_err(ops::drafts::draft_error)?
+            .verdict;
         drafts.push(CompletedDraft {
             kind: "DataSource".into(),
             name: name.into(),

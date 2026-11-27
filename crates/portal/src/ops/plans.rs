@@ -2997,8 +2997,7 @@ mod tests {
         let requests = server.received_requests().await.expect("requests");
         let written: Vec<&str> = requests
             .iter()
-            .filter(|r| r.method.as_str() != "GET")
-            .map(|r| r.url.path())
+            .filter_map(|r| (r.method.as_str() != "GET").then_some(r.url.path()))
             .collect();
         assert!(written.is_empty(), "nothing written: {written:?}");
     }
@@ -3089,11 +3088,10 @@ mod tests {
             .await;
         let state = on_forge(&held).await;
         state.mirror.upsert(model);
-        let etag = source_etag(&state, "doprava", "parking").await;
-        assert!(
-            etag.as_ref().map_or(true, |e| e != "absent"),
-            "a held file is hashed or refused, never absent: {etag:?}"
-        );
+        let etag = source_etag(&state, "doprava", "parking")
+            .await
+            .expect("a held file is hashed");
+        assert_eq!(etag.len(), 64, "a sha256: {etag}");
     }
 
     /// The 422's lines: a finding's `at` wins over its dotted path, a path-less finding names the
@@ -3217,7 +3215,7 @@ mod tests {
         assert!(
             matches!(&err, Err(ApiError::BadRequest(why)) if why.contains("invalid DataModel manifest")),
             "{:?}",
-            err.map(|p| p.is_some())
+            err.as_ref().err()
         );
         let why = propose_source(&steward(), &state, &plan.items[1], &json!({}))
             .await

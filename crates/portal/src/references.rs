@@ -845,6 +845,19 @@ mod tests {
         vec![object]
     }
 
+    /// The walker's corners: an empty path is the spec itself, a boolean schema has no
+    /// branch, a list is addressed with `[]` and a field that is no list is not.
+    #[test]
+    fn the_path_walker_reads_lists_only_as_lists() {
+        let layer = spec_schema("Layer");
+        assert!(holds(&layer.schema, &[], &layer));
+        assert!(branches(&schemars::schema::Schema::Bool(true), &layer).is_empty());
+        assert!(has_path(&layer, "spec.sourceEndpointRef"));
+        assert!(has_path(&layer, "popupProperties[]"));
+        assert!(!has_path(&layer, "sourceEndpointRef[]"));
+        assert!(!has_path(&layer, "noSuchField"));
+    }
+
     /// Whether a dotted path, `[]` and all, addresses a field of this spec.
     fn has_path(root: &schemars::schema::RootSchema, path: &str) -> bool {
         let segments: Vec<&str> = path.trim_start_matches("spec.").split('.').collect();
