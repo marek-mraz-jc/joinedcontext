@@ -1492,12 +1492,21 @@ mod tests {
         use axum::extract::{Path, Query, State};
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
+        // A body that marks `flag` once anything polls it.
+        fn watched(flag: Arc<AtomicBool>) -> axum::body::Body {
+            axum::body::Body::from_stream(futures_util::stream::poll_fn(move |_| {
+                flag.store(true, Ordering::SeqCst);
+                std::task::Poll::Ready(None::<Result<axum::body::Bytes, std::io::Error>>)
+            }))
+        }
+        // The probe itself works: a body that is read marks its flag.
+        let probe = Arc::new(AtomicBool::new(false));
+        axum::body::to_bytes(watched(probe.clone()), 16)
+            .await
+            .expect("an empty body");
+        assert!(probe.load(Ordering::SeqCst), "the probe body was read");
         let read = Arc::new(AtomicBool::new(false));
-        let flag = read.clone();
-        let body = axum::body::Body::from_stream(futures_util::stream::poll_fn(move |_| {
-            flag.store(true, Ordering::SeqCst);
-            std::task::Poll::Ready(None::<Result<axum::body::Bytes, std::io::Error>>)
-        }));
+        let body = watched(read.clone());
         let request = axum::http::Request::post("/").body(body).expect("request");
         let user = crate::auth::CurrentUser(Session {
             identity: Identity {

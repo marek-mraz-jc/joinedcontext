@@ -3697,4 +3697,89 @@ mod tests {
             Err(StatusCode::NOT_IMPLEMENTED)
         );
     }
+
+    /// The small helpers' other arms: each status's slug, a document without the container the
+    /// singletons and actions go into, a row that is no object or keyed by a number, and a
+    /// `$select` path of two segments (T-7909).
+    #[tokio::test]
+    async fn the_helpers_answer_each_shape_they_meet() {
+        for (status, slug) in [
+            (StatusCode::UNAUTHORIZED, "unauthorized"),
+            (StatusCode::FORBIDDEN, "forbidden"),
+            (StatusCode::PRECONDITION_FAILED, "precondition-failed"),
+            (StatusCode::CONFLICT, "conflict"),
+            (StatusCode::BAD_GATEWAY, "internal-error"),
+            (StatusCode::IM_A_TEAPOT, "invalid-request"),
+        ] {
+            assert_eq!(slug_of(status), slug, "{status}");
+        }
+        assert_eq!(with_singletons_xml("<Schema/>"), "<Schema/>");
+        let visible = BTreeSet::new();
+        let none: Offered<'_> = (&[], &[]);
+        assert_eq!(
+            xml_for("<Schema/>", &Rights::default(), &visible, none),
+            "<Schema/>"
+        );
+        assert_eq!(
+            json_for("not json", &Rights::default(), &visible, none),
+            "not json"
+        );
+        // An approver who reads no Changes is offered neither approve nor reject.
+        let approver = Rights {
+            approve: true,
+            ..Rights::default()
+        };
+        assert!(bound_actions(&approver, &visible).is_empty());
+        assert_eq!(json_email("bob"), Value::Null);
+        assert_eq!(json_email("bob@example.org"), json!("bob@example.org"));
+
+        let mut rows = [json!(1), json!({ ROW_KEY: "a/b", "name": "b" })];
+        strip_key(&mut rows);
+        assert_eq!(rows, [json!(1), json!({ "name": "b" })]);
+
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let spaces = kind("spaces").expect("spaces is a kind");
+        let keyed = keyed_rows(
+            spaces,
+            &state,
+            "air",
+            vec![
+                json!("no row"),
+                json!({ "name": 7 }),
+                json!({ "title": "no key" }),
+            ],
+        );
+        assert_eq!(keyed.len(), 1, "{keyed:?}");
+        assert_eq!(keyed[0][ROW_KEY], json!("air/7"));
+
+        let options = QueryOptions {
+            select: Some(vec![
+                odata_url::SelectItem::Path(vec!["spec".into(), "title".into()]),
+                odata_url::SelectItem::Star,
+                odata_url::SelectItem::Path(vec!["name".into()]),
+            ]),
+            ..QueryOptions::default()
+        };
+        assert_eq!(selected(&options), ["name"]);
+
+        // A refusal's ETag stays on its OData error; a door's 204 is a 200 with its cache and tag.
+        let mut refused = (StatusCode::PRECONDITION_FAILED, "{}").into_response();
+        refused
+            .headers_mut()
+            .insert(header::ETAG, HeaderValue::from_static("\"v1\""));
+        let answer = as_odata_error(refused).await;
+        assert_eq!(answer.status(), StatusCode::PRECONDITION_FAILED);
+        assert_eq!(answer.headers()[header::ETAG], "\"v1\"");
+        let mut empty = StatusCode::NO_CONTENT.into_response();
+        empty
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+        empty
+            .headers_mut()
+            .insert(header::ETAG, HeaderValue::from_static("\"v2\""));
+        let answer = door_answer(&state, empty).await;
+        assert_eq!(answer.status(), StatusCode::OK);
+        assert_eq!(answer.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(answer.headers()[header::ETAG], "\"v2\"");
+    }
 }

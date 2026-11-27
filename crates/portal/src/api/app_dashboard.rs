@@ -1119,6 +1119,45 @@ mod tests {
         }
     }
 
+    /// A positive column width is no finding; an App whose data needs name no space for the type,
+    /// or no need for it at all, reads no attributes (T-7909).
+    #[test]
+    fn a_positive_width_passes_and_an_unplaced_type_reads_no_attributes() {
+        let known = names(&["a"]);
+        let before = serde_json::json!({ "grid": { "source": "s", "type": "T" } });
+        let config = serde_json::json!({ "grid": { "source": "s", "type": "T",
+            "columns": [{ "attr": "a", "width": 120 }] } });
+        let found = check(&config, &before, &known);
+        assert!(!found.iter().any(|f| f.contains("width")), "{found:?}");
+
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let user = CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 1000,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        });
+        for app in [
+            serde_json::json!({ "spec": { "dataNeeds": [{ "types": ["Other"] }] } }),
+            serde_json::json!({ "spec": { "dataNeeds": [{ "types": ["T"] }] } }),
+        ] {
+            assert!(readable_attributes(&state, &user, "helsinki", &app, "T").is_empty());
+        }
+    }
+
     /// Each malformed part of a dashboard file is refused at its own path, beside the cases the
     /// SDK shares.
     #[test]
