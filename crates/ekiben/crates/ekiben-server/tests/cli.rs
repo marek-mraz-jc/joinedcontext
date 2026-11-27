@@ -131,6 +131,23 @@ fn blobl_maps_each_line_and_reports_bad_ones() {
     );
 }
 
+/// stdin that cannot be read (a directory) ends `blobl` with the read error, not a hang or 0.
+#[test]
+fn blobl_fails_on_an_unreadable_stdin() {
+    let dir = std::env::temp_dir();
+    let o = Command::new(env!("CARGO_BIN_EXE_ekiben"))
+        .args(["blobl", "root = this"])
+        .stdin(std::fs::File::open(&dir).unwrap())
+        .output()
+        .unwrap();
+    assert_ne!(o.status.code(), Some(0), "{}", stderr(&o));
+    assert!(
+        stderr(&o).to_lowercase().contains("directory"),
+        "{}",
+        stderr(&o)
+    );
+}
+
 #[test]
 fn blobl_imports_and_reads_files_of_the_host() {
     let dir = tempfile::tempdir().unwrap();

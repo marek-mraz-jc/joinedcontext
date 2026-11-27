@@ -108,6 +108,13 @@ struct Membership {
     seen: BTreeMap<String, usize>,
 }
 
+/// A membership given up (replaced, dropped, the input closed) stops its heartbeats.
+impl Drop for Membership {
+    fn drop(&mut self) {
+        self.heartbeat.abort();
+    }
+}
+
 pub struct KafkaInput {
     s: Settings,
     label: String,
@@ -284,10 +291,8 @@ impl KafkaInput {
     /// Joins the group (or, without one, takes every partition) and sets each partition's
     /// position from its committed offset or the reset rule.
     async fn assign(&mut self) -> Result<(), CoreError> {
-        // an assignment that failed half way left a membership whose heartbeats still run
-        if let Some(m) = self.member.take() {
-            m.heartbeat.abort();
-        }
+        // an assignment that failed half way left a membership: dropping it stops its heartbeats
+        self.member = None;
         self.refresh().await?;
         let topics = self.subscribed();
         if topics.is_empty() {
@@ -527,7 +532,7 @@ impl KafkaInput {
             return Ok(());
         }
         let body = group::offset_commit(&m.group, m.generation, &m.member, &offsets);
-        let node = m.coordinator;
+        let (node, rejoin) = (m.coordinator, m.rejoin.clone());
         let d = self
             .cluster
             .call(node, client::OFFSET_COMMIT, 2, &body, REQUEST_TIMEOUT)
@@ -543,9 +548,7 @@ impl KafkaInput {
                 Ok(())
             }
             c @ (22 | 25 | 27) => {
-                if let Some(m) = &self.member {
-                    m.rejoin.store(true, Ordering::Relaxed);
-                }
+                rejoin.store(true, Ordering::Relaxed);
                 Err(failed(format!(
                     "committing offsets: {}; rejoining the group",
                     error_name(c)
@@ -580,24 +583,18 @@ impl KafkaInput {
         if let Err(e) = self.commit().await {
             tracing::warn!("kafka_franz input: {e}");
         }
-        if let Some(m) = self.member.take() {
-            m.heartbeat.abort();
-        }
+        self.member = None;
         self.lock().parts.clear();
         self.ready.clear();
         self.leaders.clear();
         self.assigned = false;
     }
 
+    /// A member whose heartbeat failed, or whose topics' partition counts moved, rejoins.
     fn needs_rejoin(&self) -> bool {
-        let Some(m) = &self.member else {
-            return false;
-        };
-        if m.rejoin.load(Ordering::Relaxed) {
-            return true;
-        }
-        let topics = self.subscribed();
-        self.partition_counts(&topics) != m.seen
+        self.member.as_ref().is_some_and(|m| {
+            m.rejoin.load(Ordering::Relaxed) || self.partition_counts(&self.subscribed()) != m.seen
+        })
     }
 
     /// Fetch v4 from the next leader of the assignment; queues one batch per partition.
@@ -802,7 +799,7 @@ impl KafkaInput {
             self.refresh().await?;
             self.leaders_of_assignment();
         }
-        if self.member.is_some() && self.needs_rejoin() {
+        if self.needs_rejoin() {
             tracing::info!("kafka_franz input: the group rebalances; rejoining");
             self.drop_assignment().await;
         }

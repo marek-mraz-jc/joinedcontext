@@ -188,6 +188,36 @@ mod chart_tests {
         }
     }
 
+    /// Structured data cut or broken inside a parameter: each input fails with an error, and
+    /// best effort keeps the partial message (priority and version are there).
+    #[test]
+    fn broken_structured_data_fails_and_best_effort_keeps_the_head() {
+        for input in [
+            &b"<1>1 - - - - - [id a=\"x\\\"y"[..],
+            b"<1>1 - - - - - [id a=\"x\\\"y\"",
+            b"<1>1 - - - - - [id a=\"x\"][id2 b=\"\\",
+            b"<1>1 - - - - - [id a=\"x\" b",
+            b"<1>1 - - - - - [id a=",
+            b"<1>1 - - - - - [id a=\"\\x\"]",
+            b"<1>1 - - - - - [id a=\"x\"]m",
+            b"<1>1 - - - - - [id a=\"x\"",
+            b"<1>1 - - - - - [id a=\"x\" a b=\"y\"]",
+            b"<1>1 - - - - - [",
+            b"<1>1 - - - - - [id",
+            b"<1>1 - - - - - [id ",
+        ] {
+            for best_effort in [true, false] {
+                let (m, e) = parse(input, best_effort);
+                assert!(e.is_some(), "{input:?} {best_effort}");
+                assert_eq!(m.is_some(), best_effort, "{input:?}");
+            }
+        }
+        // An escaped quote cut at the end keeps what was read of the value, unescaped.
+        let (m, _) = parse(b"<1>1 - - - - - [id a=\"x\\\"y", true);
+        let sd = m.and_then(|m| m.structured_data).unwrap_or_default();
+        assert!(sd.contains_key("id"), "{sd:?}");
+    }
+
     /// The machine over `input` with its EOF actions off (eof is never reached).
     fn step(input: &[u8]) -> (i32, Option<String>) {
         let mut m = Machine {

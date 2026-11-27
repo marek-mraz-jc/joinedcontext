@@ -133,6 +133,19 @@ impl ekiben_core::Output for PanicsOnClose {
     }
 }
 
+/// An output whose write panics: the pipeline's writer task dies mid-run.
+struct PanicsOnWrite;
+
+#[async_trait::async_trait]
+impl ekiben_core::Output for PanicsOnWrite {
+    fn output_type(&self) -> &'static str {
+        "panics_on_write"
+    }
+    async fn write_batch(&self, _ctx: &StreamContext, _batch: Batch) -> Result<(), CoreError> {
+        panic!("write bug");
+    }
+}
+
 struct Rig {
     reg: Arc<ekiben_core::Registry>,
     out: Arc<Collect>,
@@ -155,6 +168,7 @@ fn rig(steps: Vec<Step>, input_fails: bool, out: Collect) -> Rig {
     });
     reg.register_processor("busy", |_, _| Ok(Arc::new(Busy)));
     reg.register_output("panics_on_close", |_, _| Ok(Arc::new(PanicsOnClose)));
+    reg.register_output("panics_on_write", |_, _| Ok(Arc::new(PanicsOnWrite)));
     Rig { reg, out }
 }
 
@@ -234,6 +248,22 @@ async fn a_refused_write_counts_failed_messages_and_fails_the_run() {
     assert_eq!(s.error.as_deref(), Some("disk full"));
     assert_eq!(s.messages_out, 0);
     assert!(s.messages_failed >= 1);
+}
+
+/// A writer that panics fails the run with that named, and the input stops feeding it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_panicking_write_ends_the_run_with_the_writer_named() {
+    let steps = (0..200).map(|_| Step::Batch(vec!["c"])).collect();
+    let r = rig(steps, false, Collect::default());
+    let conf = StreamConfig::from_yaml_or_json(
+        "input:\n  scripted: {}\noutput:\n  panics_on_write: {}\npipeline:\n  threads: 1\n",
+    )
+    .unwrap();
+    let s = run(&r, conf, ResourceManager::new()).await;
+    assert!(!s.success);
+    let err = s.error.unwrap_or_default();
+    assert!(err.contains("pipeline writer ended abnormally"), "{err}");
+    assert_eq!(s.messages_out, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
