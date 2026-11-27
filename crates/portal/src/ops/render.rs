@@ -2077,9 +2077,17 @@ mod tests {
             .await
             .expect("drawn");
         let status = answer["widgets"][0]["error"]["status"].as_u64();
+        let asked: Vec<String> = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .map(|r| r.url.path().to_owned())
+            .collect();
         assert!(
             status.is_some_and(|s| ![403, 404, 422, 429].contains(&s)),
-            "{answer}"
+            "{:?} {asked:?}",
+            answer["widgets"]
         );
     }
 

@@ -632,10 +632,14 @@ mod tests {
     /// An answer as its HTTP status, and for a 200 the members it answers.
     fn outcome(result: Result<Value, OpError>) -> String {
         match result {
-            Ok(Value::Object(map)) => {
-                format!("200 {}", map.keys().cloned().collect::<Vec<_>>().join(","))
-            }
-            Ok(other) => format!("200 {other}"),
+            Ok(value) => format!(
+                "200 {}",
+                value.as_object().map_or_else(String::new, |map| map
+                    .keys()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(","))
+            ),
             Err(err) => err.into_response().status().as_u16().to_string(),
         }
     }

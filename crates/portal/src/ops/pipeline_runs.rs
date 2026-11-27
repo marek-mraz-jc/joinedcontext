@@ -449,11 +449,10 @@ mod tests {
         assert_eq!(all["run"], runs[0]["run"], "{all}");
         assert!(all.get("next").is_none(), "{all}");
         let newest = all["run"].as_str().unwrap_or_default().to_owned();
-        let (other, lines_of_other) = if newest.starts_with("2026-11-01T11") {
-            ("2026-11-01T10:00:00Z", 1)
-        } else {
-            ("2026-11-01T11:00:00Z", 2)
-        };
+        let (other, lines_of_other) = [("2026-11-01T10:00:00Z", 1), ("2026-11-01T11:00:00Z", 2)]
+            .into_iter()
+            .find(|(run, _)| !newest.starts_with(&run[..13]))
+            .expect("the run that is not the newest");
         let one = logs(&state, json!({ "name": "counters", "run": other }))
             .await
             .expect("one run");

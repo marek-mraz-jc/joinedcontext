@@ -978,6 +978,28 @@ mod tests {
         (state, caller)
     }
 
+    /// A 404 on an Endpoint whose audience leaves the caller out names the fix; any other
+    /// status, or an Endpoint that admits them, goes on to speak for itself (T-7921).
+    #[test]
+    fn a_404_on_an_endpoint_that_leaves_the_caller_out_names_the_audience() {
+        let (state, caller) = helsinki(None);
+        state.mirror.upsert(crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "Endpoint".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("listed", "helsinki"),
+            spec: json!({ "slug": PRIVATE, "audience": "project-list", "allowedProjects": ["espoo"] }),
+            status: None,
+        });
+        let refused = not_admitted(404, &caller, &state, "helsinki", "listed").expect_err("left out");
+        assert!(
+            matches!(&refused, OpError::Api(ApiError::Denied(why))
+                if why.starts_with("Endpoint listed: you would not reach this Endpoint: audience project-list")),
+            "{refused:?}"
+        );
+        assert!(not_admitted(500, &caller, &state, "helsinki", "listed").is_ok());
+        assert!(not_admitted(404, &caller, &state, "helsinki", "stops").is_ok());
+    }
+
     #[test]
     fn a_public_slug_of_another_project_is_readable_and_nothing_else_is() {
         let (state, caller) = helsinki(None);

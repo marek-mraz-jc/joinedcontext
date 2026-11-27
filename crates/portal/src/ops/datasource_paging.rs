@@ -388,7 +388,7 @@ mod tests {
         assert_eq!(
             records_path(&json!({
                 "features": [{ "id": 1 }, { "id": 2 }],
-                "extra": [{ "id": 3 }],
+                "more": [{ "id": 3 }],
                 "meta": { "counts": [1, 2, 3] }
             })),
             Some("features".to_owned())

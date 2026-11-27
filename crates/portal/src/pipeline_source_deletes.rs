@@ -1981,12 +1981,14 @@ mod tests {
     fn more_than_the_share_is_held_and_deletes_nothing() {
         let rows = fifty(&[1, 2, 3, 4, 5, 6], "r2", 1);
         let (misses, verdict) = judge(&rows, "r2", &rule(2, 10));
-        assert!(matches!(verdict, Verdict::Held(_)), "{verdict:?}");
-        if let Verdict::Held(hold) = verdict {
-            assert_eq!(hold.reason, HoldReason::ShareExceeded);
-            assert_eq!((hold.would, hold.ledger), (6, 50));
-            assert!(hold.detail().contains("would delete 6 of 50"));
-        }
+        let hold = Hold {
+            run: "r2".into(),
+            reason: HoldReason::ShareExceeded,
+            would: 6,
+            ledger: 50,
+        };
+        assert!(hold.detail().contains("would delete 6 of 50"));
+        assert_eq!(verdict, Verdict::Held(hold));
         // The misses still count, so the next complete run is judged the same way.
         assert_eq!(misses.iter().filter(|(_, m)| *m == 2).count(), 6);
         // Five of fifty is the share exactly and goes.
@@ -2173,9 +2175,8 @@ mod tests {
             "/tests/fixtures/source-deletes/stream.json"
         );
         let text = serde_json::to_string_pretty(&stream).expect("json") + "\n";
-        if std::env::var_os("JC_UPDATE_GOLDEN").is_some() {
-            std::fs::write(golden, &text).expect("golden written");
-        }
+        let update = std::env::var_os("JC_UPDATE_GOLDEN").is_some();
+        let _ = update.then(|| std::fs::write(golden, &text).expect("golden written"));
         assert_eq!(std::fs::read_to_string(golden).expect("golden"), text);
     }
 
@@ -3323,9 +3324,7 @@ mod tests {
                     tokio::task::spawn_blocking(|| std::thread::sleep(Duration::from_millis(2)))
                         .await
                         .expect("the wait");
-                    if hung_up.load(Ordering::SeqCst) {
-                        after += 1;
-                    }
+                    after += usize::from(hung_up.load(Ordering::SeqCst));
                 }
                 started
             })

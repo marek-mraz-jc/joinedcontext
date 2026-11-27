@@ -498,8 +498,9 @@ async fn a_refusing_counter_store_answers_at_the_step_it_refused() {
          $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
         "CREATE FUNCTION skipped() RETURNS trigger LANGUAGE plpgsql AS \
          $$ BEGIN RETURN NULL; END $$",
+        // A row trigger: the insert of the day's first call updates no row, the settle does.
         "CREATE TRIGGER refused BEFORE UPDATE ON app_service_usage \
-         FOR EACH STATEMENT EXECUTE FUNCTION refused()",
+         FOR EACH ROW EXECUTE FUNCTION refused()",
     ])
     .await;
     // The day is held by an insert; the settle's update is refused after the answer.

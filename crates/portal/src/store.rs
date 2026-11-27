@@ -773,13 +773,13 @@ mod tests {
         let (done, finished) = mpsc::channel();
         let reader = Arc::clone(&mirror);
         std::thread::spawn(move || {
-            let mut first = true;
+            let first = std::sync::Once::new();
             let held = reader.matching(|_| {
-                if std::mem::take(&mut first) {
+                first.call_once(|| {
                     barrier.wait();
                     // Long enough for the writer to queue for the write lock.
                     std::thread::sleep(Duration::from_millis(200));
-                }
+                });
                 reader.get("org", "Organization", "hel").is_some()
             });
             let _ = done.send(held.len());
