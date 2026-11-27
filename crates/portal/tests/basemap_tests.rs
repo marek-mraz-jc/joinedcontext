@@ -390,6 +390,39 @@ async fn an_unreachable_upstream_answers_502_without_the_key() {
     }
 }
 
+/// A plain-http upstream the configuration does not allow is refused before any call, and an
+/// upstream that is neither https nor http is refused too (T-7909).
+#[tokio::test]
+async fn an_upstream_scheme_the_configuration_does_not_allow_is_refused_before_any_call() {
+    let (addr, calls) = start_upstream().await;
+    for (template, allow_http) in [
+        (format!("http://{addr}/{{z}}/{{x}}/{{y}}.png"), false),
+        (format!("ftp://{addr}/{{z}}/{{x}}/{{y}}.png"), true),
+    ] {
+        let mut config = Config::for_tests();
+        let mut bm = BasemapConfig::for_tests(
+            template.clone(),
+            "OSM".to_string(),
+            std::env::temp_dir().join(format!("jc-bm-scheme-{}", crate::unique::unique())),
+        );
+        bm.allow_http = allow_http;
+        config.basemap = Some(bm);
+        let app = server::app(AppState::new(config, None).with_mirror(mirror()));
+        let (status, _, body) = call_app(
+            &app,
+            &format!("/api/v1/projects/{PROJECT}/basemap/default/2/1/1.png"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_GATEWAY, "{template}");
+        assert!(
+            String::from_utf8_lossy(&body).contains("https"),
+            "{template}: {}",
+            String::from_utf8_lossy(&body)
+        );
+    }
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
 #[tokio::test]
 async fn out_of_range_coordinates_refused_before_upstream_call() {
     let (addr, calls) = start_upstream().await;

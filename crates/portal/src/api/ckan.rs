@@ -424,6 +424,32 @@ mod tests {
         assert!(organization_catalogue(&state, "helsinki").is_none());
     }
 
+    /// An endpoint whose named instance the project holds is no dangling reference: `missing`
+    /// answers nothing for it, and one naming another instance is shown as missing (T-7909).
+    #[test]
+    fn a_held_instance_is_not_reported_missing() {
+        let env: ResourceEnvelope = serde_json::from_value(serde_json::json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "Endpoint",
+            "metadata": { "name": "air", "namespace": "helsinki" },
+            "spec": { "publish": { "ckan": { "instanceRef": "main", "name": "air-data" } } },
+        }))
+        .expect("endpoint");
+        let spec: CkanInstanceSpec = serde_json::from_value(serde_json::json!({
+            "url": "https://ckan.example",
+            "apiTokenRef": { "name": "ckan-token", "key": "token" },
+        }))
+        .expect("instance");
+        let held = [("main".to_owned(), spec.clone())];
+        assert!(missing(&env, None, &held).is_none());
+        let other = [("other".to_owned(), spec)];
+        let shown = missing(&env, Some("Ready".into()), &other).expect("missing");
+        assert!(shown.instance_missing);
+        assert_eq!(
+            (shown.instance.as_str(), shown.dataset.as_str()),
+            ("main", "air-data")
+        );
+    }
+
     /// T-7455: an endpoint the load refused stays on the catalogue page as the dataset it would
     /// be, with the refusal and no catalogue address; a served one carries no refusal.
     #[test]
@@ -524,6 +550,13 @@ mod tests {
         let held = organization_catalogue(&state, "rt-project").expect("its catalogue");
         assert_eq!(held.url.as_str(), "http://data.rt.localhost/");
         assert_eq!(held.token.as_ref(), Some(&token));
+        // The held token mints what its source mints.
+        let minted = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime")
+            .block_on(token.mint())
+            .expect("minted");
+        assert_eq!(minted.expose(), "eyJ.t.s");
         assert_eq!(
             organization_catalogue(&state, "bratislava").map(|c| c.url.to_string()),
             Some("http://opendata.ba.localhost/".to_owned()),

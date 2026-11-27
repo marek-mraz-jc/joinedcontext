@@ -1036,6 +1036,23 @@ mod tests {
 
     /// A test that panicked while holding the running list poisons it: the next test still takes
     /// its slot and gives it back, and a second one in the same project waits.
+    /// A spreadsheet and a zipped shapefile sample keep their format and sheet (T-7909).
+    #[test]
+    fn a_spreadsheet_and_a_shapefile_sample_keep_their_format() {
+        for (asked, format) in [
+            ("xlsx", SampleFormat::Xlsx),
+            ("shapefile", SampleFormat::Shapefile),
+        ] {
+            let request: SampleRequest = serde_json::from_value(serde_json::json!({
+                "url": "https://data.example.org/stations", "format": asked, "sheet": "Stations 2026",
+            }))
+            .expect("a sample request");
+            let sample = Sample::from(request);
+            assert_eq!(sample.format, format, "{asked}");
+            assert_eq!(sample.sheet.as_deref(), Some("Stations 2026"));
+        }
+    }
+
     #[test]
     fn a_poisoned_running_list_still_hands_out_and_takes_back_slots() {
         let _ = std::thread::spawn(|| {

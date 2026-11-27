@@ -659,6 +659,54 @@ async fn a_request_is_refused_before_it_is_stored() {
     .await;
     assert_eq!(inbox.status, StatusCode::OK, "{}", inbox.text);
     assert!(!inbox.text.contains("not-there"), "{}", inbox.text);
+    // Nor may an owner who guesses its id decide it: a request with no space is no one's.
+    let lost = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    for verb in ["approve", "decline", "revoke"] {
+        let decided = send(
+            &state,
+            "olli",
+            "POST",
+            &format!("/api/v1/projects/{HELSINKI}/access-requests/{lost}/{verb}"),
+            Some(json!({ "reason": "not ours" })),
+        )
+        .await;
+        assert_eq!(
+            decided.status,
+            StatusCode::NOT_FOUND,
+            "{verb}: {}",
+            decided.text
+        );
+    }
+
+    // A body that is no request is refused with what is wrong, before anything is stored.
+    let garbled = send(&state, "jana", "POST", &uri, Some(json!("air please"))).await;
+    assert_eq!(garbled.status, StatusCode::BAD_REQUEST, "{}", garbled.text);
+    // An owner's decision whose body is no decision is refused the same way.
+    let filed = send(&state, "jana", "POST", &uri, Some(ask())).await;
+    assert_eq!(filed.status, StatusCode::CREATED, "{}", filed.text);
+    let id = serde_json::from_str::<Value>(&filed.text).expect("json")["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+    for verb in ["decline", "revoke"] {
+        let decided = send(
+            &state,
+            "olli",
+            "POST",
+            &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/{verb}"),
+            Some(json!(5)),
+        )
+        .await;
+        assert_eq!(
+            decided.status,
+            StatusCode::BAD_REQUEST,
+            "{verb}: {}",
+            decided.text
+        );
+    }
 }
 
 /// A grant whose Policy name would pass 63 characters is refused when it is asked for, and an

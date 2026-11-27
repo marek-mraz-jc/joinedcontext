@@ -471,6 +471,42 @@ mod tests {
         );
     }
 
+    /// A profile's item counts its own runs only, today's tokens as its spend and its latest
+    /// run as its last activity; a run named by no title reads as its App and, holding no
+    /// endpoint list, as its one endpoint (T-7909).
+    #[test]
+    fn a_profile_counts_its_own_runs_and_a_bare_run_reads_as_its_app() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let today = jiff::Timestamp::now()
+            .strftime("%Y-%m-%dT08:00:00Z")
+            .to_string();
+        let mut mine = crate::agents::store::tests::run("r-1", "helsinki", &today);
+        mine.profile = "builder".into();
+        mine.tokens_used = 700;
+        let mut old = crate::agents::store::tests::run("r-2", "helsinki", "2020-01-01T00:00:00Z");
+        old.profile = "builder".into();
+        old.tokens_used = 50;
+        let mut theirs = crate::agents::store::tests::run("r-3", "helsinki", &today);
+        theirs.profile = "other".into();
+        theirs.tokens_used = 9;
+        let profile: ResourceEnvelope = serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1", "kind": "AgentProfile",
+            "metadata": { "name": "builder", "namespace": "helsinki" },
+            "spec": {},
+        }))
+        .expect("profile");
+        let item = manifest_item(&state, &profile, &[mine.clone(), old, theirs]);
+        assert_eq!(item.spend.used, Some(700));
+        assert_eq!(item.last_activity.as_deref(), Some(today.as_str()));
+
+        let mut bare = mine;
+        bare.title = None;
+        bare.endpoints = Value::Null;
+        let item = run_item(&state, &bare);
+        assert_eq!(item.name, bare.app_name);
+        assert_eq!(item.endpoints, [bare.endpoint_name.clone()]);
+    }
+
     #[test]
     fn a_run_waits_while_it_asks_or_awaits_approval() {
         assert_eq!(run_state("interviewing"), AgentState::Waiting);
