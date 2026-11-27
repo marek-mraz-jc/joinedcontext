@@ -2918,7 +2918,11 @@ mod drive_tests {
                 )),
                 Some(answer(
                     "The second page.",
-                    &[("src/pages/Bye.tsx", "", "export function Bye() {\n  return <p>bye</p>;\n}")],
+                    &[(
+                        "src/pages/Bye.tsx",
+                        "",
+                        "export function Bye() {\n  return <p>bye</p>;\n}",
+                    )],
                 )),
             ],
         )
@@ -2935,9 +2939,17 @@ mod drive_tests {
         ] {
             tx.send(next).expect("sent");
         }
-        driver.drive_code(&mut inbox, far()).await.expect("the loop ends");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
         assert_eq!(previews(&state).await, 2);
-        let run = state.agents.get_run("test-run").await.expect("read").expect("run");
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
         assert_eq!(run.title.as_deref(), Some("Hello board"));
         assert_eq!(asked(&server).await.len(), 2);
     }
@@ -2947,13 +2959,19 @@ mod drive_tests {
         let server = MockServer::start().await;
         script(
             &server,
-            &[Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])), None],
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                None,
+            ],
         )
         .await;
         let (state, driver) = driver(&server).await;
         let (tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
         drop(tx);
-        driver.drive_code(&mut inbox, far()).await.expect("the loop ends");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
         assert_eq!(previews(&state).await, 1);
         let said = thoughts(&state).await;
         assert!(
@@ -2971,14 +2989,20 @@ mod drive_tests {
             &[
                 Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
                 Some(answer("Axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
-                Some(answer("Still axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
+                Some(answer(
+                    "Still axios.",
+                    &[("src/pages/Hello.tsx", "", AXIOS)],
+                )),
             ],
         )
         .await;
         let (state, driver) = driver(&server).await;
         let (tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
         drop(tx);
-        driver.drive_code(&mut inbox, far()).await.expect("the loop ends");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
         assert_eq!(previews(&state).await, 1);
         assert_eq!(asked(&server).await.len(), 3);
     }
@@ -2990,30 +3014,55 @@ mod drive_tests {
         let app = template["src/App.tsx"].trim_end_matches('\n').to_owned();
         script(
             &server,
-            &[Some(answer("It already says hello.", &[("src/App.tsx", "", &app)]))],
+            &[Some(answer(
+                "It already says hello.",
+                &[("src/App.tsx", "", &app)],
+            ))],
         )
         .await;
         let (state, driver) = driver(&server).await;
         let (_tx, mut inbox) = broadcast::channel::<AgentRunEvent>(4);
         let lapsed = tokio::time::Instant::now();
-        driver.drive_code(&mut inbox, lapsed).await.expect("the lease ends it");
+        driver
+            .drive_code(&mut inbox, lapsed)
+            .await
+            .expect("the lease ends it");
         assert_eq!(previews(&state).await, 0);
-        assert!(thoughts(&state).await.contains(&"It already says hello.".to_owned()));
-        let run = state.agents.get_run("test-run").await.expect("read").expect("run");
+        assert!(thoughts(&state)
+            .await
+            .contains(&"It already says hello.".to_owned()));
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
         assert_eq!(run.status, AgentRunStatus::Expired.as_str());
     }
 
     #[tokio::test]
     async fn a_lagging_inbox_reads_on_and_a_failed_first_pass_keeps_the_template() {
         let server = MockServer::start().await;
-        script(&server, &[Some("No code.".into()), Some("No code again.".into())]).await;
+        script(
+            &server,
+            &[Some("No code.".into()), Some("No code again.".into())],
+        )
+        .await;
         let (state, driver) = driver(&server).await;
         let (tx, mut inbox) = broadcast::channel(1);
         tx.send(message("lost")).expect("sent");
         tx.send(cancelled()).expect("sent");
-        driver.drive_code(&mut inbox, far()).await.expect("the loop ends");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
         assert_eq!(previews(&state).await, 0);
-        let run = state.agents.get_run("test-run").await.expect("read").expect("run");
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
         assert!(run.files.get("src/App.tsx").is_some(), "{:?}", run.files);
     }
 
@@ -3037,7 +3086,10 @@ mod drive_tests {
                     )],
                 )),
                 Some(answer("Axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
-                Some(answer("Still axios.", &[("src/pages/Hello.tsx", "", AXIOS)])),
+                Some(answer(
+                    "Still axios.",
+                    &[("src/pages/Hello.tsx", "", AXIOS)],
+                )),
                 None,
                 Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
                 // With a version on screen a message is an edit turn: one that ends at once and
@@ -3067,7 +3119,10 @@ mod drive_tests {
         ] {
             tx.send(next).expect("sent");
         }
-        driver.drive_code(&mut inbox, far()).await.expect("the loop ends");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
         assert_eq!(previews(&state).await, 1);
         let said = thoughts(&state).await;
         for part in [
@@ -3106,13 +3161,21 @@ mod drive_tests {
             driver
                 .state
                 .agents
-                .append_event("test-run", "preview_error", json!({ "message": "x is undefined" }))
+                .append_event(
+                    "test-run",
+                    "preview_error",
+                    json!({ "message": "x is undefined" }),
+                )
                 .await
                 .expect("stored");
-            tx.send(event("preview_error", json!({ "message": "x is undefined" })))
-                .expect("sent");
+            tx.send(event(
+                "preview_error",
+                json!({ "message": "x is undefined" }),
+            ))
+            .expect("sent");
             // A second error leaves the wait where the first set it.
-            tx.send(event("preview_error", json!({ "message": "y" }))).expect("sent");
+            tx.send(event("preview_error", json!({ "message": "y" })))
+                .expect("sent");
             tokio::time::sleep(OBSERVATION_WAIT + Duration::from_secs(1)).await;
             for _ in 0..200 {
                 if asked(&server).await.len() > 2 {
@@ -3125,7 +3188,11 @@ mod drive_tests {
         let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
         ended.expect("the loop ends");
         let asked = asked(&server).await;
-        assert!(asked.len() > 2, "the check asked the model: {}", asked.len());
+        assert!(
+            asked.len() > 2,
+            "the check asked the model: {}",
+            asked.len()
+        );
         assert!(asked[2].contains("x is undefined"), "{}", asked[2]);
     }
 }

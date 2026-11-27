@@ -414,6 +414,93 @@ mod tests {
         assert!(admin.iter().all(|op| op.name != crate::connectors::APPLY));
     }
 
+    /// A project whose DataModel the Portal cannot read, with a public Endpoint on `gateway`
+    /// that answers one stop entity (T-7916).
+    async fn unreadable_marks(gateway: &MockServer) -> AppState {
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(
+                json!([{ "id": "urn:ngsi-ld:GtfsStop:1", "type": "GtfsStop", "name": "Kamppi" }]),
+            ))
+            .mount(gateway)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.gateway_url = Some(gateway.uri());
+        let state = AppState::new(config, None);
+        for (kind, name, spec) in [
+            (
+                "Endpoint",
+                "stops",
+                json!({ "slug": "stopshelsinkizzzzzzzzzzzzzzz", "audience": "public" }),
+            ),
+            ("DataModel", "riders", json!({})),
+        ] {
+            state.mirror.upsert(crate::resource::ResourceEnvelope {
+                api_version: crate::resource::API_VERSION.to_owned(),
+                kind: kind.to_owned(),
+                metadata: crate::resource::ObjectMeta::new(name, "helsinki"),
+                spec,
+                status: None,
+            });
+        }
+        state
+    }
+
+    /// AG-158: entities read while a model's personal marks cannot be read never reach the
+    /// model, through the connector or through the registry; the step says why (T-7916).
+    #[tokio::test]
+    async fn entities_whose_personal_marks_cannot_be_read_are_refused() {
+        let gateway = MockServer::start().await;
+        let state = unreadable_marks(&gateway).await;
+        let driver = in_state(&state, "http://localhost:1", "data-read");
+        let arguments = json!({ "endpoint": "stopshelsinkizzzzzzzzzzzzzzz", "type": "GtfsStop" });
+        // The read is offered as the segment lists it, whatever this test person's rights.
+        let (caller, mut offered) = driver.connector_offered("data-read");
+        offered.push(crate::ops::summary(
+            crate::ops::find("jc_data_query").expect("registered"),
+        ));
+        let call = model::ToolCall {
+            id: "call-1".into(),
+            name: "jc_data_query".into(),
+            input: arguments.clone(),
+        };
+        let said = driver
+            .connector_call(&caller, &offered, &call)
+            .await
+            .expect("an answer");
+        assert!(!said.contains("Kamppi"), "{said}");
+        assert!(
+            said.contains("personal attributes cannot be withheld"),
+            "{said}"
+        );
+        let said = driver
+            .registry_call(&super::super::tools_registry::RegistryCall {
+                name: "jc_data_query".into(),
+                arguments,
+            })
+            .await
+            .expect("an answer");
+        assert!(said.starts_with("error: the data model riders"), "{said}");
+        let steps: Vec<Value> = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == "tool")
+            .map(|event| event.payload)
+            .collect();
+        assert_eq!(steps.len(), 2, "{steps:?}");
+        assert!(
+            steps.iter().all(|step| step["status"] == "failed"),
+            "{steps:?}"
+        );
+        assert!(!gateway
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .is_empty());
+    }
+
     /// An operation whose input schema is no object, or one without a `type`, still reaches the
     /// provider as an object schema (T-7818).
     #[test]
