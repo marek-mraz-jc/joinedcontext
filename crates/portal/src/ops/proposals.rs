@@ -1173,6 +1173,37 @@ mod tests {
         );
     }
 
+    /// A check of an inline manifest that names no draft answers its verdict and keeps none,
+    /// and an MCP client typing a new Endpoint's slug is refused at that field (EP-75, T-7921).
+    #[tokio::test]
+    async fn an_inline_check_keeps_no_draft_and_a_typed_slug_is_refused_at_its_field() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = super::super::testkit::admin(&state);
+        let op = crate::ops::find("jc_manifest_dry_run").expect("registered");
+        let space = json!({ "manifest": {
+            "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "bikes", "namespace": "p" }, "spec": {}
+        } });
+        let checked = (op.run)(&admin, &state, "p", space)
+            .await
+            .expect("a verdict");
+        assert!(checked["verdict"].is_object(), "{checked}");
+        let mcp = Caller::new(admin.identity.clone(), Via::Mcp);
+        let typed = json!({ "manifest": {
+            "apiVersion": crate::resource::API_VERSION, "kind": "Endpoint",
+            "metadata": { "name": "counters", "namespace": "p" },
+            "spec": { "contextSpaceRef": "bikes", "audience": "public", "slug": "typedbyamodel" }
+        } });
+        let refused = (op.run)(&mcp, &state, "p", typed)
+            .await
+            .expect_err("the platform mints the slug");
+        assert!(
+            matches!(&refused, OpError::InvalidInput { path, message }
+                if path == "/manifest/spec/slug" && message.contains("EP-75")),
+            "{refused:?}"
+        );
+    }
+
     #[tokio::test]
     async fn a_proposal_from_an_unreadable_draft_is_not_found() {
         let state = AppState::new(crate::config::Config::for_tests(), None);

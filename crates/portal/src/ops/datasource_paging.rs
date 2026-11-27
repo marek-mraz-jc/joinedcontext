@@ -383,6 +383,18 @@ mod tests {
             Some("data".to_owned()),
             "links are never the records"
         );
+        // The longest array of objects wins; a shorter one after it and an array of plain values
+        // one level down are no records.
+        assert_eq!(
+            records_path(&json!({
+                "features": [{ "id": 1 }, { "id": 2 }],
+                "extra": [{ "id": 3 }],
+                "meta": { "counts": [1, 2, 3] }
+            })),
+            Some("features".to_owned())
+        );
+        assert!(page_url("not a url")
+            .is_err_and(|why| why.starts_with("the URL does not parse")));
     }
 
     fn recorded(folder: &str) -> (Value, Value) {
