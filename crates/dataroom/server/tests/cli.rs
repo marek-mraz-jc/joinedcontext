@@ -6,7 +6,10 @@
 
 use clap::Parser;
 use dataroom_core::{CatalogueId, DataroomError, OrgId, RequestCtx, Store, Subject};
-use dataroom_server::{ensure_catalogue, ensure_default_catalogue, import_ckan_json, run_cli, Cli};
+use dataroom_harvest::{HarvestEngine, MapFetcher};
+use dataroom_server::{
+    ensure_catalogue, ensure_default_catalogue, import_ckan_json, run_cli, run_cli_with, Cli,
+};
 use dataroom_store_memory::MemoryStore;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -518,6 +521,38 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
         matches!(err, DataroomError::OutboundRefused(ref m) if m.contains("127.0.0.1")),
         "{err:?}"
     );
+
+    // A source on a public host is harvested and the finished run printed (the fetcher answers
+    // from a map, every name resolving to one public address).
+    let feed = json!({"name": "cli-pg-feed", "kind": "dcat-ap",
+                      "url": "https://feeds.city.example/catalog.ttl",
+                      "publisherId": "cli-pg-mesto", "allowedHosts": ["feeds.city.example"]});
+    run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_source.propose",
+        "--input",
+        &feed.to_string(),
+    ]))
+    .await
+    .unwrap();
+    let fetcher = MapFetcher::new();
+    fetcher.insert(
+        "https://feeds.city.example/catalog.ttl",
+        Some("text/turtle"),
+        "@prefix dcat: <http://www.w3.org/ns/dcat#> .\n\
+         @prefix dct: <http://purl.org/dc/terms/> .\n\
+         <https://feeds.city.example/d/1> a dcat:Dataset ; dct:title \"Cesty\"@sk ;\n\
+         dct:description \"Popis\"@sk ;\n\
+         dcat:distribution [ a dcat:Distribution ; dcat:accessURL <https://feeds.city.example/d/1.csv> ] .\n",
+    );
+    let engine = HarvestEngine::new(std::sync::Arc::new(fetcher)).with_custom_dns(|_, port| {
+        Ok(vec![std::net::SocketAddr::from(([93, 184, 216, 34], port))])
+    });
+    let run = run_cli_with(pg(&["harvest", "--source", "cli-pg-feed"]), engine)
+        .await
+        .unwrap();
+    assert_eq!(run["state"], "succeeded", "{run}");
 
     // Started as an operation, the run goes on in a task: the command waits for its end and
     // prints the finished run, failed by the same guard.

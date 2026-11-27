@@ -407,6 +407,11 @@ pub async fn import_ckan_json(
 
 /// Runs the CLI command and returns a JSON summary.
 pub async fn run_cli(cli: Cli) -> Result<Value> {
+    run_cli_with(cli, HarvestEngine::new(Arc::new(HttpFetcher::new()))).await
+}
+
+/// [`run_cli`] with `harvester` running the `harvest` command (a test fetches from a map).
+pub async fn run_cli_with(cli: Cli, harvester: HarvestEngine) -> Result<Value> {
     dataroom_api::check_profiles()?;
     let org_id = OrgId::parse_verified(&cli.org_id)?;
     let catalogue_id = CatalogueId::parse_verified(&cli.catalogue_id)?;
@@ -459,8 +464,7 @@ pub async fn run_cli(cli: Cli) -> Result<Value> {
                 .ok_or_else(|| {
                     DataroomError::NotFound(format!("harvest source '{source}' not found"))
                 })?;
-            let engine = HarvestEngine::new(Arc::new(HttpFetcher::new()));
-            let run = engine.run_source(&ctx, store.as_ref(), &src).await?;
+            let run = harvester.run_source(&ctx, store.as_ref(), &src).await?;
             Ok(serde_json::to_value(run).unwrap_or(Value::Null))
         }
         Command::FeedCheck { profile } => {
@@ -540,10 +544,8 @@ pub fn serve_state(
             ))
         }
     };
-    let verifier = match jc_door::Verifier::new(issuer, jwks_url, &tokens.clients) {
-        Ok(verifier) => verifier,
-        Err(e) => return Err(DataroomError::field_error("jwksUrl", e)),
-    };
+    let verifier = jc_door::Verifier::new(issuer, jwks_url, &tokens.clients)
+        .map_err(|e| DataroomError::field_error("jwksUrl", e))?;
     let (subject, grant) = dataroom_api::portal_publisher(org_id, catalogue_id);
     let authz = Arc::new(PolicyAuthorizer::new(vec![grant]));
     Ok(DataroomState::new(store, authz, org_id, catalogue_id)
