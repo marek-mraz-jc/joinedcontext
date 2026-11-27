@@ -63,10 +63,9 @@ pub fn image_of(layout: &[u8], digest: &str) -> Result<Image, String> {
         if !entry.header().entry_type().is_file() {
             continue;
         }
-        let path = entry
-            .path()
-            .map_err(|e| format!("a path in the layout is not readable: {e}"))?
-            .to_string_lossy()
+        // The name as the archive spells it: a layout's names are ASCII, and a byte that is no
+        // text only names a file the index never asks for.
+        let path = String::from_utf8_lossy(&entry.path_bytes())
             .trim_start_matches("./")
             .to_owned();
         let mut bytes = Vec::new();
@@ -743,6 +742,77 @@ mod tests {
                 ),
             }
         }
+    }
+
+    /// The migrations are the `.sql` files directly in the folder the manifest names, in name
+    /// order, a file the forge no longer holds left out; without the field the forge is not asked.
+    #[tokio::test]
+    async fn the_migrations_are_the_sql_files_of_the_named_folder_in_order() {
+        use base64::Engine as _;
+        use wiremock::matchers::{method, path_regex, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex("Shako.Tree"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "Sha": "t1",
+                "Truncated": false,
+                "Tree": [
+                    { "Path": "db/002_more.sql", "Type": "blob", "Sha": "b2" },
+                    { "Path": "db/001_init.sql", "Type": "blob", "Sha": "b1" },
+                    { "Path": "db/003_gone.sql", "Type": "blob", "Sha": "b3" },
+                    { "Path": "db/notes.md", "Type": "blob", "Sha": "b4" },
+                    { "Path": "db/old/000.sql", "Type": "blob", "Sha": "b5" },
+                ],
+            })))
+            .mount(&server)
+            .await;
+        for (file, sql) in [
+            ("db/001_init.sql", "CREATE TABLE a ();"),
+            ("db/002_more.sql", "SELECT 1;"),
+        ] {
+            let content = base64::engine::general_purpose::STANDARD.encode(sql);
+            Mock::given(method("GET"))
+                .and(path_regex("Shako.File"))
+                .and(query_param("@p", format!("'{file}'")))
+                .respond_with(
+                    ResponseTemplate::new(200)
+                        .set_body_json(serde_json::json!({ "Sha": "s", "Content": content })),
+                )
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path_regex("Shako.File"))
+            .and(query_param("@p", "'db/003_gone.sql'"))
+            .respond_with(ResponseTemplate::new(404))
+            .mount(&server)
+            .await;
+        let shako =
+            ShakoClient::new(server.uri().parse().expect("url"), "o", "r", "t").expect("client");
+        let spec = serde_json::json!({ "storage": { "sql": { "migrations": "db" } } });
+        let migrations = migrations_at(&shako, &spec, "c1").await.expect("read");
+        let got: Vec<(&str, &str)> = migrations
+            .iter()
+            .map(|m| (m.file.as_str(), m.sql.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("001_init.sql", "CREATE TABLE a ();"),
+                ("002_more.sql", "SELECT 1;")
+            ]
+        );
+        let before = server.received_requests().await.expect("recorded").len();
+        let none = migrations_at(&shako, &serde_json::json!({}), "c1")
+            .await
+            .expect("none");
+        assert!(none.is_empty());
+        assert_eq!(
+            server.received_requests().await.expect("recorded").len(),
+            before,
+            "the forge is not asked without the field"
+        );
     }
 
     /// A build of an App with no repository of its own is refused before the forge is asked; a

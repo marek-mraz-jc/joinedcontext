@@ -408,17 +408,19 @@ fn eval(expr: &Expr, doc: &Value) -> bool {
                     other => text_of(other).as_deref() == Some(want.as_str()),
                 }),
                 (Op::Ne, Some(want)) => !found.iter().any(|v| text_of(v).as_deref() == Some(want)),
-                (op, Some(want)) => found.iter().any(|v| {
-                    let order = compare(v, want);
-                    match op {
-                        Op::Eq => order == Some(Ordering::Equal),
-                        Op::Lt => order == Some(Ordering::Less),
-                        Op::Le => matches!(order, Some(Ordering::Less | Ordering::Equal)),
-                        Op::Gt => order == Some(Ordering::Greater),
-                        _ => matches!(order, Some(Ordering::Greater | Ordering::Equal)),
-                    }
+                // The parser gives every operator but `:` a value (`*` alone is `:*`).
+                (op, want) => want.as_ref().is_some_and(|want| {
+                    found.iter().any(|v| {
+                        let order = compare(v, want);
+                        match op {
+                            Op::Eq => order == Some(Ordering::Equal),
+                            Op::Lt => order == Some(Ordering::Less),
+                            Op::Le => matches!(order, Some(Ordering::Less | Ordering::Equal)),
+                            Op::Gt => order == Some(Ordering::Greater),
+                            _ => matches!(order, Some(Ordering::Greater | Ordering::Equal)),
+                        }
+                    })
                 }),
-                (_, None) => false,
             }
         }
     }
@@ -585,6 +587,30 @@ mod tests {
             "(labels.team = water OR labels.team = air) AND status.phase = Live"
         ));
         assert!(check("metadata.name > a"));
+    }
+
+    /// A node with both `items` and `properties` knows a member its items lack through its own
+    /// properties, and a member neither names is no field.
+    #[test]
+    fn a_member_the_items_lack_is_found_in_the_nodes_own_properties() {
+        let schema = json!({
+            "type": "object",
+            "properties": { "spec": {
+                "items": { "type": "object", "properties": { "a": { "type": "string" } },
+                           "additionalProperties": false },
+                "properties": { "b": { "type": "string" } },
+                "additionalProperties": false
+            } }
+        });
+        let doc = json!({ "spec": { "b": "x" } });
+        assert!(Filter::parse("spec.b = x", Some(&schema))
+            .expect("spec.b is a field")
+            .matches(&doc));
+        assert!(
+            Filter::parse("spec.a = x", Some(&schema)).is_ok(),
+            "the items' member"
+        );
+        assert!(Filter::parse("spec.c = x", Some(&schema)).is_err());
     }
 
     #[test]

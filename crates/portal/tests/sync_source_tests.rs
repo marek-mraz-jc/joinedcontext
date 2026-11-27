@@ -760,3 +760,44 @@ async fn a_merge_request_the_forge_refuses_is_never_recorded_as_open() {
     assert_eq!(status.merge_request, None);
     assert!(status.last_error.is_some(), "{status:?}");
 }
+
+/// CC-03: the leader's timer runs a pass whose flags it says: an origin that does not answer
+/// leaves the source in error and the repository alone.
+#[tokio::test]
+async fn the_leaders_timer_says_the_flags_of_its_pass() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::store::Mirror;
+    use joinedcontext_portal::sync::driver::spawn_periodic;
+    struct Quiet;
+    impl SyncRemote for Quiet {
+        fn revision(&self, _origin: &SyncOrigin) -> Result<String, RemoteError> {
+            Err(RemoteError::Unavailable("the origin is quiet".into()))
+        }
+        fn checkout(
+            &self,
+            _origin: &SyncOrigin,
+            _revision: &str,
+            _into: &Path,
+        ) -> Result<(), RemoteError> {
+            Err(RemoteError::Unavailable("the origin is quiet".into()))
+        }
+    }
+    let (server, recorded) = repository(json!({"interval": "30m"})).await;
+    let states = Arc::new(States::new(None));
+    let driver = Arc::new(Driver::new(
+        client(&server),
+        Arc::clone(&states),
+        Arc::new(Quiet) as Remote,
+    ));
+    let leader = Syncer::new(client(&server), Arc::new(Mirror::new()));
+    let ticking = spawn_periodic(Arc::clone(&driver), Arc::new(leader));
+    tokio::time::timeout(std::time::Duration::from_secs(20), async {
+        while states.get("bb", "regional").await.phase().as_str() != "Error" {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the leader's first tick ran a pass and flagged the quiet origin");
+    ticking.abort();
+    assert!(recorded.branches().is_empty(), "nothing is written");
+}

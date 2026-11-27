@@ -1272,12 +1272,9 @@ async fn answer_call(
             crate::change::PROPOSED_VIA.scope(via.clone(), async move {
                 let _in_flight = in_flight;
                 let op = crate::ops::find(op_name).expect("the operation was found above");
-                let mut outcome =
-                    match crate::ops::call(op, &caller, &state_for_task, &project, input).await {
-                        Ok(output) => call_result(&output),
-                        Err(crate::ops::OpError::Conflict(val)) => conflict_result(&val),
-                        Err(err) => problem_result(err),
-                    };
+                let mut outcome = answer_of(
+                    crate::ops::call(op, &caller, &state_for_task, &project, input).await,
+                );
                 // `tasks/result` answers this later: grounded when it was evaluated (AG-12).
                 // Each of the three answers above is an object whose `_meta` is one or absent.
                 outcome["_meta"][GROUNDING_META] = grounding(&state_for_task);
@@ -1287,13 +1284,10 @@ async fn answer_call(
         return result(id, json!({ "task": task }));
     }
 
-    let response_val = match crate::ops::call(op, &caller, state, project, input).await {
-        Ok(output) => result(id, call_result(&output)),
-        Err(crate::ops::OpError::Conflict(val)) => result(id, conflict_result(&val)),
-        Err(err) => result(id, problem_result(err)),
-    };
-
-    response_val
+    result(
+        id,
+        answer_of(crate::ops::call(op, &caller, state, project, input).await),
+    )
 }
 
 /// AG-12, CC-47: the configuration a `tools/call` result was evaluated against, in its `_meta`.
@@ -1849,6 +1843,16 @@ pub(crate) fn fence_for(text: &str) -> String {
 }
 
 /// A conflict the caller resolves: the document says which and what to do.
+/// The `tools/call` answer of an operation's outcome, inline or as a task's result: its output,
+/// a conflict as its structured content, or the problem.
+fn answer_of(outcome: Result<Value, crate::ops::OpError>) -> Value {
+    match outcome {
+        Ok(output) => call_result(&output),
+        Err(crate::ops::OpError::Conflict(val)) => conflict_result(&val),
+        Err(err) => problem_result(err),
+    }
+}
+
 fn conflict_result(val: &Value) -> Value {
     json!({
         "isError": true,

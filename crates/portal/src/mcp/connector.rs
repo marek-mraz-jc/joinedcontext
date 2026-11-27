@@ -1686,6 +1686,154 @@ mod tests {
             .is_ok_and(|c| c.contains("scope=\"connector:abcdefghijklmnopqrstuvwxyz\"")));
     }
 
+    /// A connector token signed by `sign` for `issuer`, naming connector `id`'s scope.
+    fn connector_token(sign: &dyn Fn(&Value) -> String, issuer: &str, id: &str) -> String {
+        let now = crate::auth::session::now_unix();
+        sign(&json!({
+            "iss": issuer, "typ": "Bearer", "aud": connectors::AUDIENCE, "sub": "f:1:ana",
+            "azp": "mcp-local", "exp": now + 300, "iat": now, "scope": connectors::scope(id),
+        }))
+    }
+
+    fn bearer(token: &str) -> HeaderMap {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().expect("header"),
+        );
+        headers
+    }
+
+    /// Past a token of its own scope: an id that is no connector id is the 404 of no connector,
+    /// a connector store that does not answer is its error, and a one-project connector's call
+    /// without `project` is handed on with that project filled in.
+    #[tokio::test]
+    async fn past_the_token_the_door_reads_the_id_the_store_and_the_one_project() {
+        let issuer = "https://idm.example.test/realms/dev";
+        let (verifier, sign) =
+            crate::auth::bearer::test_verifier(issuer, connectors::AUDIENCE, "k1");
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.bearer = Some(std::sync::Arc::new(verifier));
+        let call = |state: AppState, id: String, token: String, body: Value| async move {
+            handle_connector(
+                State(state),
+                Path(id),
+                bearer(&token),
+                Bytes::from(body.to_string()),
+            )
+            .await
+        };
+        let odd = "Not-A-Connector";
+        let response = call(
+            state.clone(),
+            odd.to_owned(),
+            connector_token(&sign, issuer, odd),
+            json!({}),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+
+        let new = connectors::NewConnector {
+            name: "doprava-in-claude".into(),
+            segments: vec!["data-read".into()],
+            scope: vec![connectors::ScopeItem {
+                project: "doprava".into(),
+                space: None,
+                endpoint: None,
+                pipeline: None,
+                access: connectors::ItemAccess::Read,
+                personal_data: false,
+            }],
+            kinds: None,
+            writes: false,
+            autonomous: false,
+            expires_at: jc_time::TimestampTz::now() + jiff::SignedDuration::from_hours(24),
+            allowed_clients: vec![],
+        };
+        let held = state
+            .connectors
+            .create("f:1:ana", new, connectors::Above::default(), &base(&state))
+            .await
+            .expect("a connector");
+        let ping = rpc(
+            "tools/call",
+            json!({ "name": "jc_resource_list", "arguments": { "kind": "Endpoint" } }),
+        );
+        let token = connector_token(&sign, issuer, &held.id);
+        let response = call(state.clone(), held.id.clone(), token.clone(), ping).await;
+        assert_ne!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_ne!(response.status(), StatusCode::NOT_FOUND);
+
+        let dead = sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(std::time::Duration::from_millis(300))
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let mut broken = state.clone();
+        broken.connectors = std::sync::Arc::new(connectors::ConnectorStore::new(
+            Some((dead, broken.mirror.clone())),
+            Some("helsinki".into()),
+        ));
+        let response = call(broken, held.id.clone(), token, json!({})).await;
+        assert!(response.status().is_server_error(), "{}", response.status());
+    }
+
+    /// A token of the request's Organization realm is checked by that realm, and the
+    /// installation's administrator group it names is dropped before anything is read (T-7001).
+    #[tokio::test]
+    async fn an_organization_realms_token_is_checked_there_and_confined() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let certs = MockServer::start().await;
+        let (signer, set) = crate::auth::bearer::tests::keypair("org-key");
+        Mock::given(method("GET"))
+            .and(path("/realms/hel/protocol/openid-connect/certs"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&set))
+            .mount(&certs)
+            .await;
+        let mut config = crate::config::Config::for_tests();
+        config.oidc = Some(crate::config::OidcConfig {
+            issuer: "https://idm.example.test/realms/jc".parse().expect("url"),
+            client_id: "portal-api".into(),
+            auth: crate::auth::client_auth::ClientAuth::Secret("s".into()),
+            extra_ca_pem: None,
+            admin_url: None,
+        });
+        let hosts = crate::organization_host::parse("hel=https://portal.hel.test").expect("hosts");
+        config.organization_hosts = hosts.clone();
+        let state = AppState::new(config, None);
+        let issuer = "https://idm-conn-7931.hel.test/realms/hel";
+        let port = certs.address().port();
+        let raw = format!(
+            r#"[{{"organization":"hel","issuer":"{issuer}","jwks_url":"http://idm-conn-7931.hel.test:{port}/realms/hel/protocol/openid-connect/certs"}}]"#
+        );
+        assert_eq!(
+            state.replace_organization_realms(&raw, Some(*certs.address())),
+            Ok(1)
+        );
+        let hel = state.organization_realms.get("hel").expect("served");
+        assert_eq!(hel.bearer.refresh().await.ok(), Some(1));
+        let sign = |claims: &Value| {
+            let mut head = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+            head.kid = Some("org-key".into());
+            jsonwebtoken::encode(&head, claims, &signer).expect("sign")
+        };
+        let odd = "Not-A-Connector";
+        let token = connector_token(&sign, issuer, odd);
+        let host = hosts.into_iter().next().expect("hel");
+        let response = crate::organization_host::scope(
+            host,
+            handle_connector(
+                State(state.clone()),
+                Path(odd.to_owned()),
+                bearer(&token),
+                Bytes::from_static(b"{}"),
+            ),
+        )
+        .await;
+        // Checked by the realm (not the 401 of a token nobody here checks), then no connector.
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    }
+
     #[tokio::test]
     async fn the_connector_door_takes_post_alone_and_a_limit_says_when_to_retry() {
         use tower::ServiceExt;

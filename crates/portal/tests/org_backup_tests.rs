@@ -690,6 +690,45 @@ async fn a_failed_backup_is_not_stamped_as_run() {
     assert!(manual.text.contains("versioning"), "{}", manual.text);
 }
 
+/// A bucket that refuses the upload fails the run with a 503 an operator retries, and the log
+/// holds the failed run.
+#[tokio::test]
+async fn an_upload_the_bucket_refuses_fails_the_run_and_is_logged() {
+    let world = world("alfa", "Enabled").await;
+    let saved = send(
+        &world.state,
+        person("ada"),
+        "PUT",
+        DOOR,
+        Some(target(&world.endpoint)),
+    )
+    .await;
+    assert_eq!(saved.status, StatusCode::OK, "{}", saved.text);
+    world
+        .bucket
+        .lock()
+        .expect("bucket")
+        .fail
+        .push(("PUT".into(), "/backups/".into(), 500));
+    let run = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &format!("{DOOR}/run"),
+        None,
+    )
+    .await;
+    assert_eq!(run.status, StatusCode::SERVICE_UNAVAILABLE, "{}", run.text);
+    let entries = world
+        .state
+        .org_backups
+        .entries("alfa", "configuration", 1)
+        .await
+        .expect("log");
+    assert_eq!(entries.len(), 1);
+    assert!(!entries[0].ok, "the failure is logged");
+}
+
 #[tokio::test]
 async fn the_bundle_holds_only_its_organization_and_no_secret_or_code() {
     let world = world("alfa", "Enabled").await;
@@ -1163,10 +1202,39 @@ async fn a_seal_from_before_the_binding_is_bound_to_its_row_once() {
         .await
         .expect("read")
         .expect("saved");
-    saved.sealed_secret = legacy;
+    saved.sealed_secret = legacy.clone();
     world.state.org_backups.save(&saved).await.expect("saved");
+    let pool = world.state.db.clone().expect("the database");
+    let raced = with_lost_updates(&pool, "organization_backup_targets", async {
+        reseal_unbound(&world.state).await.expect("raced")
+    })
+    .await;
+    assert_eq!(
+        raced, 0,
+        "a target another writer moved first is not counted"
+    );
     assert_eq!(reseal_unbound(&world.state).await.expect("moved"), 1);
     assert_eq!(reseal_unbound(&world.state).await.expect("again"), 0);
+    // Planted again, the schedule binds it at its start, before any run unseals it.
+    saved.sealed_secret = legacy.clone();
+    world.state.org_backups.save(&saved).await.expect("saved");
+    joinedcontext_portal::org_backup::spawn_schedule(world.state.clone());
+    let mut bound_by_schedule = false;
+    for _ in 0..200 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        let now = world
+            .state
+            .org_backups
+            .target("alfa", "configuration")
+            .await
+            .expect("read")
+            .expect("saved");
+        if now.sealed_secret != legacy {
+            bound_by_schedule = true;
+            break;
+        }
+    }
+    assert!(bound_by_schedule, "the schedule's start binds the seal");
     let moved = world
         .state
         .org_backups
@@ -1203,6 +1271,14 @@ async fn an_smtp_password_sealed_before_the_binding_is_bound_to_its_realm_once()
         .await
         .expect("an open Change");
     }
+    let raced = with_lost_updates(&db, "operator_changes", async {
+        reseal_unbound(&world.state).await.expect("raced")
+    })
+    .await;
+    assert_eq!(
+        raced, 0,
+        "a Change another writer moved first is not counted"
+    );
     assert_eq!(reseal_unbound(&world.state).await.expect("moved"), 1);
     assert_eq!(reseal_unbound(&world.state).await.expect("again"), 0);
     let stored = |target: &'static str| {
@@ -1230,6 +1306,38 @@ async fn an_smtp_password_sealed_before_the_binding_is_bound_to_its_realm_once()
     );
     assert_eq!(stored("mail.bravo").await, bound);
     assert_eq!(stored("mail.charlie").await, "not a seal");
+}
+
+/// Runs `reseal` while every UPDATE of `table` is lost to a concurrent writer (a BEFORE UPDATE
+/// trigger answering NULL): the rows are read and none is moved.
+async fn with_lost_updates<F: std::future::Future<Output = usize>>(
+    db: &sqlx::PgPool,
+    table: &str,
+    reseal: F,
+) -> usize {
+    for statement in [
+        "CREATE SCHEMA IF NOT EXISTS jc_test".to_owned(),
+        "CREATE OR REPLACE FUNCTION jc_test.lost_update() RETURNS trigger LANGUAGE plpgsql AS \
+         $$ BEGIN RETURN NULL; END $$"
+            .to_owned(),
+        format!(
+            "CREATE TRIGGER jc_test_lost_update BEFORE UPDATE ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION jc_test.lost_update()"
+        ),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(statement.clone()))
+            .execute(db)
+            .await
+            .expect(&statement);
+    }
+    let moved = reseal.await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER jc_test_lost_update ON {table}"
+    )))
+    .execute(db)
+    .await
+    .expect("the trigger dropped");
+    moved
 }
 
 fn store_target(organization: &str, kind: &str) -> org_backup::Target {
@@ -3063,6 +3171,100 @@ async fn a_project_folder_restores_into_a_new_project_and_leaves_the_source_unto
     )
     .await;
     assert_eq!(foreign.status, StatusCode::NOT_FOUND, "{}", foreign.text);
+    let malformed = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask("not-a-project-id", "alfa-other", false)),
+    )
+    .await;
+    assert_eq!(
+        malformed.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        malformed.text
+    );
+
+    // A name another copy takes between the check and the insert: the registry's unique rule
+    // answers, named as the name field (a trigger stands in for the racing copy).
+    for statement in [
+        "CREATE SCHEMA IF NOT EXISTS jc_test",
+        "CREATE FUNCTION jc_test.raced_name() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN \
+         IF NEW.name = 'alfa-raced' THEN RAISE unique_violation USING MESSAGE = 'raced'; END IF; \
+         RETURN NEW; END $$",
+        "CREATE TRIGGER jc_test_raced_name BEFORE INSERT ON project_ids \
+         FOR EACH ROW EXECUTE FUNCTION jc_test.raced_name()",
+    ] {
+        sqlx::query(statement).execute(&db).await.expect(statement);
+    }
+    let raced = send(
+        &world.state,
+        person("ada"),
+        "POST",
+        &door,
+        Some(ask(&source, "alfa-raced", false)),
+    )
+    .await;
+    sqlx::query("DROP TRIGGER jc_test_raced_name ON project_ids")
+        .execute(&db)
+        .await
+        .expect("the trigger dropped");
+    assert_eq!(
+        raced.status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "{}",
+        raced.text
+    );
+    assert!(
+        raced.text.contains("name:") && raced.text.contains("a moment ago"),
+        "{}",
+        raced.text
+    );
+
+    // The archive opened as the doors open it: a person who reads no project of it lists none
+    // and copies none, and another Organization holds none of its ids.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_bytes(latest(&world.bucket, &key_of(&world, "alfa", "data").await)),
+        )
+        .mount(&server)
+        .await;
+    let response = reqwest::get(server.uri()).await.expect("served");
+    let sealed = org_backup::restore::receive(response)
+        .await
+        .expect("received");
+    let mut archive =
+        org_backup::restore::open(sealed, ids[0].clone(), "alfa", org_backup::restore::CAPS)
+            .await
+            .expect("opened");
+    let none = org_backup::copy::ArchivedProjects {
+        projects: Vec::new(),
+        deleted: Vec::new(),
+    };
+    for (who, organization) in [("eve", "alfa"), ("ada", "bravo")] {
+        let listed = org_backup::copy::projects(&world.state, &person(who), organization, &archive)
+            .await
+            .expect("listed");
+        assert_eq!(listed, none, "{who} in {organization}");
+        let request = org_backup::copy::CopyRequest {
+            organization,
+            version: &version,
+            source: &source,
+            name: "alfa-unread",
+            apply: false,
+            by: who,
+        };
+        let refused = org_backup::copy::copy(&world.state, &person(who), &mut archive, &request)
+            .await
+            .expect_err("no project it may read");
+        assert!(
+            matches!(refused, joinedcontext_portal::error::ApiError::NotFound(_)),
+            "{who} in {organization}: {refused}"
+        );
+    }
 
     // alfa-city deleted since the backup: its id is retired and its folder never restored.
     world
@@ -3475,6 +3677,13 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         .expect("version")
         .1 = original;
 
+    // A project the Organization holds since the backup, not yet in the registry: no key to
+    // enter, no erasure to replay, and the restore applies the rest.
+    world.state.mirror.upsert(org(
+        "Project",
+        "alfa-unheld",
+        json!({ "organizationRef": "alfa" }),
+    ));
     let approved = send(
         &world.state,
         person("cid"),
@@ -3483,6 +3692,14 @@ async fn a_restore_request_holds_its_target_and_bytes_and_writes_tables_without_
         Some(json!({ "identity": secret_of(&ids[1]) })),
     )
     .await;
+    world
+        .state
+        .mirror
+        .remove(&joinedcontext_portal::resource::ResourceKey {
+            namespace: ORG_NAMESPACE.to_owned(),
+            kind: "Project".to_owned(),
+            name: "alfa-unheld".to_owned(),
+        });
     assert_eq!(approved.status, StatusCode::OK, "{}", approved.text);
     assert_eq!(body(&approved)["state"], "applied", "{}", approved.text);
     let drafts: Vec<String> =

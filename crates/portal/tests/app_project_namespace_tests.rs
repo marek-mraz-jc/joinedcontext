@@ -545,3 +545,28 @@ async fn a_namespace_name_longer_than_a_label_is_refused_before_any_call() {
     let requests = api.received_requests().await.expect("recorded");
     assert!(calls(&requests, "PATCH").is_empty());
 }
+
+/// An installation without a pull Secret still readies the namespace: the Portal's own
+/// namespace is never read for one and none is copied.
+#[tokio::test]
+async fn without_a_pull_secret_the_namespace_is_ready_and_none_is_copied() {
+    let api = cluster().await;
+    let (repository, root) = scratch("no-pull", &[("air", "ovzdusie", "fullstack", "published")]);
+    let mut settings = settings();
+    settings.pull_secret = None;
+    let report = converger(&api, settings)
+        .converge(&repository, &Default::default())
+        .await;
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        report
+            .iter()
+            .any(|(id, o)| id == "namespace ovzdusie" && matches!(o, Ok(Outcome::NamespaceReady))),
+        "the namespace is ready"
+    );
+    let requests = api.received_requests().await.expect("recorded");
+    assert!(!calls(&requests, "GET").iter().any(|p| p == PULL));
+    assert!(!calls(&requests, "PATCH")
+        .iter()
+        .any(|p| p.ends_with("/secrets/app-registry")));
+}

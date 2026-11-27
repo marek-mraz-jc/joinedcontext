@@ -3033,3 +3033,56 @@ async fn an_organization_models_source_is_listed_beside_its_manifest_to_its_read
         "nor may read its source: {read}"
     );
 }
+
+/// POSTs one JSON-RPC message to `uri` with `token`; the status and the answer.
+async fn mcp_post(state: &AppState, uri: &str, token: &str, body: Value) -> (StatusCode, Value) {
+    let response = server::app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(body.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    let status = response.status();
+    let bytes = response
+        .into_body()
+        .collect()
+        .await
+        .expect("a body")
+        .to_bytes();
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
+}
+
+/// A person who signed out holds a token that still verifies: the MCP door answers it 401.
+#[tokio::test]
+async fn a_signed_out_persons_token_is_refused_at_the_mcp_door() {
+    let (state, issuer, signer, kid) = setup_state_with(Vec::new()).await;
+    let token = sign_token(
+        &signer,
+        &kid,
+        &issuer,
+        PORTAL_AUDIENCE,
+        "signed.out.user",
+        &["portal-approver"],
+        &[],
+    );
+    let initialize = json!({ "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {} });
+    let (status, _) = mcp_post(&state, "/api/v1/mcp", &token, initialize.clone()).await;
+    assert_eq!(status, StatusCode::OK, "before the sign-out");
+    state
+        .revoke_subject(
+            "signed.out.user",
+            joinedcontext_portal::auth::session::now_unix() + 5,
+        )
+        .await;
+    let (status, _) = mcp_post(&state, "/api/v1/mcp", &token, initialize).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
