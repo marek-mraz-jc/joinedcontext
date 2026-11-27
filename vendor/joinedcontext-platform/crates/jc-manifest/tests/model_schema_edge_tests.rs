@@ -226,6 +226,91 @@ fn a_unit_problem_names_the_model_s_code_and_its_symbol() {
     );
 }
 
+/// A class schema keeps the definitions it reaches by `$defs` pointers, each once however many
+/// attributes name it, and none a pointer names without a definition.
+#[test]
+fn a_class_schema_follows_defs_pointers_once_and_skips_a_dangling_one() {
+    let model = ModelSchema::compile(
+        "places",
+        "1.0.0",
+        &json!({ "$defs": {
+            "Shop": { "properties": {
+                "address": { "$ref": "#/$defs/Address", "x-ngsi-ld-kind": "Property" },
+                "billing": { "$ref": "#/$defs/Address", "x-ngsi-ld-kind": "Property" },
+                "ghost": { "$ref": "#/$defs/Missing", "x-ngsi-ld-kind": "Property" }
+            } },
+            "Address": { "type": "object", "properties": { "country": { "$ref": "#/$defs/Country" } } },
+            "Country": { "enum": ["SK", "CZ"], "type": "string" },
+            "Unused": { "type": "string" }
+        }}),
+        &["Shop".to_owned()],
+        false,
+    );
+    let mut kept: Vec<&String> = model.classes["Shop"]["definitions"]
+        .as_object()
+        .expect("definitions")
+        .keys()
+        .collect();
+    kept.sort();
+    assert_eq!(kept, ["Address", "Country"]);
+}
+
+/// The slots a quantity rule reads in shapes it does not know are no unit, and a rule of the
+/// schema no SHACL component names is `sh:node`.
+#[test]
+fn a_slot_of_an_odd_shape_and_a_rule_with_no_component_are_still_judged() {
+    let model = ModelSchema::compile(
+        "odd",
+        "1.0.0",
+        &json!({ "definitions": { "Gauge": { "properties": {
+            "step": { "type": "number", "multipleOf": 5, "x-ngsi-ld-kind": "Property" },
+            "text": { "type": "string", "x-unit": { "exactMappings": "ucefact:MTR" }, "x-ngsi-ld-kind": "Property" },
+            "either": { "type": ["string", "integer", "null"], "x-ngsi-ld-kind": "Property" },
+            "anything": true,
+            "count": { "type": "number", "x-unit": { "exactMappings": ["ucefact:H87"] }, "x-ngsi-ld-kind": "Property" }
+        } } } }),
+        &["Gauge".to_owned()],
+        false,
+    );
+    let gauge = |extra: Value| {
+        let mut record = json!({ "id": "urn:ngsi-ld:Gauge:1", "type": "Gauge" });
+        for (key, value) in extra.as_object().expect("an object") {
+            record[key] = value.clone();
+        }
+        record
+    };
+    let off_step = model.check(&gauge(json!({"step": {"type": "Property", "value": 7}})));
+    assert_eq!(rules(&off_step), vec![("sh:node", "step")], "{off_step:?}");
+    assert_eq!(off_step[0].message, "step breaks its class's shape");
+
+    let unitless = model.check(&gauge(
+        json!({"text": {"type": "Property", "value": "x", "unitCode": "KGM"}}),
+    ));
+    assert!(
+        unitless.iter().all(|p| p.rule != "ngsi-ld:unitCode"),
+        "{unitless:?}"
+    );
+    let either = model.check(&gauge(json!({"either": {"type": "Property", "value": 3}})));
+    assert!(either.is_empty(), "{either:?}");
+    let wrong = model.check(&gauge(
+        json!({"either": {"type": "Property", "value": 2.5}}),
+    ));
+    assert!(!wrong.is_empty());
+
+    let piece = model.check(&gauge(
+        json!({"count": {"type": "Property", "value": 3, "unitCode": "MTR"}}),
+    ));
+    let unit = piece
+        .iter()
+        .find(|p| p.rule == "ngsi-ld:unitCode")
+        .expect("a unit problem");
+    assert!(
+        unit.message.contains("is measured in H87 (piece)"),
+        "{}",
+        unit.message
+    );
+}
+
 #[test]
 fn a_required_end_absent_or_nulled_is_refused() {
     let model = model();

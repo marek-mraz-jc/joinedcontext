@@ -798,6 +798,31 @@ fn a_role_name_declared_twice_is_reported_at_the_project_role() {
     );
 }
 
+/// F-R2PLT4-002: a context-space binding to a space name two projects declare is one finding,
+/// at `users/` since no single manifest is to blame for it.
+#[test]
+fn a_binding_to_a_space_name_two_projects_declare_is_reported_under_users() {
+    let dir = valid_repo("ambiguous-space");
+    project(&dir, "doprava");
+    space(&dir, "ovzdusie", "parking", None);
+    space(&dir, "doprava", "parking", None);
+    write(
+        &dir,
+        ROLE_BINDING_PATH,
+        &ROLE_BINDING.replace("{ project: ovzdusie }", "{ contextSpace: parking }"),
+    );
+    let report = validate::run(&dir);
+    let found: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("parking") && f.message.contains("ovzdusie-developers"))
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert_eq!(found[0].path, PathBuf::from("users"));
+    assert_eq!((found[0].document, found[0].line), (1, 1));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// PF-49: a repository without roles and bindings has no role finding, and no `users/` folder
 /// is needed for that.
 #[test]
@@ -942,6 +967,59 @@ mod federation_topology {
     fn a_served_hub_over_a_declared_member_is_clean() {
         let dir = hub_repo("cc13-clean");
         assert_eq!(messages(&dir), Vec::<String>::new());
+    }
+
+    /// CC-13: an Endpoint names its space as a typed reference as it does as a bare name; one
+    /// whose reference carries no name, or is no name at all, serves no space.
+    #[test]
+    fn an_endpoints_typed_space_ref_serves_its_hub_and_a_nameless_one_serves_none() {
+        let dir = hub_repo("cc13-endpoint-ref");
+        let hub_read = "projects/ovzdusie/spaces/hub/endpoints/hub-read.yaml";
+        let text = std::fs::read_to_string(dir.join(hub_read)).expect("the Endpoint");
+        let with = |reference: &str| {
+            write(
+                &dir,
+                hub_read,
+                &text.replace(
+                    "contextSpaceRef: hub",
+                    &format!("contextSpaceRef: {reference}"),
+                ),
+            );
+            messages(&dir)
+        };
+        assert_eq!(
+            with("{ kind: ContextSpace, name: hub }"),
+            Vec::<String>::new()
+        );
+        for nameless in ["{ kind: ContextSpace }", "[hub]"] {
+            let said = with(nameless);
+            assert!(
+                said.iter()
+                    .any(|m| m.contains("no Endpoint of this project serves it")),
+                "{nameless}: {said:?}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// CC-13: two members that register the same base space reach it twice, which is no loop.
+    #[test]
+    fn two_registrations_reaching_one_space_by_two_routes_are_no_loop() {
+        let dir = hub_repo("cc13-diamond");
+        for (space_name, slug) in [
+            ("left", "c2bcdefghijklmnopqrstuvwxy"),
+            ("right", "d2bcdefghijklmnopqrstuvwxy"),
+            ("base", "e2bcdefghijklmnopqrstuvwxy"),
+        ] {
+            space(&dir, space_name);
+            endpoint(&dir, &format!("{space_name}-read"), space_name, slug);
+        }
+        registration(&dir, "left", "hub", "left-read", None);
+        registration(&dir, "right", "hub", "right-read", None);
+        registration(&dir, "left-base", "left", "base-read", None);
+        registration(&dir, "right-base", "right", "base-read", None);
+        assert_eq!(messages(&dir), Vec::<String>::new());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A test name, what breaks the topology, and the words its finding carries.
@@ -2000,6 +2078,68 @@ fn a_project_prefixed_target_endpoint_is_told_to_write_the_name_alone() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// DM-61, DM-48: a space naming a model it does not hold is refused, saying which model it does
+/// hold when it has one; a peer's mirrored copy in the space is no model of its own.
+#[test]
+fn a_space_naming_a_model_it_does_not_hold_is_refused_and_a_mirror_is_not_its_model() {
+    let dir = valid_repo("dm61-ghost-model");
+    let space_with = |model: &str| {
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n  dataModelRef: {model}\n"),
+        );
+    };
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/datamodels/partner.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: partner\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: partner/model.linkml.yaml\n  version: 1.2.0\n  lifecycle: mirrored\n  classes: [AirQualityObserved]\n  source:\n    remote:\n      url: https://peer.example/schema/v1/model.linkml.yaml\n      version: 1.2.0\n      sha256: {}\n      fetchedAt: 2026-09-01T08:00:00Z\n  artifacts:\n    context: partner/context.jsonld\n", "a".repeat(64)),
+    );
+    space_with("ghost");
+    let report = validate::run(&dir);
+    let found: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("DM-61"))
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0]
+            .message
+            .ends_with("names DataModel `ghost` in spec.dataModelRef, which is not a model of this space (DM-61)"),
+        "{}",
+        found[0].message
+    );
+    assert_eq!(
+        found[0].path,
+        PathBuf::from("projects/ovzdusie/spaces/ovzdusie/space.yaml")
+    );
+
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/datamodels/air.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  linkml: ./air.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n",
+    );
+    let report = validate::run(&dir);
+    let found: Vec<_> = report
+        .findings
+        .iter()
+        .filter(|f| f.message.contains("DM-61"))
+        .collect();
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0]
+            .message
+            .ends_with("which is not a model of this space; its model is `air` (DM-61)"),
+        "{}",
+        found[0].message
+    );
+    space_with("air");
+    let report = validate::run(&dir);
+    assert!(citing(&report, "DM-61").is_empty(), "{:?}", report.findings);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A second space `verejne` with its Endpoint `verejne-air`.
 fn second_space(dir: &Path) {
     write(
@@ -2195,6 +2335,35 @@ fn a_replace_into_the_same_type_of_another_space_is_valid() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// MF-51, MF-52, MF-56: a deployment the kind refuses is reported once by the kind, and its
+/// server and its connectors are still checked as written, a connector without an Endpoint
+/// skipped.
+#[test]
+fn an_assistant_deployment_the_kind_refuses_is_still_checked_for_its_references() {
+    let dir = valid_repo("assistant-unparsed");
+    write(
+        &dir,
+        "projects/ovzdusie/assistant/deployments/chat.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  name: chat\n  namespace: ovzdusie\nspec:\n  bogusField: 1\n  channel: public\n  mcpServer: ovzdusie/nowhere\n  connectors:\n    - { tools: [query_entities] }\n    - { endpoint: ghost, tools: [query_entities] }\n",
+    );
+    let report = validate::run(&dir);
+    assert!(
+        report
+            .findings
+            .iter()
+            .any(|f| f.message.contains("bogusField")),
+        "{:?}",
+        report.findings
+    );
+    let found = citing(&report, "MF-56");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`ovzdusie/nowhere`"), "{}", found[0]);
+    let found = citing(&report, "MF-52");
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].contains("`ghost`"), "{}", found[0]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 // --- T-4529: a named MCP server's select and an assistant's mcpServer (MF-55, MF-56) ---
 
 fn selecting_server(dir: &Path, audience: &str, select: &str) {
@@ -2346,6 +2515,68 @@ fn an_assistant_selecting_outside_its_reach_is_told_to_widen_its_scope() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// AG-122, MF-61: the types an Endpoint serves are the classes of its space's model, named by the
+/// space as a bare name or as a typed reference, so a selector by type reaches those Endpoints.
+#[test]
+fn a_selector_by_type_reaches_the_endpoints_of_the_space_whose_model_has_the_class() {
+    let dir = valid_repo("assistant-model-types");
+    const BASE32: &[u8] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let model = |name: &str, class: &str| {
+        write(
+            &dir,
+            &format!("projects/ovzdusie/spaces/ovzdusie/datamodels/{name}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: DataModel\nmetadata:\n  name: {name}\n  namespace: ovzdusie\nspec:\n  linkml: ./{name}.linkml.yaml\n  version: 1.0.0\n  lifecycle: draft\n  classes: [{class}]\n"),
+        );
+    };
+    let space_naming = |reference: &str| {
+        write(
+            &dir,
+            "projects/ovzdusie/spaces/ovzdusie/space.yaml",
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n  dataModelRef: {reference}\n"),
+        );
+    };
+    for i in 0..jc_core::reach::MAX_RESOLVED {
+        let tail: String = [i / 32, i % 32]
+            .iter()
+            .map(|&k| BASE32[k] as char)
+            .collect();
+        write(
+            &dir,
+            &format!("projects/ovzdusie/spaces/ovzdusie/endpoints/e{i}.yaml"),
+            &format!("apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e{i}\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: zt4qm7ge2xdv6ksb3ncf5ar{tail}x\n  audience: public\n"),
+        );
+    }
+    model("air", "AirQualityObserved");
+    // The 101 Endpoints of the space are reached through the model's class, by either spelling
+    // of the reference.
+    for reference in [
+        "air",
+        "{ kind: DataModel, name: air }",
+        "{ kind: DataModel, name: air, namespace: ovzdusie }",
+    ] {
+        space_naming(reference);
+        let report = selecting_deployment(&dir, "  select: { types: [AirQualityObserved] }\n");
+        let found = citing(&report, "AG-122");
+        assert_eq!(found.len(), 1, "{reference}: {:?}", report.findings);
+        assert!(found[0].contains("resolves 101 Endpoints"), "{}", found[0]);
+        let report = selecting_deployment(&dir, "  select: { types: [Alert] }\n");
+        assert!(
+            citing(&report, "AG-122").is_empty(),
+            "{reference}: {:?}",
+            report.findings
+        );
+    }
+    // A model the space does not hold gives its Endpoints no type to be selected by.
+    space_naming("missing");
+    let report = selecting_deployment(&dir, "  select: { types: [AirQualityObserved] }\n");
+    assert!(
+        citing(&report, "AG-122").is_empty(),
+        "{:?}",
+        report.findings
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// AG-122: one deployment serves at most 100 Endpoints (50 before T-5786); a selector that
 /// reaches more is refused with the count and the slugs left out, and an exclusion brings it
 /// back under.
@@ -2441,6 +2672,34 @@ fn a_write_policy_no_endpoint_binds_is_refused() {
         PathBuf::from("projects/ovzdusie/spaces/ovzdusie/policies/sensors-write.yaml")
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// ADR-N-057: a write Policy of a space no Endpoint serves says the space has none, and the
+/// project's Endpoint of another space is not blamed for it.
+#[test]
+fn a_write_policy_of_a_space_without_endpoints_says_so() {
+    let dir = valid_repo("adr57-space-without-endpoint");
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/parking/space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: parking\n  namespace: ovzdusie\nspec:\n  isSandbox: false\n",
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/parking/policies/lot-write.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Policy\nmetadata:\n  name: lot-write\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: { kind: ContextSpace, name: parking }\n  assigner: did:web:banskabystrica.sk\n  assignee: { kind: serviceAccount, id: sensors }\n  operations: [upsertBatch]\n",
+    );
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0].contains("Policy lot-write grants a write on the space parking")
+            && found[0].contains("(the space parking has no Endpoint in project ovzdusie)")
+            && !found[0].contains("public-air"),
+        "{}",
+        found[0]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -2666,6 +2925,71 @@ fn a_pipeline_whose_target_does_not_bind_its_write_is_refused() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// PL-20, EP-14: a Pipeline aimed at an App's own Endpoint writes as a serviceAccount that
+/// Endpoint binds no grant of, and the finding says whose Endpoint it is.
+#[test]
+fn a_pipeline_writing_through_an_apps_own_endpoint_is_refused_with_the_reason() {
+    let dir = valid_repo("adr57-pipeline-app-endpoint");
+    write(
+        &dir,
+        ROLES_APP_PATH,
+        &roles_app("{ group: air-quality-team }", ""),
+    );
+    write(
+        &dir,
+        "projects/ovzdusie/spaces/ovzdusie/endpoints/app-alerts.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: app-alerts\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  slug: q2bcdefghijklmnopqrstuvwxy\n  audience: organization\n",
+    );
+    writer(&dir, "stations", "app-alerts", "Alert", "upsert", None);
+    let repo = jc_manifest::loader::Repository::load(&dir).expect("the repository loads");
+    let pipeline_writes: Vec<_> = validate::unmade_writes(&repo)
+        .into_iter()
+        .filter(|u| u.id.kind == "Pipeline")
+        .collect();
+    assert_eq!(pipeline_writes.len(), 1, "{pipeline_writes:?}");
+    assert_eq!(
+        pipeline_writes[0].field.as_deref(),
+        Some("spec.targetEndpoint")
+    );
+    assert!(
+        pipeline_writes[0]
+            .message
+            .contains("(app-alerts is the App alerts's own Endpoint)"),
+        "{}",
+        pipeline_writes[0].message
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// PL-73, PL-20: an output of a route is refused at the route's own field, counted after the
+/// outputs of the default lane.
+#[test]
+fn a_routed_pipelines_refused_outputs_name_their_lane_or_route_in_the_field() {
+    let dir = valid_repo("adr57-routed-fields");
+    data_source(&dir, "ovzdusie", "feed");
+    let target = |name: &str| format!("urn:ngsi-ld:Endpoint:banskabystrica.sk:ovzdusie:{name}");
+    write(
+        &dir,
+        "projects/ovzdusie/pipelines/routed/pipeline.yaml",
+        &format!("apiVersion: joinedcontext.com/v1alpha2\nkind: Pipeline\nmetadata:\n  name: routed\n  namespace: ovzdusie\nspec:\n  class: resident\n  period: 30s\n  sources:\n    - dataSourceRef: {{ kind: DataSource, name: feed }}\n  steps:\n    - kind: bloblang\n      bloblang: \"root = this\"\n  routes:\n    - name: hot\n      when: this.temperature.value > 30\n      outputs:\n        - targetEndpoint: {}\n    - name: cold\n      when: this.temperature.value < 0\n      outputs:\n        - targetEndpoint: {}\n        - targetEndpoint: {}\n  outputs:\n    - targetEndpoint: {}\n", target("public-air"), target("frost-a"), target("frost-b"), target("lane-gone")),
+    );
+    let repo = jc_manifest::loader::Repository::load(&dir).expect("the repository loads");
+    let fields: Vec<Option<String>> = validate::unmade_writes(&repo)
+        .into_iter()
+        .filter(|u| u.id.kind == "Pipeline")
+        .map(|u| u.field)
+        .collect();
+    assert_eq!(
+        fields,
+        [
+            Some("spec.outputs.0.targetEndpoint".to_owned()),
+            Some("spec.routes.1.outputs.0.targetEndpoint".to_owned()),
+            Some("spec.routes.1.outputs.1.targetEndpoint".to_owned()),
+        ]
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// T-5040: manifests held in memory render `{orgDomain}` with the domain they are handed.
 #[test]
 fn manifests_in_memory_render_the_org_domain() {
@@ -2795,6 +3119,46 @@ fn a_policy_ref_binds_under_the_projects_own_organization_domain() {
         found[0]
     );
 
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// T-6502: a project whose Organization no manifest declares has no domain of its own, so a
+/// Policy URN binds under the installation's, and one under another domain binds nothing.
+#[test]
+fn a_policy_ref_of_a_project_without_a_declared_organization_binds_under_the_installations_domain()
+{
+    let dir = valid_repo("adr57-policy-refs-no-org");
+    write(
+        &dir,
+        "projects/ovzdusie/project.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: ovzdusie\n  \
+         namespace: org\nspec:\n  organizationRef: ghost\n",
+    );
+    space_policy(
+        &dir,
+        "sensors-write",
+        "{ kind: serviceAccount, id: sensors }",
+        "[upsertBatch]",
+    );
+    let under = |domain: &str| {
+        format!(
+            "{ENDPOINT}  policyRefs:\n    - urn:ngsi-ld:Policy:{domain}:ovzdusie-ovzdusie:sensors-write\n"
+        )
+    };
+    write(&dir, ENDPOINT_PATH, &under("banskabystrica.sk"));
+    let report = validate::run(&dir);
+    assert_eq!(citing(&report, "ADR-N-057"), Vec::<&str>::new());
+
+    write(&dir, ENDPOINT_PATH, &under("zilina.sk"));
+    let report = validate::run(&dir);
+    let found = citing(&report, "ADR-N-057");
+    assert_eq!(found.len(), 1, "{:?}", report.findings);
+    assert!(
+        found[0]
+            .contains("write urn:ngsi-ld:Policy:banskabystrica.sk:ovzdusie-ovzdusie:sensors-write"),
+        "{}",
+        found[0]
+    );
     let _ = std::fs::remove_dir_all(&dir);
 }
 

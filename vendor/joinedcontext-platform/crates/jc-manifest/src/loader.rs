@@ -558,16 +558,18 @@ pub(crate) fn is_native_yaml(file_name: &str) -> bool {
         || is_encrypted_file(file_name)
 }
 
+/// An I/O failure at `path`, as the load's own error.
+fn io_at(path: PathBuf) -> impl FnOnce(std::io::Error) -> LoadError {
+    |source| LoadError::Io { path, source }
+}
+
 /// Every regular file under `root`, in deterministic path order (CC-08).
 ///
 /// Links are followed, but anything resolving outside the root is refused rather than read:
 /// both the manifest loader and the secret store walk the repository this way, so the
 /// containment rule has one implementation, not one per caller.
 pub fn walk_files(root: &Path) -> Result<Vec<walkdir::DirEntry>, LoadError> {
-    let canonical_root = root.canonicalize().map_err(|source| LoadError::Io {
-        path: root.to_path_buf(),
-        source,
-    })?;
+    let canonical_root = root.canonicalize().map_err(io_at(root.to_path_buf()))?;
 
     let mut entries = Vec::new();
     // Links are followed: a Kubernetes ConfigMap or Secret volume is nothing but symlinks
@@ -607,15 +609,12 @@ pub fn walk_files(root: &Path) -> Result<Vec<walkdir::DirEntry>, LoadError> {
             .to_path_buf();
         // The containment check runs on the resolved target, link or not, before the walk
         // descends: a link whose target leaves the root is refused, never followed (CC-08).
-        match entry.path().canonicalize() {
-            Ok(canonical) if canonical.starts_with(&canonical_root) => {}
-            Ok(_) => return Err(LoadError::PathEscapesRepository { path: rel_path }),
-            Err(source) => {
-                return Err(LoadError::Io {
-                    path: rel_path,
-                    source,
-                })
-            }
+        let canonical = entry
+            .path()
+            .canonicalize()
+            .map_err(io_at(rel_path.clone()))?;
+        if !canonical.starts_with(&canonical_root) {
+            return Err(LoadError::PathEscapesRepository { path: rel_path });
         }
 
         if entry.file_type().is_dir()
@@ -1225,18 +1224,16 @@ impl Repository {
 
     /// Lists resources whose repository path differs from their canonical path template (MF-06).
     pub fn misplaced(&self) -> Vec<(ResourceId, PathBuf, String)> {
-        let mut result = Vec::new();
-        for (id, loaded) in &self.resources {
-            if is_legacy_organization(id, loaded) {
-                continue;
-            }
-            if let Some(expected) = self.expected_path(id) {
-                if loaded.path != Path::new(&expected) {
-                    result.push((id.clone(), loaded.path.clone(), expected));
-                }
-            }
-        }
-        result
+        self.resources
+            .iter()
+            .filter(|(id, loaded)| !is_legacy_organization(id, loaded))
+            .filter_map(|(id, loaded)| {
+                // A loaded resource is of a registered kind, so it has an expected path.
+                let expected = self.expected_path(id)?;
+                (loaded.path != Path::new(&expected))
+                    .then(|| (id.clone(), loaded.path.clone(), expected))
+            })
+            .collect()
     }
 }
 

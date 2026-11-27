@@ -66,6 +66,80 @@ fn a_project_without_its_checkout_is_a_finding() {
     );
 }
 
+/// CC-88: a literal where a parameter exists and a mapping reading an undeclared one are findings
+/// of their project's files, in an organization and in a project checked alone.
+#[test]
+fn a_literal_where_a_parameter_exists_is_a_finding_in_both_entry_points() {
+    let project = project_repository("validate-literal");
+    write(
+        &project,
+        "project.yaml",
+        &(PROJECT.to_owned()
+            + "  parameters:\n    audience: { type: string, default: public, enum: [public, organization] }\n"),
+    );
+    write(
+        &project,
+        "pipelines/air/bento.yaml",
+        "pipeline:\n  processors:\n    - mapping: root.host = env(\"JC_PARAM_FEED_HOTS\")\n",
+    );
+    let alone = run_project(&project, None, "example.org", &BTreeMap::new());
+    let organization = run_assembled(
+        &organization("validate-literal"),
+        &with("ovzdusie", &project),
+    );
+    for (what, report) in [("project", alone), ("organization", organization)] {
+        let found = messages(&report);
+        assert!(
+            found.iter().any(|m| m.starts_with(
+                "spaces/ovzdusie/endpoints/public-air.yaml:1 (document 1): project `ovzdusie`: spec.audience writes the value of a parameter; write `{param:audience}`"
+            )),
+            "{what}: {found:?}"
+        );
+        assert!(
+            found
+                .iter()
+                .any(|m| m.starts_with("pipelines/air/bento.yaml:1")
+                    && m.contains("project `ovzdusie`: reads env(\"JC_PARAM_FEED_HOTS\")")),
+            "{what}: {found:?}"
+        );
+    }
+}
+
+/// T-6709: a project whose manifest cannot be read is refused alone, and its reason is a finding
+/// on the file that broke it, under the project's folder, in an organization and in a project
+/// checked alone.
+#[test]
+fn a_project_refused_at_assembly_is_a_finding_on_the_file_that_broke_it() {
+    let project = project_repository("validate-refused");
+    write(
+        &project,
+        "spaces/ovzdusie/endpoints/broken.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: [\n",
+    );
+    let alone = run_project(&project, None, "example.org", &BTreeMap::new());
+    let organization = run_assembled(
+        &organization("validate-refused"),
+        &with("ovzdusie", &project),
+    );
+    for (what, report) in [("project", alone), ("organization", organization)] {
+        let found: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| {
+                f.path == Path::new("projects/ovzdusie/spaces/ovzdusie/endpoints/broken.yaml")
+            })
+            .collect();
+        assert_eq!(found.len(), 1, "{what}: {:?}", messages(&report));
+        assert!(
+            found[0]
+                .message
+                .starts_with("ovzdusie: spaces/ovzdusie/endpoints/broken.yaml"),
+            "{what}: {}",
+            found[0].message
+        );
+    }
+}
+
 /// CC-90: a project repository validates alone, without its organization, and its findings
 /// name the paths of the project repository.
 #[test]

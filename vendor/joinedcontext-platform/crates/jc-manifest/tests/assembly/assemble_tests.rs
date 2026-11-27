@@ -830,6 +830,235 @@ fn a_refused_assembly_puts_the_reused_renders_back() {
     );
 }
 
+/// An error that names no project refuses the whole assembly, and the renders it reused go back
+/// where they were: here the environment the caller asks for is declared by nobody.
+#[test]
+fn an_error_naming_no_project_refuses_the_assembly_and_keeps_the_last_render() {
+    let org = organization("no-environment", &[("ovzdusie", ENTRY)]);
+    let tree = project_repository("no-environment");
+    let links = temp_dir("no-environment-links");
+    let into = temp_dir("no-environment-into").join("r");
+    let mut renders = Renders::default();
+    let linked = link(&links, "ovzdusie", &tree);
+    assemble_reusing(&org, &linked, &into, None, &mut renders).expect("assembles");
+
+    let refused = assemble_reusing(&org, &linked, &into, Some("nowhere"), &mut renders)
+        .expect_err("no environment of that name");
+    assert!(refused.to_string().contains("`nowhere`"), "{refused}");
+    assert!(
+        into.join("projects/ovzdusie/spaces/ovzdusie/endpoints/public-air.yaml")
+            .is_file(),
+        "the reused render is back in the last tree"
+    );
+    let next = assemble_reusing(&org, &linked, &into, None, &mut renders).expect("assembles");
+    assert!(next.entries[0].reused, "the renders it had are kept");
+}
+
+/// T-6709: two projects whose last render already holds the conflict they are named in are both
+/// refused and left out, the one reused from the last assembly included, and they converge once
+/// the claim is withdrawn.
+#[test]
+fn a_conflict_the_last_render_already_holds_refuses_every_project_it_names() {
+    const OVZDUSIE_SLUG: &str = "zt4qm7ge2xdv6ksb3ncf5arw2y";
+    const DOPRAVA_SLUG: &str = "b2c3d4e5f6g7h2i3j4k5l6m7n2";
+    let doprava_entry = ENTRY.replace("ovzdusie", "doprava");
+    let org = organization(
+        "stale-conflict",
+        &[("doprava", &doprava_entry), ("ovzdusie", ENTRY)],
+    );
+    let tree = project_repository("stale-conflict-ovzdusie");
+    let doprava = temp_dir("stale-conflict-doprava");
+    write(&doprava, ".jc/layout", "2\n");
+    write(
+        &doprava,
+        "project.yaml",
+        &PROJECT.replace("ovzdusie", "doprava"),
+    );
+    write(
+        &doprava,
+        "spaces/doprava/space.yaml",
+        &SPACE.replace("ovzdusie", "doprava"),
+    );
+    let endpoint = doprava.join("spaces/doprava/endpoints/public-air.yaml");
+    write(
+        &doprava,
+        "spaces/doprava/endpoints/public-air.yaml",
+        &ENDPOINT
+            .replace("ovzdusie", "doprava")
+            .replace(OVZDUSIE_SLUG, DOPRAVA_SLUG),
+    );
+    let mut resolver = link(&temp_dir("stale-conflict-links"), "ovzdusie", &tree);
+    resolver.0.insert("doprava".to_owned(), doprava.clone());
+    let into = temp_dir("stale-conflict-into").join("r");
+    let mut renders = Renders::default();
+    let first = assemble_reusing(&org, &resolver, &into, None, &mut renders).expect("both");
+    assert!(first.entries.iter().all(|entry| entry.refused.is_none()));
+
+    // The checkout and the last render both come to claim ovzdusie's slug.
+    let claim = |path: &Path| {
+        let text = std::fs::read_to_string(path).expect("the Endpoint");
+        assert!(text.contains(DOPRAVA_SLUG), "{text}");
+        std::fs::write(path, text.replace(DOPRAVA_SLUG, OVZDUSIE_SLUG)).expect("claim the slug");
+    };
+    claim(&endpoint);
+    claim(&into.join("projects/doprava/spaces/doprava/endpoints/public-air.yaml"));
+    let second = assemble_reusing(&org, &resolver, &into, None, &mut renders).expect("assembles");
+    for entry in &second.entries {
+        assert!(!entry.rendered && !entry.reused, "{entry:?}");
+        let refusal = entry.refused.as_ref().expect("refused");
+        assert!(refusal.reason.contains("the Endpoint slug"), "{refusal:?}");
+    }
+    assert!(
+        second
+            .repository
+            .iter()
+            .all(|(id, _)| id.kind != "Endpoint"),
+        "neither serves"
+    );
+
+    claim_back(&endpoint, OVZDUSIE_SLUG, DOPRAVA_SLUG);
+    let third = assemble_reusing(&org, &resolver, &into, None, &mut renders).expect("assembles");
+    assert!(
+        third
+            .entries
+            .iter()
+            .all(|e| e.rendered && e.refused.is_none()),
+        "{:?}",
+        third.entries
+    );
+}
+
+fn claim_back(path: &Path, from: &str, to: &str) {
+    let text = std::fs::read_to_string(path).expect("the Endpoint");
+    std::fs::write(path, text.replace(from, to)).expect("withdraw the claim");
+}
+
+/// Each file of a project that cannot be rendered refuses that project alone, with the reason,
+/// and the file when the error names one; the organization still assembles.
+#[test]
+fn a_project_file_that_cannot_be_rendered_refuses_that_project_naming_it() {
+    type Break = (&'static str, fn(&Path), Option<&'static str>, &'static str);
+    let cases: [Break; 5] = [
+        (
+            "not-utf8",
+            |dir| {
+                std::fs::write(dir.join("spaces/ovzdusie/binary.yaml"), [0xff, 0xfe, 0x00])
+                    .expect("write the bytes")
+            },
+            None,
+            "binary.yaml",
+        ),
+        (
+            "unknown-envelope-field",
+            |dir| {
+                write(
+                    dir,
+                    "spaces/ovzdusie/extra.yaml",
+                    &(SPACE.replace("name: ovzdusie", "name: extra") + "extra: 1\n"),
+                )
+            },
+            Some("spaces/ovzdusie/extra.yaml"),
+            "extra",
+        ),
+        (
+            "own-file-malformed",
+            |dir| write(dir, "project.yaml", "kind: [\n"),
+            Some("project.yaml"),
+            "project.yaml",
+        ),
+        (
+            "organization-kind",
+            |dir| {
+                write(
+                    dir,
+                    "spaces/ovzdusie/group.yaml",
+                    "apiVersion: joinedcontext.com/v1alpha1\nkind: Group\nmetadata:\n  name: staff\n  namespace: org\nspec:\n  description: Staff\n  members: []\n",
+                )
+            },
+            Some("spaces/ovzdusie/group.yaml"),
+            "belongs to the organization repository",
+        ),
+        (
+            "undeclared-parameter",
+            |dir| {
+                write(
+                    dir,
+                    "spaces/ovzdusie/space.yaml",
+                    &SPACE.replace("isSandbox: false", "isSandbox: \"{param:ghost}\""),
+                )
+            },
+            Some("spaces/ovzdusie/space.yaml"),
+            "ghost",
+        ),
+    ];
+    for (test, spoil, file, reason) in cases {
+        let org = organization(test, &[("ovzdusie", ENTRY)]);
+        let project = project_repository(test);
+        spoil(&project);
+        let assembly = assemble(
+            &org,
+            &checkouts(&[("ovzdusie", &project)]),
+            &temp_dir(&format!("{test}-into")).join("r"),
+            None,
+        )
+        .expect("the organization assembles around the refused project");
+        let entry = &assembly.entries[0];
+        assert!(!entry.rendered, "{test}: {entry:?}");
+        let refusal = entry.refused.as_ref().expect("refused");
+        assert!(refusal.reason.contains(reason), "{test}: {refusal:?}");
+        assert_eq!(refusal.path.as_deref(), file.map(Path::new), "{test}");
+    }
+}
+
+/// PF-86: an entry that parses but is not valid, and one whose file name is no slug, are each
+/// refused with the registry path.
+#[test]
+fn a_registry_entry_that_is_invalid_or_has_no_slug_for_a_name_is_refused() {
+    let both = ENTRY.replace(
+        "repository: { name: ovzdusie }",
+        "repository: { name: ovzdusie, url: \"https://git.example/ovzdusie.git\" }",
+    );
+    let org = organization("registry-invalid", &[("ovzdusie", &both)]);
+    let error = jc_manifest::assemble::read_registry(&org).expect_err("two repositories");
+    assert!(
+        error.to_string().starts_with("projects/ovzdusie.yaml")
+            && error.to_string().contains("spec.repository"),
+        "{error}"
+    );
+
+    let org = organization(
+        "registry-no-slug",
+        &[(
+            "Ovzdusie",
+            &ENTRY.replace("name: ovzdusie", "name: Ovzdusie"),
+        )],
+    );
+    let error = jc_manifest::assemble::read_registry(&org).expect_err("no slug");
+    assert!(
+        error.to_string().starts_with("projects/Ovzdusie.yaml"),
+        "{error}"
+    );
+}
+
+/// An organization repository that links to itself cannot be copied: the walk's failure is
+/// the assembly's, naming the path it met it at.
+#[test]
+fn an_organization_that_cannot_be_walked_is_refused() {
+    let org = organization("walk-loop", &[("ovzdusie", ENTRY)]);
+    std::os::unix::fs::symlink(".", org.join("loop")).expect("link the folder to itself");
+    let error = assemble(
+        &org,
+        &Directories::default(),
+        &temp_dir("walk-loop-into").join("r"),
+        None,
+    )
+    .expect_err("a loop");
+    assert!(
+        error.to_string().contains("loop") && error.to_string().contains("File system loop"),
+        "{error}"
+    );
+}
+
 /// F-R2PLT3-002: the `-` join of project and name is not one-to-one, so the ServiceAccount
 /// `vendorx-parking-push` of `ovzdusie` and `parking-push` of `ovzdusie-vendorx` derive one
 /// Keycloak client, `ovzdusie-vendorx-parking-push`; the second is refused by name.

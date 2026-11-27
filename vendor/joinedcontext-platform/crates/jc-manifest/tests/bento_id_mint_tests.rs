@@ -70,6 +70,45 @@ fn prefixed_mints_the_platform_shape_from_a_field() {
     );
 }
 
+/// An author's file that has no `pipeline`, or one without `processors`, still gets the one
+/// processor that makes the ids, and what else it holds is kept.
+#[test]
+fn the_minting_processor_is_added_to_a_file_with_no_pipeline_or_no_processors() {
+    let spec = pipeline(", id: { mint: prefixed, from: station.code }");
+    let context = InputContext::new("weather", "helsinki", "weather").with_pipeline_spec(&spec);
+    // A broker input adds no processor of its own, so the minting one is the only one.
+    let broker = ResourceEnvelope::<DataSourceSpec>::from_yaml(
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: DataSource\nmetadata: { name: weather, namespace: helsinki }\nspec:\n  type: mqtt\n  mqtt:\n    urls: [\"tcp://mqtt.example.org:1883\"]\n    topics: [\"weather/+\"]\n",
+    )
+    .expect("parses")
+    .spec;
+    for (what, bento, kept) in [
+        ("no pipeline", "output:\n  stdout: {}\n", ""),
+        (
+            "no processors",
+            "pipeline:\n  threads: 2\noutput:\n  stdout: {}\n",
+            "threads",
+        ),
+    ] {
+        let yaml = render(bento, &broker, &context).expect(what);
+        let value: serde_norway::Value = serde_norway::from_str(&yaml).expect("yaml");
+        let processors = value["pipeline"]["processors"]
+            .as_sequence()
+            .expect("the processors");
+        assert_eq!(processors.len(), 1, "{what}: {yaml}");
+        assert!(
+            processors[0]["mapping"]
+                .as_str()
+                .is_some_and(|m| m.contains("root.id = \"urn:ngsi-ld:WeatherObserved:%s:%s:%s\"")),
+            "{what}: {yaml}"
+        );
+        assert!(!value["output"]["stdout"].is_null(), "{what}: {yaml}");
+        if !kept.is_empty() {
+            assert_eq!(value["pipeline"][kept], 2, "{what}: {yaml}");
+        }
+    }
+}
+
 #[test]
 fn keep_uses_the_sources_id_and_makes_a_urn_of_it_only_when_it_is_none() {
     let yaml = rendered(&pipeline(", id: { mint: keep, from: id }")).expect("renders");
