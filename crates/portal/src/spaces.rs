@@ -543,5 +543,13 @@ mod tests {
             missing.starts_with("the space ghost-project/mhd has no broker tenant yet:"),
             "{missing}"
         );
+        // Under the scheme the environment names, whichever it is: a tenant, or the reason why not.
+        match repo_tenant(&repo, "ovzdusie", "mhd") {
+            Ok(tenant) => assert!(!tenant.is_empty()),
+            Err(reason) => assert!(
+                reason.starts_with("the space ovzdusie/mhd has no broker tenant yet:"),
+                "{reason}"
+            ),
+        }
     }
 }

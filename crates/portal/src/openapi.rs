@@ -1233,4 +1233,34 @@ mod tests {
             .find(|op| text.contains(&format!("/ops/{}\": {{}}", op.name)));
         assert!(unfilled.is_none(), "a placeholder was left unfilled");
     }
+
+    /// A type whose schema utoipa cannot read: a `description` that is no text.
+    struct NotOpenApi;
+
+    impl schemars::JsonSchema for NotOpenApi {
+        fn schema_name() -> String {
+            "NotOpenApi".into()
+        }
+
+        fn json_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+            let mut schema = schemars::schema::SchemaObject::default();
+            schema.extensions.insert("description".into(), json!(5));
+            schemars::schema::Schema::Object(schema)
+        }
+    }
+
+    /// A schema the document cannot express is a free object, and the log names the defect.
+    #[tokio::test]
+    async fn a_schema_utoipa_cannot_read_is_a_free_object_and_logged() {
+        let (schema, log) =
+            crate::test_log::logged(tracing::level_filters::LevelFilter::ERROR, async {
+                schemars_schema::<NotOpenApi>()
+            })
+            .await;
+        assert!(schema == RefOr::T(Schema::Object(Default::default())));
+        assert!(
+            log.contains("jc-core schema is not a valid OpenAPI schema"),
+            "{log}"
+        );
+    }
 }

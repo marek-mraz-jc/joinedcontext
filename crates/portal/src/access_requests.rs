@@ -470,9 +470,14 @@ pub fn revoke_bundle(
             .is_some_and(|list| list.iter().any(|p| p == request.project.as_str()));
     if listed && !others_remain {
         let mut updated = writable(endpoint);
-        if let Some(list) = updated["spec"]["allowedProjects"].as_array_mut() {
-            list.retain(|p| p != request.project.as_str());
-        }
+        // `listed` saw the list, so this rebuilds it without the project.
+        updated["spec"]["allowedProjects"] = endpoint["spec"]["allowedProjects"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| *p != request.project.as_str())
+            .cloned()
+            .collect();
         manifests.push(updated);
     }
     if let Some(policy) = policies
@@ -1042,6 +1047,24 @@ mod tests {
         );
         assert_eq!(kept.len(), 1, "the project's share still needs the listing");
         assert_eq!(kept[0]["kind"], "Policy");
+    }
+
+    /// A revoke of a grant whose Policy is already gone only unlists the project; a manifest that
+    /// is not an object goes back as it came.
+    #[test]
+    fn revoking_a_grant_whose_policy_is_gone_only_unlists_the_project() {
+        let now = time::macros::datetime!(2026-11-01 08:00 UTC);
+        let bundle = revoke_bundle(
+            &request(),
+            &endpoint("project-list", &["city-kpis", "traffic"]),
+            &[],
+            now,
+        );
+        assert_eq!(bundle.len(), 1);
+        assert_eq!(bundle[0]["kind"], "Endpoint");
+        assert_eq!(bundle[0]["spec"]["allowedProjects"], json!(["traffic"]));
+        assert!(bundle[0].get("status").is_none());
+        assert_eq!(writable(&json!("not a manifest")), json!("not a manifest"));
     }
 
     #[test]

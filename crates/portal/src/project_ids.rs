@@ -104,7 +104,13 @@ async fn live(pool: &PgPool) -> Result<&'static str, sqlx::Error> {
         options.get_port(),
         options.get_database().unwrap_or_default()
     );
-    if seen.lock().is_ok_and(|seen| seen.contains(&database)) {
+    // The set is only read and extended under the lock, neither of which panics, so a poisoned
+    // lock holds a whole set all the same.
+    if seen
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .contains(&database)
+    {
         return Ok(RETIRING);
     }
     let retiring: bool = sqlx::query_scalar(
@@ -116,9 +122,9 @@ async fn live(pool: &PgPool) -> Result<&'static str, sqlx::Error> {
     if !retiring {
         return Ok("");
     }
-    if let Ok(mut seen) = seen.lock() {
-        seen.insert(database);
-    }
+    seen.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(database);
     Ok(RETIRING)
 }
 
@@ -689,7 +695,7 @@ fn note_branch(name: &str, entry: BranchEntry) {
 fn branch_entry(name: &str) -> Option<BranchEntry> {
     BRANCHES
         .read()
-        .unwrap_or_else(|p| p.into_inner())
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .as_ref()
         .and_then(|table| table.get(name).cloned())
 }
@@ -750,10 +756,12 @@ pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::
     .fetch_all(pool)
     .await?;
     let mut swept = Vec::new();
-    for (name, org, project) in due {
-        let Some(key) = parsed(&org, &project) else {
-            continue;
-        };
+    // Both ids are uuid columns that refuse the nil UUID (0066, 0067), the only uuid text
+    // `parsed` refuses, so every row parses.
+    let due = due
+        .into_iter()
+        .filter_map(|(name, org, project)| parsed(&org, &project).map(|key| (name, key, project)));
+    for (name, key, project) in due {
         let mut complete = true;
         for table in crate::org_backup::data::PORTAL_TABLES {
             // The branch's own `project_ids` row is the tombstone that stays.
@@ -796,11 +804,16 @@ pub async fn sweep_expired_branches(pool: &PgPool) -> Result<Vec<String>, sqlx::
 /// Reads the branch table once, then keeps it fresh and sweeps expired branches every
 /// [`BRANCH_WATCH`] in the background.
 pub async fn watch_branches(pool: PgPool) {
+    watch_branches_every(pool, BRANCH_WATCH).await;
+}
+
+/// [`watch_branches`] with a read and a sweep every `every`.
+pub async fn watch_branches_every(pool: PgPool, every: std::time::Duration) {
     if let Err(err) = read_branches(&pool).await {
         tracing::warn!(error = %err, "the branch table could not be read; branches wait for the next read");
     }
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(BRANCH_WATCH);
+        let mut tick = tokio::time::interval(every);
         tick.tick().await;
         loop {
             tick.tick().await;
@@ -1049,11 +1062,16 @@ pub async fn key_under_installation(
 /// Runs [`backfill`] each minute once the mirror holds a sync (a project's Organization lives
 /// only in Git), on the replica that leads; says each change of the projects that wait.
 pub(crate) fn spawn_backfill(state: crate::state::AppState) {
+    spawn_backfill_every(state, std::time::Duration::from_secs(60));
+}
+
+/// [`spawn_backfill`] with a pass every `every`.
+fn spawn_backfill_every(state: crate::state::AppState, every: std::time::Duration) {
     let (Some(pool), Some(syncer)) = (state.db.clone(), state.syncer.clone()) else {
         return;
     };
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(std::time::Duration::from_secs(60));
+        let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         let mut said: Vec<String> = Vec::new();
         loop {
@@ -1357,6 +1375,76 @@ mod backfill_loop_tests {
             notified(&pool, &waiting_project).await,
             None,
             "a project the mirror lacks keeps no key"
+        );
+    }
+
+    /// An Organization the registry removed has no reserved project to take a person's rows.
+    #[tokio::test]
+    async fn a_removed_organization_keys_no_rows_of_a_person() {
+        let Some(pool) = database().await else {
+            return;
+        };
+        let name = format!("cov-removed-{}", unique());
+        sqlx::query(
+            "INSERT INTO organizations (name, host, state, created_by) \
+             VALUES ($1, $1 || '.example', 'removed', 'test')",
+        )
+        .bind(&name)
+        .execute(&pool)
+        .await
+        .expect("a removed Organization");
+        let organization = crate::host_registry::SeedOrganization {
+            name: name.clone(),
+            organization_id: None,
+            host: format!("{name}.example"),
+            catalogue_id: None,
+        };
+        assert_eq!(
+            key_person_rows(&pool, &organization)
+                .await
+                .expect("no error"),
+            0
+        );
+    }
+
+    /// The loop names the projects that wait once per change: a project that starts to wait is
+    /// named, one that stops waiting clears the list, and an unchanged list is not named again.
+    #[tokio::test]
+    async fn the_loop_names_the_waiting_projects_once_per_change() {
+        let Some(scratch) = crate::test_db::scratch().await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let forge = forge().await;
+        let mut state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(scratch.pool.clone());
+        state.syncer = Some(syncer_of(&forge, &state.mirror));
+        state
+            .syncer
+            .as_ref()
+            .expect("a syncer")
+            .sync_once()
+            .await
+            .expect("the forge loads");
+        let waiting = format!("cov-waiting-{}", unique());
+        let ((), log) = crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+            spawn_backfill_every(state, Duration::from_millis(50));
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            insert_notification(&scratch.pool, &waiting).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            sqlx::query("DELETE FROM notifications WHERE project = $1")
+                .bind(&waiting)
+                .execute(&scratch.pool)
+                .await
+                .expect("the row deleted");
+            tokio::time::sleep(Duration::from_millis(300)).await;
+        })
+        .await;
+        scratch.remove().await;
+        assert_eq!(
+            log.matches(&waiting).count(),
+            1,
+            "named once, when it started to wait: {log}"
         );
     }
 }

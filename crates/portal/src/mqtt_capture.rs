@@ -461,7 +461,12 @@ impl Capture {
                     continue;
                 }
                 let host = format!("{release}.{}.svc.cluster.local", self.namespace);
-                let task = tokio::spawn(subscribe(Arc::clone(&self.store), target.clone(), host));
+                let task = tokio::spawn(subscribe(
+                    Arc::clone(&self.store),
+                    target.clone(),
+                    host,
+                    PORT,
+                ));
                 running.insert(release.clone(), (target.clone(), task.abort_handle()));
             }
         }
@@ -484,11 +489,12 @@ impl Capture {
     }
 }
 
-/// One broker's subscriber: dials the internal listener, subscribes after every CONNACK (a clean
-/// session forgets them) and writes what arrived once per [`FLUSH`]. The buffer holds at most
-/// what the broker's capture could keep, so a burst costs no more memory than that.
-async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
-    let mut options = MqttOptions::new(format!("{USERNAME}-{}", target.release), host, PORT);
+/// One broker's subscriber: dials the internal listener on `port` (tests pass their own),
+/// subscribes after every CONNACK (a clean session forgets them) and writes what arrived once
+/// per [`FLUSH`]. The buffer holds at most what the broker's capture could keep, so a burst
+/// costs no more memory than that.
+async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String, port: u16) {
+    let mut options = MqttOptions::new(format!("{USERNAME}-{}", target.release), host, port);
     options
         .set_credentials(USERNAME, "")
         .set_keep_alive(Duration::from_secs(30))
@@ -544,11 +550,13 @@ async fn subscribe(store: Arc<CaptureStore>, target: Target, host: String) {
                     expires_at: received_at + jiff::SignedDuration::from_secs(target.window),
                     payload: publish.payload.to_vec(),
                 });
+                // `bytes` is the sum of the buffer's payloads, so an empty buffer holds 0 and ends
+                // the loop; were it ever not, the empty buffer's `bytes` drop to 0 all the same.
                 while buffer.len() > BROKER_MESSAGES || bytes > BROKER_BYTES {
-                    let Some(oldest) = buffer.pop_front() else {
-                        break;
-                    };
-                    bytes = bytes.saturating_sub(oldest.payload.len());
+                    let oldest = buffer
+                        .pop_front()
+                        .map_or(bytes, |oldest| oldest.payload.len());
+                    bytes = bytes.saturating_sub(oldest);
                 }
             }
             Ok(_) => {}
@@ -1108,6 +1116,7 @@ mod tests {
             Arc::clone(&store),
             cams_target(),
             "127.0.0.1".to_owned(),
+            PORT,
         ));
         let started = std::time::Instant::now();
         let mut found = Vec::new();
@@ -1140,7 +1149,12 @@ mod tests {
 
         // A store whose database is down: the batch is lost with a warning, the subscriber lives.
         let refusing = Arc::new(CaptureStore::new(Some(dead_pool()), mirror_placing_p()));
-        let second = tokio::spawn(subscribe(refusing, cams_target(), "127.0.0.1".to_owned()));
+        let second = tokio::spawn(subscribe(
+            refusing,
+            cams_target(),
+            "127.0.0.1".to_owned(),
+            PORT,
+        ));
         while served.load(std::sync::atomic::Ordering::SeqCst) < 2
             && started.elapsed() < Duration::from_secs(40)
         {
@@ -1150,5 +1164,35 @@ mod tests {
         assert!(!second.is_finished());
         second.abort();
         accepting.abort();
+    }
+
+    /// A broker whose release names no topic: after the CONNACK there is nothing to subscribe to,
+    /// and the subscriber says so instead of failing.
+    #[tokio::test]
+    async fn a_broker_with_no_topic_to_subscribe_to_is_named_in_the_log() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let port = listener.local_addr().expect("address").port();
+        let broker = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.expect("accept");
+            let _ = one_connection(socket, (Duration::ZERO, Vec::new()), Duration::ZERO).await;
+        });
+        let target = Target {
+            publish: Vec::new(),
+            ..cams_target()
+        };
+        let store = Arc::new(CaptureStore::new(None, Default::default()));
+        let (_, log) = crate::test_log::logged(tracing::level_filters::LevelFilter::WARN, async {
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                subscribe(store, target, "127.0.0.1".to_owned(), port),
+            )
+            .await
+        })
+        .await;
+        broker.abort();
+        assert!(log.contains("the MQTT capture did not subscribe"), "{log}");
+        assert!(log.contains("mqtt-p-cams"), "{log}");
     }
 }

@@ -19,7 +19,7 @@
 
 use std::collections::BTreeMap;
 
-use hmac::{Hmac, Mac};
+use hmac::Mac;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::Sha256;
@@ -309,8 +309,7 @@ pub fn is_id(id: &str) -> bool {
 /// The subject's keyed hash in one space: 32 hex of an HMAC-SHA256 under `key`, so the log and
 /// the broker's record name the subject without holding a value anyone can look up.
 pub fn subject_hash(key: &str, project: &str, space: &str, subject: &str) -> String {
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.as_bytes())
-        .unwrap_or_else(|_| unreachable!("HMAC takes a key of any length"));
+    let mut mac = crate::artifact_store::hmac_sha256(key.as_bytes());
     mac.update(format!("joinedcontext/erasure-subject/v1/{project}/{space}").as_bytes());
     mac.update(&[0]);
     mac.update(subject.trim().as_bytes());
@@ -2097,5 +2096,30 @@ classes:
     async fn a_portal_without_a_database_starts_no_loop() {
         spawn_periodic(plain_state());
         assert!(plain_state().db.is_none());
+    }
+
+    /// A replica that does not lead keeps its loop and asks no store: its minute does not count.
+    #[tokio::test]
+    async fn the_loop_of_a_replica_that_does_not_lead_asks_nothing() {
+        let shako = Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://127.0.0.1:1".parse().expect("a url"),
+                "owner",
+                "repo",
+                "token",
+            )
+            .expect("a client"),
+        );
+        let follower = crate::reconciler::Syncer::new(shako, Arc::new(crate::store::Mirror::new()))
+            .with_leadership(Arc::new(crate::reconciler::Leadership::reconciler(
+                dead_pool(),
+            )));
+        let mut state = plain_state();
+        state.syncer = Some(Arc::new(follower));
+        state.db = Some(dead_pool());
+        assert!(!state.leads());
+        assert!(!pass(&state, &dead_pool(), 0).await);
+        spawn_periodic(state);
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
 }

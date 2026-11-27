@@ -108,6 +108,18 @@ async fn the_internal_router_and_the_build_router_refuse_an_unknown_path() {
     assert_eq!(build, StatusCode::NOT_FOUND);
 }
 
+/// Waits until `addr` refuses a connection: the serve ended and its task with it.
+async fn closes(addr: std::net::SocketAddr) {
+    for _ in 0..200 {
+        if tokio::net::TcpStream::connect(addr).await.is_err() {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+    panic!("{addr} still answers after its shutdown");
+}
+
 #[tokio::test]
 async fn a_portal_without_a_realm_opens_no_internal_listener() {
     let state = AppState::new(Config::for_tests(), None);
@@ -130,6 +142,7 @@ async fn a_portal_with_a_realm_serves_its_internal_listener_until_shutdown() {
         .expect("an answer");
     assert_eq!(answer.status(), reqwest::StatusCode::NOT_FOUND);
     stop.send(()).expect("the listener still waits");
+    closes(addr).await;
 }
 
 #[tokio::test]
@@ -198,6 +211,7 @@ async fn a_portal_that_builds_apps_serves_its_build_listener_until_shutdown() {
         .expect("answer");
     assert_eq!(answer.status(), reqwest::StatusCode::NOT_FOUND);
     stop.send(()).expect("the listener still waits");
+    closes(addr).await;
 }
 
 #[tokio::test]
@@ -269,6 +283,17 @@ async fn the_background_work_starts_with_a_broker_writing_views() {
 async fn the_background_work_starts_with_a_portal_that_writes_no_views() {
     let forge = MockServer::start().await;
     server::spawn_background(&busy_state(&forge, false));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+}
+
+/// A forge and a syncer without an outbound client for `SyncSource`s: the sync loop and the
+/// mirror start, the `SyncSource` loop does not.
+#[tokio::test]
+async fn the_background_work_starts_without_a_sync_driver() {
+    let forge = MockServer::start().await;
+    let mut state = busy_state(&forge, false);
+    state.sync = None;
+    server::spawn_background(&state);
     tokio::time::sleep(Duration::from_millis(100)).await;
 }
 

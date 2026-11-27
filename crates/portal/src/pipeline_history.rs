@@ -781,6 +781,7 @@ mod tests {
         assert!(check(&state, "helsinki", "Endpoint", &spec).is_ok());
         assert!(check_attributes(&state, "helsinki", "Endpoint", &spec).is_ok());
         assert!(check(&state, "helsinki", "Pipeline", &json!({ "class": 5 })).is_ok());
+        assert!(check_attributes(&state, "helsinki", "Pipeline", &json!({ "class": 5 })).is_ok());
     }
 
     #[test]

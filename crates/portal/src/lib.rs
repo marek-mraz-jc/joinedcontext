@@ -109,6 +109,8 @@ pub mod sync;
 pub mod telemetry;
 pub mod temporal_audit;
 #[cfg(test)]
+mod test_db;
+#[cfg(test)]
 mod test_log;
 pub mod tools;
 

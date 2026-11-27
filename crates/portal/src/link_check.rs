@@ -190,13 +190,12 @@ pub fn robots_allow(body: &str, path: &str) -> bool {
         let (key, value) = (key.trim().to_ascii_lowercase(), value.trim());
         match key.as_str() {
             "user-agent" => {
-                if !in_agents {
-                    groups.push((Vec::new(), Vec::new()));
+                let agent = value.to_ascii_lowercase();
+                match groups.last_mut() {
+                    Some(group) if in_agents => group.0.push(agent),
+                    _ => groups.push((vec![agent], Vec::new())),
                 }
                 in_agents = true;
-                if let Some(group) = groups.last_mut() {
-                    group.0.push(value.to_ascii_lowercase());
-                }
             }
             "allow" | "disallow" => {
                 in_agents = false;

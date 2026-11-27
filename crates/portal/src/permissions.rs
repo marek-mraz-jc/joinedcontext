@@ -4596,6 +4596,12 @@ mod tests {
         ));
         mirror.upsert(by("no-scope", "g", serde_json::json!({})));
         mirror.upsert(by("scoped", "g", serde_json::json!({ "project": "p" })));
+        mirror.upsert(org(
+            "RoleBinding",
+            "no-role",
+            serde_json::json!({ "subjects": [{ "group": "g" }], "role": "missing",
+                                "scope": { "project": "p" } }),
+        ));
         let adding = serde_json::json!({
             "kind": "Group", "metadata": { "name": "g", "namespace": ORG_NAMESPACE },
             "spec": { "members": [{ "user": "new@hel.fi" }] } });

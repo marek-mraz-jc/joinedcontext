@@ -132,43 +132,61 @@ async fn from_bundle(ui: &str, path: &str) -> Response {
             HeaderValue::from_str(mime_guess::from_path(path).first_or_octet_stream().as_ref())
                 .unwrap_or(HeaderValue::from_static("application/octet-stream"))
         });
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime)
-        .header(header::CACHE_CONTROL, cache_control(path))
-        .body(Body::from_stream(answer.bytes_stream()))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime),
+            (
+                header::CACHE_CONTROL,
+                HeaderValue::from_static(cache_control(path)),
+            ),
+        ],
+        Body::from_stream(answer.bytes_stream()),
+    )
+        .into_response()
 }
 
 fn embedded(path: &str) -> Response {
-    let Some(file) = Assets::get(path) else {
+    served(path, Assets::get(path))
+}
+
+/// The answer of the embedded file at `path`, a 404 when the build holds none: apart from
+/// [`embedded`], so a test hands it a file when the UI is not built.
+fn served(path: &str, file: Option<rust_embed::EmbeddedFile>) -> Response {
+    let Some(file) = file else {
         return ApiError::NotFound(format!("Asset '{path}' not found")).into_response();
     };
     let mime = mime_guess::from_path(path).first_or_octet_stream();
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, mime.as_ref())
-        .header(header::CACHE_CONTROL, cache_control(path))
-        .body(Body::from(file.data))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, mime.as_ref()),
+            (header::CACHE_CONTROL, cache_control(path)),
+        ],
+        Body::from(file.data),
+    )
+        .into_response()
 }
 
 fn serve_index() -> Response {
-    if let Some(file) = Assets::get("index.html") {
-        Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .header(header::CACHE_CONTROL, "no-cache")
-            .body(Body::from(file.data))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-    } else {
-        Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
-            .header(header::CACHE_CONTROL, "no-cache")
-            .body(Body::from(PLACEHOLDER_HTML))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
-    }
+    index_page(Assets::get("index.html"))
+}
+
+/// The shell of the SPA: the built `index.html`, or [`PLACEHOLDER_HTML`] before a UI build.
+fn index_page(file: Option<rust_embed::EmbeddedFile>) -> Response {
+    let page = match file {
+        Some(file) => file.data,
+        None => std::borrow::Cow::Borrowed(PLACEHOLDER_HTML.as_bytes()),
+    };
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-cache"),
+        ],
+        Body::from(page),
+    )
+        .into_response()
 }
 
 #[cfg(test)]
@@ -189,5 +207,64 @@ mod tests {
             mime.as_ref().contains("javascript"),
             "expected mime to contain 'javascript', got {mime}"
         );
+    }
+
+    /// A file as the embed hands it, read from a scratch copy: the test build embeds no UI.
+    fn file(name: &str, body: &[u8]) -> rust_embed::EmbeddedFile {
+        let path = std::env::temp_dir().join(format!("t7858-assets-{}-{name}", std::process::id()));
+        std::fs::write(&path, body).expect("the scratch file");
+        let file = rust_embed::utils::read_file_from_fs(&path).expect("read back");
+        let _ = std::fs::remove_file(&path);
+        file
+    }
+
+    async fn text(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("the body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    #[tokio::test]
+    async fn an_embedded_file_is_served_with_its_type_and_its_cache_rule() {
+        let response = served("assets/app-1a2b.js", Some(file("app.js", b"export {}")));
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .expect("text")
+            .contains("javascript"));
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "public, max-age=31536000, immutable"
+        );
+        assert_eq!(text(response).await, "export {}");
+        let missing = served("assets/gone.js", None);
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn the_shell_is_the_built_index_or_the_placeholder_and_never_cached() {
+        let built = index_page(Some(file("index.html", b"<!doctype html><p>built</p>")));
+        assert_eq!(built.status(), StatusCode::OK);
+        assert_eq!(built.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(
+            built.headers()[header::CONTENT_TYPE],
+            "text/html; charset=utf-8"
+        );
+        assert_eq!(text(built).await, "<!doctype html><p>built</p>");
+        let placeholder = index_page(None);
+        assert_eq!(placeholder.headers()[header::CACHE_CONTROL], "no-cache");
+        assert_eq!(text(placeholder).await, PLACEHOLDER_HTML);
+    }
+
+    /// The derive's lookups that need no built UI: a path outside the folder, a missing file,
+    /// and the trait's own entry points.
+    #[test]
+    fn the_embed_answers_nothing_outside_its_folder_or_missing() {
+        assert!(Assets::get("../Cargo.toml").is_none());
+        assert!(Assets::get("no-such-file.js").is_none());
+        assert!(<Assets as RustEmbed>::get("no-such-file.js").is_none());
+        let listed: Vec<_> = <Assets as RustEmbed>::iter().collect();
+        assert_eq!(listed.len(), Assets::iter().count());
     }
 }

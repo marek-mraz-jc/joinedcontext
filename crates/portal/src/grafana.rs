@@ -2003,4 +2003,51 @@ mod tests {
             "the sweep never looked for the organization"
         );
     }
+
+    #[tokio::test]
+    async fn an_organization_request_that_gets_no_answer_is_unavailable() {
+        let missing = Some(
+            "HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n".to_owned(),
+        );
+        let url = scripted(vec![missing, None]).await;
+        let config = config_at(&url);
+        assert!(unavailable(Client::new(&config).provision("doprava").await));
+    }
+
+    /// A replica that does not hold the reconciler lock ticks both loops and asks Grafana nothing.
+    #[tokio::test]
+    async fn a_follower_ticks_the_provisioning_and_the_sweep_without_asking_grafana() {
+        let server = server().await;
+        daiya_health(&server).await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://follower@127.0.0.1:1/none")
+            .expect("a lazy pool");
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://localhost:3000".parse().expect("a url"),
+                "test-owner",
+                "test-repo",
+                "token",
+            )
+            .expect("a client"),
+        );
+        let follower =
+            crate::reconciler::Syncer::new(shako, std::sync::Arc::new(crate::store::Mirror::new()))
+                .with_leadership(std::sync::Arc::new(
+                    crate::reconciler::Leadership::reconciler(pool.clone()),
+                ));
+        let mut settings = crate::config::Config::for_tests();
+        settings.grafana = Some(config(&server));
+        let mut state = AppState::new(settings, None).with_syncer(std::sync::Arc::new(follower));
+        state.db = Some(pool);
+        assert!(!state.leads());
+        spawn_provisioning(state.clone());
+        spawn_periodic(state);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .is_empty());
+    }
 }

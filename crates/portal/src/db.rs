@@ -1532,6 +1532,42 @@ mod coverage_tests {
         assert_eq!(one, 1);
     }
 
+    /// One role that owns its database and has no RLS bypass migrates and serves with no warning
+    /// about the bypass.
+    #[tokio::test]
+    async fn one_owning_role_without_a_bypass_gets_a_pool() {
+        let Some(db) = scratch("one_owner").await else {
+            eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+            return;
+        };
+        let role = format!("jc_cov_owner_{}", std::process::id());
+        sqlx::raw_sql(AssertSqlSafe(format!(
+            "DROP ROLE IF EXISTS {role}; CREATE ROLE {role} LOGIN PASSWORD 'pw'; \
+             ALTER DATABASE {} OWNER TO {role}",
+            db.name
+        )))
+        .execute(&db.admin)
+        .await
+        .expect("the role");
+        let outcome = connect_as(&db.as_role(&role), None).await;
+        let bypass = match &outcome {
+            Ok(pool) => rls_bypass(pool).await.map_err(|e| e.to_string()),
+            Err(e) => Err(e.to_string()),
+        };
+        if let Ok(pool) = outcome {
+            pool.close().await;
+        }
+        db.remove().await;
+        let cleanup = PgPool::connect(&database_url().expect("url"))
+            .await
+            .expect("connect");
+        sqlx::query(AssertSqlSafe(format!("DROP ROLE IF EXISTS {role}")))
+            .execute(&cleanup)
+            .await
+            .expect("drop role");
+        assert_eq!(bypass, Ok(None));
+    }
+
     /// The same role named for serving and for migrating is refused before any connection.
     #[tokio::test]
     async fn one_role_named_twice_is_refused() {

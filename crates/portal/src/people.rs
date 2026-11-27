@@ -1237,6 +1237,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_create_whose_e_mail_search_answers_no_json_is_unreachable() {
+        let realm = MockServer::start().await;
+        silent(&realm, "POST", "/users", 201).await;
+        Mock::given(method("GET"))
+            .and(path(format!("{ADMIN}/users")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .mount(&realm)
+            .await;
+        let person = NewPerson {
+            email: "a@b.org",
+            first_name: "A",
+            last_name: "B",
+            locale: None,
+        };
+        assert!(matches!(
+            admin_for(&realm.uri()).create(&person).await,
+            Err(PeopleError::Unreachable(_))
+        ));
+    }
+
+    #[tokio::test]
     async fn a_create_nobody_can_find_is_not_found_and_a_location_names_the_id() {
         let none = MockServer::start().await;
         silent(&none, "POST", "/users", 201).await;

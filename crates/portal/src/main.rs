@@ -12,14 +12,12 @@ static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[tokio::main]
 async fn main() {
-    // OPS-15: JSON lines on stdout, nothing on disk.
-    if let Err(err) = tracing::subscriber::set_global_default(telemetry::log_subscriber(
+    // OPS-15: JSON lines on stdout, nothing on disk. tracing refuses a global subscriber only
+    // when one is set already, and this is the process's first statement, so it is never refused.
+    let _first = tracing::subscriber::set_global_default(telemetry::log_subscriber(
         std::io::stdout,
         telemetry::log_filter(),
-    )) {
-        eprintln!("Logging error: {err}");
-        std::process::exit(1);
-    }
+    ));
 
     // `joinedcontext-portal migrate`: bring `JC_PORTAL_DATABASE_URL` up to this release's schema
     // (as the role of `JC_PORTAL_MIGRATION_DATABASE_URL` where it is set, granting the serving role;

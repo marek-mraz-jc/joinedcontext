@@ -576,6 +576,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_purge_of_a_broker_that_is_away_says_so_without_its_address() {
+        let moves = Moves::new(Duration::from_millis(10), Duration::from_secs(1));
+        let said = moves
+            .purge("http://127.0.0.1:1", &plan(&[]))
+            .await
+            .expect_err("nobody listens");
+        assert!(!said.is_empty());
+        assert!(!said.contains("127.0.0.1:1"), "{said}");
+    }
+
+    #[tokio::test]
     async fn the_copy_waits_for_the_pod_slow_to_take_the_hold() {
         let quick = gateway(&[HOLDS]).await;
         let slow = gateway(&["", "", HOLDS]).await;

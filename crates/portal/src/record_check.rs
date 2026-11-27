@@ -449,14 +449,7 @@ pub fn writable(
                     &mut findings,
                 ),
             }
-            let area = findings.iter().position(|f| f.field == "location" && f.rule == "grant");
-            let reason = match area {
-                Some(at) if findings.len() == 1 => {
-                    findings.remove(at);
-                    Some("only inside the area its grant names".to_owned())
-                }
-                _ => findings.first().map(|f| f.reason.clone()),
-            };
+            let reason = writable_reason(&mut findings);
             Writable {
                 name: name.clone(),
                 writable: findings.is_empty(),
@@ -464,6 +457,21 @@ pub fn writable(
             }
         })
         .collect())
+}
+
+/// Why an attribute is not writable, from the findings of its probe: a grant limited to an area,
+/// when it is all there is, leaves the attribute writable with that limit and its finding gone.
+fn writable_reason(findings: &mut Vec<Finding>) -> Option<String> {
+    let area = findings
+        .iter()
+        .position(|f| f.field == "location" && f.rule == "grant");
+    match area {
+        Some(at) if findings.len() == 1 => {
+            findings.remove(at);
+            Some("only inside the area its grant names".to_owned())
+        }
+        _ => findings.first().map(|f| f.reason.clone()),
+    }
 }
 
 /// [`check_records`] over what a test's mapping made: its first [`MAX_RECORDS`] records.
@@ -1249,6 +1257,22 @@ mod tests {
                     && n[0].reason.as_deref().unwrap_or_default().contains("no Endpoint")),
             "{none:?}"
         );
+    }
+
+    #[test]
+    fn a_location_its_grant_limits_to_an_area_is_writable_there_alone() {
+        let area = || endpoint_finding("grant", "location", "outside the area".into());
+        let mut alone = vec![area()];
+        assert_eq!(
+            writable_reason(&mut alone).as_deref(),
+            Some("only inside the area its grant names")
+        );
+        assert!(alone.is_empty());
+
+        let mut with_more = vec![endpoint_finding("view", "", "no view".into()), area()];
+        assert_eq!(writable_reason(&mut with_more).as_deref(), Some("no view"));
+        assert_eq!(with_more.len(), 2);
+        assert_eq!(writable_reason(&mut Vec::new()), None);
     }
 
     #[test]

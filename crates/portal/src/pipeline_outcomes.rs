@@ -276,36 +276,38 @@ impl RejectedStore {
             }
             Inner::Memory(map) => {
                 let map = map.read().unwrap_or_else(|e| e.into_inner());
-                let mut groups: Vec<RejectedGroup> = Vec::new();
                 let newest_first = map
                     .get(&(project.to_owned(), pipeline.to_owned()))
                     .map(|(_, list)| list.iter().rev())
                     .into_iter()
                     .flatten();
-                let mut index: HashMap<(&str, &str), usize> = HashMap::new();
+                // Each group with the place it was first met at, newest first.
+                let mut found: HashMap<(&str, &str), (usize, RejectedGroup)> = HashMap::new();
                 for record in newest_first {
-                    let at = *index
+                    let next = found.len();
+                    let (_, group) = found
                         .entry((record.rule.as_str(), record.path.as_str()))
                         .or_insert_with(|| {
-                            groups.push(RejectedGroup {
-                                rule: record.rule.clone(),
-                                path: record.path.clone(),
-                                count: 0,
-                                examples: Vec::new(),
-                            });
-                            groups.len() - 1
+                            (
+                                next,
+                                RejectedGroup {
+                                    rule: record.rule.clone(),
+                                    path: record.path.clone(),
+                                    count: 0,
+                                    examples: Vec::new(),
+                                },
+                            )
                         });
-                    if let Some(group) = groups.get_mut(at) {
-                        group.count += 1;
-                        if group.examples.len() < EXAMPLES {
-                            group.examples.push(record.clone());
-                        }
+                    group.count += 1;
+                    if group.examples.len() < EXAMPLES {
+                        group.examples.push(record.clone());
                     }
                 }
-                // Stable: a tie keeps the group refused last first, as the database orders.
-                groups.sort_by_key(|g| std::cmp::Reverse(g.count));
+                let mut groups: Vec<(usize, RejectedGroup)> = found.into_values().collect();
+                // A tie keeps the group refused last first, as the database orders.
+                groups.sort_by_key(|(first, g)| (std::cmp::Reverse(g.count), *first));
                 groups.truncate(GROUPS);
-                Ok(groups)
+                Ok(groups.into_iter().map(|(_, g)| g).collect())
             }
         }
     }
@@ -808,6 +810,22 @@ mod tests {
             .collect();
         assert_eq!(newest, [json!(59), json!(58), json!(56)]);
         assert!(store.groups("q", "a").await.expect("none").is_empty());
+
+        // A tie puts the group refused last first.
+        for rule in ["first", "second"] {
+            store
+                .reject("p", "c", &json!({}), &reason(rule, "x", None))
+                .await
+                .expect("kept");
+        }
+        let tied: Vec<String> = store
+            .groups("p", "c")
+            .await
+            .expect("groups")
+            .into_iter()
+            .map(|g| g.rule)
+            .collect();
+        assert_eq!(tied, ["second", "first"]);
     }
 
     /// A sync drops the lists of pipelines a loaded project no longer holds and leaves a project

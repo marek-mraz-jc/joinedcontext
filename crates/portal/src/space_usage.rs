@@ -470,6 +470,32 @@ mod tests {
 
     use serde_json::json;
 
+    /// A broker that takes the connection and hangs up before answering: neither slow nor out of
+    /// reach, so the words say only that it did not answer.
+    #[tokio::test]
+    async fn a_broker_that_hangs_up_did_not_answer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = listener.local_addr().expect("address");
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let mut request = [0_u8; 4096];
+                let _ = tokio::io::AsyncReadExt::read(&mut socket, &mut request).await;
+            }
+        });
+        let err = reqwest::Client::new()
+            .get(format!("http://{at}/q/tenants/t-air"))
+            .send()
+            .await
+            .expect_err("hung up");
+        assert!(!err.is_timeout() && !err.is_connect(), "{err:?}");
+        assert_eq!(
+            unanswered(&err),
+            "the broker did not answer; try again in a minute"
+        );
+    }
+
     #[test]
     fn the_count_is_read_from_the_tenants_entity_count() {
         assert_eq!(count_of(&json!({"counts": {"entities": 14232}})), Ok(14232));
