@@ -443,8 +443,7 @@ mod tests {
         let e = i
             .connect(&ctx(true))
             .await
-            .err()
-            .expect("connected to broadcast");
+            .expect_err("connected to broadcast");
         assert!(e.to_string().contains("socket input: udp connect: "), "{e}");
     }
 

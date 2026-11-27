@@ -666,7 +666,11 @@ mod tests {
     #[test]
     fn tls_client_certificates_load_from_inline_pem_or_refuse_clearly() {
         let pair = self_signed();
-        let skip = if pair.is_none() { "SKIP (no openssl) " } else { "" };
+        let skip = if pair.is_none() {
+            "SKIP (no openssl) "
+        } else {
+            ""
+        };
         eprintln!("{skip}tls_client_certificates");
         let Some((cert, key)) = pair else { return };
         let client = |c: &str, k: &str| {

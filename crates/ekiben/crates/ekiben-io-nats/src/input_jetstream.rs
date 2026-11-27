@@ -362,13 +362,18 @@ impl JetStreamInput {
                 ..Default::default()
             };
             let consumer: consumer::PushConsumer = match (&existing, &durable) {
-                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(consumer_failed)?,
+                (Some(_), Some(name)) => {
+                    stream.get_consumer(name).await.map_err(consumer_failed)?
+                }
                 // Replicas starting together race to create the durable: the loser uses it.
                 (None, Some(name)) => match stream.create_consumer(config).await {
                     Ok(c) => c,
                     Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 },
-                _ => stream.create_consumer(config).await.map_err(consumer_failed)?,
+                _ => stream
+                    .create_consumer(config)
+                    .await
+                    .map_err(consumer_failed)?,
             };
             let messages = consumer.messages().await.map_err(consumer_failed)?;
             Ok(messages.map(|m| m.map_err(|e| e.to_string())).boxed())
@@ -383,13 +388,18 @@ impl JetStreamInput {
                 ..Default::default()
             };
             let consumer: consumer::PullConsumer = match (&existing, &durable) {
-                (Some(_), Some(name)) => stream.get_consumer(name).await.map_err(consumer_failed)?,
+                (Some(_), Some(name)) => {
+                    stream.get_consumer(name).await.map_err(consumer_failed)?
+                }
                 // Replicas starting together race to create the durable: the loser uses it.
                 (None, Some(name)) => match stream.create_consumer(config).await {
                     Ok(c) => c,
                     Err(_) => stream.get_consumer(name).await.map_err(consumer_failed)?,
                 },
-                _ => stream.create_consumer(config).await.map_err(consumer_failed)?,
+                _ => stream
+                    .create_consumer(config)
+                    .await
+                    .map_err(consumer_failed)?,
             };
             // Each pull asks for at most max_ack_pending (cap 200) messages, so instances on
             // one durable split the backlog instead of the first one prefetching all of it.

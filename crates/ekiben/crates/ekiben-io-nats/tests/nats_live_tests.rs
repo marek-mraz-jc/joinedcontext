@@ -263,10 +263,17 @@ async fn jetstream_unsent_acks_leave_the_message_redelivered() {
     .await;
     let (p, ack) = read(&mut i, &sctx).await;
     assert_eq!(p.meta_get_str("X-Kept"), "yes");
-    assert!(p.meta_get("X-Empty").is_none(), "an empty header is not metadata");
+    assert!(
+        p.meta_get("X-Empty").is_none(),
+        "an empty header is not metadata"
+    );
     std::thread::spawn(move || ack.ack()).join().unwrap();
     let (p, ack) = read(&mut i, &sctx).await;
-    assert_eq!(p.meta_get_str("nats_num_delivered"), "2", "the unsent ack redelivers");
+    assert_eq!(
+        p.meta_get_str("nats_num_delivered"),
+        "2",
+        "the unsent ack redelivers"
+    );
     ack.ack();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let info = js(&srv.url)
@@ -551,13 +558,38 @@ async fn jetstream_connect_names_what_is_missing_and_reads_existing_consumer_fil
     .await;
     assert!(err.contains("bind with only durable"), "{err}");
     add_stream(&srv.url, "MULTI", &["org_a.m.>"]).await;
-    // A filter the stream does not hold: the server refuses the consumer, push (no durable)
-    // and pull (a durable it cannot create nor find) alike.
-    for extra in [serde_json::json!({}), serde_json::json!({"durable": "dz"})] {
-        let mut v = serde_json::json!({"urls": [srv.url], "subject": "org_a.z", "stream": "MULTI"});
-        v.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
-        let err = connect_err(serde_json::json!({ "nats_jetstream": v })).await;
-        assert!(err.contains("failed to create JetStream consumer"), "{extra}: {err}");
+    // A work-queue stream takes one consumer per subject: a second, ephemeral push consumer
+    // is refused; a durable name with a dot is refused (pull).
+    js(&srv.url)
+        .await
+        .create_stream(jetstream::stream::Config {
+            name: "WQ".to_string(),
+            subjects: vec!["org_a.w.>".to_string()],
+            retention: jetstream::stream::RetentionPolicy::WorkQueue,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    js(&srv.url)
+        .await
+        .get_stream("WQ")
+        .await
+        .unwrap()
+        .create_consumer(jetstream::consumer::pull::Config {
+            durable_name: Some("first".into()),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    for v in [
+        serde_json::json!({"urls": [srv.url], "subject": "org_a.w.>", "stream": "WQ"}),
+        serde_json::json!({"urls": [srv.url], "subject": "org_a.w.>", "stream": "WQ", "durable": "bad.name"}),
+    ] {
+        let err = connect_err(serde_json::json!({ "nats_jetstream": v.clone() })).await;
+        assert!(
+            err.contains("failed to create JetStream consumer"),
+            "{v}: {err}"
+        );
     }
     let stream = js(&srv.url).await.get_stream("MULTI").await.unwrap();
     stream

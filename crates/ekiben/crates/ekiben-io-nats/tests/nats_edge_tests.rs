@@ -803,8 +803,14 @@ fn a_jetstream_output_builds_with_its_limits_and_string_headers() {
     let c = ctx("org-jso", None);
     let v = json!({"urls": ["nats://memory/jso"], "subject": "s", "max_in_flight": 8,
         "headers": {"A": "${! \"x\" }", "B": 5}});
-    let out = c.reg.build_output(&conf(json!({ "nats_jetstream": v })), &c.sctx);
-    assert!(out.is_ok(), "{:?}", out.err().as_ref().map(ToString::to_string));
+    let out = c
+        .reg
+        .build_output(&conf(json!({ "nats_jetstream": v })), &c.sctx);
+    assert!(
+        out.is_ok(),
+        "{:?}",
+        out.err().as_ref().map(ToString::to_string)
+    );
 }
 
 #[tokio::test]
@@ -906,7 +912,11 @@ async fn the_kv_processor_reads_revisions_updates_and_reports_missing_keys() {
         .await
         .unwrap();
     assert!(!out[0][0].is_errored(), "{:?}", out[0][0].error_get());
-    assert!(text(&out[0][0]).contains("KeyValueDeleteOp"), "{}", text(&out[0][0]));
+    assert!(
+        text(&out[0][0]).contains("KeyValueDeleteOp"),
+        "{}",
+        text(&out[0][0])
+    );
     let out = proc("keys", json!({"key": ">"}))
         .process_batch(&c.pctx, vec![msg("", "", None)])
         .await
