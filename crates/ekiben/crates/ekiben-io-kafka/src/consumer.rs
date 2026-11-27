@@ -339,11 +339,8 @@ impl KafkaInput {
         self.ready.clear();
         self.leaders_of_assignment();
         self.assigned = true;
-        tracing::info!(
-            "kafka_franz input: reading {} partition(s) of {}",
-            self.lock().parts.len(),
-            topics.join(", ")
-        );
+        let (parts, topics) = (self.lock().parts.len(), topics.join(", "));
+        tracing::info!("kafka_franz input: reading {parts} partition(s) of {topics}");
         Ok(())
     }
 

@@ -117,6 +117,26 @@ impl Processor for Busy {
     }
 }
 
+/// Hands back new parts that carry no sort tag of the input batch.
+struct Fresh;
+
+#[async_trait::async_trait]
+impl Processor for Fresh {
+    fn processor_type(&self) -> &'static str {
+        "fresh"
+    }
+    async fn process_batch(
+        &self,
+        _ctx: &ProcContext,
+        batch: Batch,
+    ) -> Result<Vec<Batch>, CoreError> {
+        Ok(vec![batch
+            .into_iter()
+            .map(|mut p| Part::new(p.as_bytes().to_vec()))
+            .collect()])
+    }
+}
+
 /// An output whose close panics: the stream's task dies before it hands back a summary.
 struct PanicsOnClose;
 
@@ -167,6 +187,7 @@ fn rig(steps: Vec<Step>, input_fails: bool, out: Collect) -> Rig {
         Ok(shared.clone() as Arc<dyn ekiben_core::Output>)
     });
     reg.register_processor("busy", |_, _| Ok(Arc::new(Busy)));
+    reg.register_processor("fresh", |_, _| Ok(Arc::new(Fresh)));
     reg.register_output("panics_on_close", |_, _| Ok(Arc::new(PanicsOnClose)));
     reg.register_output("panics_on_write", |_, _| Ok(Arc::new(PanicsOnWrite)));
     Rig { reg, out }
@@ -251,6 +272,51 @@ async fn a_refused_write_counts_failed_messages_and_fails_the_run() {
 }
 
 /// A writer that panics fails the run with that named, and the input stops feeding it.
+/// A refused write of parts a processor made anew (no sort tag of the input) still fails the
+/// run; only the parts it can trace back are marked failed in the input batch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_write_of_untraceable_parts_fails_the_run() {
+    let out = Collect {
+        write_fails: true,
+        ..Default::default()
+    };
+    let r = rig(vec![Step::Batch(vec!["a", "b"])], false, out);
+    let c = conf("pipeline:\n  processors:\n    - fresh: {}\n");
+    let s = run(&r, c, ResourceManager::new()).await;
+    assert!(!s.success);
+    assert_eq!(s.error.as_deref(), Some("disk full"));
+    assert_eq!(s.messages_out, 0);
+}
+
+/// A pipeline that drops every message writes nothing and the run succeeds.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_pipeline_that_drops_every_message_writes_nothing() {
+    let r = rig(vec![Step::Batch(vec!["a", "b"])], false, Collect::default());
+    let c = conf("pipeline:\n  processors:\n    - mapping: root = deleted()\n");
+    let s = run(&r, c, ResourceManager::new()).await;
+    assert!(s.success, "{:?}", s.error);
+    assert_eq!(s.messages_in, 2);
+    assert_eq!(s.messages_out, 0);
+    assert!(r.out.written.lock().unwrap().is_empty());
+}
+
+/// A batch split into many pages stops paging once a write failed: the later pages are not
+/// handed to the stopped writer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_write_stops_the_pages_of_the_batch_in_flight() {
+    let out = Collect {
+        write_fails: true,
+        ..Default::default()
+    };
+    let parts: Vec<&'static str> = (0..400).map(|_| "p").collect();
+    let r = rig(vec![Step::Batch(parts)], false, out);
+    let c = conf("pipeline:\n  threads: 1\n  processors:\n    - split: {size: 1}\n");
+    let s = run(&r, c, ResourceManager::new()).await;
+    assert!(!s.success);
+    assert_eq!(s.error.as_deref(), Some("disk full"));
+    assert_eq!(s.messages_out, 0);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_panicking_write_ends_the_run_with_the_writer_named() {
     let steps = (0..200).map(|_| Step::Batch(vec!["c"])).collect();

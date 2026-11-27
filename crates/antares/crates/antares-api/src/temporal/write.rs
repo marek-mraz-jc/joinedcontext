@@ -957,6 +957,26 @@ mod edges {
     const ID: &str = "urn:ngsi-ld:Vehicle:tw1";
     const SPEED: &str = "https://uri.etsi.org/ngsi-ld/default-context/speed";
 
+    /// clause 5.6.14, step 4: a fragment whose instance expands under another IRI than
+    /// the Attribute's holds no instance of it, and is refused.
+    #[test]
+    fn an_instance_under_another_iri_is_no_instance_fragment() {
+        let ctx = Context::default();
+        let frag = json_object(serde_json::json!({"type": "Property", "value": 1}));
+        let ok = instance_fragment(&frag, "speed", SPEED, &ctx).expect("a bare instance");
+        assert!(ok.is_object(), "{ok}");
+        let err = instance_fragment(&frag, "speed", "urn:not-speed", &ctx)
+            .expect_err("not under the Attribute's IRI");
+        assert!(
+            format!("{err:?}").contains("invalid instance fragment"),
+            "{err:?}"
+        );
+    }
+
+    fn json_object(v: Value) -> Map<String, Value> {
+        v.as_object().cloned().expect("an object")
+    }
+
     async fn send(
         st: &AppState,
         method: &str,
