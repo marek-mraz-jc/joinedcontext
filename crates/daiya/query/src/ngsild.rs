@@ -1154,13 +1154,7 @@ mod tests {
         ];
         let frame =
             entities_to_table_frame("A", &entities, &json!({"attributes": ["speed", "speed"]}));
-        let field = |name: &str| {
-            frame
-                .fields
-                .iter()
-                .find(|f| f.name == name)
-                .unwrap_or_else(|| panic!("{name}: {:?}", frame.fields))
-        };
+        let field = |name: &str| frame.fields.iter().find(|f| f.name == name).expect(name);
         assert_eq!(
             field("type").values,
             [json!("Road,Segment"), Value::Null, json!("Road")]
