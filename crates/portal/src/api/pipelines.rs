@@ -1234,20 +1234,7 @@ pub async fn post_run(
         .ok_or_else(|| ApiError::Unavailable("no pipeline runner is configured".into()))?;
     let run = deployer
         .run_now(&project, &name)
-        .map_err(|refusal| match refusal {
-            crate::reconciler::run_queue::RunNow::Running(run) => ApiError::Conflict(format!(
-                "pipeline '{name}' is running ({run}); start another once it ended"
-            )),
-            crate::reconciler::run_queue::RunNow::Held => ApiError::Conflict(format!(
-                "pipeline '{name}' is held: its last run ran past its cap and the runner could \
-                 not stop it; change the looping step and push again, it runs once its steps \
-                 change"
-            )),
-            crate::reconciler::run_queue::RunNow::NotQueued => ApiError::Conflict(format!(
-            "pipeline '{name}' does not run from the queue: it waits for pushes and always runs, \
-             or it is not deployed (its status says why)"
-        )),
-        })?;
+        .map_err(|refusal| run_refused(&name, refusal))?;
     let event = crate::activity::ActivityEvent {
         time: jc_time::TimestampTz::now(),
         project: project.clone(),
@@ -1272,6 +1259,25 @@ pub async fn post_run(
     Ok((axum::http::StatusCode::ACCEPTED, Json(RunStarted { run })))
 }
 
+/// Why a run cannot be queued now, as the 409 that tells a steward what to do instead.
+fn run_refused(name: &str, refusal: crate::reconciler::run_queue::RunNow) -> ApiError {
+    use crate::reconciler::run_queue::RunNow;
+    ApiError::Conflict(match refusal {
+        RunNow::Running(run) => {
+            format!("pipeline '{name}' is running ({run}); start another once it ended")
+        }
+        RunNow::Held => format!(
+            "pipeline '{name}' is held: its last run ran past its cap and the runner could \
+             not stop it; change the looping step and push again, it runs once its steps \
+             change"
+        ),
+        RunNow::NotQueued => format!(
+            "pipeline '{name}' does not run from the queue: it waits for pushes and always runs, \
+             or it is not deployed (its status says why)"
+        ),
+    })
+}
+
 /// Which rejected records to replay.
 #[derive(Debug, serde::Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
@@ -1292,8 +1298,13 @@ pub struct RetryAnswer {
     pub masked: Vec<i64>,
 }
 
-/// The longest a replay stream is left on the runner before it is deleted.
-const REPLAY_WINDOW: Duration = Duration::from_secs(15);
+/// The longest a replay stream is left on the runner before it is deleted (a moment under test,
+/// so a test sees it go).
+const REPLAY_WINDOW: Duration = if cfg!(test) {
+    Duration::from_millis(100)
+} else {
+    Duration::from_secs(15)
+};
 
 #[utoipa::path(
     post,
@@ -2294,5 +2305,397 @@ uptime_seconds 900
             ask("stranger@hel.fi", "feed").await,
             Err(ApiError::NotFound(_))
         ));
+    }
+
+    // ---- T-7917 ----------------------------------------------------------------------------
+
+    fn admin() -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "sub-admin".to_owned(),
+                username: "admin".to_owned(),
+                email: Some("admin@hel.fi".to_owned()),
+                name: None,
+                roles: Vec::new(),
+                groups: vec!["portal-approver".to_owned()],
+                second_factor: false,
+            },
+            expires_at: 9_999_999_999,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 9_999_999_999,
+            refresh_token: None,
+        })
+    }
+
+    /// Project `helsinki` with the pipeline `stations` writing through the Endpoint `ep` of the
+    /// space `mobility`, whose model lists the `status` values; the runner and the internal
+    /// listener are the ones given.
+    fn replay_world(runner: Option<String>, internal: Option<&str>) -> AppState {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        use serde_json::json;
+        let mut config = crate::config::Config::for_tests();
+        config.pipeline_runner_url = runner;
+        config.pipeline_test_capture_url = internal.map(str::to_owned);
+        let state = AppState::new(config, None);
+        let envelope = |kind: &str, name: &str, spec: Value| ResourceEnvelope {
+            api_version: API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: ObjectMeta::new(name, "helsinki"),
+            spec,
+            status: None,
+        };
+        state.mirror.upsert(envelope(
+            "Pipeline",
+            "stations",
+            json!({
+                "class": "scheduled",
+                "schedule": "0 * * * *",
+                "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+                "outputs": [{ "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep" }],
+            }),
+        ));
+        state.mirror.upsert(envelope(
+            "Endpoint",
+            "ep",
+            json!({ "contextSpaceRef": "mobility", "slug": "bq3kz7xw2mdv6ksb3ncf5arw2y",
+                    "audience": "organization" }),
+        ));
+        state
+            .model_schemas
+            .replace(std::collections::HashMap::from([(
+                ("helsinki".to_owned(), "mobility".to_owned()),
+                std::sync::Arc::new(crate::pipeline_validation::ModelSchema::compile(
+                    "mobility",
+                    "1.0.0",
+                    &json!({ "definitions": { "Station": { "properties": {
+                        "id": { "type": "string" },
+                        "status": { "type": "string", "enum": ["working", "closed"] },
+                    }}}}),
+                    &["Station".to_owned()],
+                    false,
+                )),
+            )]));
+        state
+    }
+
+    async fn retry(
+        state: &AppState,
+        ids: Vec<i64>,
+    ) -> Result<(axum::http::StatusCode, Json<RetryAnswer>), ApiError> {
+        retry_rejected(
+            admin(),
+            State(state.clone()),
+            Path(("helsinki".to_owned(), "stations".to_owned())),
+            Json(RetryRequest { ids }),
+        )
+        .await
+    }
+
+    /// Keeps one refused record of `stations` and answers its id.
+    async fn keep_one(state: &AppState) -> i64 {
+        state
+            .rejected
+            .reject(
+                "helsinki",
+                "stations",
+                &serde_json::json!({ "type": "Station", "status": "gone" }),
+                &crate::pipeline_outcomes::Reason {
+                    rule: "sh:in".into(),
+                    path: "status".into(),
+                    message: "status is not one of the values the model lists".into(),
+                    step: None,
+                    run: None,
+                },
+            )
+            .await
+            .expect("kept");
+        state
+            .rejected
+            .list("helsinki", "stations", crate::pipeline_outcomes::KEPT, None)
+            .await
+            .expect("listed")
+            .first()
+            .expect("the record kept")
+            .id
+    }
+
+    /// T-7917 (PL-61): a replay names 1 to 100 records, and needs a runner and the internal
+    /// listener the runner posts back to; each missing one is a 503 naming what to configure.
+    #[tokio::test]
+    async fn a_replay_needs_ids_a_runner_and_an_internal_listener() {
+        let bare = replay_world(None, None);
+        let refused = retry(&bare, Vec::new()).await.expect_err("no ids");
+        assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
+        let refused = retry(&bare, (1..=101).collect())
+            .await
+            .expect_err("101 ids");
+        assert!(matches!(refused, ApiError::BadRequest(_)), "{refused:?}");
+
+        let refused = retry(&bare, vec![1]).await.expect_err("no runner");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("no pipeline runner")),
+            "{refused:?}"
+        );
+        let no_listener = replay_world(Some("http://127.0.0.1:1".into()), None);
+        let refused = retry(&no_listener, vec![1]).await.expect_err("no listener");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("internal listener")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: ids nobody holds replay nothing and tell so; a store that cannot be read is a 503
+    /// that does not say why.
+    #[tokio::test]
+    async fn a_replay_of_ids_nobody_holds_replays_nothing_and_an_unreadable_list_is_a_503() {
+        let state = replay_world(
+            Some("http://127.0.0.1:1".into()),
+            Some("http://127.0.0.1:2"),
+        );
+        let (status, answer) = retry(&state, vec![404]).await.expect("an empty replay");
+        assert_eq!(status, axum::http::StatusCode::ACCEPTED);
+        assert_eq!((answer.0.replayed, answer.0.masked.len()), (0, 0));
+
+        let mut down = replay_world(
+            Some("http://127.0.0.1:1".into()),
+            Some("http://127.0.0.1:2"),
+        );
+        down.rejected = std::sync::Arc::new(crate::pipeline_outcomes::RejectedStore::new(
+            Some(crate::test_db::dead_pool()),
+            crate::test_db::placed_mirror("helsinki"),
+        ));
+        let refused = retry(&down, vec![1]).await.expect_err("the list is down");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a runner that does not answer takes nothing: the record goes back on the list as
+    /// it was and the answer is a 503.
+    #[tokio::test]
+    async fn a_replay_the_runner_cannot_take_puts_the_record_back() {
+        let state = replay_world(
+            Some("http://127.0.0.1:1".into()),
+            Some("http://127.0.0.1:2"),
+        );
+        let id = keep_one(&state).await;
+        let refused = retry(&state, vec![id])
+            .await
+            .expect_err("no runner answers");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("did not answer")),
+            "{refused:?}"
+        );
+        let kept = state
+            .rejected
+            .count("helsinki", "stations")
+            .await
+            .expect("counted");
+        assert_eq!(kept, 1, "the record is on the list again");
+    }
+
+    /// T-7917: a replay the runner takes is deleted from it after its window, and a runner gone by
+    /// then costs the answer nothing.
+    #[tokio::test]
+    async fn a_replay_stream_is_deleted_after_its_window() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+        let runner = MockServer::start().await;
+        for verb in ["POST", "DELETE"] {
+            Mock::given(method(verb))
+                .respond_with(ResponseTemplate::new(200))
+                .mount(&runner)
+                .await;
+        }
+        let state = replay_world(Some(runner.uri()), Some("http://127.0.0.1:2"));
+        let id = keep_one(&state).await;
+        let (status, answer) = retry(&state, vec![id]).await.expect("the runner took it");
+        assert_eq!(status, axum::http::StatusCode::ACCEPTED);
+        assert_eq!(answer.0.replayed, 1);
+        let mut deleted = false;
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            deleted = runner
+                .received_requests()
+                .await
+                .expect("requests are recorded")
+                .iter()
+                .any(|request| request.method.as_str() == "DELETE");
+            if deleted {
+                break;
+            }
+        }
+        assert!(deleted, "the replay stream was left on the runner");
+
+        let gone = MockServer::builder().start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&gone)
+            .await;
+        let state = replay_world(Some(gone.uri()), Some("http://127.0.0.1:2"));
+        let id = keep_one(&state).await;
+        let (_, answer) = retry(&state, vec![id]).await.expect("the runner took it");
+        assert_eq!(answer.0.replayed, 1);
+        drop(gone);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    /// T-7917 (T-5370): each refusal of a run now says what to do instead.
+    #[test]
+    fn a_run_that_cannot_start_names_why() {
+        use crate::reconciler::run_queue::RunNow;
+        let said = |refusal, part: &str| {
+            let refused = run_refused("air", refusal);
+            assert!(
+                matches!(&refused, ApiError::Conflict(message) if message.contains(part)),
+                "{part}: {refused:?}"
+            );
+        };
+        said(RunNow::Running("r7".into()), "is running (r7)");
+        said(RunNow::Held, "is held: its last run ran past its cap");
+        said(RunNow::NotQueued, "does not run from the queue");
+    }
+
+    /// T-7917 (T-4349): a run outside the schedule of a pipeline the queue does not hold is a 409
+    /// naming why, as the queue's own refusal says it.
+    #[tokio::test]
+    async fn a_run_of_a_pipeline_the_queue_does_not_hold_is_a_409() {
+        let state = replay_world(None, None);
+        let shako = std::sync::Arc::new(
+            crate::forge::ShakoClient::new(
+                "http://127.0.0.1:1".parse().expect("a url"),
+                "o",
+                "r",
+                "token",
+            )
+            .expect("a forge client"),
+        );
+        let deployer =
+            std::sync::Arc::new(crate::reconciler::StreamDeployer::new("http://127.0.0.1:1"));
+        let syncer = crate::reconciler::Syncer::new(shako, std::sync::Arc::clone(&state.mirror))
+            .with_streams(deployer);
+        let state = state.with_syncer(std::sync::Arc::new(syncer));
+        let refused = post_run(
+            admin(),
+            State(state),
+            Path(("helsinki".to_owned(), "stations".to_owned())),
+        )
+        .await
+        .expect_err("nothing is queued");
+        assert!(
+            matches!(&refused, ApiError::Conflict(message)
+                if message.contains("does not run from the queue")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917: a bucket whose predecessor counts NaN has no interpolation to make: its own bound
+    /// is the answer.
+    #[test]
+    fn a_nan_before_the_rank_answers_the_bound_of_the_bucket() {
+        assert_eq!(
+            histogram_p99_ms(vec![(0.1, f64::NAN), (0.5, 100.0)]),
+            Some(500.0)
+        );
+    }
+
+    /// T-7917: a runner nobody listens at is asked twice and answers 503 without its address.
+    #[tokio::test]
+    async fn a_runner_nobody_listens_at_is_a_503() {
+        let refused = read_metrics(
+            &reqwest::Client::new(),
+            "http://127.0.0.1:1/metrics",
+            "helsinki",
+        )
+        .await
+        .expect_err("nobody listens");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if !m.contains("127.0.0.1")),
+            "{refused:?}"
+        );
+    }
+
+    /// T-7917 (PL-68): readings younger than the gap are answered from what is kept, and the
+    /// runner is not asked.
+    #[tokio::test]
+    async fn fresh_rates_are_answered_without_asking_the_runner() {
+        let state = replay_world(None, None);
+        let now = time::OffsetDateTime::now_utc().unix_timestamp().max(0) as u64;
+        state.pipeline_stats.record(
+            "helsinki",
+            "stations",
+            now,
+            "2026-11-05T21:41:00Z".to_owned(),
+            std::collections::BTreeMap::new(),
+        );
+        let answer = get_stats(
+            admin(),
+            State(state),
+            Path(("helsinki".to_owned(), "stations".to_owned())),
+        )
+        .await
+        .expect("the kept readings");
+        assert_eq!(answer.0.pipeline, "stations");
+    }
+
+    /// T-7917 (G-21): a `sh:in` group offers the values its model lists at the attribute.
+    #[test]
+    fn a_group_of_a_listed_value_offers_the_models_values() {
+        let state = replay_world(None, None);
+        let spec = state
+            .mirror
+            .get("helsinki", "Pipeline", "stations")
+            .expect("the pipeline")
+            .spec;
+        let group = crate::pipeline_outcomes::RejectedGroup {
+            rule: "sh:in".into(),
+            path: "status".into(),
+            count: 1,
+            examples: vec![crate::pipeline_outcomes::Rejected {
+                id: 1,
+                at: "2026-11-05T21:41:00Z".into(),
+                record: serde_json::json!({ "type": "Station", "status": "gone" }),
+                rule: "sh:in".into(),
+                path: "status".into(),
+                message: "status is not one of the values the model lists".into(),
+                step: None,
+                run: None,
+            }],
+        };
+        let views = group_views(&state, "helsinki", &spec, vec![group]);
+        assert_eq!(views[0].allowed, ["working", "closed"]);
+    }
+
+    /// T-7917 (PL-96): a release of due deletes the runner cannot be given is a 503 that says the
+    /// deletes were not started, and the ledger keeps them.
+    #[tokio::test]
+    async fn a_release_without_a_pipeline_to_delete_through_is_a_503() {
+        let state = replay_world(None, None);
+        state
+            .source_ledger
+            .seen("helsinki", "gone", "r1", &["urn:a".to_owned()], true)
+            .await
+            .expect("seen");
+        state
+            .source_ledger
+            .settle("helsinki", "gone", &[("urn:a".to_owned(), 2)], None)
+            .await
+            .expect("settled");
+        let rule: jc_core::kinds::SourceDeletes = serde_json::from_value(
+            serde_json::json!({ "mode": "snapshot", "misses": 2, "maxShare": 10 }),
+        )
+        .expect("a rule");
+        let refused = decide(&state, "helsinki", "gone", &rule, SourceChoice::Delete)
+            .await
+            .expect_err("the pipeline is gone");
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("deletes were not started")),
+            "{refused:?}"
+        );
     }
 }

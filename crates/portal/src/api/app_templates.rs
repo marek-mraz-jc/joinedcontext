@@ -95,3 +95,65 @@ pub fn router() -> Router<AppState> {
         .route("/app-templates", get(list_templates))
         .route("/app-templates/{name}/screenshot/{width}", get(screenshot))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn signed_in() -> CurrentUser {
+        let now = crate::auth::session::now_unix();
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: None,
+                roles: Vec::new(),
+                groups: Vec::new(),
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 3600,
+            refresh_token: None,
+        })
+    }
+
+    /// T-7917: a template's screenshot is its PNG at 1440 or 375; any other width, any other
+    /// name and a name that climbs out of the folder are the one 404.
+    #[tokio::test]
+    async fn a_templates_screenshot_is_a_png_at_two_widths_and_nothing_else_is_there() {
+        use http_body_util::BodyExt;
+        let name = samples::templates()
+            .into_iter()
+            .next()
+            .expect("the gallery is embedded")
+            .name;
+        for width in [1440, 375] {
+            let response = screenshot(signed_in(), Path((name.clone(), width))).await;
+            assert_eq!(response.status(), StatusCode::OK, "{name} {width}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .expect("a type"),
+                "image/png"
+            );
+            let bytes = response
+                .into_body()
+                .collect()
+                .await
+                .expect("body")
+                .to_bytes();
+            assert!(bytes.starts_with(b"\x89PNG"), "{name} {width}: not a PNG");
+        }
+        for (asked, width) in [(name.as_str(), 800), ("no-such", 1440), ("../secret", 1440)] {
+            let response = screenshot(signed_in(), Path((asked.to_owned(), width))).await;
+            assert_eq!(response.status(), StatusCode::NOT_FOUND, "{asked} {width}");
+        }
+    }
+}

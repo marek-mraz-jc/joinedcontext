@@ -452,6 +452,180 @@ mod tests {
             matches!(&refused, ApiError::Unavailable(m) if m.contains("open data catalogue")),
             "{refused:?}"
         );
+        a_failing_file_store_is_a_500_without_its_detail();
+    }
+
+    /// A file store whose every call fails with detail the answer must not carry.
+    struct Broken;
+
+    fn broken<'a, T: Send + 'a>() -> FileFuture<'a, T> {
+        Box::pin(async {
+            Err(FileRefusal::Desk(DeskError::Failed(
+                "s3: secret-host".into(),
+            )))
+        })
+    }
+
+    impl FileDesk for Broken {
+        fn list<'a>(
+            &'a self,
+            _: &'a PortalSpec,
+        ) -> crate::api::portal_sources::DeskFuture<'a, (Vec<PortalFile>, FileLimits)> {
+            Box::pin(async { Err(DeskError::Failed("s3: secret-host".into())) })
+        }
+        fn upload<'a>(
+            &'a self,
+            _: &'a PortalSpec,
+            _: &'a str,
+            _: &'a str,
+            _: Vec<u8>,
+        ) -> FileFuture<'a, PortalFile> {
+            broken()
+        }
+        fn rename<'a>(
+            &'a self,
+            _: &'a PortalSpec,
+            _: &'a str,
+            _: &'a str,
+            _: &'a str,
+        ) -> FileFuture<'a, PortalFile> {
+            broken()
+        }
+        fn replace<'a>(
+            &'a self,
+            _: &'a PortalSpec,
+            _: &'a str,
+            _: &'a str,
+            _: Vec<u8>,
+        ) -> FileFuture<'a, PortalFile> {
+            broken()
+        }
+        fn delete<'a>(&'a self, _: &'a PortalSpec, _: &'a str, _: &'a str) -> FileFuture<'a, ()> {
+            broken()
+        }
+    }
+
+    fn administrator(name: Option<&str>) -> CurrentUser {
+        let now = crate::auth::session::now_unix();
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::auth::session::Identity {
+                client: None,
+                subject: "f:1:ada".into(),
+                username: "ada".into(),
+                email: None,
+                name: name.map(str::to_owned),
+                roles: Vec::new(),
+                groups: vec!["portal-approver".into()],
+                second_factor: false,
+            },
+            expires_at: now + 3600,
+            issued_at: now,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: now + 3600,
+            refresh_token: None,
+        })
+    }
+
+    fn manifest(
+        kind: &str,
+        name: &str,
+        spec: serde_json::Value,
+    ) -> crate::resource::ResourceEnvelope {
+        crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, ORG_NAMESPACE),
+            spec,
+            status: None,
+        }
+    }
+
+    /// T-7917: a person without a display name is written down by their subject; an
+    /// Organization whose own manifest names a file's address is named among its users.
+    #[test]
+    fn a_person_is_named_by_subject_and_an_organization_is_a_user_of_its_files() {
+        assert_eq!(person(&administrator(Some("Ada L."))), "Ada L.");
+        assert_eq!(person(&administrator(None)), "f:1:ada");
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let sha = "ab".repeat(32);
+        state.mirror.upsert(manifest(
+            "Organization",
+            "bbsk",
+            serde_json::json!({ "logo": format!("/files/{sha}/logo.png") }),
+        ));
+        let spec: PortalSpec = serde_json::from_value(
+            serde_json::json!({ "organizationRef": "bbsk", "path": "skoly" }),
+        )
+        .expect("a portal spec");
+        assert_eq!(used_by(&state, &spec, &sha), ["Organization bbsk"]);
+        assert!(used_by(&state, &spec, &"cd".repeat(32)).is_empty());
+    }
+
+    /// T-7917: a file store that fails answers the list and the guard of a delete or replace as
+    /// the plain 500 it is, keeping its detail to the log; the handover lands in a lock a
+    /// panicked handover poisoned. Run by the test above, which owns the process's desk: the
+    /// two would otherwise hand and read it at once.
+    fn a_failing_file_store_is_a_500_without_its_detail() {
+        hand_file_desk_to(Arc::new(Broken));
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        state
+            .mirror
+            .upsert(manifest("Organization", "bbsk", serde_json::json!({})));
+        state.mirror.upsert(manifest(
+            "Portal",
+            "bbsk-skoly",
+            serde_json::json!({ "organizationRef": "bbsk", "path": "skoly" }),
+        ));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("a runtime");
+        // Every write of the store fails the same way, whatever the caller asked.
+        let spec: PortalSpec = serde_json::from_value(
+            serde_json::json!({ "organizationRef": "bbsk", "path": "skoly" }),
+        )
+        .expect("a portal spec");
+        let failed = |answer: Result<(), FileRefusal>| {
+            assert!(
+                matches!(answer, Err(FileRefusal::Desk(DeskError::Failed(_)))),
+                "a write of a failing store succeeded"
+            );
+        };
+        failed(
+            runtime
+                .block_on(Broken.upload(&spec, "a", "n.csv", Vec::new()))
+                .map(|_| ()),
+        );
+        failed(
+            runtime
+                .block_on(Broken.rename(&spec, "a", "f-1", "m.csv"))
+                .map(|_| ()),
+        );
+        failed(
+            runtime
+                .block_on(Broken.replace(&spec, "a", "f-1", Vec::new()))
+                .map(|_| ()),
+        );
+        failed(runtime.block_on(Broken.delete(&spec, "a", "f-1")));
+        let listed = runtime.block_on(list_portal_files(
+            administrator(None),
+            State(state.clone()),
+            Path("bbsk-skoly".into()),
+        ));
+        let deleted = runtime.block_on(delete_portal_file(
+            administrator(None),
+            State(state),
+            Path(("bbsk-skoly".into(), "f-1".into())),
+        ));
+        // Nothing else in this process reads the desk: leave it as it was found.
+        *DESK.write().unwrap_or_else(|e| e.into_inner()) = None;
+        for answer in [listed.err(), deleted.err()] {
+            assert!(
+                matches!(&answer, Some(ApiError::Internal(m)) if !m.contains("secret-host")),
+                "{answer:?}"
+            );
+        }
     }
 
     /// Each refusal of the file store is the answer a person can act on; a store failure keeps

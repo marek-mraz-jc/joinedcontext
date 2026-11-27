@@ -286,6 +286,18 @@ async fn import(
     file: &[u8],
     fields: &[(&str, &str)],
 ) -> Answer {
+    import_into(state, who, "doprava", query, file, fields).await
+}
+
+/// [`import`] into the project named `project`.
+async fn import_into(
+    state: &AppState,
+    who: Identity,
+    project: &str,
+    query: &str,
+    file: &[u8],
+    fields: &[(&str, &str)],
+) -> Answer {
     use http_body_util::BodyExt;
     use tower::ServiceExt;
     let boundary = "jcgitimport";
@@ -311,7 +323,7 @@ async fn import(
         .oneshot(
             axum::http::Request::builder()
                 .method("POST")
-                .uri(format!("/api/v1/projects/doprava/import{query}"))
+                .uri(format!("/api/v1/projects/{project}/import{query}"))
                 .header(
                     axum::http::header::COOKIE,
                     common::cookie(&state.config, who),
@@ -1017,4 +1029,300 @@ async fn a_carried_model_that_does_not_compile_creates_nothing() {
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     assert!(answer.text.contains("no slots"), "{}", answer.text);
     nothing_created(&server).await;
+}
+
+// --- T-7917: the failures the coverage run found no test for ----------------------------
+
+const ENDPOINT: &str = "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  \
+                        name: air\n  namespace: ovzdusie\nspec:\n  contextSpaceRef: ovzdusie\n  \
+                        slug: mluyob4nz52lok3ssk7pgn5vwt\n  audience: public\n  \
+                        enabledRepresentations: [ngsi-ld]\n";
+
+/// One pkt-line of a `git-receive-pack` answer.
+fn pkt(text: &str) -> String {
+    format!("{:04x}{text}", text.len() + 4)
+}
+
+/// The project repository's push answers `unpack ok`, `main` taken and `refused` lines besides.
+async fn push_answers(server: &MockServer, refused: &[&str]) {
+    let mut body = pkt("unpack ok\n") + &pkt("ok refs/heads/main\n");
+    for line in refused {
+        body.push_str(&pkt(line));
+    }
+    body.push_str("0000");
+    Mock::given(method("POST"))
+        .and(path("/test-owner/doprava.git/git-receive-pack"))
+        .respond_with(ResponseTemplate::new(200).set_body_bytes(body.into_bytes()))
+        .with_priority(1)
+        .mount(server)
+        .await;
+}
+
+/// An archive of project `ovzdusie` with one application named `app`, nothing else.
+fn archive_with_app(app: &str) -> Vec<u8> {
+    let app_bundle = format!("{app}.bundle");
+    let files: Vec<(String, Vec<u8>)> = vec![
+        ("ovzdusie.bundle".into(), bundle(HEAD)),
+        ("project.yaml".into(), PROJECT.as_bytes().to_vec()),
+        (app_bundle.clone(), bundle(APP_HEAD)),
+    ];
+    let index = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Bundle",
+        "metadata": { "name": "ovzdusie", "namespace": "org" },
+        "spec": {
+            "exportedAt": "2026-09-22T12:00:00Z",
+            "exportedBy": "jana",
+            "sourceRevision": HEAD,
+            "items": [],
+            "files": files.iter().map(|(path, bytes)| json!({
+                "path": path, "sha256": format!("{:x}", Sha256::digest(bytes))
+            })).collect::<Vec<_>>(),
+            "omitted": 0,
+            "repositories": [
+                { "name": "ovzdusie", "role": "project", "file": "ovzdusie.bundle", "head": HEAD },
+                { "name": app, "role": "application", "file": app_bundle, "head": APP_HEAD },
+            ],
+            "models": [],
+        },
+    });
+    let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    for (path, bytes) in &files {
+        writer
+            .start_file(path, zip::write::SimpleFileOptions::default())
+            .expect("entry");
+        writer.write_all(bytes).expect("write");
+    }
+    writer
+        .start_file("bundle.yaml", zip::write::SimpleFileOptions::default())
+        .expect("entry");
+    writer
+        .write_all(serde_norway::to_string(&index).expect("yaml").as_bytes())
+        .expect("write");
+    writer.finish().expect("zip").into_inner()
+}
+
+/// T-7917, CC-85: a Portal with no forge answers 503 naming it, and creates nothing.
+#[tokio::test]
+async fn an_import_without_a_forge_is_unavailable() {
+    let (server, mut state) = world().await;
+    state.shako = None;
+    let answer = import(
+        &state,
+        person("jana"),
+        "?format=git",
+        &archive(PROJECT, |_| {}),
+        &[],
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert!(
+        answer.text.contains("git forge is not configured"),
+        "{}",
+        answer.text
+    );
+    nothing_created(&server).await;
+}
+
+/// T-7917, CC-88: a value that is a declaration (`{ type }`) where a registry entry sets a value
+/// is a 400 naming the parameter, before anything is created.
+#[tokio::test]
+async fn a_parameter_set_as_a_declaration_is_refused_naming_it() {
+    let (server, state) = world().await;
+    let answer = import(
+        &state,
+        person("jana"),
+        "?format=git",
+        &archive(PROJECT, |_| {}),
+        &[("parameters", r#"{"audience":{"type":"string"}}"#)],
+    )
+    .await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(answer.text.contains("audience"), "{}", answer.text);
+    nothing_created(&server).await;
+}
+
+/// T-7917, AP-75: an application whose repository name would pass the forge's limit is refused
+/// with the length it would be, before anything is created.
+#[tokio::test]
+async fn an_application_whose_repository_name_is_too_long_is_refused_before_anything_is_created() {
+    let (server, state) = world().await;
+    let project = "p".repeat(40);
+    let file = archive_with_app(&"a".repeat(63));
+    let answer = import_into(&state, person("jana"), &project, "?format=git", &file, &[]).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+    assert!(answer.text.contains("characters long"), "{}", answer.text);
+    nothing_created(&server).await;
+}
+
+/// T-7917, PF-86: a repository that appears between the check and the create (the forge answers
+/// 409) is never adopted: the import stops and says so.
+#[tokio::test]
+async fn a_repository_that_appeared_during_the_import_is_not_adopted() {
+    let (server, state) = world().await;
+    Mock::given(method("POST"))
+        .and(path("/odata/CreateRepository"))
+        .respond_with(ResponseTemplate::new(409).set_body_json(json!({ "message": "exists" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer
+            .text
+            .contains("appeared in the forge during the import"),
+        "{}",
+        answer.text
+    );
+    assert!(
+        sent(&server, "POST", "/test-owner/doprava.git/git-receive-pack")
+            .await
+            .is_empty()
+    );
+}
+
+/// T-7917, MF-45: a branch the forge refuses (`ng refs/heads/main`) stops the import and removes
+/// what it created.
+#[tokio::test]
+async fn a_branch_the_forge_refuses_removes_what_was_created() {
+    let (server, state) = world().await;
+    push_answers(&server, &["ng refs/heads/main hook declined\n"]).await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer
+            .text
+            .contains("the forge refused refs/heads/main hook declined of 'doprava'"),
+        "{}",
+        answer.text
+    );
+    assert_eq!(sent(&server, "DELETE", NEW).await.len(), 1);
+}
+
+/// T-7917, MF-45: a tag the forge refuses on its own is reported on the Change and the import
+/// still lands: the branch is the import.
+#[tokio::test]
+async fn a_tag_the_forge_refuses_is_reported_and_the_import_lands() {
+    let (server, state) = world().await;
+    push_answers(&server, &["ng refs/tags/v1.0.0 missing commit\n"]).await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+    let requests = server.received_requests().await.expect("requests");
+    assert!(
+        requests
+            .iter()
+            .any(|request| String::from_utf8_lossy(&request.body)
+                .contains("doprava: refs/tags/v1.0.0 missing commit")),
+        "the Change's report names the refused tag"
+    );
+    assert!(sent(&server, "DELETE", NEW).await.is_empty());
+}
+
+/// T-7917, MF-46, CC-85: a repository the import created that cannot be removed again is logged
+/// and the import still answers the refusal that caused the cleanup.
+#[tokio::test]
+async fn a_repository_that_cannot_be_removed_does_not_hide_the_refusal() {
+    let (server, state) = world().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{NEW_APP}/Branches('main')")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Name": "main", "HeadSha": TAGGED })),
+        )
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    for repository in [NEW, NEW_APP] {
+        Mock::given(method("DELETE"))
+            .and(path(repository))
+            .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "busy" })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+    }
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(answer.text.contains("MF-46"), "{}", answer.text);
+    assert_eq!(sent(&server, "DELETE", NEW).await.len(), 1);
+    assert_eq!(sent(&server, "DELETE", NEW_APP).await.len(), 1);
+}
+
+/// T-7917, MF-46, CC-88: a project.yaml at the pushed head that is not the one beside the bundle
+/// stops the import and removes what it created.
+#[tokio::test]
+async fn a_pushed_project_file_that_differs_from_the_archives_removes_what_was_created() {
+    let (server, state) = world().await;
+    Mock::given(method("GET"))
+        .and(path(format!("{NEW}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'project.yaml'"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-other",
+            "Content": STANDARD.encode("kind: Other\n"),
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+    assert!(
+        answer.text.contains("is not the one beside the bundle"),
+        "{}",
+        answer.text
+    );
+    assert_eq!(sent(&server, "DELETE", NEW).await.len(), 1);
+}
+
+/// T-7917, EP-02: an Endpoint slug another project of this organization serves is drawn anew on
+/// import, so two projects never answer at one capability URL.
+#[tokio::test]
+async fn an_endpoint_slug_another_project_serves_is_drawn_anew() {
+    const TAKEN: &str = "mluyob4nz52lok3ssk7pgn5vwt";
+    let (server, state) = world_with(&[("endpoints/air.yaml", ENDPOINT)]).await;
+    state.mirror.upsert(envelope(
+        "Endpoint",
+        "other-air",
+        "other",
+        json!({ "contextSpaceRef": "other", "slug": TAKEN, "audience": "public" }),
+    ));
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
+
+    let remount = sent(&server, "POST", &format!("{NEW}/Shako.CommitFiles")).await;
+    assert_eq!(remount.len(), 1, "one remount commit");
+    let remount: Value = serde_json::from_slice(&remount[0]).expect("json");
+    let endpoint = remount["Files"]
+        .as_array()
+        .expect("files")
+        .iter()
+        .find(|file| file["path"] == "endpoints/air.yaml")
+        .expect("the endpoint is rewritten");
+    let text = String::from_utf8(
+        STANDARD
+            .decode(endpoint["content"].as_str().unwrap_or_default())
+            .expect("base64"),
+    )
+    .expect("text");
+    assert!(!text.contains(TAKEN), "the taken slug is gone: {text}");
+    assert!(text.contains("slug:"), "{text}");
+}
+
+/// T-7917, MF-24: a YAML file the tree lists that the forge no longer holds is left out of the
+/// judging rather than failing the import.
+#[tokio::test]
+async fn a_listed_file_the_forge_does_not_hold_is_not_judged() {
+    let (server, state) = world_with(&[("ghost.yaml", "kind: Nothing\n")]).await;
+    Mock::given(method("GET"))
+        .and(path(format!("{NEW}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", "'ghost.yaml'"))
+        .respond_with(ResponseTemplate::new(404).set_body_json(json!({ "message": "gone" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = checked_import(&state, &archive(PROJECT, |_| {}), &[]).await;
+    assert_eq!(answer.status, StatusCode::ACCEPTED, "{}", answer.text);
 }

@@ -416,3 +416,73 @@ async fn a_repository_already_in_the_forge_is_never_adopted() {
     assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
     nothing_created(&server).await;
 }
+
+/// T-7917: a landing that fails takes its new repository away again, and a repository the forge
+/// will not delete is only logged: the person is told what failed, not what was left behind.
+#[tokio::test]
+async fn a_failed_landing_removes_its_repository_and_a_removal_that_fails_is_only_logged() {
+    let (server, state) = world().await;
+    at(
+        "POST",
+        &format!("{LANDED}/Shako.CommitFiles"),
+        500,
+        json!({ "message": "disk full" }),
+    )
+    .with_priority(1)
+    .mount(&server)
+    .await;
+    at("DELETE", LANDED, 500, json!({ "message": "not today" }))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let answer = create(
+        &state,
+        "ema",
+        json!({ "name": "bike-finder", "endpointName": "bikes" }),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert_eq!(
+        sent(&server, "DELETE", LANDED).await.len(),
+        1,
+        "the repository this request created is deleted again"
+    );
+    assert!(
+        !answer.text.contains("not today"),
+        "the forge's words leaked: {}",
+        answer.text
+    );
+}
+
+/// T-7917: a landing that fails with the forge able to delete leaves no repository behind.
+#[tokio::test]
+async fn a_failed_landing_with_a_working_forge_leaves_nothing_behind() {
+    let (server, state) = world().await;
+    at(
+        "POST",
+        &format!("{LANDED}/Shako.CommitFiles"),
+        500,
+        json!({ "message": "disk full" }),
+    )
+    .with_priority(1)
+    .mount(&server)
+    .await;
+    let answer = create(
+        &state,
+        "ema",
+        json!({ "name": "bike-finder", "endpointName": "bikes" }),
+    )
+    .await;
+    assert_eq!(
+        answer.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        answer.text
+    );
+    assert_eq!(sent(&server, "DELETE", LANDED).await.len(), 1);
+}

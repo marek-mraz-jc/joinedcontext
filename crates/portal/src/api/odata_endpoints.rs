@@ -640,4 +640,99 @@ mod tests {
             .unwrap_or_default();
         assert_eq!(keys.len(), names.len(), "a row carries every property");
     }
+
+    fn steward(groups: &[&str]) -> Identity {
+        Identity {
+            subject: "sub-pia".into(),
+            username: "pia".into(),
+            email: None,
+            name: None,
+            roles: Vec::new(),
+            groups: groups.iter().map(|g| (*g).to_owned()).collect(),
+            client: None,
+            second_factor: false,
+        }
+    }
+
+    fn air_endpoint() -> ResourceEnvelope {
+        serde_json::from_value(json!({
+            "apiVersion": "joinedcontext.com/v1alpha1",
+            "kind": "Endpoint",
+            "metadata": { "name": "air", "namespace": "espoo", "title": "Air quality" },
+            "spec": { "slug": "s1", "audience": "public" },
+            "status": { "phase": "Live" },
+        }))
+        .expect("an Endpoint manifest")
+    }
+
+    /// T-7918: a project's own row carries the resolved title, the phase of its status and the
+    /// calls of the last 7 days summed over every surface of the endpoint.
+    #[tokio::test]
+    async fn an_own_row_carries_its_title_phase_and_the_summed_calls() {
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        mirror.upsert(air_endpoint());
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_mirror(mirror);
+        let today = jc_time::TimestampTz::now().utc().date();
+        let key = |surface: &str| {
+            (
+                "espoo".to_owned(),
+                "air".to_owned(),
+                surface.to_owned(),
+                today,
+                "person".to_owned(),
+            )
+        };
+        state
+            .endpoint_usage
+            .add(
+                std::collections::BTreeMap::from([(key("ogc"), 4), (key("mcp"), 3)]),
+                today,
+            )
+            .await
+            .expect("usage added");
+        let rows = rows(&state, &steward(&["portal-approver"]), "espoo")
+            .await
+            .expect("rows");
+        let air = rows
+            .iter()
+            .find(|row| str_of(row, "id") == Some("air"))
+            .expect("the air row");
+        assert_eq!(str_of(air, "title"), Some("Air quality"));
+        assert_eq!(str_of(air, "phase"), Some("Live"));
+        assert_eq!(air.get("calls7d"), Some(&json!(7)));
+    }
+
+    /// T-7918: a caller who reads no Endpoint in the project is told so, naming the project.
+    #[tokio::test]
+    async fn a_caller_reading_no_endpoint_gets_not_found_naming_the_project() {
+        let mirror = std::sync::Arc::new(crate::store::Mirror::new());
+        mirror.upsert(air_endpoint());
+        let state = AppState::new(crate::config::Config::for_tests(), None).with_mirror(mirror);
+        let error = rows(&state, &steward(&[]), "espoo")
+            .await
+            .expect_err("refused");
+        assert!(
+            matches!(&error, ApiError::NotFound(m) if m.contains("project 'espoo'") && m.contains("you read no Endpoint")),
+            "{error:?}"
+        );
+    }
+
+    /// T-7918: when the usage database does not answer the rows still show and their calls read
+    /// as unknown (null), not as zero.
+    #[tokio::test]
+    async fn rows_still_show_when_the_usage_database_is_down() {
+        let mirror = crate::test_db::placed_mirror("espoo");
+        mirror.upsert(air_endpoint());
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_mirror(mirror)
+            .with_db(crate::test_db::dead_pool());
+        let rows = rows(&state, &steward(&["portal-approver"]), "espoo")
+            .await
+            .expect("rows");
+        let air = rows
+            .iter()
+            .find(|row| str_of(row, "id") == Some("air"))
+            .expect("the air row");
+        assert_eq!(air.get("calls7d"), Some(&Value::Null));
+    }
 }

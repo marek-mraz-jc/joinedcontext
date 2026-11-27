@@ -181,7 +181,11 @@ fn list_sets() -> Vec<ListSet> {
 /// The fields of a list operation's rows: the scalar members its output schema names for an
 /// item. Objects and arrays are no property (not filterable here); the key is never null.
 fn fields_of(op: &ops::Operation, key: &str) -> Vec<Field> {
-    let schema = (op.output)();
+    scalar_fields(&(op.output)(), key)
+}
+
+/// The properties of a list output `schema`: [`fields_of`] over the schema alone.
+fn scalar_fields(schema: &Value, key: &str) -> Vec<Field> {
     let Some(members) = schema
         .pointer("/properties/items/items/properties")
         .and_then(Value::as_object)
@@ -461,13 +465,16 @@ pub(crate) fn flat(row: Value) -> Value {
     };
     for nested in ["metadata", "status"] {
         // A scalar of that name is the row's own member: a run's `status` is its state.
-        if !matches!(top.get(nested), Some(Value::Object(_))) {
+        let Some(inner) = top
+            .get_mut(nested)
+            .and_then(Value::as_object_mut)
+            .map(std::mem::take)
+        else {
             continue;
-        }
-        if let Some(Value::Object(inner)) = top.remove(nested) {
-            for (member, value) in inner {
-                top.entry(member).or_insert(value);
-            }
+        };
+        top.remove(nested);
+        for (member, value) in inner {
+            top.entry(member).or_insert(value);
         }
     }
     Value::Object(top)
@@ -521,12 +528,30 @@ pub(crate) async fn items_of(
     } else {
         vec![set.input.clone()]
     };
+    collect_pages(set, inputs, |input| async move {
+        ops::call(op, caller, state, project, input)
+            .await
+            .map_err(IntoResponse::into_response)
+    })
+    .await
+}
+
+/// The rows of every page `call` answers for each of `inputs`: a page names what follows as
+/// `next` (a cursor) or `nextCursor` (an offset), which goes back in the set's cursor member;
+/// past [`MAX_ROWS`] the read is refused, never cut.
+async fn collect_pages<F, Fut>(
+    set: &ListSet,
+    inputs: Vec<Value>,
+    call: F,
+) -> Result<Vec<Value>, Box<Response>>
+where
+    F: Fn(Value) -> Fut,
+    Fut: std::future::Future<Output = Result<Value, Response>>,
+{
     let mut rows = Vec::new();
     for mut input in inputs {
         loop {
-            let page = ops::call(op, caller, state, project, input.clone())
-                .await
-                .map_err(IntoResponse::into_response)?;
+            let page = call(input.clone()).await?;
             let items = page
                 .get("items")
                 .and_then(Value::as_array)
@@ -542,7 +567,6 @@ pub(crate) async fn items_of(
                 .into_response()
                 .into());
             }
-            // A page names what follows as `next` (a cursor) or `nextCursor` (an offset).
             let next = page.get("next").or_else(|| page.get("nextCursor"));
             match (set.cursor, next) {
                 (Some(member), Some(next)) if !next.is_null() && !empty => {
@@ -597,6 +621,18 @@ fn collection(root: &str, path: &[Segment], options: &QueryOptions, answer: Answ
     Value::Object(body)
 }
 
+/// The in-memory table of the set `name` over `rows`; a set the model lacks, or rows that are
+/// no table (a missing or repeated key), are the service's own fault, answered as a source error
+/// whose text stays in the log.
+fn table_of(served: &Served, name: &str, rows: Vec<Value>) -> Result<MemoryTable, Box<Response>> {
+    let fail = |e: TableError| Box::new(Refusal::from(e).into_response());
+    let info = served
+        .service
+        .info(served.model.clone(), name)
+        .ok_or_else(|| fail(TableError::Source(format!("{name} is not in the model"))))?;
+    MemoryTable::new(info, rows).map_err(|e| fail(TableError::Source(e.to_string())))
+}
+
 /// The answer to `target` (the resource path below the service root, with its query) over the
 /// rows the caller may read.
 async fn answer(
@@ -638,12 +674,7 @@ async fn answer(
     };
     let rows = rows_of(set, caller, state, project).await?;
     let fail = |e: TableError| Refusal::from(e).into_response();
-    let info = served
-        .service
-        .info(served.model.clone(), name)
-        .ok_or_else(|| fail(TableError::Source(format!("{name} is not in the model"))))?;
-    let table =
-        MemoryTable::new(info, rows).map_err(|e| fail(TableError::Source(e.to_string())))?;
+    let table = table_of(served, name, rows)?;
     let root = service_root(state, project);
     let all = Scope::all();
     match rest {
@@ -1031,8 +1062,17 @@ pub async fn change_row(
             bytes.clone(),
         )
     };
-    // The check first, as the page's form runs it: it records the verdict the proposal needs
-    // (PF-57), and a red one is answered with its findings and proposes nothing.
+    check_then_propose(&key, door).await
+}
+
+/// The check first, as the page's form runs it: `door(Some("All"))` records the verdict the
+/// proposal needs (PF-57), and a red one is answered with its findings and proposes nothing; on
+/// a green one `door(None)` proposes.
+async fn check_then_propose<F, Fut>(key: &str, door: F) -> Result<Response, ApiError>
+where
+    F: Fn(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = Result<Response, ApiError>>,
+{
     let checked = door(Some("All".to_owned())).await?;
     let verdict: Value = serde_json::from_slice(
         &axum::body::to_bytes(checked.into_body(), 1 << 20)
@@ -1129,8 +1169,13 @@ pub async fn metadata(
     Path(project): Path<String>,
 ) -> Result<Response, ApiError> {
     readable_project(&state, &user, &project)?;
-    let xml = SERVED
-        .metadata
+    metadata_response(&SERVED.metadata)
+}
+
+/// The `$metadata` answer from the document written at start-up: one that did not write is the
+/// service's own fault, a 500 naming why.
+fn metadata_response(written: &Result<String, String>) -> Result<Response, ApiError> {
+    let xml = written
         .clone()
         .map_err(|e| ApiError::Internal(format!("the OData metadata did not write: {e}")))?;
     Ok((odata_headers("application/xml"), xml).into_response())
@@ -1417,5 +1462,510 @@ mod tests {
         assert_eq!(edm_type(&json!({})), "Edm.Untyped");
         let op = ops::find("jc_resource_propose").expect("registered");
         assert!(fields_of(op, "name").is_empty());
+    }
+
+    fn session_of(groups: &[&str]) -> CurrentUser {
+        CurrentUser(crate::auth::session::Session {
+            identity: crate::ops::testkit::person("pia", groups),
+            expires_at: 0,
+            issued_at: 0,
+            signed_in_at: None,
+            stepped_up_at: None,
+            id_token: String::new(),
+            access_expires_at: 0,
+            refresh_token: None,
+        })
+    }
+
+    async fn body_text(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("a body");
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    fn list_set(op: &'static str, cursor: Option<&'static str>) -> ListSet {
+        ListSet {
+            set: "things".into(),
+            type_name: "Thing".into(),
+            op,
+            input: json!({}),
+            key: "name",
+            cursor,
+            endpoint_list: false,
+        }
+    }
+
+    /// T-7918: an entity type holds the scalar members of a list's output, whatever their JSON
+    /// type: text, date-time, integer, number and boolean; the key is never null, an object or
+    /// array member and a name that is no OData identifier are no property, and a schema with
+    /// no items lists nothing.
+    #[test]
+    fn scalar_members_become_typed_properties() {
+        let schema = json!({ "properties": { "items": { "items": { "properties": {
+            "name": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" },
+            "count": { "type": "integer" },
+            "ratio": { "type": "number", "description": "a share" },
+            "live": { "type": "boolean" },
+            "tags": { "type": "array" },
+            "spec": { "type": "object" },
+            "bad-name": { "type": "string" },
+        } } } } });
+        let fields = scalar_fields(&schema, "name");
+        let kind = |name: &str| {
+            fields
+                .iter()
+                .find(|f| f.name == name)
+                .map(|f| f.kind.clone())
+        };
+        assert_eq!(kind("name"), Some(FieldKind::String));
+        assert_eq!(kind("at"), Some(FieldKind::DateTime));
+        assert_eq!(kind("count"), Some(FieldKind::Integer));
+        assert_eq!(kind("ratio"), Some(FieldKind::Number));
+        assert_eq!(kind("live"), Some(FieldKind::Boolean));
+        for left_out in ["tags", "spec", "bad-name"] {
+            assert_eq!(kind(left_out), None, "{left_out} is no property");
+        }
+        assert!(fields.iter().all(|f| f.nullable == (f.name != "name")));
+        assert!(scalar_fields(&json!({}), "name").is_empty());
+    }
+
+    /// T-7918: `$metadata` that cannot be written (here a namespace that is no name) is an
+    /// error naming why, and the answer built from it is a 500 problem, not a half document;
+    /// a written one is served as XML with the OData version header.
+    #[tokio::test]
+    async fn a_metadata_document_that_did_not_write_is_a_500() {
+        let mut model = (*SERVED.model).clone();
+        model.schemas[0].namespace = "not a namespace!".into();
+        let written = metadata_xml(&model);
+        assert!(written.is_err(), "an invalid model is not written");
+        let error = metadata_response(&written).expect_err("a 500");
+        assert!(
+            matches!(&error, ApiError::Internal(m) if m.contains("the OData metadata did not write")),
+            "{error:?}"
+        );
+        let served = metadata_response(&SERVED.metadata).expect("written at start-up");
+        assert_eq!(served.status(), StatusCode::OK);
+        assert_eq!(
+            served.headers().get("odata-version"),
+            Some(&HeaderValue::from_static("4.01"))
+        );
+        assert!(body_text(served).await.contains("EntitySet"));
+    }
+
+    /// T-7918: pages are followed by their cursor until none is named: `next` or `nextCursor`
+    /// goes back in the set's cursor member, a null next or an empty page stops the loop (no
+    /// endless read), and a set without a cursor member reads one page only.
+    #[tokio::test]
+    async fn pages_are_followed_by_their_cursor_and_stop_when_none_follows() {
+        let call = |input: Value| async move {
+            Ok::<Value, Response>(match input["cursor"].as_str() {
+                None => json!({ "items": [{ "name": "a" }], "next": "c1" }),
+                Some("c1") => json!({ "items": [{ "name": "b" }], "nextCursor": "c2" }),
+                Some(_) => json!({ "items": [], "next": "c3" }),
+            })
+        };
+        let rows = collect_pages(&list_set("x", Some("cursor")), vec![json!({})], call)
+            .await
+            .expect("rows");
+        assert_eq!(rows, vec![json!({ "name": "a" }), json!({ "name": "b" })]);
+        let once = collect_pages(&list_set("x", None), vec![json!({})], call)
+            .await
+            .expect("rows");
+        assert_eq!(
+            once,
+            vec![json!({ "name": "a" })],
+            "no cursor member, one page"
+        );
+        let null_next = |_: Value| async {
+            Ok::<Value, Response>(json!({ "items": [{ "name": "a" }], "next": null }))
+        };
+        let rows = collect_pages(&list_set("x", Some("cursor")), vec![json!({})], null_next)
+            .await
+            .expect("rows");
+        assert_eq!(rows.len(), 1);
+        let none = collect_pages(&list_set("x", Some("cursor")), Vec::new(), call)
+            .await
+            .expect("rows");
+        assert!(none.is_empty());
+    }
+
+    /// T-7918: a read longer than one OData read covers is refused with a sentence asking for a
+    /// narrower list, naming the set; an operation's own refusal passes through unchanged.
+    #[tokio::test]
+    async fn a_set_over_the_row_cap_and_a_refused_page_are_answered_not_cut() {
+        let page = |input: Value| async move {
+            let n = if input["cursor"].is_null() {
+                6_000
+            } else {
+                5_000
+            };
+            let items: Vec<Value> = (0..n).map(|i| json!({ "name": format!("r{i}") })).collect();
+            Ok::<Value, Response>(json!({ "items": items, "next": "more" }))
+        };
+        let refused = collect_pages(&list_set("x", Some("cursor")), vec![json!({})], page)
+            .await
+            .expect_err("over the cap");
+        assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+        let text = body_text(*refused).await;
+        assert!(text.contains("things holds more than 10000 rows"), "{text}");
+        let denied = |_: Value| async {
+            Err::<Value, Response>(ApiError::Denied("no reading here".into()).into_response())
+        };
+        let refused = collect_pages(&list_set("x", None), vec![json!({})], denied)
+            .await
+            .expect_err("denied");
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// T-7918: a set naming an operation the registry lacks is a 500 naming it; the Endpoints
+    /// page's rows answer a caller who reads no Endpoint there with 404, not an empty list.
+    #[tokio::test]
+    async fn a_set_without_its_operation_and_an_unreadable_endpoint_list_are_refused() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::testkit::caller(
+            crate::ops::testkit::person("pia", &[]),
+            crate::ops::Via::Session,
+        );
+        let refused = items_of(
+            &list_set("jc_no_such_list", None),
+            &caller,
+            &state,
+            "helsinki",
+        )
+        .await
+        .expect_err("not registered");
+        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        // The answer is a 500 that names no internals; the operation name stays in the log.
+        assert!(!body_text(*refused).await.contains("jc_no_such_list"));
+        let endpoint_list = SERVED
+            .sets
+            .iter()
+            .find(|set| set.endpoint_list)
+            .expect("the Endpoints page set");
+        let refused = items_of(endpoint_list, &caller, &state, "helsinki")
+            .await
+            .expect_err("reads no Endpoint");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// T-7918: a query the parser cannot take is answered by its kind: valid OData outside the
+    /// subset 501, bad syntax and an over-long number 400, an unknown property 400 pointing at
+    /// `$metadata`, an unknown set 404, and a path below a collection this service does not
+    /// serve (`/$ref`) 501. Nothing of the rows is read before the query parses.
+    #[tokio::test]
+    async fn each_kind_of_bad_query_gets_its_own_status() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = crate::ops::testkit::admin(&state);
+        for (target, want, says) in [
+            (
+                "endpoints?$filter=name has 1",
+                StatusCode::NOT_IMPLEMENTED,
+                "not served here",
+            ),
+            ("endpoints?$top=abc", StatusCode::BAD_REQUEST, ""),
+            (
+                "endpoints?$filter=nope eq 1",
+                StatusCode::BAD_REQUEST,
+                "$metadata lists",
+            ),
+            ("nothings", StatusCode::NOT_FOUND, "no entity set nothings"),
+            (
+                "endpoints/$ref",
+                StatusCode::NOT_IMPLEMENTED,
+                "this resource path",
+            ),
+        ] {
+            let refused = answer(&state, &admin, "helsinki", target)
+                .await
+                .expect_err(target);
+            assert_eq!(refused.status(), want, "{target}");
+            let text = body_text(*refused).await;
+            assert!(text.contains(says), "{target}: {text}");
+        }
+    }
+
+    /// T-7918: rows that are no table (a repeated key, a missing key) or a set the model lacks
+    /// are the service's own fault: a 500 whose text names nothing of the rows.
+    #[tokio::test]
+    async fn rows_that_are_no_table_are_a_500_without_the_rows() {
+        let served = &*SERVED;
+        let twice = vec![json!({ "name": "air" }), json!({ "name": "air" })];
+        let refused = table_of(served, "endpoints", twice).expect_err("a repeated key");
+        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let refused = table_of(served, "nothings", Vec::new()).expect_err("not in the model");
+        assert_eq!(refused.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(table_of(served, "endpoints", vec![json!({ "name": "air" })]).is_ok());
+    }
+
+    /// T-7918: a request address that is not under the project's `odata/` is no OData resource
+    /// (404), after the project check; the action door takes an empty body as no input, so the
+    /// operation's own validation names what is missing instead of a JSON error.
+    #[tokio::test]
+    async fn an_address_outside_odata_is_not_found_and_an_empty_action_body_is_no_input() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let uri: axum::http::Uri = "/api/v1/projects/helsinki/elsewhere".parse().expect("uri");
+        let error = read(
+            session_of(&["portal-approver"]),
+            Front::Portal,
+            state.clone(),
+            "helsinki".into(),
+            uri.clone(),
+        )
+        .await
+        .expect_err("not an OData resource");
+        assert!(matches!(&error, ApiError::NotFound(m) if m.contains("no such OData resource")));
+        let error = read(
+            session_of(&[]),
+            Front::Portal,
+            state.clone(),
+            "helsinki".into(),
+            uri,
+        )
+        .await
+        .expect_err("not readable");
+        assert!(
+            matches!(&error, ApiError::NotFound(m) if m.contains("project 'helsinki' not found"))
+        );
+
+        let empty = invoke_action(
+            session_of(&["portal-approver"]),
+            Front::Portal,
+            State(state.clone()),
+            Path(("helsinki".to_owned(), "jc_resource_propose".to_owned())),
+            Bytes::new(),
+        )
+        .await;
+        let refused = empty.expect("an answered refusal").status();
+        assert!(
+            refused.is_client_error(),
+            "an empty input proposes nothing: {refused}"
+        );
+        let broken = invoke_action(
+            session_of(&["portal-approver"]),
+            Front::Portal,
+            State(state),
+            Path(("helsinki".to_owned(), "jc_resource_propose".to_owned())),
+            Bytes::from_static(b"{"),
+        )
+        .await
+        .expect_err("not JSON");
+        assert!(matches!(&broken, ApiError::BadRequest(m) if m.contains("invalid json body")));
+    }
+
+    /// T-7918: a write on `$metadata` is no row of the list: 405 saying which change is possible.
+    #[test]
+    fn a_write_on_the_metadata_document_is_not_allowed() {
+        let uri: axum::http::Uri = "/api/v1/projects/p/odata/$metadata".parse().expect("uri");
+        let Refusal(status, code, text) = row_key(&uri, "p").expect_err("no row");
+        assert_eq!(
+            (status, code),
+            (StatusCode::METHOD_NOT_ALLOWED, "MethodNotAllowed")
+        );
+        assert!(text.contains("endpointList('air-counters')"), "{text}");
+    }
+
+    /// T-7918: a caller who reads the project but no Endpoint in it, naming a row, gets the
+    /// list's own 404 before any decision; and a write forwards the caller's `If-Match` to the
+    /// REST door (the call reaches it: the verdict, not the permission, decides the answer).
+    #[tokio::test]
+    async fn a_write_without_the_endpoint_list_is_not_found_and_an_if_match_is_forwarded() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        crate::ops::testkit::grant(
+            &state,
+            "pipeline-readers",
+            "helsinki",
+            &["Pipeline"],
+            &["read"],
+        );
+        let uri: axum::http::Uri = "/api/v1/projects/helsinki/odata/endpointList('air')"
+            .parse()
+            .expect("uri");
+        let refused = keyed(
+            &state,
+            &session_of(&["pipeline-readers"]),
+            "helsinki",
+            &uri,
+            "update",
+        )
+        .await
+        .expect_err("reads no Endpoint");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+        let other: axum::http::Uri = "/api/v1/projects/helsinki/odata/endpoints('air')"
+            .parse()
+            .expect("uri");
+        let refused = keyed(
+            &state,
+            &session_of(&["pipeline-readers"]),
+            "helsinki",
+            &other,
+            "update",
+        )
+        .await
+        .expect_err("not a row of the list");
+        assert_eq!(refused.status(), StatusCode::METHOD_NOT_ALLOWED);
+        let refused = keyed(&state, &session_of(&[]), "helsinki", &uri, "update")
+            .await
+            .expect_err("a project nobody bound the caller to");
+        assert_eq!(refused.status(), StatusCode::NOT_FOUND);
+
+        state.mirror.upsert(crate::ops::testkit::envelope(
+            "Endpoint",
+            "air",
+            "helsinki",
+            json!({ "slug": "airzzzzzzzzzzzzzzzzzzzzzz", "audience": "public", "contextSpaceRef": "air" }),
+        ));
+        let mut headers = HeaderMap::new();
+        headers.insert(header::IF_MATCH, HeaderValue::from_static("\"1\""));
+        let outcome = change_row(
+            session_of(&["portal-approver"]),
+            Front::Portal,
+            State(state),
+            Path(("helsinki".to_owned(), "endpointList('air')".to_owned())),
+            OriginalUri(uri),
+            headers,
+            Bytes::from_static(br#"{"mcp":false}"#),
+        )
+        .await;
+        let status = outcome.expect_err("a refusal").into_response().status();
+        assert!(
+            ![
+                StatusCode::FORBIDDEN,
+                StatusCode::NOT_FOUND,
+                StatusCode::BAD_REQUEST
+            ]
+            .contains(&status),
+            "the key was found, allowed and read: {status}"
+        );
+    }
+
+    fn json_response(body: Value) -> Response {
+        Response::new(axum::body::Body::from(body.to_string()))
+    }
+
+    /// T-7918: the check runs first and a green verdict proposes: the door is called twice,
+    /// first as a dry run of everything, then for real, and the second answer is the caller's.
+    #[tokio::test]
+    async fn a_green_check_is_followed_by_the_proposal() {
+        let calls = std::sync::Mutex::new(Vec::new());
+        let door = |dry: Option<String>| {
+            calls.lock().expect("calls").push(dry.clone());
+            std::future::ready(Ok::<Response, ApiError>(match dry {
+                Some(_) => json_response(json!({ "valid": true })),
+                None => json_response(json!({ "change": "c-1" })),
+            }))
+        };
+        let answered = check_then_propose("air", door).await.expect("proposed");
+        assert_eq!(body_text(answered).await, r#"{"change":"c-1"}"#);
+        assert_eq!(
+            *calls.lock().expect("calls"),
+            vec![Some("All".to_owned()), None]
+        );
+    }
+
+    /// T-7918: a red check proposes nothing and answers 422 with each finding as `path: message`
+    /// (findings without both are left out); a check answer that is not JSON, or whose body
+    /// cannot be read, is an internal error naming which.
+    #[tokio::test]
+    async fn a_red_check_proposes_nothing_and_a_broken_check_answer_is_internal() {
+        let asked = std::sync::Mutex::new(Vec::new());
+        let red = |dry: Option<String>| {
+            asked.lock().expect("asked").push(dry);
+            std::future::ready(Ok::<Response, ApiError>(json_response(json!({
+                "valid": false,
+                "verdict": { "findings": [
+                    { "path": "spec.audience", "message": "is not an audience" },
+                    { "path": "spec.mcp" },
+                    "not an object",
+                ] },
+            }))))
+        };
+        let error = check_then_propose("air", red).await.expect_err("red");
+        assert!(
+            matches!(&error, ApiError::Unprocessable { detail, errors }
+                if detail.contains("Endpoint 'air' is refused by its check")
+                    && *errors == vec!["spec.audience: is not an audience".to_owned()]),
+            "{error:?}"
+        );
+        let bare = |_: Option<String>| {
+            std::future::ready(Ok::<Response, ApiError>(json_response(json!({}))))
+        };
+        let error = check_then_propose("air", bare)
+            .await
+            .expect_err("no verdict");
+        assert!(
+            matches!(&error, ApiError::Unprocessable { errors, .. } if errors.is_empty()),
+            "{error:?}"
+        );
+        assert!(
+            asked.lock().expect("asked").iter().all(Option::is_some),
+            "only the dry run was asked, never the proposal"
+        );
+
+        let text = |_: Option<String>| {
+            std::future::ready(Ok::<Response, ApiError>(Response::new(
+                axum::body::Body::from("<html>"),
+            )))
+        };
+        let error = check_then_propose("air", text).await.expect_err("not JSON");
+        assert!(
+            matches!(&error, ApiError::Internal(m) if m.contains("the check's answer is not JSON")),
+            "{error:?}"
+        );
+        let cut = |_: Option<String>| {
+            let stream = futures_util::stream::once(async {
+                Err::<Bytes, std::io::Error>(std::io::Error::other("cut"))
+            });
+            std::future::ready(Ok::<Response, ApiError>(Response::new(
+                axum::body::Body::from_stream(stream),
+            )))
+        };
+        let error = check_then_propose("air", cut)
+            .await
+            .expect_err("unreadable");
+        assert!(
+            matches!(&error, ApiError::Internal(m) if m.contains("the check's answer was not read")),
+            "{error:?}"
+        );
+    }
+
+    /// T-7918: a row's `metadata` and `status` objects are lifted to the top and a top-level
+    /// member wins; a scalar `status` is the row's own; a row that is no object is returned as is.
+    #[test]
+    fn a_rows_nested_members_are_lifted_and_the_top_level_wins() {
+        let lifted = flat(json!({
+            "name": "top",
+            "metadata": { "name": "nested", "title": "T", "labels": 1 },
+            "status": { "phase": "Live", "title": "other" },
+        }));
+        assert_eq!(
+            lifted,
+            json!({ "name": "top", "title": "T", "labels": 1, "phase": "Live" })
+        );
+        assert_eq!(
+            flat(json!({ "status": "open" })),
+            json!({ "status": "open" })
+        );
+        assert_eq!(flat(json!(3)), json!(3));
+    }
+
+    /// T-7918: the `$metadata` handler answers the written document to a reader of the project
+    /// and 404 to anyone else.
+    #[tokio::test]
+    async fn the_metadata_handler_answers_a_reader_and_hides_the_project_from_others() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let served = metadata(
+            session_of(&["portal-approver"]),
+            State(state.clone()),
+            Path("helsinki".to_owned()),
+        )
+        .await
+        .expect("a reader");
+        assert_eq!(served.status(), StatusCode::OK);
+        let hidden = metadata(session_of(&[]), State(state), Path("helsinki".to_owned()))
+            .await
+            .expect_err("a stranger");
+        assert!(matches!(hidden, ApiError::NotFound(_)), "{hidden:?}");
     }
 }
