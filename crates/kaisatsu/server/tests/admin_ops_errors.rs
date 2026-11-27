@@ -295,6 +295,42 @@ async fn send_required_actions_refuses_a_redirect_the_client_does_not_register()
         "invalid redirect_uri",
     )
     .await;
+    // A redirect the client registers is taken, and sending the same action twice keeps it
+    // once in the person's required actions.
+    let mut client = api
+        .store
+        .get_client_by_client_id("dev", "portal-api")
+        .await
+        .unwrap()
+        .unwrap();
+    client.redirect_uris = vec!["https://portal.example.test/*".into()];
+    api.store.upsert_client(client).await.unwrap();
+    for _ in 0..2 {
+        let (st, _, raw) = api
+            .call(
+                Method::POST,
+                &format!("{BASE}/People('{STEWARD}')/SendRequiredActions"),
+                &admin,
+                Some(
+                    json!({ "actions": ["UPDATE_PASSWORD"], "clientId": "portal-api",
+                             "redirectUri": "https://portal.example.test/done" }),
+                ),
+            )
+            .await;
+        assert!(st.is_success(), "{raw}");
+    }
+    let steward = api
+        .store
+        .get_user_by_id("dev", None, STEWARD)
+        .await
+        .unwrap()
+        .unwrap();
+    let held = steward
+        .required_actions
+        .iter()
+        .filter(|a| *a == "UPDATE_PASSWORD")
+        .count();
+    assert_eq!(held, 1, "{:?}", steward.required_actions);
 }
 
 #[tokio::test]

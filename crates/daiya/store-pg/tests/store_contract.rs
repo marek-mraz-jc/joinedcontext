@@ -242,6 +242,15 @@ async fn data_survives_a_new_store_instance() {
         .upsert_dashboard(dashboard(org, "durable", None), "first", true)
         .await
         .unwrap();
+    // A model that is no JSON object is kept as written: no version or uid goes into it.
+    let mut listed = dashboard(org, "listed", None);
+    listed.data = json!(["a", "b"]);
+    db.app
+        .upsert_dashboard(listed, "a list", true)
+        .await
+        .unwrap();
+    let listed = db.app.get_dashboard(org, "listed").await.unwrap().unwrap();
+    assert_eq!(listed.data, json!(["a", "b"]));
     db.app
         .upsert_datasource(datasource(org, "durable-ds", "Durable", "prometheus"))
         .await
