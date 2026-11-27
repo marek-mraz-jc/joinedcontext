@@ -5109,46 +5109,37 @@ mod tests {
     fn the_day_s_limit_says_when_the_day_starts_again() {
         use super::super::clock::Zone;
         use time::macros::datetime;
-        let said = |now, zone| {
-            match Limit::Day.event(now, zone) {
-                Event::Error {
-                    status,
-                    title,
-                    detail,
-                } => {
-                    assert_eq!((status, title), (429, "Daily Limit Reached"));
-                    Some(detail)
-                }
-                _ => None,
-            }
-            .expect("a limit error")
+        let said = |now, zone, detail: String| {
+            let limit = Event::Error {
+                status: 429,
+                title: "Daily Limit Reached",
+                detail,
+            };
+            assert_eq!(Limit::Day.event(now, zone), limit);
         };
         let day = "Asistent dnes dosiahol denný limit. Skúste to znova";
         let summer = datetime!(2026-10-18 18:30 UTC);
-        assert_eq!(
-            said(summer, Some(Zone::Bratislava)),
-            format!("{day} zajtra po 2:00.")
+        said(
+            summer,
+            Some(Zone::Bratislava),
+            format!("{day} zajtra po 2:00."),
         );
-        assert_eq!(
-            said(summer, Some(Zone::Helsinki)),
-            format!("{day} zajtra po 3:00.")
+        said(
+            summer,
+            Some(Zone::Helsinki),
+            format!("{day} zajtra po 3:00."),
         );
-        assert_eq!(said(summer, None), format!("{day} zajtra po 0:00."));
+        said(summer, None, format!("{day} zajtra po 0:00."));
         // Past local midnight, before UTC's: the reset is later the same local day.
         let late = datetime!(2026-10-18 22:30 UTC);
-        assert_eq!(
-            said(late, Some(Zone::Bratislava)),
-            format!("{day} dnes po 2:00.")
-        );
+        said(late, Some(Zone::Bratislava), format!("{day} dnes po 2:00."));
         let winter = datetime!(2026-12-01 12:00 UTC);
-        assert_eq!(
-            said(winter, Some(Zone::Prague)),
-            format!("{day} zajtra po 1:00.")
-        );
+        said(winter, Some(Zone::Prague), format!("{day} zajtra po 1:00."));
         // The year's last day still rolls over.
-        assert_eq!(
-            said(datetime!(2026-12-31 23:59 UTC), None),
-            format!("{day} zajtra po 0:00.")
+        said(
+            datetime!(2026-12-31 23:59 UTC),
+            None,
+            format!("{day} zajtra po 0:00."),
         );
         let month = Limit::Month {
             resets: "1. 11. 2026".into(),
@@ -8071,12 +8062,13 @@ classes:
                 Ok::<usize, ()>(n)
             }
         };
+        // What a hedge heard: whether the second call won.
+        fn heard_in(into: &mut Option<bool>) -> impl FnOnce(Instant, bool, bool) + '_ {
+            move |_, second, _| *into = Some(second)
+        }
         let mut heard = None;
         let started = tokio::time::Instant::now();
-        let won = hedged(slow_first, ROUTER_HEDGE, |_, second, _| {
-            heard = Some(second)
-        })
-        .await;
+        let won = hedged(slow_first, ROUTER_HEDGE, heard_in(&mut heard)).await;
         // T-7772: the first call was dropped before it answered, so it is charged.
         assert_eq!((won, heard), ((Ok(1), true), Some(true)));
         assert_eq!(started.elapsed(), ROUTER_HEDGE + Duration::from_secs(1));
@@ -8086,12 +8078,12 @@ classes:
             once.fetch_add(1, Ordering::SeqCst);
             async { Ok::<u8, ()>(7) }
         };
-        let mut hedge_heard = false;
+        let mut hedge_heard = None;
         assert_eq!(
-            hedged(fast, ROUTER_HEDGE, |_, _, _| hedge_heard = true).await,
+            hedged(fast, ROUTER_HEDGE, heard_in(&mut hedge_heard)).await,
             (Ok(7), false)
         );
-        assert_eq!((once.load(Ordering::SeqCst), hedge_heard), (1, false));
+        assert_eq!((once.load(Ordering::SeqCst), hedge_heard), (1, None));
 
         let tries = AtomicUsize::new(0);
         let second_fails = || {

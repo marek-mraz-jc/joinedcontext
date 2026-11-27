@@ -3560,6 +3560,153 @@ async fn a_sources_only_question_is_routed_searched_and_streamed_once() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// T-4810: a catalogue question lists the live data the deployment reads, cited at its
+/// Endpoint's address unless the sources hold its page, beside the catalogue's pages, under the
+/// catalogue rule.
+#[tokio::test]
+async fn a_catalogue_question_lists_the_live_data_beside_the_catalogues_pages() {
+    let mut d = deployment(Channel::Public, 50_000, 10);
+    d.spec.connectors[0].tools = vec!["list_types".into(), "query_entities".into()];
+    let w = world("chatcataloguelist", d).await;
+    recorded_air(&w.gateway, SLUG).await;
+    // Warming lists the Endpoint's types, which the live data's passage names.
+    assistant::chat::warm_types(Arc::clone(&w.state)).await;
+    script_routed(
+        &w.proxy,
+        vec![completion(
+            json!({"role": "assistant", "content": json!({"route": "catalogue", "queries": ["ovzdušie"]}).to_string()}),
+            130,
+        )],
+        vec![],
+        vec![streamed(&["Jeden zdroj živých dát [1]."], 900, 20)],
+    )
+    .await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Aké dáta máte o ovzduší?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(events.iter().any(|(n, _)| n == "answer"), "{events:?}");
+    let calls = model_calls(&w.proxy).await;
+    let answer = calls_of(&calls, None);
+    let read = answer.last().expect("an answer call").to_string();
+    assert!(read.contains("Live data the assistant reads"), "{read}");
+    assert!(read.contains("Holds: AirQualityObserved"), "{read}");
+    assert!(read.contains("Group them by publisher"), "{read}");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// AG-104: a routed question whose conversation cannot hold the router's call, or whose router
+/// call spent what the direct answer or the searched one would need, ends with the
+/// conversation's limit and no answer call.
+#[tokio::test]
+async fn a_routed_question_past_its_conversations_tokens_ends_at_the_limit() {
+    let spent_by = |events: &[(String, Value)]| {
+        events
+            .iter()
+            .any(|(n, d)| n == "error" && d["title"] == "Conversation Budget Spent")
+    };
+    let w = world("chatroutedcap", deployment(Channel::Public, 300, 10)).await;
+    let (status, events, _) = answer_of(
+        &w.app,
+        ask(json!({"message": "Kedy je zber?"}), Some(ORIGIN)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(spent_by(&events), "{events:?}");
+    assert!(model_calls(&w.proxy).await.is_empty());
+    db::drop_database(w.admin, w.pool, &w.name).await;
+
+    let w = world(
+        "chatroutedcapspent",
+        deployment(Channel::Public, 50_000, 10),
+    )
+    .await;
+    script_routed(
+        &w.proxy,
+        vec![
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"direct\"}"}),
+                49_600,
+            ),
+            completion(
+                json!({"role": "assistant", "content": "{\"route\": \"rag\", \"queries\": [\"zber odpadu\", \"harmonogram\"]}"}),
+                49_600,
+            ),
+        ],
+        vec![],
+        vec![],
+    )
+    .await;
+    for message in ["Napíš mi básničku o jeseni.", "Kedy je zber?"] {
+        let (status, events, _) =
+            answer_of(&w.app, ask(json!({"message": message}), Some(ORIGIN))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(spent_by(&events), "{message}: {events:?}");
+        assert!(
+            events.iter().all(|(n, _)| n != "answer"),
+            "{message}: {events:?}"
+        );
+    }
+    let calls = model_calls(&w.proxy).await;
+    assert!(
+        calls_of(&calls, None).is_empty(),
+        "no answer call: {calls:?}"
+    );
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
+/// Every visitor path of an id no assistant is published under is not found, a preflight
+/// without an origin is refused, and a token request whose body is no proof is refused in words.
+#[tokio::test]
+async fn an_unknown_id_is_not_found_on_every_visitor_path() {
+    let w = world("chatunknownid", deployment(Channel::Public, 50_000, 10)).await;
+    let send = |method: &str, uri: &str, body: &'static str| {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(body))
+            .expect("a request")
+    };
+    for (method, uri) in [
+        ("GET", "/api/v1/d/nobody/challenge"),
+        ("POST", "/api/v1/d/nobody/token"),
+        ("GET", "/api/v1/d/nobody/turns/1/resume"),
+        ("POST", "/api/v1/d/nobody/turns/1/cancel"),
+        ("GET", "/api/v1/d/nobody/map/1"),
+        ("OPTIONS", "/api/v1/d/nobody/chat"),
+    ] {
+        let response = w
+            .app
+            .clone()
+            .oneshot(send(method, uri, "{}"))
+            .await
+            .expect("an answer");
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{method} {uri}");
+    }
+    let preflight = w
+        .app
+        .clone()
+        .oneshot(send("OPTIONS", "/api/v1/d/hronov-obcania/chat", ""))
+        .await
+        .expect("an answer");
+    assert_eq!(preflight.status(), StatusCode::FORBIDDEN);
+    let token = w
+        .app
+        .clone()
+        .oneshot(send(
+            "POST",
+            "/api/v1/d/hronov-obcania/token",
+            "not a proof",
+        ))
+        .await
+        .expect("an answer");
+    assert_eq!(token.status(), StatusCode::BAD_REQUEST);
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// A row of `answer_timings`: deployment, cached, model calls, then the first token, the total
 /// and the route, search, judge and answer stages in milliseconds, whether the judgement was
 /// skipped.

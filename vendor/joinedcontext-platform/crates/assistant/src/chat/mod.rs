@@ -2892,6 +2892,16 @@ mod tests {
             }
             assert_eq!(problem["field"].as_str(), field, "{body}: {problem}");
         }
+        let read = app
+            .oneshot(
+                axum::http::Request::post("/")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(r#"{"message":"a"}"#))
+                    .expect("a request"),
+            )
+            .await
+            .expect("an answer");
+        assert_eq!(read.status(), StatusCode::OK, "a question reads");
     }
 
     fn one(key: &str, limit: u32) -> [(&str, u32, Duration); 1] {
@@ -3144,6 +3154,25 @@ mod tests {
         assert!(!limits.over_share("a", 20_001, 1.0, 10), "a new day");
         limits.spend("a", 20_001, 1);
         assert_eq!(limits.spent["a"], (20_001, 1));
+    }
+
+    /// Past [`MAX_KEYS`] visitors the earlier days' spend goes; with the map full of today's,
+    /// a new visitor is not counted, and one already counted still is.
+    #[test]
+    fn a_full_spend_map_forgets_earlier_days_and_counts_no_new_visitor() {
+        let mut limits = Limits::default();
+        for i in 0..MAX_KEYS {
+            limits.spend(&format!("v{i}"), 1, 10);
+        }
+        limits.spend("late", 2, 10);
+        assert_eq!(limits.spent.len(), 1, "yesterday's visitors went");
+        for i in 1..MAX_KEYS {
+            limits.spend(&format!("w{i}"), 2, 10);
+        }
+        limits.spend("new", 2, 10);
+        assert!(!limits.spent.contains_key("new"));
+        limits.spend("late", 2, 5);
+        assert_eq!(limits.spent["late"], (2, 15));
     }
 
     /// T-5928: a deployment's `visitorSharePercent` sets the share: at 50 a visitor asks up to
