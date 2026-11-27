@@ -78,15 +78,14 @@ impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for Peer {
 ///
 /// # Errors
 /// What the listener fails with.
-pub async fn serve_internal(
+pub fn serve_internal(
     listener: tokio::net::TcpListener,
     router: axum::Router,
-) -> std::io::Result<()> {
-    axum::serve(
+) -> impl std::future::Future<Output = std::io::Result<()>> + Send {
+    std::future::IntoFuture::into_future(axum::serve(
         listener,
         router.into_make_service_with_connect_info::<Peer>(),
-    )
-    .await
+    ))
 }
 
 /// Leaves [`MESH_IDENTITY`] on a request only as the pod's own proxy sets it: one value, over
@@ -187,30 +186,39 @@ pub fn brokers_of(repo: &Repository) -> Brokers {
         match spec {
             Ok((spec, sources)) => {
                 let auth = spec.effective_device_auth();
+                let (release, door) = (
+                    release_name(&project, &id.name),
+                    certificate_release_name(&project, &id.name),
+                );
+                let broker = Broker {
+                    name: id.name.clone(),
+                    project,
+                    capture_topics: if spec.mode == Some(MqttMode::Capture) {
+                        capture_topics(&spec.roles)
+                    } else {
+                        Vec::new()
+                    },
+                    roles: spec.roles,
+                    runner_topics: Vec::new(),
+                    sources,
+                    messages_per_second: spec.limits.messages_per_second,
+                    tokens: auth.contains(&MqttDeviceAuth::Token),
+                    certificate_door: false,
+                };
                 if auth.contains(&MqttDeviceAuth::ClientCertificate) {
+                    // The door serves the broker's roles, sources and limits, and no topic of
+                    // its own.
                     doors.push((
-                        certificate_release_name(&project, &id.name),
-                        release_name(&project, &id.name),
+                        door,
+                        Broker {
+                            certificate_door: true,
+                            runner_topics: Vec::new(),
+                            capture_topics: Vec::new(),
+                            ..broker.clone()
+                        },
                     ));
                 }
-                brokers.insert(
-                    release_name(&project, &id.name),
-                    Broker {
-                        name: id.name.clone(),
-                        project,
-                        capture_topics: if spec.mode == Some(MqttMode::Capture) {
-                            capture_topics(&spec.roles)
-                        } else {
-                            Vec::new()
-                        },
-                        roles: spec.roles,
-                        runner_topics: Vec::new(),
-                        sources,
-                        messages_per_second: spec.limits.messages_per_second,
-                        tokens: auth.contains(&MqttDeviceAuth::Token),
-                        certificate_door: false,
-                    },
-                );
+                brokers.insert(release, broker);
             }
             Err(error) => tracing::warn!(broker = %id.name, %error, "the MqttBroker is not served"),
         }
@@ -238,20 +246,12 @@ pub fn brokers_of(repo: &Repository) -> Brokers {
     }
     // A door whose release is another broker's (a broker named `<name>-cert`) is not served:
     // that release is the other broker's token door, and the Portal refuses to stamp this one.
-    for (door, release) in doors {
+    for (door, entry) in doors {
         if brokers.contains_key(&door) {
             tracing::warn!(%door, "the certificate door's release is another broker's; not served");
             continue;
         }
-        if let Some(broker) = brokers.get(&release) {
-            let entry = Broker {
-                certificate_door: true,
-                runner_topics: Vec::new(),
-                capture_topics: Vec::new(),
-                ..broker.clone()
-            };
-            brokers.insert(door, entry);
-        }
+        brokers.insert(door, entry);
     }
     brokers
 }

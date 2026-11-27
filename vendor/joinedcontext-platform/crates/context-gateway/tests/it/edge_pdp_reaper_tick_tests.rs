@@ -10,6 +10,7 @@
 //! authored. `reaper_tests.rs` has the revocation itself; these are the repository states a
 //! ConfigMap volume, a git-sync sidecar and a half-finished write produce.
 
+use crate::common;
 use context_gateway::app::Gateway;
 use context_gateway::pdp::reaper::Reaper;
 use context_gateway::pdp::PolicyPdp;
@@ -134,10 +135,82 @@ fn a_dot_directory_is_not_part_of_the_fingerprint() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// git-sync swaps its `current` link to a new commit whole: the reaper follows the link by its
+/// target without walking it, so the same commit is no reload and a new one is one.
+#[test]
+fn a_linked_repository_reloads_when_its_link_moves_to_another_commit() {
+    let first = repo("link-first");
+    let second = repo("link-second");
+    write(
+        &second,
+        "endpoint-2.yaml",
+        &ENDPOINT
+            .replace("public-air", "internal-air")
+            .replace(SLUG, "mluyob4nz52lok3ssk7pgn5vwt"),
+    );
+    let current = first.with_extension("current");
+    std::os::unix::fs::symlink(&first, &current).expect("link the first commit");
+    let gateway = gateway_on(&current);
+    let mut reaper = Reaper::new(Arc::clone(&gateway), &current);
+    assert_eq!(reaper.files_walked(), 0, "a link is read, not walked");
+
+    assert!(!reaper.tick(), "the link still names the same commit");
+    std::fs::remove_file(&current).expect("unlink the first commit");
+    std::os::unix::fs::symlink(&second, &current).expect("link the second commit");
+
+    assert!(reaper.tick(), "the link moved");
+    assert_eq!(gateway.resolver.len(), 2);
+
+    for dir in [current, first, second] {
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_file(&dir);
+    }
+}
+
+/// An entry whose target is gone cannot be statted: it is skipped rather than making the whole
+/// repository unreadable, so the tables keep serving.
+#[test]
+fn a_dangling_entry_is_no_part_of_the_fingerprint() {
+    let dir = repo("dangling");
+    let gateway = gateway_on(&dir);
+    let mut reaper = Reaper::new(Arc::clone(&gateway), &dir);
+    assert_eq!(reaper.files_walked(), 3);
+
+    std::os::unix::fs::symlink(dir.join("gone.yaml"), dir.join("dangling"))
+        .expect("a dangling link");
+
+    assert!(!reaper.tick(), "a dangling entry is not a change");
+    assert_eq!(reaper.files_walked(), 3, "and it is not counted");
+    assert!(gateway.resolver.resolve(SLUG).is_some());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// CC-86: a projects directory that cannot be read counts as no checkouts, so the organization
+/// alone is still followed and the tables that are serving keep serving.
+#[test]
+fn a_projects_directory_that_cannot_be_read_leaves_the_organization_followed() {
+    let dir = repo("no-projects");
+    let gateway = gateway_on(&dir);
+    let root = dir.with_extension("checkouts");
+    let mut reaper = Reaper::new(Arc::clone(&gateway), &dir).with_checkouts(store::Checkouts {
+        projects: root.join("missing"),
+        assembly: root.join("assembly"),
+        renders: Default::default(),
+    });
+
+    assert!(!reaper.tick(), "nothing the reaper can read changed");
+    assert_eq!(reaper.files_walked(), 3);
+    assert!(gateway.resolver.resolve(SLUG).is_some());
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A manifest in a subdirectory is a manifest: a repository laid out per space must not be a
 /// repository whose changes are invisible.
 #[test]
 fn a_manifest_in_a_subdirectory_is_seen() {
+    let log = common::Log::capture();
     let dir = repo("subdirectory");
     let gateway = gateway_on(&dir);
     let mut reaper = Reaper::new(Arc::clone(&gateway), &dir);
@@ -157,6 +230,12 @@ fn a_manifest_in_a_subdirectory_is_seen() {
         .resolver
         .resolve("mluyob4nz52lok3ssk7pgn5vwt")
         .is_some());
+    let text = log.text();
+    assert!(
+        text.contains("repository reloaded")
+            && text.contains("endpoints=2 spaces=1 accounts=0 files_walked=5"),
+        "{text}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -56,9 +56,7 @@ async fn main() -> ExitCode {
         };
         tracing::info!(bind = %internal, "internal listener for the MQTT brokers");
         // axum's serve loop retries every accept error and ends only with the process.
-        tokio::spawn(async move {
-            let _ = context_gateway::mqtt::serve_internal(listener, app).await;
-        });
+        tokio::spawn(context_gateway::mqtt::serve_internal(listener, app));
     }
 
     // The scrape on a listener of its own (S2-18, T-7279): its series name tenants, so the
@@ -71,9 +69,10 @@ async fn main() -> ExitCode {
         }
     };
     tracing::info!(bind = %config.metrics_bind, "metrics listener");
-    tokio::spawn(async move {
-        let _ = axum::serve(metrics, context_gateway::telemetry::router()).await;
-    });
+    tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+        metrics,
+        context_gateway::telemetry::router(),
+    )));
 
     let app = built.app;
     let listener = match tokio::net::TcpListener::bind(config.bind).await {

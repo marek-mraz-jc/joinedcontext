@@ -683,6 +683,11 @@ fn the_store_loads_each_server_with_its_members_slugs() {
                 "{ kind: Endpoint, name: air }, { kind: Endpoint, name: air }",
             ),
         ),
+        (
+            "documents.yaml",
+            server("documents", "{ kind: Endpoint, name: air }")
+                + "  knowledgeSources: [manuals, mesto/guides]\n",
+        ),
     ] {
         std::fs::write(dir.join(file), body).expect("write a manifest");
     }
@@ -691,11 +696,28 @@ fn the_store_loads_each_server_with_its_members_slugs() {
         .expect("the repository loads")
         .6;
     std::fs::remove_dir_all(&dir).expect("clean up");
-    assert_eq!(servers.len(), 1, "{servers:?}");
-    assert_eq!(servers[0].name, "mobility");
-    assert_eq!(servers[0].title.as_deref(), Some("Mobility"));
-    assert_eq!(servers[0].members, [BIKES, AIR]);
-    assert_eq!(servers[0].path(), "/api/mcp/ovzdusie/mobility");
+    assert_eq!(servers.len(), 2, "{servers:?}");
+    let documents = servers
+        .iter()
+        .find(|s| s.name == "documents")
+        .expect("documents");
+    assert_eq!(documents.members, [AIR]);
+    // A source without a project is the server's own project's.
+    assert_eq!(
+        documents.knowledge_sources,
+        [
+            ("ovzdusie".to_owned(), "manuals".to_owned()),
+            ("mesto".to_owned(), "guides".to_owned())
+        ]
+    );
+    let mobility = servers
+        .iter()
+        .find(|s| s.name == "mobility")
+        .expect("mobility");
+    assert!(mobility.knowledge_sources.is_empty());
+    assert_eq!(mobility.title.as_deref(), Some("Mobility"));
+    assert_eq!(mobility.members, [BIKES, AIR]);
+    assert_eq!(mobility.path(), "/api/mcp/ovzdusie/mobility");
 }
 
 /// One hop to a member's view, as the broker's MCP surface received it.

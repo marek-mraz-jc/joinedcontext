@@ -364,6 +364,13 @@ mod tests {
         let held = downloads.get_or_build(key("q0"), counted(&builds, 1)).await;
         assert_eq!(held.map(|(bytes, _)| bytes.len()), Ok(1));
         assert_eq!(builds.load(Ordering::SeqCst), MAX_HELD + 2);
+        // A failed build of a key past the cap has nothing held to forget, and takes no held
+        // answer with it.
+        let failed = downloads
+            .get_or_build(key("beyond"), async { Err::<(Bytes, bool), _>("down") })
+            .await;
+        assert_eq!(failed, Err("down"));
+        assert_eq!(lock(&downloads.held).len(), MAX_HELD);
     }
 
     #[test]

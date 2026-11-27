@@ -193,6 +193,29 @@ async fn a_public_instance_answers_without_a_token() {
     assert!(answer["result"]["tools"].is_array(), "{body}");
 }
 
+/// A message the broker cannot be reached for is answered as the failure it is; an Endpoint
+/// that counts no creates has no reservation to give back.
+#[tokio::test]
+async fn a_message_to_an_unreachable_broker_is_a_failure() {
+    let app = router(Arc::new(
+        Gateway::new(
+            Broker::new("http://127.0.0.1:1"),
+            Box::new(PolicyPdp),
+            "banskabystrica.sk",
+        )
+        .serve([endpoint(
+            OPEN,
+            Audience::Public,
+            vec![Representation::NgsiLd, Representation::Mcp],
+        )]),
+    ));
+    let response = app
+        .oneshot(post(OPEN, message("tools/list")))
+        .await
+        .expect("the gateway answers");
+    assert!(response.status().is_server_error(), "{}", response.status());
+}
+
 /// EP-05, EP-24: an endpoint whose resolved table leaves MCP out (a manifest with
 /// `mcp: false`; the store adds MCP to every other one) has no MCP instance, and asking for one
 /// is 404 — the same 404 as an endpoint that does not exist, so the representation table is not

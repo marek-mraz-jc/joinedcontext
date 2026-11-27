@@ -87,11 +87,10 @@ pub(crate) async fn file_csv_for(
     let headers = response.headers_mut();
     // The slug is base32 and the extension a literal, so the filename needs no quoting beyond
     // the quotes themselves (EP-43).
-    if let Ok(disposition) =
-        HeaderValue::from_str(&format!("attachment; filename=\"{}.csv\"", endpoint.slug))
-    {
-        headers.insert(axum::http::header::CONTENT_DISPOSITION, disposition);
-    }
+    // A slug is a legal header value; a name that were not would leave the header out.
+    let disposition =
+        HeaderValue::from_str(&format!("attachment; filename=\"{}.csv\"", endpoint.slug)).ok();
+    headers.extend(disposition.map(|value| (axum::http::header::CONTENT_DISPOSITION, value)));
     if restricted {
         headers.insert(RESULTS_RESTRICTED, HeaderValue::from_static("true"));
     }

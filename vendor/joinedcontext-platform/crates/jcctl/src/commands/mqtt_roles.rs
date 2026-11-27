@@ -168,6 +168,21 @@ mod tests {
         format!("apiVersion: joinedcontext.com/v1alpha1\nkind: ServiceAccount\nmetadata:\n  name: {name}\n  namespace: air\nspec:\n  owner:\n    user: demo.steward\n  purpose: sensors\n  roles:\n    - role: space-writer\n      scope:\n        project: air\n  credentials:\n    - kind: oauth-client\n      name: default\n")
     }
 
+    /// An account document without a spec mapping (a ServiceAccount the schema would refuse) is
+    /// left as it is, not given one.
+    #[test]
+    fn an_account_without_a_spec_mapping_is_left_alone() {
+        for text in [
+            "kind: ServiceAccount\n",
+            "kind: ServiceAccount\nspec: [a]\n",
+        ] {
+            let mut doc: Value = serde_norway::from_str(text).expect("yaml");
+            let before = doc.clone();
+            bind(&mut doc, "mqtt/air/sensor", "air");
+            assert_eq!(doc, before);
+        }
+    }
+
     #[test]
     fn each_listed_account_gets_its_binding_and_the_list_goes() {
         let dir = std::env::temp_dir().join("jcctl-mqtt-roles");

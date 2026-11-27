@@ -224,6 +224,72 @@ fn a_deployment_reads_org_all_or_nothing_from_an_undeclared_server() {
     assert!(named("/api/mcp/d/bbsk-ghost").is_none_or(|ghost| ghost.members.is_empty()));
 }
 
+/// A deployment that resolves more Endpoints than it may read serves the first
+/// `MAX_RESOLVED` by slug and leaves the rest out.
+#[test]
+fn a_deployment_past_its_endpoint_bound_serves_the_first_by_slug() {
+    let bound = jc_core::reach::MAX_RESOLVED;
+    let slug = |n: usize| {
+        let alphabet = b"abcdefghijklmnopqrstuvwxyz234567";
+        let tail: String = [15, 10, 5, 0]
+            .iter()
+            .map(|shift| char::from(alphabet[(n >> shift) & 31]))
+            .collect();
+        format!("{}{tail}", "a".repeat(22))
+    };
+    let dir = std::env::temp_dir().join(format!(
+        "gw-mcp-deployment-bound-{}-{:?}",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("create the repository");
+    let write = |file: String, body: String| std::fs::write(dir.join(file), body).expect("write");
+    write(
+        "space.yaml".into(),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: data\n  \
+         namespace: bbsk\nspec:\n  isSandbox: false\n"
+            .to_owned(),
+    );
+    for n in 0..=bound {
+        write(
+            format!("e{n}.yaml"),
+            format!(
+                "apiVersion: joinedcontext.com/v1alpha1\nkind: Endpoint\nmetadata:\n  name: e{n}\n  \
+                 namespace: bbsk\nspec:\n  contextSpaceRef: data\n  slug: {}\n  \
+                 audience: public\n  enabledRepresentations: [\"ngsi-ld\", \"mcp\"]\n",
+                slug(n)
+            ),
+        );
+    }
+    write(
+        "wide.yaml".into(),
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: AssistantDeployment\nmetadata:\n  \
+         name: wide\n  namespace: bbsk\nspec:\n  publicId: bbsk-wide\n  channel: internal\n  \
+         mcpServer: org/all\n  allowedOrigins: [https://www.bbsk.sk]\n  \
+         rateLimit: { requestsPerMinute: 60, perClientPerMinute: 10 }\n  \
+         budget: { tokensPerDay: 1000000, tokensPerConversation: 20000 }\n"
+            .to_owned(),
+    );
+    let (endpoints, _, _, _, _, _, servers, ..) =
+        context_gateway::store::load(&dir).expect("the repository loads");
+    std::fs::remove_dir_all(&dir).expect("clean up");
+    assert_eq!(endpoints.len(), bound + 1, "every Endpoint loads");
+    let wide = servers
+        .iter()
+        .find(|s| s.path() == "/api/mcp/d/bbsk-wide")
+        .expect("the deployment");
+    // By slug is by byte: the base32 digits sort before the letters.
+    let mut by_slug: Vec<String> = (0..=bound).map(slug).collect();
+    by_slug.sort();
+    assert_eq!(wide.members.len(), bound);
+    assert_eq!(wide.members.first(), by_slug.first());
+    assert!(
+        !wide.members.contains(&by_slug[bound]),
+        "the last by slug is left out"
+    );
+}
+
 /// A stand-in `jc-assistant` answering the sources summary, one search and `bbsk-data`'s context.
 async fn assistant() -> String {
     let stub = Router::new().fallback(|request: axum::extract::Request| async move {

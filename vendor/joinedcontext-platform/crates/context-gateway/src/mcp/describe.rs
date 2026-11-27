@@ -677,18 +677,19 @@ mod tests {
 
     /// A broker publishing one LinkML model (version 1) next to an index entry that is no model.
     fn one_model(path: &str) -> (StatusCode, &'static str) {
-        if path.ends_with("/schema/index.json") {
+        [
             (
-                StatusCode::OK,
+                "/schema/index.json",
                 r#"{"endpoint":"x","models":["junk",{"name":"fleet","version":1,"artifacts":{"model.linkml.yaml":{"bytes":9,"sha256":"d"},"model.schema.json":{"bytes":9,"sha256":"e"}}}]}"#,
-            )
-        } else if path.ends_with("/schema/v1/model.linkml.yaml") {
-            (StatusCode::OK, "classes: [unclosed")
-        } else if path.ends_with("/schema/v1/model.schema.json") {
-            (StatusCode::OK, "not json")
-        } else {
-            (StatusCode::NOT_FOUND, "")
-        }
+            ),
+            ("/schema/v1/model.linkml.yaml", "classes: [unclosed"),
+            ("/schema/v1/model.schema.json", "not json"),
+        ]
+        .into_iter()
+        .find(|(end, _)| path.ends_with(end))
+        .map_or((StatusCode::NOT_FOUND, ""), |(_, body)| {
+            (StatusCode::OK, body)
+        })
     }
 
     /// An Endpoint whose public grant reads, so its card and describe tools are offered.

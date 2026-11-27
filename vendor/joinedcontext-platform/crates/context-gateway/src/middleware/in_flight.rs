@@ -790,10 +790,14 @@ mod tests {
         let guard = Dropped(Arc::clone(&dropped));
         let ticket = gate.admit("a".into(), SIGNED_READ).expect("a");
         let answer = gate
-            .time(ticket, async move {
-                let _guard = guard;
-                std::future::pending::<Response<Body>>().await
-            })
+            .time(
+                ticket,
+                // Never ready, and holds the guard until it is dropped.
+                std::future::poll_fn(move |_| {
+                    let _held = &guard;
+                    std::task::Poll::<Response<Body>>::Pending
+                }),
+            )
             .await;
         assert_eq!(answer.status(), 503);
         assert_eq!(answer.headers()["retry-after"], "10");

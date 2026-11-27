@@ -269,7 +269,9 @@ impl Issuer {
             challenge: Some(challenge.to_owned()),
             ..Claims::default()
         };
-        self.sign(&claims).ok_or_else(|| "cannot sign".into())
+        self.sign(&claims)
+            .ok_or("cannot sign")
+            .map_err(String::from)
     }
 
     /// The resource a token is for: one on this host, or the whole host when none is named
@@ -372,18 +374,17 @@ impl Issuer {
                 ..Claims::default()
             })
         };
-        let (Some(access), Some(refresh)) = (
-            token(ACCESS, ACCESS_SECONDS, None),
-            token(REFRESH, REFRESH_SECONDS, Some(cid)),
-        ) else {
-            return Err(("server_error", "cannot sign"));
-        };
-        Ok(json!({
-            "access_token": access,
-            "token_type": "Bearer",
-            "expires_in": ACCESS_SECONDS,
-            "refresh_token": refresh,
-        }))
+        token(ACCESS, ACCESS_SECONDS, None)
+            .zip(token(REFRESH, REFRESH_SECONDS, Some(cid)))
+            .map(|(access, refresh)| {
+                json!({
+                    "access_token": access,
+                    "token_type": "Bearer",
+                    "expires_in": ACCESS_SECONDS,
+                    "refresh_token": refresh,
+                })
+            })
+            .ok_or(("server_error", "cannot sign"))
     }
 
     /// Whether `token` is an access token of this server for `url`, the resource it was issued

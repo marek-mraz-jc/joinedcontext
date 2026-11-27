@@ -93,7 +93,6 @@ mod tests {
             &HeaderMap::new(),
         )
         .await
-        .map_err(|refused| refused.status)
         .expect("an answer");
         assert_eq!(read.status, 200);
         assert_eq!(read.body["id"], "urn:ngsi-ld:A:1");
@@ -105,7 +104,6 @@ mod tests {
             &HeaderMap::new(),
         )
         .await
-        .map_err(|refused| refused.status)
         .expect("an answer");
         assert_eq!((read.status, read.body), (404, Value::Null));
     }

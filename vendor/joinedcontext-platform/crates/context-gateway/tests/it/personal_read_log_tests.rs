@@ -268,6 +268,82 @@ async fn a_personal_read_through_odata_and_ogc_names_its_entities() {
     assert!(!log.contains("jana"), "a username reached the log: {log}");
 }
 
+/// S-3-09: a file the broker streams through OGC API Features (`f=csv`) is not held to list its
+/// Entities: its line names the query that chose them, and the file passes on as written.
+#[tokio::test]
+async fn a_personal_file_streamed_through_ogc_names_its_query() {
+    let captured = common::Log::capture();
+    let broker = axum::Router::new().fallback(|| async {
+        (
+            [
+                (header::CONTENT_TYPE, "text/csv"),
+                (
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"trips.csv\"",
+                ),
+            ],
+            "id\nurn:ngsi-ld:BikeTrip:c1\n",
+        )
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let url = format!("http://{}", listener.local_addr().expect("address"));
+    tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+        listener, broker,
+    )));
+    let realm = common::Realm::new();
+    let app = router(Arc::new(
+        Gateway::new(Broker::new(&url), Box::new(PolicyPdp), "banskabystrica.sk")
+            .with_provenance(context_gateway::store::Provenance::without_organizations())
+            .serve(vec![endpoint(PERSONAL, &[])])
+            .authenticate(
+                Arc::new(realm.verifier()),
+                ServiceAccounts::new(),
+                Some("https://city.example".to_owned()),
+            ),
+    ));
+    let token = realm.mint(&json!({
+        "iss": common::ISSUER,
+        "sub": "0f5a",
+        "aud": "context-gateway",
+        "preferred_username": "jana",
+        "groups": ["/trips"],
+        "realm_access": { "roles": ["steward"] },
+        "exp": common::in_seconds(300),
+        "iat": common::in_seconds(-10),
+    }));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(format!(
+                    "/api/endpoint/{PERSONAL}/ogc/features/collections/BikeTrip/items?f=csv"
+                ))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .body(Body::empty())
+                .expect("a request"),
+        )
+        .await
+        .expect("the gateway answers");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("a body");
+    assert!(String::from_utf8_lossy(&body).contains("BikeTrip:c1"));
+    let log = captured.text();
+    let read = log
+        .lines()
+        .find(|line| line.contains("personal attributes read"))
+        .expect("a personal read line");
+    // The query is named by its parameters, never their values.
+    for named in [PERSONAL, "OGC API Features", "parameters=f", "user:0f5a"] {
+        assert!(read.contains(named), "{named} missing: {read}");
+    }
+    for unnamed in ["BikeTrip:c1", "csv"] {
+        assert!(!read.contains(unnamed), "{unnamed} is named: {read}");
+    }
+}
+
 /// An answer that holds personal data and is too large to name its Entities in a log line is
 /// refused with 413 and the reason, never passed on unlogged (ADR-N-054 2.6).
 #[tokio::test]

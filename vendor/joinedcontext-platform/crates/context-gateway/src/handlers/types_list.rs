@@ -72,3 +72,33 @@ pub(super) async fn dataset_types(
     }
     Ok(types)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A request that pins no tenant is answered the broker's list, entries that are no type
+    /// left out, and nothing is held for a space it does not name.
+    #[tokio::test]
+    async fn a_list_for_no_pinned_tenant_is_read_and_not_held() {
+        let broker = axum::Router::new()
+            .fallback(|| async { axum::Json(serde_json::json!({"typeList": ["Vehicle", 7]})) });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let url = format!("http://{}", listener.local_addr().expect("address"));
+        tokio::spawn(std::future::IntoFuture::into_future(axum::serve(
+            listener, broker,
+        )));
+        let gateway = Gateway::new(
+            crate::proxy::Broker::new(&url),
+            Box::new(crate::pdp::PolicyPdp),
+            "hel.fi",
+        );
+        let types = dataset_types(&gateway, "s", &HeaderMap::new())
+            .await
+            .expect("a list");
+        assert_eq!(types, ["Vehicle"]);
+        assert!(gateway.held_types.get("").is_none());
+    }
+}

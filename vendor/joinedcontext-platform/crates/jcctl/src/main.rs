@@ -3028,11 +3028,11 @@ mod tests {
             "apiVersion: joinedcontext.com/v1alpha1\nkind: NoSuchKind\nmetadata:\n  name: x\n",
         );
         for dir in [broken, apply_dir("gone").join("not-there")] {
+            let shown = dir.display().to_string();
             assert_eq!(
                 apply(&dir, CONFIRMED, Connection::default()),
                 ExitCode::FAILURE,
-                "{}",
-                dir.display()
+                "{shown}"
             );
         }
     }

@@ -527,6 +527,17 @@ mod tests {
             Broker::trusting("https://broker:1026", broken),
             Err(ProxyError::Trust(_))
         ));
+        // A block that is no PEM at all, base64 that does not decode or an END that never
+        // comes, refuses the start too rather than being read as no block.
+        for unreadable in [
+            &b"-----BEGIN CERTIFICATE-----\n!!!!\n-----END CERTIFICATE-----\n"[..],
+            &b"-----BEGIN CERTIFICATE-----\nAAAA\n"[..],
+        ] {
+            assert!(matches!(
+                Broker::trusting("https://broker:1026", unreadable),
+                Err(ProxyError::Trust(_))
+            ));
+        }
         assert!(matches!(
             roots_from_file("/nonexistent/roots.pem"),
             Err(ProxyError::Trust(why)) if why.starts_with("/nonexistent/roots.pem")
@@ -669,18 +680,17 @@ mod tests {
             let addr = listener.local_addr().expect("an address");
             tokio::spawn(async move {
                 // One connection per broker: the test asks each of them once.
-                if let Ok((mut socket, _)) = listener.accept().await {
-                    tokio::spawn(async move {
-                        let mut buf = [0u8; 4096];
-                        let _ = socket.read(&mut buf).await;
-                        match answer {
-                            Some(answer) => {
-                                let _ = socket.write_all(answer).await;
-                            }
-                            None => tokio::time::sleep(Duration::from_secs(30)).await,
+                let (mut socket, _) = listener.accept().await.expect("a connection");
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = socket.read(&mut buf).await;
+                    match answer {
+                        Some(answer) => {
+                            let _ = socket.write_all(answer).await;
                         }
-                    });
-                }
+                        None => tokio::time::sleep(Duration::from_secs(30)).await,
+                    }
+                });
             });
             let mut broker = Broker::new(format!("http://{addr}"));
             broker.answer_within = Duration::from_millis(200);

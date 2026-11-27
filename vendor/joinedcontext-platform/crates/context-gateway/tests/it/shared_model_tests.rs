@@ -90,3 +90,45 @@ fn every_record_of_a_space_shares_one_parsed_model() {
     );
     assert!(schema(&one.models)["$defs"]["AirQualityObserved"].is_object());
 }
+
+/// DM-128: a space whose model marks an attribute personal grants the Portal's reconciler its
+/// read of those classes on the space's own surface; a space whose model marks none grants it
+/// nothing.
+#[test]
+fn a_space_with_a_personal_class_grants_the_portal_its_read() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock after the epoch")
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("gw-shared-model-personal-{now}"));
+    std::fs::create_dir_all(&dir).expect("create the repository");
+    let write =
+        |name: &str, body: &str| std::fs::write(Path::new(&dir).join(name), body).expect("write");
+    write(
+        "space.yaml",
+        "apiVersion: joinedcontext.com/v1alpha1\nkind: ContextSpace\nmetadata:\n  name: ovzdusie\n  namespace: ovzdusie\n\
+         spec:\n  urnSegment: ovzdusie\n  dataModelRef: { kind: DataModel, name: bb-air-quality }\n",
+    );
+    write("model.yaml", MODEL);
+    write(
+        "bb-air-quality.schema.json",
+        r#"{"$defs": {"AirQualityObserved": {"type": "object", "properties": {
+            "id": {"type": "string"},
+            "reporter": {"type": "string", "x-personal-data": true}}}}}"#,
+    );
+    write(
+        "bb-air-quality.context.jsonld",
+        r#"{"@context": {"@vocab": "https://bb.example.sk/"}}"#,
+    );
+    let (_, spaces, ..) = store::load(&dir).expect("the repository loads");
+    let _ = std::fs::remove_dir_all(&dir);
+    let space = &spaces.first().expect("the space").endpoint;
+    assert_eq!(
+        space.policy_names.last().map(String::as_str),
+        Some(store::PORTAL_PERSONAL_DATA_POLICY),
+        "{:?}",
+        space.policy_names
+    );
+    let grant = space.policies.last().expect("the Portal's grant");
+    assert_eq!(grant.assignee.id, store::PORTAL_RECONCILER_USER);
+}

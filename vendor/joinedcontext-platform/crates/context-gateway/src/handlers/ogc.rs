@@ -1405,6 +1405,12 @@ mod tests {
             "n": {"C": {"S": {"$Type": "n.A"}}, "A": {"$BaseType": "n.A"}}
         });
         assert_eq!(entity_key(&looped, "S"), None);
+        // A key that is neither a property name nor an alias names no key.
+        let numbered = serde_json::json!({
+            "$EntityContainer": "n.C",
+            "n": {"C": {"S": {"$Type": "n.A"}}, "A": {"$Key": [7]}}
+        });
+        assert_eq!(entity_key(&numbered, "S"), None);
     }
 
     #[test]
