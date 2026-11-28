@@ -1610,9 +1610,11 @@ pub(crate) mod hidden {
         s: S,
     ) -> Result<S::Ok, S::Error> {
         let mut doc = serde_json::to_value(record).map_err(S::Error::custom)?;
-        if let (Some(doc), Value::Object(fields)) = (doc.as_object_mut(), fields) {
-            doc.extend(fields);
-        }
+        // A record is a struct and its hidden fields an object literal: both are maps.
+        doc.as_object_mut()
+            .into_iter()
+            .zip(fields.as_object())
+            .for_each(|(doc, fields)| doc.extend(fields.clone()));
         doc.serialize(s)
     }
 
@@ -1646,6 +1648,11 @@ pub(crate) mod hidden {
     );
 }
 
+/// The projection answers the record of the op's own type; anything else is a store defect.
+fn unexpected_answer(e: serde_json::Error) -> ShakoError {
+    ShakoError::Storage(format!("unexpected store answer: {e}"))
+}
+
 impl PgStore {
     /// Logs `op` and applies it to the typed tables in one transaction under the tenant's lock.
     /// What is refused leaves neither an entry nor a row.
@@ -1663,8 +1670,7 @@ impl PgStore {
             let at = projection::append(&mut tx, tenant, &op).await?;
             let answer = projection::apply(&mut tx, tenant, op, &at).await?;
             projection::projected(&mut tx, tenant, at.seq()).await?;
-            let answer = serde_json::from_value(answer)
-                .map_err(|e| ShakoError::Storage(format!("unexpected store answer: {e}")))?;
+            let answer = serde_json::from_value(answer).map_err(unexpected_answer)?;
             jc_audit::commit(tx).await.map_err(tables::failed)?;
             self.mark_ready(tenant).await;
             Ok(answer)
@@ -1732,6 +1738,16 @@ impl PgStore {
 mod store_log_tests {
     use super::Op;
     use serde_json::json;
+
+    #[test]
+    fn an_answer_of_another_type_is_a_storage_error() {
+        let e = serde_json::from_value::<u8>(json!("text")).expect_err("not a number");
+        let err = super::unexpected_answer(e);
+        assert!(
+            matches!(&err, super::ShakoError::Storage(m) if m.starts_with("unexpected store answer: ")),
+            "{err:?}"
+        );
+    }
 
     fn replayed(op: &Op) -> Op {
         let logged = serde_json::to_value(op).expect("log entry");
