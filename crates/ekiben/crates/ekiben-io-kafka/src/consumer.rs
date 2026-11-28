@@ -536,11 +536,11 @@ impl KafkaInput {
             .await?;
         match group::decode_offset_commit(d).map_err(wire)? {
             0 => {
+                // parts changes only under &mut self (assign, drop_assignment), which this
+                // commit holds: every partition read above is still there
                 let mut shared = self.lock();
                 for (t, p, o) in offsets {
-                    if let Some(s) = shared.parts.get_mut(&(t, p)) {
-                        s.committed = o;
-                    }
+                    shared.parts.entry((t, p)).and_modify(|s| s.committed = o);
                 }
                 Ok(())
             }
