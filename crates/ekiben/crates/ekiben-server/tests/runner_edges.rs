@@ -154,6 +154,31 @@ impl Processor for Emptied {
     }
 }
 
+/// Fails a batch holding a `boom` part after 100 ms with a quota refusal (an error the pipeline
+/// passes through instead of marking the parts); hands every other batch back.
+struct SlowBoom;
+
+#[async_trait::async_trait]
+impl Processor for SlowBoom {
+    fn processor_type(&self) -> &'static str {
+        "slow_boom"
+    }
+    async fn process_batch(
+        &self,
+        _ctx: &ProcContext,
+        batch: Batch,
+    ) -> Result<Vec<Batch>, CoreError> {
+        if batch.iter().any(|p| &*p.as_bytes_ref() == b"boom") {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            return Err(CoreError::QuotaExceeded {
+                org: "default".into(),
+                reason: "boom refused".into(),
+            });
+        }
+        Ok(vec![batch])
+    }
+}
+
 /// An output whose close panics: the stream's task dies before it hands back a summary.
 struct PanicsOnClose;
 
@@ -206,6 +231,7 @@ fn rig(steps: Vec<Step>, input_fails: bool, out: Collect) -> Rig {
     reg.register_processor("busy", |_, _| Ok(Arc::new(Busy)));
     reg.register_processor("fresh", |_, _| Ok(Arc::new(Fresh)));
     reg.register_processor("emptied", |_, _| Ok(Arc::new(Emptied)));
+    reg.register_processor("slow_boom", |_, _| Ok(Arc::new(SlowBoom)));
     reg.register_output("panics_on_close", |_, _| Ok(Arc::new(PanicsOnClose)));
     reg.register_output("panics_on_write", |_, _| Ok(Arc::new(PanicsOnWrite)));
     Rig { reg, out }
@@ -346,6 +372,28 @@ async fn a_failed_write_stops_the_pages_of_the_batch_in_flight() {
     assert!(!s.success);
     assert_eq!(s.error.as_deref(), Some("disk full"));
     assert_eq!(s.messages_out, 0);
+}
+
+/// A batch that fails stops the batch behind it between two of its pages: the second worker's
+/// pages wait for the writer, the writer reads the failure first and raises stop, and the
+/// next page of the second batch is never sent. The run fails with the first batch's reason.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_failed_batch_stops_the_next_batch_between_its_pages() {
+    let parts: Vec<&'static str> = (0..400).map(|_| "p").collect();
+    let r = rig(
+        vec![Step::Batch(vec!["boom"]), Step::Batch(parts)],
+        false,
+        Collect::default(),
+    );
+    let c = conf(
+        "pipeline:\n  threads: 2\n  page_rows: 1\n  processors:\n    - slow_boom: {}\n    - split: {size: 1}\n",
+    );
+    let s = run(&r, c, ResourceManager::new()).await;
+    assert!(!s.success);
+    let err = s.error.unwrap_or_default();
+    assert!(err.contains("boom refused"), "{err}");
+    let written = r.out.written.lock().unwrap().len();
+    assert!(written < 400, "the stopped batch wrote all {written} pages");
 }
 
 /// A writer that panics mid-batch drops the pages still queued for it: the pipeline's next

@@ -671,6 +671,65 @@ async fn an_unsent_or_failed_ack_leaves_the_message_redelivered() {
     let _ = conn.close(200, "test done".into()).await;
 }
 
+/// An ack given as the stream stops goes out while the connection closes: the client refuses
+/// it (the channel is closing), the input logs it, and the broker keeps the message for the
+/// next consumer, marked redelivered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_ack_racing_the_close_fails_and_leaves_the_message_queued() {
+    use lapin::options::BasicPublishOptions;
+    let Some(url) = live_url() else { return };
+    let queue = format!("ekiben-ack-race-{}", std::process::id());
+    let config = json!({
+        "urls": [url.clone()],
+        "queue": queue,
+        "queue_declare": {"enabled": true, "durable": false, "auto_delete": false},
+    });
+    let c = loopback();
+    let mut input = AmqpInput::from_config(&conf(config.clone())).expect("builds");
+    assert!(matches!(
+        input.read_batch(&c).await,
+        Err(CoreError::Timeout)
+    ));
+    let conn = Connection::connect(&url, ConnectionProperties::default())
+        .await
+        .expect("publisher connects");
+    let ch = conn.create_channel().await.expect("channel");
+    ch.basic_publish(
+        "".into(),
+        queue.as_str().into(),
+        BasicPublishOptions::default(),
+        b"in flight",
+        lapin::BasicProperties::default(),
+    )
+    .await
+    .expect("publish")
+    .await
+    .expect("confirm");
+    let (b, ack) = read_one(&mut input, &c).await;
+    assert_eq!(b[0].meta_get_str("amqp_redelivered"), "false");
+    ack.ack();
+    input.close().await.expect("close");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    let mut input = AmqpInput::from_config(&conf(config)).expect("builds");
+    let (b, ack) = read_one(&mut input, &c).await;
+    assert_eq!(&*b[0].as_bytes_ref(), b"in flight");
+    assert_eq!(
+        b[0].meta_get_str("amqp_redelivered"),
+        "true",
+        "the refused ack left the message with the broker"
+    );
+    ack.ack();
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    input.close().await.expect("close");
+    let left = ch
+        .queue_delete(queue.as_str().into(), Default::default())
+        .await
+        .expect("delete");
+    assert_eq!(left, 0, "the second ack removed the message");
+    let _ = conn.close(200, "test done".into()).await;
+}
+
 /// A broker that refuses the connection is retried with a doubling wait, so a stream does not
 /// hammer a broker that is down.
 #[tokio::test]
