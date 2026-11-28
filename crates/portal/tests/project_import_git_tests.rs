@@ -542,6 +542,11 @@ async fn an_archive_that_does_not_check_creates_nothing() {
             vec![("parameters", r#"{"colour":"red"}"#)],
             "colour",
         ),
+        (
+            archive(PROJECT, |_| {}),
+            vec![("parameters", r#"{"audience":["public"]}"#)],
+            "the registry entry does not load",
+        ),
     ] {
         let answer = import(&state, person("jana"), "?format=git", &file, &fields).await;
         assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
