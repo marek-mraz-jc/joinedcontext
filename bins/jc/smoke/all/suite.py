@@ -10,7 +10,8 @@
 Each suite runs as its own process (`run <suite>`) into <out>/<suite>/ with the common flags it
 declares; logs runs last and scans the others' result dirs. A suite that dies without results.json
 is one failing row; one refused for a missing required flag is one skip row naming it. --e2e runs
-`cargo test --locked -p jc --tests` and turns every test into a row. Writes <out>/results.json
+`cargo test --locked -p jc --test '*'` (bins/jc/tests; the bin's unit tests run in ci.yml root-test,
+with their databases) and turns every test into a row. Writes <out>/results.json
 (one row per check, ids prefixed with the suite) and <out>/REPORT.md (suite, checks, pass, fail,
 skip, then the failures). Answers 0 only when no check failed outside the --known list.
 `--with SUITE@VARIANT=ARGS` runs SUITE a second time right after its first run, with ARGS, into
@@ -182,7 +183,7 @@ def parse_e2e(text: str, call: str) -> list[dict]:
 def run_e2e(out: Path, timeout: float) -> dict:
     d = out / "e2e"
     d.mkdir(parents=True, exist_ok=True)
-    cmd = ["cargo", "test", "--locked", "-p", "jc", "--tests", "--no-fail-fast"]
+    cmd = ["cargo", "test", "--locked", "-p", "jc", "--test", "*", "--no-fail-fast"]
     call = " ".join(cmd)
     started = time.time()
     with (d / "run.log").open("wb") as fo:
@@ -311,7 +312,7 @@ def main(argv=None) -> int:
     p.add_argument("--rate", type=float, default=5.0, help="live mode: requests per second, all suites together")
     for f in COMMON:
         p.add_argument(f)
-    p.add_argument("--e2e", action="store_true", help="also cargo test -p jc --tests (from the repository root)")
+    p.add_argument("--e2e", action="store_true", help="also cargo test -p jc --test '*' (from the repository root)")
     p.add_argument("--only", default="", help="comma list of suites (default: every suite present)")
     p.add_argument("--skip", default="", help="comma list of suites to leave out")
     p.add_argument("--with", dest="extra_args", action="append", default=[], metavar="SUITE=ARGS",
@@ -380,11 +381,11 @@ def main(argv=None) -> int:
         runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "", "rows": [
             row("e2e", "cargo", "", "ok", "not run", SKIP, "live mode: jc's e2e tests run on the rehearsal")]})
     elif e2e:
-        print("all: e2e (cargo test -p jc --tests) ...", flush=True)
+        print("all: e2e (cargo test -p jc --test '*') ...", flush=True)
         runs.append(run_e2e(out, a.suite_timeout))
     elif not a.shard:
         runs.append({"suite": "e2e", "seconds": 0, "exit": None, "call": "",
-                     "rows": [row("e2e", "cargo", "cargo test --locked -p jc --tests", "ok", "not run", SKIP,
+                     "rows": [row("e2e", "cargo", "cargo test --locked -p jc --test '*'", "ok", "not run", SKIP,
                                   "pass --e2e to run jc's e2e tests")]})
     known = load_known(a.known)
     fixed = mark_known([r for x in runs for r in x["rows"]], known)
