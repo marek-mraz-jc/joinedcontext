@@ -6,7 +6,7 @@
 # to now, imports it through deploy/rehearsal/import.sh (PostgreSQL in docker, `jc --role all` on a
 # loopback bind) and runs every smoke suite with the rehearsal's state, log and admin listener.
 # JC_BIN names the jc binary (kaisatsu and daiya beside it); SMOKE_E2E=1 adds `cargo test -p jc
-# --tests`; SMOKE_ARGS adds flags to `run all`. SMOKE_SHARD=<name> with SMOKE_ONLY / SMOKE_SKIP (comma
+# --test '*'`; SMOKE_ARGS adds flags to `run all`. SMOKE_SHARD=<name> with SMOKE_ONLY / SMOKE_SKIP (comma
 # lists of run names, `run all --only/--skip`) and SMOKE_WITH (one more --with) runs one shard of the
 # CI gate: only the multiorg jcs its runs need are imported; ci/merge.py folds the shards' verdicts.
 # Beside it, two more jcs on the six-Organization bundle compose.py makes of synth-export.tgz (hel,

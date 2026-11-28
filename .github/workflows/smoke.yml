@@ -1,7 +1,7 @@
 name: smoke
 # The smoke gate: jc built from the pushed commit, started on synthetic data (the committed
 # bins/jc/smoke/ci/synth-export.tgz, moved to now), and every smoke suite (endpoints, mcp, pipelines,
-# charts-apps, logs, ui, whichever are present) plus jc's e2e tests (`cargo test -p jc --tests`)
+# charts-apps, logs, ui, whichever are present) plus jc's e2e tests (`cargo test -p jc --test '*'`)
 # against it, one summary table and one verdict. A red verdict fails the `verdict` job; the merged
 # results.json and REPORT.md with every shard's files are the smoke-all artifact. Nothing here
 # reaches dev or prod: the suites refuse any host but loopback.
