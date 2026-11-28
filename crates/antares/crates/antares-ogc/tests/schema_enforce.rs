@@ -89,7 +89,10 @@ async fn a_model_refusal_of_a_shown_property_is_answered_with_its_detail() -> Re
     )
     .await;
     assert_eq!(s, StatusCode::BAD_REQUEST, "{body}");
-    let detail = body["detail"].as_str().unwrap_or_default();
+    let detail = body
+        .get("detail")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
     assert!(
         detail.contains("colour") && detail.contains(linkml_model::check::MARK),
         "the refusal names the property: {body}"
