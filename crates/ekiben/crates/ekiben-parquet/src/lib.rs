@@ -708,13 +708,11 @@ mod tests {
             .build()
             .expect("root");
         assert_eq!(repetition(&root), Repetition::REQUIRED);
-        let field = parquet::schema::types::Type::primitive_type_builder(
-            "n",
-            parquet::basic::Type::INT32,
-        )
-        .with_repetition(Repetition::OPTIONAL)
-        .build()
-        .expect("field");
+        let field =
+            parquet::schema::types::Type::primitive_type_builder("n", parquet::basic::Type::INT32)
+                .with_repetition(Repetition::OPTIONAL)
+                .build()
+                .expect("field");
         assert_eq!(repetition(&field), Repetition::OPTIONAL);
     }
 

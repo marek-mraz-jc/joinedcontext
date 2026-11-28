@@ -566,14 +566,10 @@ async fn a_pass_that_cannot_read_the_partition_tree_defers_both_index_builds() {
         .await
         .expect("role pool");
 
-    let summary = temporal_maintenance(
-        &limited,
-        TemporalBackend::Partitioned,
-        None,
-        Duration::ZERO,
-    )
-    .await
-    .expect("a refused step is a line, never the pass's error");
+    let summary =
+        temporal_maintenance(&limited, TemporalBackend::Partitioned, None, Duration::ZERO)
+            .await
+            .expect("a refused step is a line, never the pass's error");
     let got = lines(&summary);
     for want in [
         "history index build deferred (",

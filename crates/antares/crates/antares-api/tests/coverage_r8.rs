@@ -24,7 +24,10 @@ async fn get(st: &AppState, uri: &str) -> (StatusCode, Value) {
         .expect("answer");
     let status = resp.status();
     let bytes = resp.into_body().collect().await.expect("body").to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// T-6770: a GET of a reminted id answers the Entity under its new id. When the new id reads as
@@ -56,7 +59,10 @@ async fn call(st: &AppState, method: &str, uri: &str, body: Option<Value>) -> (S
         .expect("answer");
     let status = resp.status();
     let bytes = resp.into_body().collect().await.expect("body").to_bytes();
-    (status, serde_json::from_slice(&bytes).unwrap_or(Value::Null))
+    (
+        status,
+        serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+    )
 }
 
 /// Delete Entities by query (purge): an Entity another writer deleted between the query and the
@@ -117,5 +123,8 @@ async fn a_federated_replace_keeps_an_entity_a_racing_write_retyped() {
     assert_ne!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, now) = get(&st, &format!("/ngsi-ld/v1/entities/{ID}?local=true")).await;
     assert_eq!(status, StatusCode::OK, "{now}");
-    assert_eq!(now["type"], "Building", "the racing write's Entity stands: {now}");
+    assert_eq!(
+        now["type"], "Building",
+        "the racing write's Entity stands: {now}"
+    );
 }

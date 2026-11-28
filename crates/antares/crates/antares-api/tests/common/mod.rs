@@ -661,7 +661,9 @@ impl CurrentStateDriver for Double {
         ids: &[String],
     ) -> Result<Vec<bool>, NgsiError> {
         if self.vanish_first {
-            self.inner.batch_delete(tenant, &ids[..ids.len().min(1)]).await?;
+            self.inner
+                .batch_delete(tenant, &ids[..ids.len().min(1)])
+                .await?;
         }
         self.inner.batch_delete(tenant, ids).await
     }

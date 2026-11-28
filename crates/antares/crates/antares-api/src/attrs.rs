@@ -1766,7 +1766,10 @@ mod attr_name_and_via_paths {
                 let head = String::from_utf8_lossy(&buf[..n]).into_owned();
                 let line = head.lines().next().unwrap_or_default().to_owned();
                 let target = line.split_whitespace().nth(1).unwrap_or_default();
-                seen_targets.lock().expect("targets").push(target.to_owned());
+                seen_targets
+                    .lock()
+                    .expect("targets")
+                    .push(target.to_owned());
                 let _ = s.write_all(
                     b"HTTP/1.1 204 No Content\r\nConnection: close\r\nContent-Length: 0\r\n\r\n",
                 );

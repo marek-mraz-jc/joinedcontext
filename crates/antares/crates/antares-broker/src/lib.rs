@@ -2248,8 +2248,9 @@ mod fault_store;
 #[cfg(test)]
 pub(crate) mod test_env {
     pub fn db() -> String {
-        std::env::var("ANTARES_TEST_DATABASE_URL")
-            .expect("ANTARES_TEST_DATABASE_URL: the antares:antares Postgres ci.yml antares-test runs")
+        std::env::var("ANTARES_TEST_DATABASE_URL").expect(
+            "ANTARES_TEST_DATABASE_URL: the antares:antares Postgres ci.yml antares-test runs",
+        )
     }
 
     pub fn nats() -> Option<String> {
@@ -2602,12 +2603,14 @@ mod accept_loop_tests {
             let waited =
                 tokio::time::timeout(std::time::Duration::from_millis(350), accept(&listener))
                     .await;
-            assert!(waited.is_err(), "no descriptor, no connection: accept retries");
+            assert!(
+                waited.is_err(),
+                "no descriptor, no connection: accept retries"
+            );
             drop(held);
-            let served =
-                tokio::time::timeout(std::time::Duration::from_secs(5), accept(&listener))
-                    .await
-                    .expect("a free descriptor serves the waiting connection");
+            let served = tokio::time::timeout(std::time::Duration::from_secs(5), accept(&listener))
+                .await
+                .expect("a free descriptor serves the waiting connection");
             assert_eq!(
                 served.peer_addr().expect("peer").port(),
                 client.local_addr().expect("local").port()
