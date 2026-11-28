@@ -630,6 +630,72 @@ mod paging_store {
             }
         }
     }
+
+    /// 5.8.6 over Postgres: a periodic Subscription's `q` is decided by the store, which
+    /// expands each term it names through the Subscription's context; the Notification
+    /// carries the Entities the expanded `q` selects and none it does not.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn clause_5_8_6_a_periodic_q_is_expanded_for_the_store() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let Some((st, tenant)) = pg_state(2, "periodicq").await else {
+            return;
+        };
+        for (n, speed) in [("fast1", 30), ("slow", 5), ("fast2", 40)] {
+            let e = json!({"id": format!("urn:ngsi-ld:Vehicle:{n}"), "type": "Vehicle",
+                           "speed": {"type": "Property", "value": speed}});
+            let (status, _, body) = send_t(
+                &st,
+                &tenant,
+                "POST",
+                "/ngsi-ld/v1/entities",
+                Some(e.to_string()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("listener");
+        let port = listener.local_addr().expect("addr").port();
+        let id = "urn:ngsi-ld:Subscription:periodic-q";
+        let created = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10);
+        let sub = json!({"id": id, "type": "Subscription", "timeInterval": 1,
+            "createdAt": created.to_rfc3339(),
+            "entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}],
+            "q": "speed>10",
+            "notification": {"endpoint": {"uri": format!("http://127.0.0.1:{port}/n")}}});
+        st.store
+            .create(&tenant, Kind::Subscription, id, sub.clone())
+            .await
+            .expect("subscription row");
+        if let Some(m) = &st.sub_mirror {
+            m.apply(tenant.as_str(), id, Some(sub));
+        }
+
+        antares_api::notify::interval_tick(&st).await;
+
+        let mut seen = String::new();
+        let read = async {
+            while !(seen.contains("fast1") && seen.contains("fast2")) {
+                let (mut socket, _) = listener.accept().await.expect("accept");
+                let mut buf = vec![0_u8; 64 << 10];
+                let n = socket.read(&mut buf).await.expect("read");
+                seen.push_str(&String::from_utf8_lossy(buf.get(..n).unwrap_or_default()));
+                let _ = socket
+                    .write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\n\r\n")
+                    .await;
+            }
+        };
+        tokio::time::timeout(std::time::Duration::from_secs(20), read)
+            .await
+            .expect("the periodic Notification arrives");
+        assert!(!seen.contains("Vehicle:slow"), "{seen}");
+        clear(&st, &tenant).await;
+        st.store
+            .delete(&tenant, Kind::Subscription, id)
+            .await
+            .expect("clean");
+    }
 }
 
 /// 5.8.6: a periodic Subscription whose stored `q` no longer parses (one
