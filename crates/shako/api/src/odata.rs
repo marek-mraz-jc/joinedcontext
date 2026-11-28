@@ -646,10 +646,8 @@ async fn apply_pr_expansions(
 
     // Each row is a pull request this module serialised: an object with its repository's id.
     for row in rows.iter_mut().filter_map(Value::as_object_mut) {
-        let Some(repo_id_str) = row.get("RepoId").and_then(Value::as_str) else {
-            continue;
-        };
-        let Ok(repo_id) = repo_id_str.parse::<RepoId>() else {
+        let repo_id = row.get("RepoId").and_then(Value::as_str);
+        let Some(repo_id) = repo_id.and_then(|id| id.parse::<RepoId>().ok()) else {
             continue;
         };
         let Some(num) = row.get("Number").and_then(Value::as_u64) else {

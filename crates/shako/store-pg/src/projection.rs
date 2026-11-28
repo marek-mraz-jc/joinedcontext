@@ -28,7 +28,7 @@ pub(crate) async fn lock(tx: &mut Tx, tenant: (InstanceId, OrgId)) -> ShakoResul
 
 /// Appends `op` to the tenant's log.
 pub(crate) async fn append(tx: &mut Tx, tenant: (InstanceId, OrgId), op: &Op) -> ShakoResult<At> {
-    let doc = serde_json::to_value(op).map_err(|e| ShakoError::Storage(e.to_string()))?;
+    let doc = serde_json::to_value(op).map_err(tables::unserialisable)?;
     let (seq, time): (i64, String) = sqlx::query_as(
         "INSERT INTO shako.store_log (instance_id, org_id, op) VALUES ($1, $2, $3)
          RETURNING seq, to_jsonb(created_at) #>> '{}'",
@@ -183,11 +183,11 @@ async fn entry_after(
 }
 
 fn record(value: impl serde::Serialize) -> ShakoResult<Value> {
-    serde_json::to_value(value).map_err(|e| ShakoError::Storage(e.to_string()))
+    serde_json::to_value(value).map_err(tables::unserialisable)
 }
 
 fn hidden_record(result: Result<Value, serde_json::Error>) -> ShakoResult<Value> {
-    result.map_err(|e| ShakoError::Storage(e.to_string()))
+    result.map_err(tables::unserialisable)
 }
 
 async fn replace(tx: &mut Tx, table: &Table, record: Value) -> ShakoResult<Value> {

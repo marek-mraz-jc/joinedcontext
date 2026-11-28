@@ -496,11 +496,13 @@ pub fn evaluate_pipeline(
         ordered_refs.push(r.clone());
         if let Some(deps) = dependents.get(&r) {
             for dep in deps {
-                if let Some(deg) = in_degree.get_mut(dep) {
+                // Every dependent is a node, so it has an in-degree.
+                let left = in_degree.get_mut(dep).map(|deg| {
                     *deg -= 1;
-                    if *deg == 0 {
-                        queue.push_back(dep.clone());
-                    }
+                    *deg
+                });
+                if left == Some(0) {
+                    queue.push_back(dep.clone());
                 }
             }
         }

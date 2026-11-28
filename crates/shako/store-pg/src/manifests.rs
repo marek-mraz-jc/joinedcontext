@@ -55,10 +55,9 @@ impl PgStore {
             after = id;
             let computed = format!("sha256:{}", sha256_hex(&bytes));
             if computed != digest || validate_repo_or_owner_name(&owner, "owner").is_err() {
-                tracing::error!(
-                    %id,
-                    "shako: a stored manifest does not match its digest or owner; left in its row"
-                );
+                let msg =
+                    "shako: a stored manifest does not match its digest or owner; left in its row";
+                tracing::error!(%id, "{msg}");
                 continue;
             }
             let size_bytes = bytes.len() as u64;

@@ -545,10 +545,7 @@ impl PgStore {
         let pool = self.pool.clone();
         let gen_counter = self.reload_generation.clone();
         tokio::spawn(async move {
-            while let Ok(mut listener) = PgListener::connect_with(&pool).await {
-                if listener.listen("kaisatsu_changed").await.is_err() {
-                    break;
-                }
+            while let Ok(mut listener) = change_listener(&pool).await {
                 // Full reload on connect/reconnect
                 gen_counter.fetch_add(1, Ordering::SeqCst);
                 while listener.recv().await.is_ok() {
@@ -633,6 +630,13 @@ impl PgStore {
         .map_err(storage)?;
         Ok(())
     }
+}
+
+/// A listener on `kaisatsu_changed`: the connection and the LISTEN both have to succeed.
+async fn change_listener(pool: &PgPool) -> sqlx::Result<PgListener> {
+    let mut listener = PgListener::connect_with(pool).await?;
+    listener.listen("kaisatsu_changed").await?;
+    Ok(listener)
 }
 
 fn sso_from_row(row: (Value, String)) -> Result<SsoSession> {

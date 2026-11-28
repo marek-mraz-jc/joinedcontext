@@ -82,32 +82,14 @@ pub fn validate_provisioning_path(
         };
         // Resolve the deepest part that exists (symlinks included) and keep the rest, which has
         // no `..`, so a symlink inside the root cannot lead outside it even for a path that
-        // does not exist yet.
-        let mut existing = joined.as_path();
-        let mut rest: Vec<&std::ffi::OsStr> = Vec::new();
-        let resolved = loop {
-            match existing.canonicalize() {
-                Ok(c) => break c,
-                Err(_) => {
-                    let Some(name) = existing.file_name() else {
-                        return Err(CrError::Forbidden(format!(
-                            "provisioning path '{candidate_path}' cannot be resolved"
-                        )));
-                    };
-                    rest.push(name);
-                    let Some(parent) = existing.parent() else {
-                        return Err(CrError::Forbidden(format!(
-                            "provisioning path '{candidate_path}' cannot be resolved"
-                        )));
-                    };
-                    existing = parent;
-                }
-            }
-        };
-        let mut target = resolved;
-        for part in rest.into_iter().rev() {
-            target.push(part);
-        }
+        // does not exist yet. `/` always resolves; were nothing to, the empty target below
+        // fails the root check.
+        let (base, mut target) = joined
+            .ancestors()
+            .find_map(|a| Some((a, a.canonicalize().ok()?)))
+            .unwrap_or((joined.as_path(), PathBuf::new()));
+        let rest = joined.strip_prefix(base).ok();
+        target.extend(rest.filter(|rest| !rest.as_os_str().is_empty()));
         if !target.starts_with(&canon_root) {
             return Err(CrError::Forbidden(format!(
                 "provisioning path '{candidate_path}' escapes allowed root directory"
@@ -458,6 +440,26 @@ mod tests {
 
         let ok = validate_provisioning_path("dashboards/team", Some(&root)).unwrap();
         assert!(ok.starts_with(root.canonicalize().unwrap()));
+        // An existing path is its canonical form exactly, no separator added; a missing one is
+        // its deepest existing ancestor's canonical form with the rest in order.
+        let canon = root.canonicalize().unwrap();
+        assert_eq!(ok, canon.join("dashboards/team"));
+        assert_eq!(
+            validate_provisioning_path("dashboards/team/a/b.json", Some(&root)).unwrap(),
+            canon.join("dashboards/team/a/b.json")
+        );
+        assert_eq!(validate_provisioning_path(".", Some(&root)).unwrap(), canon);
+        let file = root.join("dashboards/team/one.json");
+        std::fs::write(&file, "{}").unwrap();
+        assert_eq!(
+            validate_provisioning_path("dashboards/team/one.json", Some(&root)).unwrap(),
+            canon.join("dashboards/team/one.json")
+        );
+        // Below a file nothing exists; the path still resolves inside the root.
+        assert_eq!(
+            validate_provisioning_path("dashboards/team/one.json/x", Some(&root)).unwrap(),
+            canon.join("dashboards/team/one.json/x")
+        );
         let later = validate_provisioning_path("dashboards/new-team", Some(&root)).unwrap();
         assert!(later.ends_with("dashboards/new-team"));
         let abs_inside = root.join("dashboards");

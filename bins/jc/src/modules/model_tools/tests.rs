@@ -300,6 +300,32 @@ async fn the_broker_schema_keeps_the_title_description_and_license() {
     );
 }
 
+/// A class with neither slots nor slot usage and an enum with no values still compile: the
+/// enum is kept with no values and the bare class has no properties of its own.
+#[tokio::test]
+async fn a_bare_class_and_an_enum_without_values_compile() {
+    let source = MODEL
+        .replacen(
+            "slots:\n  status:",
+            "  Marker:\n    description: A class with nothing of its own.\nslots:\n  status:",
+            1,
+        )
+        .replacen(
+            "enums:\n",
+            "enums:\n  Unset:\n    description: No value yet.\n",
+            1,
+        );
+    let (status, out) = call("POST", "/generate", json!({"source": source}).to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(errors_of(&out), Vec::<String>::new());
+    let unset = &out["brokerSchema"]["enums"]["Unset"];
+    assert_eq!(unset["name"], "Unset", "{out}");
+    assert!(
+        out["brokerSchema"]["classes"]["Marker"].is_object(),
+        "{out}"
+    );
+}
+
 #[tokio::test]
 async fn a_body_past_the_cap_is_refused_before_it_is_read_whole() {
     let big = json!({"source": format!("{MODEL}\n# {}", "x".repeat(MAX_BODY_BYTES))}).to_string();

@@ -7,7 +7,7 @@ use axum::Json;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::{Extension, State};
-use axum::http::{HeaderMap, HeaderValue, Request, StatusCode};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -74,9 +74,9 @@ async fn security_and_mount_headers(
     if let Ok(hv) = HeaderValue::from_str(&public_base) {
         headers.insert("x-shako-public-base", hv);
     }
-    if let Ok(hv) = HeaderValue::from_str(&cookie_name) {
-        headers.insert("x-shako-cookie-name", hv);
-    }
+    // The cookie name is one of two fixed ASCII names (jc_router::Mount::cookie_name).
+    let cookie = HeaderValue::from_str(&cookie_name).ok();
+    headers.extend(cookie.map(|hv| (HeaderName::from_static("x-shako-cookie-name"), hv)));
     resp
 }
 

@@ -7,7 +7,7 @@
 
 use axum::body::Body;
 use axum::extract::Extension;
-use axum::http::{HeaderValue, Request, StatusCode};
+use axum::http::{HeaderName, HeaderValue, Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -107,9 +107,9 @@ async fn security_and_mount_headers(
     if let Ok(hv) = HeaderValue::from_str(&public_base) {
         headers.insert("x-daiya-public-base", hv);
     }
-    if let Ok(hv) = HeaderValue::from_str(&cookie_name) {
-        headers.insert("x-daiya-cookie-name", hv);
-    }
+    // The cookie name is one of two fixed ASCII names (jc_router::Mount::cookie_name).
+    let cookie = HeaderValue::from_str(&cookie_name).ok();
+    headers.extend(cookie.map(|hv| (HeaderName::from_static("x-daiya-cookie-name"), hv)));
     resp
 }
 

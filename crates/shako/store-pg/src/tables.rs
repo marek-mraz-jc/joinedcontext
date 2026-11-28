@@ -85,6 +85,12 @@ pub(crate) fn failed(e: sqlx::Error) -> ShakoError {
     }
 }
 
+/// A record or op that does not become JSON; every one is a derived struct, so this names
+/// what a future field type that cannot serialise would cause.
+pub(crate) fn unserialisable(e: serde_json::Error) -> ShakoError {
+    ShakoError::Storage(e.to_string())
+}
+
 fn unreadable(e: impl std::fmt::Display) -> ShakoError {
     ShakoError::Storage(format!("stored record unreadable: {e}"))
 }
@@ -180,6 +186,18 @@ pub(crate) enum Taken {
     Keep,
 }
 
+/// The names are our own records' field names; nothing else becomes an identifier.
+fn column_names(columns: &[&str]) -> ShakoResult<()> {
+    if !columns.iter().all(|c| {
+        !c.is_empty()
+            && c.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    }) {
+        return Err(ShakoError::Storage("a field is no column name".into()));
+    }
+    Ok(())
+}
+
 /// Writes `row`; answers the record as stored.
 pub(crate) async fn put(
     tx: &mut Tx,
@@ -188,14 +206,7 @@ pub(crate) async fn put(
     taken: Taken,
 ) -> ShakoResult<Option<Value>> {
     let columns: Vec<&str> = row.keys().map(String::as_str).collect();
-    // The names are our own records' field names; nothing else becomes an identifier.
-    if !columns.iter().all(|c| {
-        !c.is_empty()
-            && c.bytes()
-                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
-    }) {
-        return Err(ShakoError::Storage("a field is no column name".into()));
-    }
+    column_names(&columns)?;
     let columns: Vec<String> = columns.iter().map(|c| format!("\"{c}\"")).collect();
     let update = columns
         .iter()
@@ -287,12 +298,42 @@ mod tests {
     }
 
     #[test]
+    fn a_value_that_does_not_serialise_is_a_storage_error() {
+        let e = serde_json::from_str::<Value>("{").expect_err("not JSON");
+        let text = e.to_string();
+        assert_eq!(unserialisable(e), ShakoError::Storage(text));
+    }
+
+    #[test]
     fn an_error_without_a_unique_violation_is_a_storage_error() {
         let err = failed(sqlx::Error::RowNotFound);
         assert!(
             matches!(&err, ShakoError::Storage(m) if m.contains("no rows")),
             "{err:?}"
         );
+    }
+
+    /// Only a snake-case field name becomes a column: a quote, a capital, a space, a dash or an
+    /// empty name is refused before any SQL is written.
+    #[test]
+    fn only_a_snake_case_field_becomes_a_column() {
+        column_names(&[]).expect("no column");
+        column_names(&["id", "owner_name", "v2"]).expect("snake case");
+        for bad in [
+            "",
+            "ownerName",
+            "a\"; DROP TABLE x; --",
+            "a b",
+            "a-b",
+            "\u{e9}",
+        ] {
+            let err = column_names(&["id", bad]).expect_err(bad);
+            assert_eq!(
+                err,
+                ShakoError::Storage("a field is no column name".into()),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

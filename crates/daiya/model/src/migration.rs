@@ -275,42 +275,41 @@ fn migrate_panel_datasources_internal(
     let mut updated_panel_ds: Option<Value> = None;
     let current_panel_ds = panel_map.get("datasource").cloned();
 
-    if let Some(targets) = panel_map.get_mut("targets").and_then(Value::as_array_mut) {
-        for target in targets {
-            let Some(target_map) = target.as_object_mut() else {
-                continue;
-            };
-            let target_ds = target_map.get("datasource");
-            let needs_default = match target_ds {
-                None | Some(Value::Null) => true,
-                Some(Value::Object(m)) => {
-                    matches!(m.get("uid"), None | Some(Value::Null))
-                }
-                _ => false,
-            };
-
-            if needs_default {
-                let effective_panel_ds = updated_panel_ds.as_ref().or(current_panel_ds.as_ref());
-                if let Some(Value::Object(p_ds)) = effective_panel_ds {
-                    let uid = p_ds.get("uid").and_then(Value::as_str).unwrap_or("");
-                    if uid != "-- Mixed --" {
-                        target_map.insert("datasource".to_owned(), Value::Object(p_ds.clone()));
-                    } else {
-                        let migrated = migrate_datasource_name_to_ref(target_ds, false, index);
-                        target_map.insert("datasource".to_owned(), migrated);
-                    }
-                }
-            } else {
-                let migrated = migrate_datasource_name_to_ref(target_ds, false, index);
-                target_map.insert("datasource".to_owned(), migrated);
+    // A panel here has targets (the default one at least, inserted above).
+    let targets = panel_map.get_mut("targets").and_then(Value::as_array_mut);
+    for target in targets.into_iter().flatten() {
+        let Some(target_map) = target.as_object_mut() else {
+            continue;
+        };
+        let target_ds = target_map.get("datasource");
+        let needs_default = match target_ds {
+            None | Some(Value::Null) => true,
+            Some(Value::Object(m)) => {
+                matches!(m.get("uid"), None | Some(Value::Null))
             }
+            _ => false,
+        };
 
-            if panel_ds_was_default && let Some(Value::Object(t_ds)) = target_map.get("datasource")
-            {
-                let uid = t_ds.get("uid").and_then(Value::as_str).unwrap_or("");
-                if !uid.is_empty() && uid != "__expr__" {
-                    updated_panel_ds = Some(Value::Object(t_ds.clone()));
+        if needs_default {
+            let effective_panel_ds = updated_panel_ds.as_ref().or(current_panel_ds.as_ref());
+            if let Some(Value::Object(p_ds)) = effective_panel_ds {
+                let uid = p_ds.get("uid").and_then(Value::as_str).unwrap_or("");
+                if uid != "-- Mixed --" {
+                    target_map.insert("datasource".to_owned(), Value::Object(p_ds.clone()));
+                } else {
+                    let migrated = migrate_datasource_name_to_ref(target_ds, false, index);
+                    target_map.insert("datasource".to_owned(), migrated);
                 }
+            }
+        } else {
+            let migrated = migrate_datasource_name_to_ref(target_ds, false, index);
+            target_map.insert("datasource".to_owned(), migrated);
+        }
+
+        if panel_ds_was_default && let Some(Value::Object(t_ds)) = target_map.get("datasource") {
+            let uid = t_ds.get("uid").and_then(Value::as_str).unwrap_or("");
+            if !uid.is_empty() && uid != "__expr__" {
+                updated_panel_ds = Some(Value::Object(t_ds.clone()));
             }
         }
     }
@@ -906,13 +905,14 @@ pub fn migrate_to_latest(
         steps_applied.push(step);
     }
 
-    // Ensure canonical schemaVersion 42 even if original was >= 42
-    if let Some(obj) = dashboard.as_object_mut() {
+    // Ensure canonical schemaVersion 42 even if original was >= 42 (the dashboard is an object,
+    // checked on entry, and every step keeps it one).
+    dashboard.as_object_mut().into_iter().for_each(|obj| {
         obj.insert(
             "schemaVersion".to_owned(),
             Value::from(LATEST_SCHEMA_VERSION),
         );
-    }
+    });
     *dashboard = CanonicalJson::canonicalize(dashboard);
 
     Ok(MigrationReport {
