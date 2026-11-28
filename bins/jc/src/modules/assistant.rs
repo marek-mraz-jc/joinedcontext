@@ -973,6 +973,8 @@ mod tests {
             "JC_MODEL_KEY" => Some("sk-or-v1-from-env".to_owned()),
             _ => None,
         };
+        // The environment holds a key; the table the proxy reads still names none.
+        assert!(env("JC_MODEL_KEY").is_some());
         let table = proxy_lookup(&siblings, &setup::Realm::default(), &[], &env);
         assert_eq!(table["JC_MODEL_BASE"], "https://models.example/v1");
         assert_eq!(table["JC_PROXY_BIND"], "127.0.0.1:0");
@@ -1034,6 +1036,12 @@ mod tests {
         assert!(!table.contains_key("JC_FORGE_BASE"), "{table:?}");
         assert!(!table.contains_key("JC_GATEWAY_BASE"), "{table:?}");
         assert!(!table.contains_key("JC_OIDC_ORGANIZATION_REALMS"));
+        // Without kaisatsu in this jc the proxy names no issuer, yet keeps its own client id.
+        siblings.remove(Module::Kaisatsu);
+        let table = proxy_lookup(&siblings, &setup::Realm::default(), &orgs, &none);
+        assert!(!table.contains_key("JC_OIDC_ISSUER"), "{table:?}");
+        assert!(!table.contains_key("JC_OIDC_ORGANIZATION_REALMS"));
+        assert_eq!(table["JC_OIDC_CLIENT_ID"], setup::PROXY_CLIENT);
     }
 
     /// The proxy refuses a model base that is no URL before it binds; without shako it holds no
@@ -1049,14 +1057,21 @@ mod tests {
         let setup = Setup::prepare(dir.path(), &roles, &BTreeMap::new()).unwrap();
         assert!(setup.value(Secret::ShakoToken).is_none());
         let bad = |k: &str| (k == "JC_MODEL_BASE").then(|| "not a url".to_owned());
-        let Err(why) = proxy(&siblings, &setup, &[], &bad, &key).await else {
-            panic!("a model base that is no URL built a proxy");
-        };
+        let why = proxy(&siblings, &setup, &[], &bad, &key)
+            .await
+            .err()
+            .expect("a model base that is no URL built a proxy");
         assert!(why.contains("the model proxy is not configured"), "{why}");
         let none = |_: &str| None;
         let built = proxy(&siblings, &setup, &[], &none, &key)
             .await
             .expect("the proxy builds without shako");
+        // Without kaisatsu in this jc it follows no sign-in set and still builds.
+        let mut alone = siblings.clone();
+        alone.remove(Module::Kaisatsu);
+        proxy(&alone, &setup, &[], &none, &key)
+            .await
+            .expect("the proxy builds without kaisatsu");
         let logs = Captured::default();
         let writer = logs.clone();
         let subscriber = tracing_subscriber::fmt()
@@ -1098,10 +1113,10 @@ mod tests {
             _ => None,
         };
         let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
-        let Err(why) = try_start(&cfg, &setup, &siblings, &secrets, &env, &shutdown, &tasks).await
-        else {
-            panic!("a start without the embedding model went on");
-        };
+        let why = try_start(&cfg, &setup, &siblings, &secrets, &env, &shutdown, &tasks)
+            .await
+            .err()
+            .expect("a start without the embedding model went on");
         assert!(why.contains("JC_ASSISTANT_MODEL_DIR"), "{why}");
         assert!(tasks.is_empty(), "nothing was spawned");
     }
@@ -1162,9 +1177,10 @@ mod tests {
         let why = missing(&cfg, &siblings, &setup, &gone).unwrap();
         assert!(why.contains("does not exist"), "{why}");
         // Neither the model nor ONNX Runtime named: the in-process embedder does not load.
-        let Err(why) = embedder(&none).await else {
-            panic!("an embedder without its model loaded");
-        };
+        let why = embedder(&none)
+            .await
+            .err()
+            .expect("an embedder without its model loaded");
         assert!(why.contains("is unset"), "{why}");
         let bare_dir = tempfile::tempdir().unwrap();
         let bare = Setup::prepare(bare_dir.path(), &[], &BTreeMap::new()).unwrap();
@@ -1242,9 +1258,10 @@ mod tests {
         // A service named without its secret file does not start.
         let mut broken = filled.clone();
         broken.remove("JC_ASSISTANT_EMBEDDER_CLIENT_SECRET_FILE");
-        let Err(why) = embedder(&lookup(&none, &broken)).await else {
-            panic!("a service without its secret file started");
-        };
+        let why = embedder(&lookup(&none, &broken))
+            .await
+            .err()
+            .expect("a service without its secret file started");
         assert!(why.contains("CLIENT_SECRET_FILE"), "{why}");
     }
 
@@ -1543,9 +1560,10 @@ mod tests {
             }
         };
         let empty = empty_model.display().to_string();
-        let Err(why) = embedder(&pick(empty, ort.clone())).await else {
-            panic!("an empty directory loaded as the embedding model");
-        };
+        let why = embedder(&pick(empty, ort.clone()))
+            .await
+            .err()
+            .expect("an empty directory loaded as the embedding model");
         assert!(
             why.starts_with("the embedding model is not usable"),
             "{why}"
@@ -1559,11 +1577,10 @@ mod tests {
             other => model(other),
         };
         let (stop, held) = (CancellationToken::new(), TaskTracker::new());
-        let Err(why) =
-            try_start(&cfg, &setup, &siblings, &secrets, &bad_portal, &stop, &held).await
-        else {
-            panic!("a Portal address the chat cannot use started the assistant");
-        };
+        let why = try_start(&cfg, &setup, &siblings, &secrets, &bad_portal, &stop, &held)
+            .await
+            .err()
+            .expect("a Portal address the chat cannot use started the assistant");
         assert!(why.starts_with("the Portal address is not usable"), "{why}");
         assert!(held.is_empty(), "nothing was spawned");
         let env = pick(model_dir, ort);

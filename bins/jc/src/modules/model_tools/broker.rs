@@ -182,10 +182,11 @@ pub(super) fn broker_schema(view: &View) -> Result<Value, String> {
     let mut class_names: Vec<&String> = schema.classes.keys().collect();
     class_names.sort();
     let mut classes = Map::new();
-    for name in class_names {
-        let Some(cls) = view.class(name) else {
-            continue;
-        };
+    // Every name is a key of `schema.classes`, so the view finds each one.
+    for (name, cls) in class_names
+        .into_iter()
+        .filter_map(|n| Some((n, view.class(n)?)))
+    {
         let names = view.class_slots(name)?;
         let mut slot_usage = Map::new();
         for slot_name in &names {

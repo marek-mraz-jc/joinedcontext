@@ -189,10 +189,8 @@ pub fn parse_roles(raw: &str) -> Result<Vec<Module>, RoleError> {
             continue;
         }
         let module: Module = part.parse()?;
-        if !module.compiled_in() {
-            return Err(RoleError::NotCompiled(module.name().to_owned()));
-        }
-        out.push(module);
+        let compiled = module.compiled_in().then_some(module);
+        out.push(compiled.ok_or(RoleError::NotCompiled(module.name().to_owned()))?);
     }
     if out.is_empty() {
         return Err(RoleError::Empty);
@@ -252,6 +250,19 @@ mod tests {
         assert_eq!(parse_roles(&twice).unwrap(), vec![first]);
     }
 
+    #[cfg(not(all(
+        feature = "kaisatsu",
+        feature = "dataroom",
+        feature = "daiya",
+        feature = "ekiben",
+        feature = "antares",
+        feature = "gateway",
+        feature = "portal",
+        feature = "shako",
+        feature = "model-tools",
+        feature = "assistant",
+        feature = "viz"
+    )))]
     #[test]
     fn a_module_not_compiled_in_is_refused() {
         if let Some(missing) = Module::ALL.into_iter().find(|m| !m.compiled_in()) {
