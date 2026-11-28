@@ -173,14 +173,14 @@ fn an_index_with_an_unusable_id_or_no_commit_does_not_open() {
     assert!(SdmMirror::open(&root.join("nothing")).is_err());
     // A mirror folder without its index, and one whose index is no JSON, name the index.
     std::fs::write(root.join("index.json"), "not json").unwrap();
-    let unparsed = SdmMirror::open(&root)
-        .err()
-        .expect("an index that is no JSON");
+    let Err(unparsed) = SdmMirror::open(&root) else {
+        panic!("an index that is no JSON opened");
+    };
     assert!(unparsed.starts_with("index.json: "), "{unparsed}");
     std::fs::remove_file(root.join("index.json")).unwrap();
-    let missing = SdmMirror::open(&root)
-        .err()
-        .expect("a mirror without its index");
+    let Err(missing) = SdmMirror::open(&root) else {
+        panic!("a mirror without its index opened");
+    };
     assert!(missing.starts_with("index.json: "), "{missing}");
 }
 
