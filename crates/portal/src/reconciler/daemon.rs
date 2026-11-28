@@ -8632,6 +8632,71 @@ routes:
         assert!(log.contains("org/all"), "{log}");
     }
 
+    /// EP-96: an MCP server whose client, mappers and scopes already hold what the wave wants is
+    /// left as it is: nothing is written and nothing is said about it.
+    #[tokio::test]
+    async fn a_current_mcp_server_client_is_left_alone_and_unsaid() {
+        use super::super::{app_clients, mcp_clients};
+        let realm = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/bb/protocol/openid-connect/token"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "access_token": "admin-token", "expires_in": 60 })),
+            )
+            .mount(&realm)
+            .await;
+        let admin = "/admin/realms/bb";
+        let id = mcp_clients::client_id("t7923", "air");
+        let mut held = mcp_clients::desired("t7923", "air");
+        held["id"] = json!("u-mcp-air");
+        Mock::given(method("GET"))
+            .and(path(format!("{admin}/clients")))
+            .and(query_param("clientId", id.as_str()))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([held])))
+            .mount(&realm)
+            .await;
+        let mappers: Vec<serde_json::Value> = app_clients::app_mappers(std::slice::from_ref(&id))
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut mapper)| {
+                mapper["id"] = json!(format!("m-{index}"));
+                mapper
+            })
+            .collect();
+        Mock::given(method("GET"))
+            .and(path(format!(
+                "{admin}/clients/u-mcp-air/protocol-mappers/models"
+            )))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!(mappers)))
+            .mount(&realm)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&realm)
+            .await;
+        let (syncer, _) = realm_syncer(&realm);
+        let mirror = Mirror::new();
+        mirror.upsert(ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: "McpServer".to_owned(),
+            metadata: crate::resource::ObjectMeta::new("air", "t7923"),
+            spec: json!({ "members": [{ "kind": "Endpoint", "name": "bikes", "namespace": "t7923" }], "audience": "organization" }),
+            status: None,
+        });
+        let (_, log) = crate::reconciler::logged(syncer.converge_mcp_clients(&mirror)).await;
+        assert!(!log.contains("MCP server client"), "{log}");
+        let wrote: Vec<String> = realm
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|r| r.method.as_str() != "GET" && !r.url.path().ends_with("/token"))
+            .map(|r| format!("{} {}", r.method, r.url.path()))
+            .collect();
+        assert!(wrote.is_empty(), "{wrote:?}");
+    }
+
     /// T-7923: the hub wave writes back a scope edited by hand and says so, and the Endpoint
     /// that serves MCP is told its scope waits for the deployment's link; a realm without the
     /// hub tells no Endpoint anything.

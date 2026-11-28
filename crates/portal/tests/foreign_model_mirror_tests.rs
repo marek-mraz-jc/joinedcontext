@@ -732,12 +732,11 @@ async fn a_manifest_the_portal_view_cannot_hold_is_passed_by() {
     let info = joinedcontext_portal::resource::by_kind("ContextSpace").expect("a served kind");
     let odd_path = joinedcontext_portal::resource::repository_path(info, "bb", Some("odd"), "odd")
         .expect("a path");
-    let odd = format!(
-        "apiVersion: joinedcontext.com/v1alpha1\n\
-         kind: ContextSpace\n\
-         metadata:\n  name: odd\n  namespace: bb\n  uid: 7f1c\n\
-         spec: {{}}\n"
-    );
+    let odd = "apiVersion: joinedcontext.com/v1alpha1\n\
+               kind: ContextSpace\n\
+               metadata:\n  name: odd\n  namespace: bb\n  uid: 7f1c\n\
+               spec: {}\n"
+        .to_owned();
     let files = [reference(), (odd_path.as_str(), odd)];
     let (server, _recorded) = forge(&files).await;
     let shako = Arc::new(client(&server));
