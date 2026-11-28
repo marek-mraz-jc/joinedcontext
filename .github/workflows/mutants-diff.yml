@@ -95,6 +95,12 @@ jobs:
           done
           psql postgres://postgres:postgres@127.0.0.1:5432/postgres -v ON_ERROR_STOP=1 \
             -c "CREATE ROLE antares LOGIN SUPERUSER PASSWORD 'antares'" -c "ALTER DATABASE antares OWNER TO antares"
+      # JetStream for the live-NATS tests of antares-bus and the broker, as coverage.yml (a service cannot
+      # pass -js); without it those tests skip and every mutant they guard survives (run 46131795654, T-7969).
+      - if: matrix.ws == 'antares'
+        run: |
+          docker run -d --name nats -p 4222:4222 nats@sha256:4b83414183aa5fb87cd164962c47eaffd214e84668dc4fa4f1d4c44a3e765ee8 -js
+          echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
       - if: matrix.ws == 'portal'
         run: |
           sudo fallocate -l 8G /swap-portal && sudo chmod 600 /swap-portal
