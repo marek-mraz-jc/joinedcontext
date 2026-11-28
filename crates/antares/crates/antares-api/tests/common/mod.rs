@@ -728,6 +728,13 @@ impl CurrentStateDriver for Double {
     ) -> Result<Vec<Value>, NgsiError> {
         self.registration_reads.fetch_add(1, Ordering::SeqCst);
         self.pool_wall()?;
+        // a read naming types (a join's target) is told apart from one by id alone
+        let method = if types.is_some() {
+            "matching_registrations_typed"
+        } else {
+            "matching_registrations"
+        };
+        self.faulted(method, Some(tenant))?;
         if self.refuse_registrations {
             return Err(NgsiError::InternalError("registrations unreadable".into()));
         }

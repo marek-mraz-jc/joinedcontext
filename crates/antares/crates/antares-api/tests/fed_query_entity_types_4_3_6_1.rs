@@ -6,6 +6,7 @@
 //! importing it lets it override the source that is registered for it
 //! (ETSI IOP_003_02_02, IOP_003_03_02, run 38806308784).
 
+use crate::common::Double;
 use antares_api::{AppState, BuiltForward, ForwardAnswer, ForwardFuture, ForwardTransport};
 use antares_model::TenantId;
 use antares_store::Kind;
@@ -642,6 +643,86 @@ async fn a_link_held_only_by_an_auxiliary_source_joins_its_answer() {
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["owner"]["entity"]["name"]["value"], "P", "{body}");
+}
+
+/// clause 4.5.23, step 1: a link target its only source fails to answer is left
+/// unjoined: the Entity itself still answers, with the Relationship as stored.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_link_its_source_fails_to_answer_stays_unjoined() {
+    let person = "urn:ngsi-ld:Person:2";
+    let mut aux = registration(
+        "people",
+        "http://peer-a.invalid",
+        &["retrieveEntity"],
+        json!([{"entities": [{"id": person, "type": "Person"}]}]),
+    );
+    aux["mode"] = json!("auxiliary");
+    let (st, peer) = scripted(&[aux]).await;
+    let (status, body) = write(
+        &st,
+        "POST",
+        "/ngsi-ld/v1/entities",
+        &json!({"id": VEHICLE_1, "type": "Vehicle",
+                "owner": {"type": "Relationship", "object": person, "objectType": "Person"}}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    peer.say(
+        500,
+        json!({"type": "https://uri.etsi.org/ngsi-ld/errors/InternalError", "title": "down"}),
+    );
+    let (status, _, body) = get(
+        &st,
+        &format!("/ngsi-ld/v1/entities/{VEHICLE_1}?join=inline&joinLevel=1"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["owner"]["object"], person, "{body}");
+    assert!(body["owner"].get("entity").is_none(), "{body}");
+}
+
+/// clause 4.5.23, step 1: a join whose registration read fails, for the target's type or
+/// for the target's own id, leaves the link unjoined; the Entity still answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_join_whose_registration_read_fails_leaves_the_link_unjoined() {
+    let person = "urn:ngsi-ld:Person:3";
+    let reg = registration(
+        "people",
+        "http://peer-a.invalid",
+        &["retrieveEntity"],
+        json!([{"entities": [{"id": person, "type": "Person"}]}]),
+    );
+    for failing in ["matching_registrations_typed", "matching_registrations"] {
+        let (mut st, peer) = scripted(std::slice::from_ref(&reg)).await;
+        let (status, body) = write(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/entities",
+            &json!({"id": VEHICLE_1, "type": "Vehicle",
+                    "owner": {"type": "Relationship", "object": person, "objectType": "Person"}}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+        peer.say(200, json!({"id": person, "type": "Person"}));
+        // the Entity's own read by id is the first; the join's are the later ones
+        let reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&reads);
+        st.store = Arc::new(Double::faulting(st.store.clone(), move |method, _| {
+            method == failing
+                && (failing.ends_with("_typed")
+                    || counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0)
+        }));
+        // the registrations are read from the store, not from the wired mirror
+        st.reg_mirror = None;
+        let (status, _, body) = get(
+            &st,
+            &format!("/ngsi-ld/v1/entities/{VEHICLE_1}?join=inline&joinLevel=1"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{failing}: {body}");
+        assert_eq!(body["owner"]["object"], person, "{failing}: {body}");
+        assert!(body["owner"].get("entity").is_none(), "{failing}: {body}");
+    }
 }
 
 /// T-7306: a row that names a Tenant of another Organization, written before
