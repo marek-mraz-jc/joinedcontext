@@ -21,6 +21,11 @@ percent-encoding = "2"
 futures-util = { workspace = true }
 tracing = { workspace = true }
 
+[features]
+# Test builds only: names the consumers a bus opened and lets a test drop one
+# or close the connection (antares-broker's wiring tests). Never a runtime API.
+test-kit = []
+
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
 

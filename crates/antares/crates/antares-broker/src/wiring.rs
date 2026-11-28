@@ -125,6 +125,35 @@ pub async fn wire_nats(
     url: &str,
     roles: Roles,
 ) -> Result<Arc<NatsBus>, Box<dyn std::error::Error>> {
+    wire_nats_on(state, url, roles, &Topology::default()).await
+}
+
+/// The names and delays a wiring runs on. Production takes the default; a
+/// test gives its run its own matcher durable and a short tombstone grace, so
+/// it can break and wait on its own consumers on the NATS the parallel tests
+/// share.
+struct Topology {
+    /// The balanced matcher durable every matcher pod joins.
+    matcher: String,
+    /// How long a deleted subscription's bucket entry stays for the watchers.
+    tombstone_grace: std::time::Duration,
+}
+
+impl Default for Topology {
+    fn default() -> Self {
+        Self {
+            matcher: "matcher".into(),
+            tombstone_grace: nats::SUBS_TOMBSTONE_GRACE,
+        }
+    }
+}
+
+async fn wire_nats_on(
+    state: &mut AppState,
+    url: &str,
+    roles: Roles,
+    topology: &Topology,
+) -> Result<Arc<NatsBus>, Box<dyn std::error::Error>> {
     let bus = Arc::new(NatsBus::connect(url).await?);
     // /q/health `bus` member: live connection state + reconnect count.
     // Installed HERE so bus=local never carries the member at all.
@@ -184,7 +213,7 @@ pub async fn wire_nats(
         ));
     }
 
-    let mut durables: Vec<&'static str> = Vec::new();
+    let mut durables: Vec<&str> = Vec::new();
 
     if roles.api {
         // Subscription write side: subscription CUD → KV. The value names the
@@ -193,6 +222,7 @@ pub async fn wire_nats(
         let kv = bus.subs_kv().await?;
         let kv_for_hook = kv.clone();
         let bus_for_subs = bus.clone();
+        let grace = topology.tombstone_grace;
         let sub_queue = ordered_sync(
             "subscription",
             move |key: String, (value, present): (serde_json::Value, bool)| {
@@ -216,7 +246,7 @@ pub async fn wire_nats(
                                 // Off the ordered queue: the grace must not
                                 // hold the writes behind it.
                                 tokio::spawn(async move {
-                                    tokio::time::sleep(nats::SUBS_TOMBSTONE_GRACE).await;
+                                    tokio::time::sleep(grace).await;
                                     if let Err(e) =
                                         bus.retire_subscription_key(&key, revision).await
                                     {
@@ -516,19 +546,57 @@ pub async fn wire_nats(
         });
 
         // The balanced matcher durable: decode → process_changes → ack AFTER.
-        durables.push("matcher");
-        let consumer = bus.consume_balanced("matcher").await?;
+        durables.push(topology.matcher.as_str());
+        let consumer = bus.consume_balanced(&topology.matcher).await?;
+        tokio::spawn(run_matcher(
+            bus.clone(),
+            topology.matcher.clone(),
+            consumer,
+            state.clone(),
+        ));
+
+        // Interval subscriptions: every matcher pod ticks; the row-lock claim
+        // in interval_tick makes each firing single-winner.
         let st = state.clone();
         tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
             loop {
-                let mut msgs = match consumer.messages().await {
-                    Ok(m) => m,
-                    Err(e) => {
-                        tracing::warn!("matcher consumer stream failed: {e}");
-                        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                        continue;
-                    }
-                };
+                tick.tick().await;
+                antares_api::notify::interval_tick(&st).await;
+            }
+        });
+    }
+
+    // The temporal role carries no bus consumer: auto-recording is
+    // synchronous in the write path (see above), and plain-mode partition
+    // maintenance runs from lib.rs `spawn_background` regardless of bus mode.
+
+    // The server must agree these are shared durables.
+    bus.assert_topology(&durables).await?;
+    tracing::info!(?roles, "bus=nats wired");
+    Ok(bus)
+}
+
+/// The matcher pod's loop over its balanced durable: decode → resolve →
+/// process_changes → ack AFTER, a batch of what the consumer already holds
+/// per pass.
+///
+/// A stream ends when its durable is gone (an operator delete, the stream
+/// made again) or the pull fails. A pull on the old handle then names a
+/// consumer the server no longer has and matches nothing, every second, until
+/// a restart: subscriptions stopped notifying with no error. So every reopen
+/// goes through get-or-create, which hands back the durable when it is still
+/// there and makes it again when it is not; pods on the same durable keep
+/// sharing its messages.
+async fn run_matcher(
+    bus: Arc<NatsBus>,
+    durable: String,
+    mut consumer: nats::PullConsumer,
+    st: AppState,
+) {
+    loop {
+        match consumer.messages().await {
+            Ok(mut msgs) => {
                 while let Some(Ok(first)) = msgs.next().await {
                     // What the consumer already holds rides the same pass, as
                     // on the local bus (T-6608): one pass matches up to
@@ -578,33 +646,18 @@ pub async fn wire_nats(
                         break;
                     }
                 }
-                // an errored or ended stream reopens after a pause, not in a
-                // tight loop against a server that keeps refusing it
-                tracing::warn!("matcher consumer stream ended — reopening");
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             }
-        });
-
-        // Interval subscriptions: every matcher pod ticks; the row-lock claim
-        // in interval_tick makes each firing single-winner.
-        let st = state.clone();
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_millis(500));
-            loop {
-                tick.tick().await;
-                antares_api::notify::interval_tick(&st).await;
-            }
-        });
+            Err(e) => tracing::warn!("matcher consumer stream failed: {e}"),
+        }
+        // an errored or ended stream reopens after a pause, not in a tight
+        // loop against a server that keeps refusing it
+        tracing::warn!("matcher consumer stream ended — reopening");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        match bus.consume_balanced(&durable).await {
+            Ok(fresh) => consumer = fresh,
+            Err(e) => tracing::warn!("matcher consumer re-create failed: {e}"),
+        }
     }
-
-    // The temporal role carries no bus consumer: auto-recording is
-    // synchronous in the write path (see above), and plain-mode partition
-    // maintenance runs from lib.rs `spawn_background` regardless of bus mode.
-
-    // The server must agree these are shared durables.
-    bus.assert_topology(&durables).await?;
-    tracing::info!(?roles, "bus=nats wired");
-    Ok(bus)
 }
 
 /// Attempts a mirror write gets before the divergence is logged as an error.
@@ -1746,6 +1799,347 @@ mod tests {
         let text = log.text();
         assert!(text.contains("claim-check entity read failed"), "{text}");
         assert!(text.contains("redelivering"), "{text}");
+    }
+
+    fn nonce() -> u128 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos()
+    }
+
+    /// A wiring of its own on the shared NATS: a matcher durable no other test joins.
+    fn topology(test: &str) -> Topology {
+        Topology {
+            matcher: format!("matcher-{test}{}", nonce()),
+            ..Topology::default()
+        }
+    }
+
+    /// A claim-checked change in a Tenant of its own: the matcher reads its Entity from the
+    /// store, which is how a test sees which wiring matched it.
+    fn claim_checked(tenant: &str) -> ChangeEvent {
+        let id = EntityId::new("urn:ngsi-ld:T:held").expect("id");
+        ChangeEvent {
+            tenant: TenantId::new(tenant).expect("tenant"),
+            entity_id: id.clone(),
+            types: vec!["T".into()],
+            op: ChangeOp::Update,
+            changed_attrs: vec![],
+            payload: None,
+            prev_payload: None,
+            version: 2,
+            incarnation: String::new(),
+            seq: 0,
+            payload_ref: Some(PayloadRef {
+                entity_id: id,
+                version: 2,
+            }),
+            prev_payload_ref: None,
+        }
+    }
+
+    type Reads = Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// The Tenant of every Entity read `fault` answers, one entry per read: each is one
+    /// change a matcher took. Nothing fails.
+    fn reads(fault: &crate::fault_store::FaultStore) -> Reads {
+        let seen = Reads::default();
+        let into = seen.clone();
+        fault.fail(move |m, tenant, kind| {
+            if let (true, Some(Kind::Entity), Some(t)) = (m == "get", kind, tenant) {
+                into.lock().expect("reads").push(t.to_owned());
+            }
+            false
+        });
+        seen
+    }
+
+    fn read_count(seen: &Reads, tenant: &str) -> usize {
+        seen.lock()
+            .expect("reads")
+            .iter()
+            .filter(|t| *t == tenant)
+            .count()
+    }
+
+    /// Publish a change in a fresh Tenant every 200 ms until a matcher reads one; the
+    /// Tenant read, or `None` past the deadline. A change published while no durable exists
+    /// is dropped by the Interest stream, so one change alone proves nothing.
+    async fn publish_until_read(bus: &NatsBus, seen: &[&Reads], prefix: &str) -> Option<String> {
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(20))
+            .expect("deadline");
+        let mut sent = Vec::new();
+        while std::time::Instant::now() < deadline {
+            let tenant = format!("{prefix}p{}", sent.len());
+            bus.publish(&claim_checked(&tenant)).await.expect("publish");
+            sent.push(tenant);
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            if let Some(t) = sent
+                .iter()
+                .find(|t| seen.iter().any(|s| read_count(s, t) > 0))
+            {
+                return Some(t.clone());
+            }
+        }
+        None
+    }
+
+    async fn wait_until(secs: u64, done: impl Fn() -> bool) {
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(secs))
+            .expect("deadline");
+        while !done() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
+    /// An operator deletes the matcher durable under a live wiring (or the stream is made
+    /// again). The matcher used to pull on its old handle, a consumer the server no longer
+    /// had, every second until a restart: every subscription stopped notifying, with no
+    /// error. It makes the durable again and the next change is matched.
+    #[tokio::test]
+    async fn a_deleted_matcher_durable_is_made_again_and_matching_goes_on() {
+        let Some(url) = test_env::nats() else { return };
+        let (mut state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        let seen = reads(&fault);
+        let topology = topology("t7966a");
+        let roles = Roles::parse("matcher").expect("roles");
+        let bus = wire_nats_on(&mut state, &url, roles, &topology)
+            .await
+            .expect("wired");
+        bus.delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await
+            .expect("delete the durable");
+        let read = publish_until_read(&bus, &[&seen], &format!("t7966a{}", nonce())).await;
+        let _ = bus
+            .delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await;
+        assert!(
+            read.is_some(),
+            "no change was matched in 20 s after the matcher durable was deleted"
+        );
+    }
+
+    /// Two matcher pods on one durable share its changes: each change is matched by one of
+    /// them, once, before the durable is deleted and again after both made it anew. (A
+    /// durable made anew starts at the head of what the stream still holds, which on the
+    /// shared test NATS includes the first round: other tests' durables keep it, so each
+    /// round is counted on its own.)
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_matchers_on_one_durable_match_each_change_once_across_a_re_create() {
+        let Some(url) = test_env::nats() else { return };
+        let topology = topology("t7966b");
+        let roles = Roles::parse("matcher").expect("roles");
+        let (mut one, fault_one) = crate::fault_store::FaultStore::state("wiring.one");
+        let (mut two, fault_two) = crate::fault_store::FaultStore::state("wiring.two");
+        let (seen_one, seen_two) = (reads(&fault_one), reads(&fault_two));
+        let bus = wire_nats_on(&mut one, &url, roles, &topology)
+            .await
+            .expect("wired one");
+        wire_nats_on(&mut two, &url, roles, &topology)
+            .await
+            .expect("wired two");
+        let run = format!("t7966b{}", nonce());
+        let mut counts = Vec::new();
+        for round in ["before", "after"] {
+            if round == "after" {
+                bus.delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+                    .await
+                    .expect("delete the durable");
+                let probe = publish_until_read(&bus, &[&seen_one, &seen_two], &run).await;
+                assert!(probe.is_some(), "neither pod made the durable again");
+            }
+            let tenants: Vec<String> = (0..10).map(|i| format!("{run}{round}{i}")).collect();
+            for tenant in &tenants {
+                bus.publish(&claim_checked(tenant)).await.expect("publish");
+            }
+            let matched = |t: &String| (read_count(&seen_one, t), read_count(&seen_two, t));
+            wait_until(20, || tenants.iter().all(|t| matched(t) != (0, 0))).await;
+            // what a second delivery would add arrives within the same pass
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            counts.extend(tenants.iter().map(|t| (t.clone(), matched(t))));
+        }
+        let _ = bus
+            .delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await;
+        for (t, (a, b)) in counts {
+            assert_eq!(a + b, 1, "{t}: matched {a} times on one pod, {b} on two");
+        }
+    }
+
+    /// The changes a matcher already holds when its durable goes are matched, not dropped:
+    /// the pass that meets the deletion behind them finishes them, then the loop reopens.
+    /// The first change holds the matcher in its store read while the others arrive and the
+    /// durable is deleted behind them.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn changes_held_when_the_durable_goes_are_matched_before_the_reopen() {
+        let Some(url) = test_env::nats() else { return };
+        let (mut state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        let run = format!("t7966d{}", nonce());
+        let first = format!("{run}first");
+        let held = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let seen = Reads::default();
+        {
+            let (seen, held, first) = (seen.clone(), held.clone(), first.clone());
+            fault.fail(move |m, tenant, kind| {
+                if let (true, Some(Kind::Entity), Some(t)) = (m == "get", kind, tenant) {
+                    seen.lock().expect("reads").push(t.to_owned());
+                    // blocks this worker thread only; the NATS client runs on the other
+                    let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+                    while t == first
+                        && held.load(std::sync::atomic::Ordering::SeqCst)
+                        && std::time::Instant::now() < until
+                    {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                }
+                false
+            });
+        }
+        let topology = topology("t7966d");
+        let roles = Roles::parse("matcher").expect("roles");
+        let bus = wire_nats_on(&mut state, &url, roles, &topology)
+            .await
+            .expect("wired");
+        bus.publish(&claim_checked(&first)).await.expect("publish");
+        wait_until(10, || read_count(&seen, &first) > 0).await;
+        assert_eq!(
+            read_count(&seen, &first),
+            1,
+            "the first change never reached the matcher"
+        );
+        let later: Vec<String> = (0..3).map(|i| format!("{run}held{i}")).collect();
+        for t in &later {
+            bus.publish(&claim_checked(t)).await.expect("publish");
+        }
+        bus.delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await
+            .expect("delete the durable");
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        held.store(false, std::sync::atomic::Ordering::SeqCst);
+        wait_until(10, || later.iter().all(|t| read_count(&seen, t) > 0)).await;
+        let _ = bus
+            .delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await;
+        for t in &later {
+            assert_eq!(
+                read_count(&seen, t),
+                1,
+                "{t} was held when the durable went"
+            );
+        }
+    }
+
+    /// The connection closes under a live api + matcher wiring: every consumer loop logs its
+    /// failed stream and its failed re-create instead of ending silently, and a deleted
+    /// subscription's retire, due after the grace, logs that it could not run.
+    #[tokio::test]
+    async fn a_closed_connection_is_logged_by_every_consumer_loop() {
+        let Some(url) = test_env::nats() else { return };
+        let (log, _guard) = Logged::start();
+        let (mut state, _fault) = crate::fault_store::FaultStore::state("wiring.test");
+        let topology = Topology {
+            tombstone_grace: std::time::Duration::from_secs(2),
+            ..topology("t7966c")
+        };
+        let roles = Roles::parse("api,matcher").expect("roles");
+        let bus = wire_nats_on(&mut state, &url, roles, &topology)
+            .await
+            .expect("wired");
+        let name = format!("t7966c{}", nonce());
+        let tenant = TenantId::new(&name).expect("tenant");
+        let id = "urn:ngsi-ld:Subscription:gone";
+        let sync = state
+            .sub_sync
+            .clone()
+            .expect("the api role mirrors subscriptions");
+        sync(&tenant, Kind::Subscription, id, None);
+        let probe = NatsBus::connect(&url).await.expect("connect");
+        let kv = probe.subs_kv().await.expect("kv bucket");
+        let key = kv_key(&name, Kind::Subscription, id);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while kv.get(&key).await.ok().flatten().is_none() && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        bus.close().await.expect("close");
+        let lines = [
+            format!("sub KV retire of {key} failed"),
+            "registry broadcast consumer stream failed".into(),
+            "registry broadcast consumer re-create failed".into(),
+            "matcher consumer stream failed".into(),
+            "matcher consumer re-create failed".into(),
+        ];
+        wait_until(15, || {
+            let text = log.text();
+            lines.iter().all(|l| text.contains(l.as_str()))
+        })
+        .await;
+        let _ = probe
+            .delete_consumer(nats::CHANGES_STREAM, &topology.matcher)
+            .await;
+        let text = log.text();
+        for line in &lines {
+            assert!(text.contains(line.as_str()), "{line}: {text}");
+        }
+    }
+
+    /// This pod's registry broadcast consumer is deleted under a live wiring: the loop makes
+    /// a new one, and a store that cannot reseed the mirror then is logged at error level,
+    /// since the mirror keeps serving what it held before the gap.
+    #[tokio::test]
+    async fn a_deleted_registry_consumer_is_made_again_and_a_failed_reseed_logged() {
+        let Some(url) = test_env::nats() else { return };
+        let (log, _guard) = Logged::start();
+        let (mut state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        let roles = Roles::parse("api").expect("roles");
+        let bus = wire_nats_on(&mut state, &url, roles, &Topology::default())
+            .await
+            .expect("wired");
+        let registry = |bus: &NatsBus| {
+            bus.opened_consumers()
+                .into_iter()
+                .filter(|(stream, _)| *stream == nats::REGISTRY_STREAM)
+                .map(|(_, name)| name)
+                .collect::<Vec<_>>()
+        };
+        let opened = registry(&bus);
+        assert_eq!(opened.len(), 1, "{opened:?}");
+        fault.fail(|m, _, _| m == "subscription_tenants");
+        bus.delete_consumer(nats::REGISTRY_STREAM, &opened[0])
+            .await
+            .expect("delete this pod's consumer");
+        wait_until(10, || {
+            log.text().contains("registration mirror re-hydrate failed")
+        })
+        .await;
+        let text = log.text();
+        assert!(
+            text.contains("registration mirror re-hydrate failed"),
+            "{text}"
+        );
+        assert_eq!(registry(&bus).len(), 2, "no new consumer was made");
+    }
+
+    /// A reopened subscription watch whose reseed the store refuses is still handed back,
+    /// and the stale mirror is logged at error level.
+    #[tokio::test]
+    async fn a_reopened_watch_whose_reseed_fails_is_kept_and_logged() {
+        let Some(url) = test_env::nats() else { return };
+        let (log, _guard) = Logged::start();
+        let (state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        fault.fail(|m, _, _| m == "subscription_tenants");
+        let bus = NatsBus::connect(&url).await.expect("connect");
+        let kv = bus.subs_kv().await.expect("kv bucket");
+        let mirror = antares_api::mirror::SubMirror::default();
+        let watch = reopen_sub_watch(&kv, &*state.store, &mirror).await;
+        assert!(watch.is_ok(), "the watch is kept");
+        let text = log.text();
+        assert!(
+            text.contains("subscription mirror re-hydrate failed"),
+            "{text}"
+        );
     }
 
     /// The outbox-drain switch is a config value like any other: the two
