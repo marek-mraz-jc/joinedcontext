@@ -2282,7 +2282,8 @@ async fn resource_propose_once(
                 .position(|r| r.id == stored.id)
                 .ok_or_else(not_found)?;
             let mut merged = distribution_to_ckan(&stored, &ds.id, pos, &[], lang);
-            if let Some(merged) = merged.as_object_mut() {
+            // A distribution in CKAN form is always an object.
+            merged.as_object_mut().into_iter().for_each(|merged| {
                 merged.extend(resource.clone());
                 // A plain `name` / `description` names the default language's text; the
                 // stored per-language map would otherwise win and the change would be lost.
@@ -2303,7 +2304,7 @@ async fn resource_propose_once(
                         merged.insert(translated.to_owned(), Value::Object(texts));
                     }
                 }
-            }
+            });
             let mut dist = distribution_from_ckan(&merged, &ds.id, &stored.id, lang);
             // CKAN's resource dict carries no terms of use: an update keeps the declared ones.
             dist.terms_of_use = stored.terms_of_use.clone();
