@@ -107,6 +107,26 @@ impl Scratch {
         .expect("trigger");
     }
 
+    /// Makes every UPDATE that sets `column` of `table` fail from now on, while the other writes
+    /// of that table go through: one store call of several on one row fails.
+    pub(crate) async fn refuse_column(&self, table: &str, column: &str) {
+        let function = format!("jc_refuse_{table}_{column}");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger function");
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE TRIGGER {function} BEFORE UPDATE OF {column} ON {table} \
+             FOR EACH STATEMENT EXECUTE FUNCTION {function}()"
+        )))
+        .execute(&self.pool)
+        .await
+        .expect("trigger");
+    }
+
     /// A mirror placing `project` in an active Organization of this database, so its rows have a
     /// tenancy key here.
     pub(crate) async fn placed(&self, project: &str) -> std::sync::Arc<crate::store::Mirror> {

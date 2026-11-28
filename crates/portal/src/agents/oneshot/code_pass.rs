@@ -3394,6 +3394,157 @@ mod drive_tests {
         assert_eq!(asked(&server).await.len(), 2);
     }
 
+    /// [`driver`] on a database of its own, the run stored there; the caller plants its fault.
+    async fn stored_driver(server: &MockServer) -> (crate::test_db::Scratch, AppState, Driver) {
+        let scratch = crate::test_db::scratch().await;
+        let state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(scratch.pool.clone());
+        for env in scratch.placed("helsinki").await.matching(|_| true) {
+            state.mirror.upsert(env);
+        }
+        let mut run =
+            crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        run.kind = "application".to_owned();
+        state.agents.create_run(&run).await.expect("a run");
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.proxy_base = server.uri();
+        driver.kind = "application".into();
+        driver.prompt = "A page that says hello".into();
+        (scratch, state, driver)
+    }
+
+    /// A title the store refuses is only logged; a preview address it refuses ends the run's
+    /// loop with the store's error, the files already kept.
+    #[tokio::test]
+    async fn a_refused_title_is_logged_and_a_refused_preview_address_ends_the_loop() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[Some(answer(
+                "**Hello board** A greeting.",
+                &[("src/pages/Hello.tsx", "", PAGE)],
+            ))],
+        )
+        .await;
+        let (scratch, state, driver) = stored_driver(&server).await;
+        scratch.refuse_column("agent_runs", "title").await;
+        scratch.refuse_column("agent_runs", "preview_url").await;
+        let (tx, mut inbox) = broadcast::channel(4);
+        tx.send(cancelled()).expect("sent");
+        let ended = driver.drive_code(&mut inbox, far()).await;
+        assert!(ended.is_err(), "the preview address is not kept");
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert_eq!(run.title, None);
+        assert_eq!(run.preview_url, None);
+        assert!(
+            run.files.get("src/pages/Hello.tsx").is_some(),
+            "the files were kept before: {}",
+            run.files
+        );
+        scratch.remove().await;
+    }
+
+    /// The first version's timing the store refuses leaves the run without it; the loop goes on.
+    #[tokio::test]
+    async fn a_refused_first_version_timing_leaves_the_run_without_it() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[Some(answer(
+                "A greeting.",
+                &[("src/pages/Hello.tsx", "", PAGE)],
+            ))],
+        )
+        .await;
+        let (scratch, state, driver) = stored_driver(&server).await;
+        scratch
+            .refuse_column("agent_runs", "first_version_ms")
+            .await;
+        let (tx, mut inbox) = broadcast::channel(4);
+        tx.send(cancelled()).expect("sent");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert_eq!(run.first_version_ms, None);
+        assert!(run.preview_url.is_some(), "the version is on screen");
+        scratch.remove().await;
+    }
+
+    /// A pass that never builds keeps the files it started from; a store that refuses them ends
+    /// the loop with its error.
+    #[tokio::test]
+    async fn a_failed_pass_whose_files_the_store_refuses_ends_the_loop() {
+        let server = MockServer::start().await;
+        let broken = answer("A page.", &[("src/pages/Hello.tsx", "", AXIOS)]);
+        script(
+            &server,
+            &[Some(broken.clone()), Some(broken.clone()), Some(broken)],
+        )
+        .await;
+        let (scratch, state, driver) = stored_driver(&server).await;
+        scratch.refuse_column("agent_runs", "files").await;
+        let (tx, mut inbox) = broadcast::channel(4);
+        tx.send(cancelled()).expect("sent");
+        let ended = driver.drive_code(&mut inbox, far()).await;
+        assert!(ended.is_err(), "the files are not kept");
+        let run = state
+            .agents
+            .get_run("test-run")
+            .await
+            .expect("read")
+            .expect("run");
+        assert_eq!(run.preview_url, None);
+        scratch.remove().await;
+    }
+
+    /// A block the model sent without its path is a repair: the pass asks the model again.
+    #[tokio::test]
+    async fn a_block_without_its_path_is_sent_back_as_a_repair() {
+        let server = MockServer::start().await;
+        let first = format!(
+            "A greeting.\n\n<<<<<<< SEARCH\nconst a = 1;\n=======\nconst a = 2;\n>>>>>>> REPLACE\n\n{}",
+            answer("", &[("src/pages/Hello.tsx", "", PAGE)])
+        );
+        script(
+            &server,
+            &[
+                Some(first),
+                Some(answer("Fixed.", &[("src/pages/Bye.tsx", "", "export {};")])),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(4);
+        tx.send(cancelled()).expect("sent");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        let refused: Vec<Value> = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|event| event.kind == "tool")
+            .filter_map(|event| event.payload["refused"].as_array().cloned())
+            .flatten()
+            .collect();
+        assert!(!refused.is_empty(), "the lost block is counted as refused");
+    }
+
     #[tokio::test]
     async fn a_completing_pass_that_fails_keeps_the_first_version_and_a_closed_inbox_ends_it() {
         let server = MockServer::start().await;

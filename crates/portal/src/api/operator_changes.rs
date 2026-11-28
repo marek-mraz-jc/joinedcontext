@@ -3010,6 +3010,13 @@ mod tests {
             matches!(&refused, ApiError::Unavailable(m) if m.contains("no age key")),
             "{refused:?}"
         );
+        // A row written without its settings is no SmtpSet the Portal stored.
+        let bare = stored(&pool, "SmtpSet", "smtp-bare", json!({}), None).await;
+        let refused = approve_it(bare).await;
+        assert!(
+            matches!(&refused, ApiError::Internal(m) if m.contains("without smtp")),
+            "{refused:?}"
+        );
 
         let smtp = stored(&pool, "SmtpSet", "smtp", settings(false), None).await;
         Mock::given(method("PUT"))
@@ -3036,6 +3043,15 @@ mod tests {
             "OperatorAdd",
             subject,
             json!({ "subject": subject }),
+            None,
+        )
+        .await;
+        let leaving = "8b3e4d1f-2c5a-4e9b-8f60-3d7a9c1e2f35";
+        let remove = stored(
+            &pool,
+            "OperatorRemove",
+            leaving,
+            json!({ "subject": leaving }),
             None,
         )
         .await;
@@ -3070,7 +3086,43 @@ mod tests {
             "{refused:?}"
         );
 
-        for id in [removal, smtp, add] {
+        // A removal whose commit fails puts the operator back in the group.
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/groups/g-ops/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "sub-ops-a", "username": "ops-a", "enabled": true },
+                { "id": "sub-ops-b", "username": "ops-b", "enabled": true },
+                { "id": "sub-ops-c", "username": "ops-c", "enabled": true },
+                { "id": leaving, "username": "leaving", "enabled": true }
+            ])))
+            .mount(&kc)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("/admin/realms/ops/users/{leaving}")))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(
+                    json!({ "id": leaving, "username": "leaving", "enabled": true }),
+                ),
+            )
+            .mount(&kc)
+            .await;
+        for verb in ["DELETE", "PUT"] {
+            Mock::given(method(verb))
+                .and(path(format!(
+                    "/admin/realms/ops/users/{leaving}/groups/g-ops"
+                )))
+                .respond_with(ResponseTemplate::new(204))
+                .expect(1)
+                .mount(&kc)
+                .await;
+        }
+        let refused = approve_it(remove.clone()).await;
+        assert!(
+            matches!(&refused, ApiError::Unavailable(m) if m.contains("could not be read or written")),
+            "{refused:?}"
+        );
+
+        for id in [removal, smtp, add, remove] {
             let state: String =
                 sqlx::query_scalar("SELECT state FROM operator_changes WHERE id = $1::uuid")
                     .bind(&id)
@@ -3362,6 +3414,62 @@ mod tests {
         assert_eq!(
             applies_at_once(&state, OperatorKind::AutomationLoginSet, &on, "ops-a").await,
             None
+        );
+    }
+
+    /// A realm that cannot list the operators, or holds no operators' group, says nothing about
+    /// who they are: a second operator approves. The proposer alone in the group applies at once.
+    #[tokio::test]
+    async fn a_realm_that_cannot_name_the_operators_never_applies_at_once() {
+        let on = ChangePayload {
+            single_person: Some(true),
+            ..ChangePayload::default()
+        };
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        let kc = realm(&mut state).await;
+        // No members route is mounted: the realm answers 404.
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::AutomationLoginSet, &on, "sub-ops-a").await,
+            None
+        );
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/groups/g-ops/members"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                { "id": "sub-ops-a", "username": "ops-a", "enabled": true }
+            ])))
+            .mount(&kc)
+            .await;
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "sub-ops-a").await,
+            Some("the installation has one operator")
+        );
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "sub-ops-b").await,
+            None,
+            "another proposer than the one operator"
+        );
+
+        let bare = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/realms/ops/protocol/openid-connect/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "access_token": "t" })))
+            .mount(&bare)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/admin/realms/ops/groups"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([])))
+            .mount(&bare)
+            .await;
+        state.people = crate::people::People::new(
+            &format!("{}/realms/ops", bare.uri()),
+            "portal".into(),
+            crate::config::ClientAuth::Secret("secret".into()),
+        )
+        .map(Arc::new);
+        assert_eq!(
+            applies_at_once(&state, OperatorKind::SinglePersonSet, &on, "sub-ops-a").await,
+            None,
+            "no operators' group"
         );
     }
 

@@ -313,9 +313,11 @@ impl WasmShards {
                             }
                             if done.done {
                                 app.legacy = false;
-                                if let Ok(mut moved) = self.moved.lock() {
-                                    moved.insert(id);
-                                }
+                                // A poisoned set still holds the names moved so far.
+                                self.moved
+                                    .lock()
+                                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                    .insert(id);
                             }
                         }
                         Err(why) => problems.push(format!(

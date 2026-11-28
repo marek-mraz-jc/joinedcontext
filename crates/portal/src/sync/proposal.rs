@@ -361,6 +361,52 @@ mod tests {
         );
     }
 
+    /// A file the branch holds with other bytes is written over its blob; an older day the forge
+    /// refuses to close stays open and the proposal still answers.
+    #[tokio::test]
+    async fn a_changed_file_is_written_over_its_blob_and_a_refused_close_is_only_logged() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let (server, shako) = forge(&[("models/air.yaml", "old\n")]).await;
+        Mock::given(method("POST"))
+            .and(path_regex("/Shako\\.Close$"))
+            .respond_with(ResponseTemplate::new(500))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let mut files = BTreeMap::new();
+        files.insert("models/air.yaml".to_owned(), "new".to_owned());
+        let pull = open(
+            &shako,
+            &Proposal {
+                branch: "mirror/bb-peer",
+                title: "mirror 1 foreign model(s) for bb/peer",
+                body: "{}",
+                files,
+                removed: Vec::new(),
+                auto_merge: false,
+                line: Some("mirror/bb-peer"),
+            },
+        )
+        .await
+        .expect("proposed although the close failed");
+        assert_eq!(pull.number, 7);
+        let commits: Vec<serde_json::Value> = server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| request.url.path().ends_with("/Shako.CommitFiles"))
+            .filter_map(|request| serde_json::from_slice(&request.body).ok())
+            .collect();
+        assert_eq!(commits.len(), 1, "{commits:?}");
+        assert!(
+            commits[0].to_string().contains("s1"),
+            "the write names the blob it replaces: {}",
+            commits[0]
+        );
+    }
+
     /// A forge that cannot list its open merge requests still gets the proposal: a new merge
     /// request is opened, a path the source dropped is deleted where the branch has it and
     /// skipped where it never had it, and an auto-merged proposal is merged.
