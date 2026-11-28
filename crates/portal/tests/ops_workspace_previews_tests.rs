@@ -501,6 +501,42 @@ async fn a_project_repository_that_does_not_stage_is_unavailable() {
     );
 }
 
+/// A project repository whose branch holds no project file stages but does not assemble with
+/// the organization: a 503 saying so.
+#[tokio::test]
+async fn a_project_branch_without_its_project_file_does_not_assemble() {
+    let (server, state) = layout_two(true).await;
+    Mock::given(method("GET"))
+        .and(path(format!(
+            "{PROJECT_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Truncated": false,
+            "Tree": [{ "Path": ".jc/layout", "Type": "blob", "Sha": "only-layout" }]
+        })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.text().contains("does not assemble"),
+        "{}",
+        started.text()
+    );
+}
+
 /// A forge that fails reading the workspace's branch is the forge's error, not a missing branch.
 #[tokio::test]
 async fn a_forge_failing_the_branch_read_is_not_a_missing_branch() {

@@ -258,6 +258,23 @@ async fn a_seed_the_forge_refuses_writes_no_registration() {
     assert!(organization_files(&server).await.is_empty());
 }
 
+/// CC-85: a seed the forge does not take, whose removal the forge does take, answers the seed's
+/// failure and leaves neither the repository nor a registration.
+#[tokio::test]
+async fn a_refused_seed_whose_cleanup_succeeds_answers_the_seed() {
+    let (server, state) = world(false).await;
+    Mock::given(method("POST"))
+        .and(path(format!("{NEW}/Shako.CommitFiles")))
+        .respond_with(ResponseTemplate::new(500).set_body_json(json!({ "message": "down" })))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let (status, text) = open(&state).await;
+    assert!(status.is_server_error(), "{status}: {text}");
+    assert_eq!(received(&server, "DELETE", NEW).await.len(), 1);
+    assert!(organization_files(&server).await.is_empty());
+}
+
 /// PF-77, PF-86: deleting a project of layout 2 is the organization's Change that removes its
 /// registry entry and the bindings that name it; the project's repository is not touched here
 /// (the sync archives it once the entry is gone).

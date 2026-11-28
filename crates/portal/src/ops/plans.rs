@@ -3475,9 +3475,9 @@ mod tests {
         );
     }
 
-    /// A removal into a workspace commits on the workspace's branch and opens no Change (CC-76).
-    #[tokio::test]
-    async fn a_removal_into_a_workspace_commits_on_its_branch() {
+    /// A forge that takes a commit on workspace `w1`'s branch, with ContextSpace `parking` held
+    /// and the workspace opened.
+    async fn workspace_world() -> (wiremock::MockServer, AppState) {
         use base64::Engine as _;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -3538,6 +3538,13 @@ mod tests {
             })
             .await
             .expect("a workspace");
+        (server, state)
+    }
+
+    /// A removal into a workspace commits on the workspace's branch and opens no Change (CC-76).
+    #[tokio::test]
+    async fn a_removal_into_a_workspace_commits_on_its_branch() {
+        let (_server, state) = workspace_world().await;
         let item = removal_of(
             "ContextSpace",
             "spaces",
@@ -3549,6 +3556,78 @@ mod tests {
             matches!(&opened, Ok(ProposeOutcome::Workspace(commit))
                 if commit.workspace == "w1" && commit.branch == "workspace/w1"),
             "{opened:?}"
+        );
+    }
+
+    /// An apply whose first change does not open answers that change's own error; one whose later
+    /// change does not open is a 409 naming the change and what was opened before it.
+    #[tokio::test]
+    async fn an_apply_that_stops_names_the_change_and_what_opened_before_it() {
+        let (_server, state) = workspace_world().await;
+        held(
+            &state,
+            "ContextSpace",
+            "blocked",
+            "doprava",
+            json!({ "isSandbox": true }),
+        );
+        held(
+            &state,
+            "Endpoint",
+            "counters",
+            "doprava",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "blocked" } }),
+        );
+        let removal = |name: &str| {
+            removal_of(
+                "ContextSpace",
+                "spaces",
+                name,
+                &etag(&state, "doprava", "ContextSpace", name),
+            )
+        };
+        let kept = |items: Vec<Planned>, workspace: Option<&str>| {
+            let id = new_id();
+            state.plans.keep(
+                id.clone(),
+                Plan {
+                    owner: "sub-jana".into(),
+                    connector: None,
+                    project: "doprava".into(),
+                    workspace: workspace.map(str::to_owned),
+                    items,
+                    expires_at: TimestampTz::now() + jiff::SignedDuration::from_mins(5),
+                },
+                TimestampTz::now(),
+            );
+            ApplyInput { plan_id: id }
+        };
+        let named = "1 dependent resource blocks deletion: Endpoint counters";
+        let first = apply(
+            &steward(),
+            &state,
+            "doprava",
+            kept(vec![removal("blocked")], None),
+        )
+        .await;
+        assert!(
+            matches!(&first, Err(OpError::Api(ApiError::Conflict(why))) if why.starts_with(named)),
+            "{first:?}"
+        );
+        let later = apply(
+            &steward(),
+            &state,
+            "doprava",
+            kept(vec![removal("parking"), removal("blocked")], Some("w1")),
+        )
+        .await;
+        assert!(
+            matches!(&later, Err(OpError::Api(ApiError::Conflict(why)))
+                if why.starts_with("ContextSpace blocked was not applied (")
+                    && why.contains(named)
+                    && why.contains("these were: [")
+                    && why.contains("workspace/w1")),
+            "{later:?}"
         );
     }
 

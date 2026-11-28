@@ -5657,6 +5657,40 @@ mod tests {
         assert!(forge_paths(&server).await.is_empty());
     }
 
+    /// A changed secrets file is listed as a Secret, and a file that is neither a manifest, a
+    /// native file nor a secret by an empty kind; neither carries a spec, so both are green.
+    #[tokio::test]
+    async fn a_listed_secrets_file_is_a_secret_and_an_unknown_file_has_no_kind() {
+        let server = MockServer::start().await;
+        let shako = forge_at(&server);
+        let pr = open_pr(9, "portal/secret-hel-mobility-github-token");
+        let listed = changed_files(
+            &shako,
+            &pr,
+            vec![
+                changed(
+                    "projects/hel-mobility/secrets/github-token.enc.yaml",
+                    false,
+                    true,
+                ),
+                changed("projects/hel-mobility/notes.txt", false, false),
+            ],
+        )
+        .await
+        .expect("listed");
+        let kinds: Vec<(&str, Operation, Lane)> = listed
+            .iter()
+            .map(|file| (file.kind.as_str(), file.operation, file.lane))
+            .collect();
+        assert_eq!(
+            kinds,
+            [
+                (SECRET, Operation::Create, Lane::Green),
+                ("", Operation::Update, Lane::Green)
+            ]
+        );
+    }
+
     /// A merge the forge names no merge commit for names no approver, and asks nothing.
     #[tokio::test]
     async fn a_merge_without_its_commit_names_no_decider() {

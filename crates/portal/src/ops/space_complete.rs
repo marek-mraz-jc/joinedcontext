@@ -2596,6 +2596,42 @@ mod tests {
 
     /// A DataSource check that is refused is a red verdict holding the refusal beside what the
     /// drafting found.
+    /// A run whose profile names jc_space_complete but not the check it runs inside gets each
+    /// drafted manifest back with a red verdict naming the refusal, not an error for the whole
+    /// completion.
+    #[tokio::test]
+    async fn a_check_the_profile_refuses_is_the_drafts_red_verdict() {
+        let state = crate::ops::testkit::state();
+        let mut caller = crate::ops::testkit::admin(&state);
+        caller.access = Some(crate::agents::access::Access::from_spec(&json!({
+            "access": { "operations": ["jc_space_complete"],
+                        "kinds": [{ "kind": "ContextSpace", "verbs": ["propose"] }] }
+        })));
+        let manifest = json!({ "apiVersion": crate::resource::API_VERSION, "kind": "ContextSpace",
+            "metadata": { "name": "benches", "namespace": "doprava" },
+            "spec": { "isSandbox": true } });
+        let drafted = super::checked_draft(&caller, &state, "doprava", manifest, true, Vec::new())
+            .await
+            .expect("drafted");
+        let verdict = drafted.verdict.expect("a verdict");
+        assert!(!verdict.ok, "{verdict:?}");
+        assert!(
+            verdict
+                .findings
+                .iter()
+                .any(|f| f.message.contains("jc_manifest_dry_run")),
+            "{:?}",
+            verdict.findings
+        );
+    }
+
+    /// A LinkML source with a key YAML cannot write back keeps the source as it was.
+    #[test]
+    fn a_source_that_does_not_write_back_is_kept_as_it_was() {
+        let source = "classes:\n  Bike: {}\n? [a, b]\n: complex\n";
+        assert_eq!(describe_class(source, "Bike", "counted bikes"), source);
+    }
+
     #[tokio::test]
     async fn a_refused_datasource_check_is_a_red_verdict() {
         use crate::ops::verdict::{Finding, Level};

@@ -4216,6 +4216,33 @@ mod tests {
         assert!(text.contains("is bound to a project"), "{text}");
     }
 
+    /// An `ifMatch` that is no header value (a line break in it) is refused 400 naming the door,
+    /// before the REST door is reached.
+    #[tokio::test]
+    async fn a_portal_door_refuses_an_if_match_that_is_no_header_value() {
+        let state = hel_state();
+        let headers = HeaderMap::new();
+        let answer = portal_door(
+            call_of(
+                &state,
+                Front::Portal,
+                &headers,
+                br#"{"plural":"endpoints","name":"air","ifMatch":"\"a\"\n\"b\"","body":"kind: Endpoint"}"#,
+            ),
+            "projects('helsinki')",
+            "portal_manifest_replace",
+            "",
+            false,
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(answer).await;
+        assert!(
+            text.contains("portal_manifest_replace: a parameter is no valid address"),
+            "{text}"
+        );
+    }
+
     /// T-7918: a read that would hold more than [`MAX_ROWS`] rows is refused 400 with the
     /// narrowing to ask for, never cut: the rows of several projects, the rows an expansion puts
     /// under the project rows, an Organization set, and the members one binding names.

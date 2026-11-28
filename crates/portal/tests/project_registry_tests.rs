@@ -227,6 +227,32 @@ async fn a_tag_is_pinned_by_one_red_lane_organization_change() {
     );
 }
 
+/// A registry entry whose spec is a YAML list still loads as a ProjectSpec (serde reads a struct
+/// from a sequence), but has no fields to repoint: the answer names the file and nothing is written.
+#[tokio::test]
+async fn a_registry_entry_whose_spec_is_a_list_is_refused_by_its_path() {
+    let (server, state) = world().await;
+    let listed = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: \
+                  ovzdusie\n  namespace: org\nspec: [bb, null, null, null, null, {name: ovzdusie}, main]\n";
+    Mock::given(method("GET"))
+        .and(path(format!("{REPO}/Shako.File(Path=@p,Ref=@r)")))
+        .and(query_param("@p", format!("'{ENTRY}'")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "Sha": "blob-listed",
+            "Content": encode(listed)
+        })))
+        .with_priority(0)
+        .mount(&server)
+        .await;
+    let answer = repoint(&state, "vlasta", json!({ "ref": "v0.2.0" })).await;
+    refused(
+        &answer,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "projects/ovzdusie.yaml has no spec",
+    );
+    assert!(written_entries(&server).await.is_empty());
+}
+
 /// A ref the repository does not hold is refused by name before anything is written, and so is a
 /// ref git would read as an option.
 #[tokio::test]

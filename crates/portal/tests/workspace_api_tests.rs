@@ -1352,6 +1352,31 @@ async fn a_manifest_the_branch_lists_but_the_forge_does_not_hand_out_is_no_chang
     assert!(comparison.conflicts.is_empty(), "{comparison:?}");
 }
 
+/// A workspace whose branch the forge no longer holds is brought up to main with nothing to take
+/// or merge: only its base moves, and nothing is written.
+#[tokio::test]
+async fn updating_a_workspace_whose_branch_is_gone_only_moves_its_base() {
+    let (server, state) = world().await;
+    opened(&state).await;
+    let report = ops::workspaces::update_from_main(
+        &steward(),
+        &state,
+        PROJECT,
+        "air-v2",
+        ops::workspaces::UpdateRequest::default(),
+    )
+    .await
+    .expect("an update");
+    assert!(
+        report.taken.is_empty() && report.merged.is_empty(),
+        "{report:?}"
+    );
+    assert_eq!(report.base_revision, "base1");
+    assert!(calls(&server, "POST", "/Shako.CommitFiles")
+        .await
+        .is_empty());
+}
+
 /// The merged manifest is checked as its owner's proposal: an owner who reads the project and
 /// may propose nothing is refused at the check, and nothing is written.
 #[tokio::test]

@@ -941,6 +941,54 @@ async fn another_projects_source_is_not_listened_to_and_listening_is_rate_limite
     );
 }
 
+/// A pipeline sent inline without a name is tried and tested all the same; with no draft to name,
+/// no verdict and no record check is kept anywhere.
+#[tokio::test]
+async fn a_nameless_inline_pipeline_is_tried_and_tested_and_kept_nowhere() {
+    let runner = runner().await;
+    let state = state("nameless", Some(&runner));
+    let pipeline = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Pipeline",
+        "metadata": {},
+        "spec": {
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "broker" } },
+            "compute": { "kind": "bloblang", "bloblang": "root.id = this.VP.veh.string()" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:bikes:bikes-write"
+        }
+    });
+    let captured =
+        [json!({ "input": "{\"VP\":{\"veh\":1}}", "output": { "id": "1" }, "error": null })];
+    let (tried, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &op("nameless", "jc_pipeline_try_mapping"),
+            Some(json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] })),
+        ),
+        play_runner(&runner, &state, 0, &captured),
+    );
+    assert_eq!(tried.status, StatusCode::OK, "{}", tried.text);
+    let (tested, _) = tokio::join!(
+        send(
+            &state,
+            person("dev"),
+            "POST",
+            &op("nameless", "jc_pipeline_test"),
+            Some(json!({ "pipeline": pipeline, "sample": { "text": "{}", "format": "json" } })),
+        ),
+        play_runner(&runner, &state, 1, &captured),
+    );
+    assert_eq!(tested.status, StatusCode::OK, "{}", tested.text);
+    assert!(
+        json_of(&tested.text)["verdict"].is_object(),
+        "{}",
+        tested.text
+    );
+}
+
 #[tokio::test]
 async fn streamed_messages_are_tried_one_each_and_bounded() {
     let runner = runner().await;

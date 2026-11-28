@@ -1565,6 +1565,120 @@ mod tests {
         }
     }
 
+    /// A server that speaks just enough of the Postgres protocol for a listener: its first
+    /// session takes the LISTEN and then drops, its second refuses the sign-in, every later one
+    /// signs in and refuses the LISTEN. Answers how many sessions it served.
+    async fn scripted_postgres() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        fn message(tag: u8, body: &[u8]) -> Vec<u8> {
+            let mut out = vec![tag];
+            out.extend_from_slice(&(body.len() as u32 + 4).to_be_bytes());
+            out.extend_from_slice(body);
+            out
+        }
+        fn error(severity: &str) -> Vec<u8> {
+            let mut body = Vec::new();
+            for (field, text) in [
+                (b'S', severity),
+                (b'V', severity),
+                (b'C', "42501"),
+                (b'M', "refused"),
+            ] {
+                body.push(field);
+                body.extend_from_slice(text.as_bytes());
+                body.push(0);
+            }
+            body.push(0);
+            message(b'E', &body)
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("a port");
+        let port = listener.local_addr().expect("an address").port();
+        let served = Arc::new(AtomicUsize::new(0));
+        let count = Arc::clone(&served);
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                let session = count.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let mut len = [0u8; 4];
+                    if socket.read_exact(&mut len).await.is_err() {
+                        return;
+                    }
+                    let mut startup =
+                        vec![0u8; (u32::from_be_bytes(len) as usize).saturating_sub(4)];
+                    if socket.read_exact(&mut startup).await.is_err() {
+                        return;
+                    }
+                    if session == 1 {
+                        let _ = socket.write_all(&error("FATAL")).await;
+                        return;
+                    }
+                    let mut hello = message(b'R', &0u32.to_be_bytes());
+                    hello.extend(message(b'K', &[0, 0, 0, 7, 0, 0, 0, 9]));
+                    hello.extend(message(b'Z', b"I"));
+                    if socket.write_all(&hello).await.is_err() {
+                        return;
+                    }
+                    let mut head = [0u8; 5];
+                    if socket.read_exact(&mut head).await.is_err() {
+                        return;
+                    }
+                    let len = u32::from_be_bytes([head[1], head[2], head[3], head[4]]) as usize;
+                    let mut query = vec![0u8; len.saturating_sub(4)];
+                    if socket.read_exact(&mut query).await.is_err() {
+                        return;
+                    }
+                    let answer = if session == 0 {
+                        let mut done = message(b'C', b"LISTEN\0");
+                        done.extend(message(b'Z', b"I"));
+                        done
+                    } else {
+                        let mut refused = error("ERROR");
+                        refused.extend(message(b'Z', b"I"));
+                        refused
+                    };
+                    let _ = socket.write_all(&answer).await;
+                    if session != 0 {
+                        // Held open: the listener goes on to its pause, not to a read error.
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                    }
+                });
+            }
+        });
+        (port, served)
+    }
+
+    /// The listener rides out each way its database fails it: a session lost after its LISTEN
+    /// whose reconnect is refused, and a session that signs in but refuses the LISTEN; it keeps
+    /// reconnecting instead of ending.
+    #[tokio::test]
+    async fn the_draft_listener_reconnects_through_a_lost_session_and_a_refused_listen() {
+        use std::sync::atomic::Ordering;
+        let (port, served) = scripted_postgres().await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy(&format!(
+                "postgres://jc@127.0.0.1:{port}/drafts?sslmode=disable"
+            ))
+            .expect("a lazy pool");
+        let hub = DraftHub::new();
+        let listening = tokio::spawn(hub.listen(pool));
+        let reached = tokio::time::timeout(std::time::Duration::from_secs(20), async {
+            while served.load(Ordering::SeqCst) < 3 {
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(
+            reached.is_ok(),
+            "{} sessions",
+            served.load(Ordering::SeqCst)
+        );
+        assert!(!listening.is_finished(), "the listener keeps going");
+        listening.abort();
+    }
+
     /// Joined to a database outside any async runtime, a hub keeps its events inside the
     /// process instead of panicking, and a second join is a no-op.
     #[test]

@@ -2118,6 +2118,31 @@ mod tests {
         );
     }
 
+    /// A gateway that fails the widget's history read is that widget's "not readable now" tile,
+    /// with the status and no gateway words; the other widgets are still drawn.
+    #[tokio::test]
+    async fn a_tile_whose_gateway_fails_reads_as_not_readable_now() {
+        use wiremock::matchers::{method, path_regex};
+        use wiremock::{Mock, ResponseTemplate};
+        let server = wiremock::MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path_regex(format!("^/api/endpoint/{AIR}/")))
+            .respond_with(ResponseTemplate::new(502).set_body_string("upstream 10.0.0.7 down"))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
+        board(&state, "down", vec![pm10_widget("air")]);
+        let answer = run(&caller, &state, "helsinki", whole("down"))
+            .await
+            .expect("drawn");
+        let error = &answer["widgets"][0]["error"];
+        assert_eq!(error["status"], 503, "{answer}");
+        let detail = error["detail"].as_str().unwrap_or_default();
+        assert!(detail.contains("could not be read now"), "{detail}");
+        assert!(!answer.to_string().contains("10.0.0.7"), "{answer}");
+    }
+
     #[tokio::test]
     async fn a_dashboard_widget_with_an_expression_is_its_own_422_tile() {
         let server = wiremock::MockServer::start().await;
