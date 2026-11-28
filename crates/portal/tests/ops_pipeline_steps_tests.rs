@@ -960,23 +960,25 @@ async fn a_nameless_inline_pipeline_is_tried_and_tested_and_kept_nowhere() {
     });
     let captured =
         [json!({ "input": "{\"VP\":{\"veh\":1}}", "output": { "id": "1" }, "error": null })];
+    let try_mapping = op("nameless", "jc_pipeline_try_mapping");
     let (tried, _) = tokio::join!(
         send(
             &state,
             person("dev"),
             "POST",
-            &op("nameless", "jc_pipeline_try_mapping"),
+            &try_mapping,
             Some(json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] })),
         ),
         play_runner(&runner, &state, 0, &captured),
     );
     assert_eq!(tried.status, StatusCode::OK, "{}", tried.text);
+    let test = op("nameless", "jc_pipeline_test");
     let (tested, _) = tokio::join!(
         send(
             &state,
             person("dev"),
             "POST",
-            &op("nameless", "jc_pipeline_test"),
+            &test,
             Some(json!({ "pipeline": pipeline, "sample": { "text": "{}", "format": "json" } })),
         ),
         play_runner(&runner, &state, 1, &captured),

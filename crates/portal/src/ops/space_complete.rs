@@ -2625,13 +2625,6 @@ mod tests {
         );
     }
 
-    /// A LinkML source with a key YAML cannot write back keeps the source as it was.
-    #[test]
-    fn a_source_that_does_not_write_back_is_kept_as_it_was() {
-        let source = "classes:\n  Bike: {}\n? [a, b]\n: complex\n";
-        assert_eq!(describe_class(source, "Bike", "counted bikes"), source);
-    }
-
     #[tokio::test]
     async fn a_refused_datasource_check_is_a_red_verdict() {
         use crate::ops::verdict::{Finding, Level};

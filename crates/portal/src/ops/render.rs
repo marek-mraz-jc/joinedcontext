@@ -2118,22 +2118,25 @@ mod tests {
         );
     }
 
-    /// A gateway that fails the widget's history read is that widget's "not readable now" tile,
-    /// with the status and no gateway words; the other widgets are still drawn.
+    /// An Endpoint that answers a widget's read with something that is not JSON is that
+    /// widget's "not readable now" tile, with the status and none of the Endpoint's words.
     #[tokio::test]
-    async fn a_tile_whose_gateway_fails_reads_as_not_readable_now() {
-        use wiremock::matchers::{method, path_regex};
+    async fn a_tile_whose_endpoint_answers_no_json_reads_as_not_readable_now() {
+        use wiremock::matchers::{method, path};
         use wiremock::{Mock, ResponseTemplate};
         let server = wiremock::MockServer::start().await;
         Mock::given(method("GET"))
-            .and(path_regex(format!("^/api/endpoint/{AIR}/")))
-            .respond_with(ResponseTemplate::new(502).set_body_string("upstream 10.0.0.7 down"))
-            .with_priority(1)
+            .and(path(format!("/api/endpoint/{AIR}/odata/v4/Garbled")))
+            .respond_with(ResponseTemplate::new(200).set_body_string("<html>10.0.0.7"))
             .mount(&server)
             .await;
         let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
-        board(&state, "down", vec![pm10_widget("air")]);
-        let answer = run(&caller, &state, "helsinki", whole("down"))
+        sourced(
+            &state,
+            "garbled",
+            json!({ "source": "odata", "entitySet": "Garbled" }),
+        );
+        let answer = run(&caller, &state, "helsinki", whole("garbled"))
             .await
             .expect("drawn");
         let error = &answer["widgets"][0]["error"];

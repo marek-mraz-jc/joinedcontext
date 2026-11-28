@@ -498,6 +498,35 @@ mod tests {
             .is_empty());
     }
 
+    /// AG-158: entities read in a project whose models mark nothing personal reach the model as
+    /// the operation answered them.
+    #[tokio::test]
+    async fn entities_of_a_project_without_personal_marks_reach_the_model_whole() {
+        let gateway = MockServer::start().await;
+        let state = unreadable_marks(&gateway).await;
+        state.mirror.remove(&crate::resource::ResourceKey {
+            namespace: "helsinki".to_owned(),
+            kind: "DataModel".to_owned(),
+            name: "riders".to_owned(),
+        });
+        let driver = in_state(&state, "http://localhost:1", "data-read");
+        let (caller, mut offered) = driver.connector_offered("data-read");
+        offered.push(crate::ops::summary(
+            crate::ops::find("jc_data_query").expect("registered"),
+        ));
+        let call = model::ToolCall {
+            id: "call-1".into(),
+            name: "jc_data_query".into(),
+            input: json!({ "endpoint": "stopshelsinkizzzzzzzzzzzzzzz", "type": "GtfsStop" }),
+        };
+        let said = driver
+            .connector_call(&caller, &offered, &call)
+            .await
+            .expect("an answer");
+        assert!(said.contains("Kamppi"), "{said}");
+        assert!(!said.contains("withheldPersonalAttributes"), "{said}");
+    }
+
     /// An operation whose input schema is no object, or one without a `type`, still reaches the
     /// provider as an object schema (T-7818).
     #[test]

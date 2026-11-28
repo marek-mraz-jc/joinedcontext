@@ -566,6 +566,23 @@ async fn a_source_between_runs_is_not_asked_anything() {
     );
 }
 
+/// A SyncSource that names no project belongs to none: the pass passes it by and asks its
+/// origin nothing.
+#[tokio::test]
+async fn a_source_without_a_namespace_is_passed_by() {
+    let nameless = source(json!({"interval": "30m"})).replace("  namespace: bb\n", "");
+    let (server, recorded) = forge(&[("projects/bb/sync/regional.yaml", nameless)]).await;
+    let origin = Origin::at(MOVED);
+    let states = Arc::new(States::new(None));
+    let run = driver(&server, &origin, &states)
+        .tick(NOW)
+        .await
+        .expect("the pass runs");
+    assert!(run.proposed.is_empty(), "flags: {:?}", run.flags);
+    assert!(origin.calls().is_empty(), "{:?}", origin.calls());
+    assert!(recorded.branches().is_empty());
+}
+
 #[tokio::test]
 async fn a_paused_source_runs_for_nobody_until_it_is_resumed() {
     let (server, recorded) = repository(json!({"interval": "30m"})).await;

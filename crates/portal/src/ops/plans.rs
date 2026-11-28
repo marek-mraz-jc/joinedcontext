@@ -1974,19 +1974,7 @@ mod tests {
             base: "absent".into(),
             model,
         };
-        let model = ModelPlan {
-            source: "id: https://hel.fi/air\nname: air\n".into(),
-            checked: SourceDryRunResult {
-                severity: "patch".into(),
-                changes: Vec::new(),
-                version: "1.0.1".into(),
-                artifacts: Default::default(),
-            },
-            next_val: Value::Null,
-            imports: BTreeMap::new(),
-            creating: false,
-            base: "etag".into(),
-        };
+        let model = air_model();
         store.keep(
             "p1".into(),
             Plan {
@@ -2008,6 +1996,77 @@ mod tests {
         assert!(
             store.peek("p1", "eva", "helsinki", now).is_none(),
             "another person's plan"
+        );
+    }
+
+    fn air_model() -> ModelPlan {
+        ModelPlan {
+            source: "id: https://hel.fi/air\nname: air\n".into(),
+            checked: SourceDryRunResult {
+                severity: "patch".into(),
+                changes: Vec::new(),
+                version: "1.0.1".into(),
+                artifacts: Default::default(),
+            },
+            next_val: Value::Null,
+            imports: BTreeMap::new(),
+            creating: false,
+            base: "etag".into(),
+        }
+    }
+
+    /// JC2-11: the paired tab opens a planned model's editor on its LinkML source, not its
+    /// manifest; a kept plan that changes nothing opens nothing and says so.
+    #[test]
+    fn the_tab_opens_a_planned_model_on_its_source_and_an_empty_plan_on_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = crate::ops::testkit::admin(&state);
+        let now = TimestampTz::now();
+        let keep = |id: &str, items: Vec<Planned>| {
+            state.plans.keep(
+                id.into(),
+                Plan {
+                    owner: admin.identity.subject.clone(),
+                    connector: None,
+                    project: "helsinki".into(),
+                    workspace: None,
+                    items,
+                    expires_at: now + jiff::SignedDuration::from_mins(5),
+                },
+                now,
+            )
+        };
+        keep(
+            "p-model",
+            vec![Planned {
+                kind: "DataModel".into(),
+                plural: "datamodels",
+                home: "helsinki".into(),
+                name: "air".into(),
+                manifest: Some(json!({ "kind": "DataModel" })),
+                base: "absent".into(),
+                model: Some(air_model()),
+            }],
+        );
+        keep("p-empty", Vec::new());
+        let asker = crate::agents::oneshot::ui_actions::Asker {
+            state: &state,
+            identity: &admin.identity,
+            project: "helsinki",
+            connector: None,
+        };
+        let (frame, payload) = asker
+            .show_diff(&json!({ "planId": "p-model" }))
+            .expect("opened");
+        assert_eq!(frame, "navigate");
+        assert_eq!(
+            payload["prefill"],
+            json!({ "source": "id: https://hel.fi/air\nname: air\n" }),
+            "{payload}"
+        );
+        assert_eq!(
+            asker.show_diff(&json!({ "planId": "p-empty" })),
+            Err("plan 'p-empty' changes nothing".to_owned())
         );
     }
 

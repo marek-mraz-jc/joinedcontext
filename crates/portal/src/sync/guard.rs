@@ -150,4 +150,40 @@ mod tests {
             "a redirect into a scheme with no host reads a file off the node"
         );
     }
+
+    /// The policy a fetcher carries follows a hop `follows` admits and stops at one it refuses:
+    /// a stopped hop answers the origin's own redirect, a followed one is the next URL asked.
+    #[tokio::test]
+    async fn the_redirect_policy_follows_a_public_https_hop_and_stops_an_internal_one() {
+        use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
+        let origin = MockServer::start().await;
+        for (from, to) in [
+            ("/public", "https://1.1.1.1:9/next"),
+            ("/internal", "https://169.254.169.254/latest/meta-data/"),
+        ] {
+            Mock::given(path(from))
+                .respond_with(ResponseTemplate::new(302).insert_header("location", to))
+                .mount(&origin)
+                .await;
+        }
+        let client = reqwest::Client::builder()
+            .redirect(https_redirects(3))
+            .connect_timeout(std::time::Duration::from_millis(300))
+            .timeout(std::time::Duration::from_secs(2))
+            .build()
+            .expect("a client");
+        let stopped = client
+            .get(format!("{}/internal", origin.uri()))
+            .send()
+            .await
+            .expect("the origin's own answer");
+        assert_eq!(stopped.status(), 302);
+        // The followed hop goes to an address nothing answers on: the send fails there instead
+        // of answering the origin's 302, as the stopped hop above did.
+        let followed = client
+            .get(format!("{}/public", origin.uri()))
+            .send()
+            .await;
+        assert!(followed.is_err(), "{followed:?}");
+    }
 }

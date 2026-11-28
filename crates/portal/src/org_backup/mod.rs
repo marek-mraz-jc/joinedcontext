@@ -1710,6 +1710,28 @@ mod tests {
             !ended.to_string().contains("another Portal replica"),
             "a failed renewal stops no run: {ended}"
         );
+        // A lease that is still this replica's is renewed and the run goes on to its own end.
+        let (state, _) = keyed_state();
+        let state = state.with_org_backup_egress(reqwest::Client::new());
+        target.sealed_secret = seal(
+            &state,
+            &target_context("alfa", &target.kind),
+            "s3-secret-access-key",
+        )
+        .expect("sealed");
+        state.org_backups.save(&target).await.expect("saved");
+        let own = state
+            .org_backups
+            .claim("alfa", &target.kind)
+            .await
+            .expect("claimed");
+        let ended = held(&state, &target, &own, "ada", every)
+            .await
+            .expect_err("versioning off");
+        assert!(
+            !ended.to_string().contains("another Portal replica"),
+            "a renewed lease stops no run: {ended}"
+        );
     }
 
     /// A seal opens only with the Portal's age key: a key file that is gone is said in words,
@@ -2376,6 +2398,21 @@ mod tests {
             .expect("a realm with an admin client");
         let names: Vec<&str> = people.iter().map(|p| p.username.as_str()).collect();
         assert_eq!(names, ["ada", "bea"], "sorted by id");
+        // A realm of its own without an admin client lists nobody: the bundle says so.
+        state.organization_realms =
+            crate::auth::realms::OrganizationRealms::new(std::collections::BTreeMap::from([(
+                "alfa".to_owned(),
+                Arc::new(crate::auth::realms::OrganizationRealm::new(
+                    &setting,
+                    &oidc,
+                    &"https://portal.alfa.example".parse().expect("url"),
+                    None,
+                )),
+            )]));
+        assert!(people_of(&state, "alfa")
+            .await
+            .expect("nothing asked")
+            .is_none());
     }
 
     async fn people_yaml(realm: &wiremock::MockServer, organization: &str) -> Option<String> {

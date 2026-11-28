@@ -2493,6 +2493,9 @@ mod function_tool_tests {
                     json!({ "status": 200, "body": [
                         { "id": "urn:ngsi-ld:GtfsStop:1", "type": "GtfsStop", "name": "Kamppi" }
                     ] }),
+                    json!({ "status": 200, "body": [
+                        { "id": "urn:ngsi-ld:GtfsStop:2", "type": "GtfsStop", "name": "Rautatientori" }
+                    ] }),
                 ],
                 std::sync::atomic::AtomicUsize::new(0),
             ))
@@ -2544,6 +2547,15 @@ mod function_tool_tests {
             said.contains("personal attributes cannot be withheld"),
             "{said}"
         );
+        // A project whose models mark nothing personal: the entities reach the model whole.
+        driver.state.mirror.remove(&crate::resource::ResourceKey {
+            namespace: "helsinki".to_owned(),
+            kind: "DataModel".to_owned(),
+            name: "riders".to_owned(),
+        });
+        let (said, ok) = driver.call_function_tool(&input).await;
+        assert!(ok, "{said}");
+        assert!(said.contains("Rautatientori"), "{said}");
         assert_eq!(
             driver.call_function_tool(&input).await,
             ("jc-functions is full".to_owned(), false)

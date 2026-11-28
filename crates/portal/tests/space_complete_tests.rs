@@ -312,8 +312,8 @@ async fn space_complete_env_file_creates_secret_ref_without_leaking_password() {
 }
 
 /// Every kind of uploaded file finds its place: a YAML file that is no manifest is left out, a
-/// `.blobl` file is the pipeline's mapping, a README names the source, and a `.env` that names
-/// none leaves the README's.
+/// `.blobl` file is the pipeline's mapping, a README names the source, a `.env` that names
+/// none leaves the README's, and a second sample or a file of another kind is passed by.
 #[tokio::test]
 async fn each_uploaded_file_kind_takes_its_place_in_the_completion() {
     let mut config = Config::for_tests();
@@ -343,7 +343,10 @@ async fn each_uploaded_file_kind_takes_its_place_in_the_completion() {
             { "name": "README.md", "content": "Benches, read from <https://data.example/benches.csv>." },
             { "name": "README", "content": "A second README: https://other.example/ignored.csv" },
             { "name": "local.env", "content": "COLOUR=green\n" },
-            { "name": "benches.csv", "content": "id,seats\n1,3\n" }
+            { "name": "benches.csv", "content": "id,seats\n1,3\n" },
+            // A second sample and a file of no kind the completion reads are passed by.
+            { "name": "more.csv", "content": "id,seats\n2,5\n" },
+            { "name": "photo.txt", "content": "a bench in the park" }
         ]
     });
     let resp = server::app(state)

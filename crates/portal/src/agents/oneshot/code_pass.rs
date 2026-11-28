@@ -3866,7 +3866,7 @@ mod drive_tests {
             ],
         )
         .await;
-        let (state, driver) = driver(&server).await;
+        let (state, fixer) = driver(&server).await;
         let (tx, mut inbox) = broadcast::channel(8);
         let failed = json!({ "version": 1, "outcome": "failed", "passed": 0, "failed": 1,
             "failures": [{ "file": "src/pages/Hello.test.tsx", "name": "Hello greets",
@@ -3877,7 +3877,7 @@ mod drive_tests {
             until(|| async { previews(&state).await > 1 }).await;
             tx.send(cancelled()).expect("sent");
         };
-        let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
+        let (ended, ()) = tokio::join!(fixer.drive_code(&mut inbox, far()), feed);
         ended.expect("the loop ends");
         assert_eq!(
             previews(&state).await,
@@ -3886,7 +3886,15 @@ mod drive_tests {
         );
 
         let server = MockServer::start().await;
-        script(&server, &[Some("Nothing to change yet.".into())]).await;
+        // A first answer without a change, twice, builds nothing: no version is on screen.
+        script(
+            &server,
+            &[
+                Some("Nothing to change yet.".into()),
+                Some("Still nothing.".into()),
+            ],
+        )
+        .await;
         let (state, driver) = driver(&server).await;
         let (tx, mut inbox) = broadcast::channel(8);
         tx.send(event("tests", json!({ "version": 1, "outcome": "failed" })))
@@ -3899,7 +3907,7 @@ mod drive_tests {
         assert_eq!(previews(&state).await, 0);
         assert_eq!(
             asked(&server).await.len(),
-            1,
+            2,
             "no fix for a version never shown"
         );
     }
