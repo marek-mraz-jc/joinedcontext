@@ -295,15 +295,12 @@ mod tests {
         let dir = tempfile::tempdir().expect("a scratch dir");
         let file = dir.path().join("pw");
         std::fs::write(&file, "s3cret-pw\n").expect("the password file");
-        let e = url_with_password("url", "postgres://shako@/jc", &file)
-            .err()
-            .expect("no host");
+        let e = url_with_password("url", "postgres://shako@/jc", &file).expect_err("no host");
         assert_eq!(e, "url is not a URL");
         let ok = url_with_password("url", "postgres://shako@db/jc", &file).expect("a host");
         assert!(ok.expose().contains(":s3cret-pw@db"));
         let missing = url_with_password("url", "postgres://shako@db/jc", &dir.path().join("none"))
-            .err()
-            .expect("no file");
+            .expect_err("no file");
         assert!(
             missing.starts_with("cannot read password file"),
             "{missing}"
