@@ -1115,8 +1115,7 @@ mod tests {
         let (shutdown, tasks) = (CancellationToken::new(), TaskTracker::new());
         let why = try_start(&cfg, &setup, &siblings, &secrets, &env, &shutdown, &tasks)
             .await
-            .err()
-            .expect("a start without the embedding model went on");
+            .expect_err("a start without the embedding model went on");
         assert!(why.contains("JC_ASSISTANT_MODEL_DIR"), "{why}");
         assert!(tasks.is_empty(), "nothing was spawned");
     }
@@ -1579,8 +1578,7 @@ mod tests {
         let (stop, held) = (CancellationToken::new(), TaskTracker::new());
         let why = try_start(&cfg, &setup, &siblings, &secrets, &bad_portal, &stop, &held)
             .await
-            .err()
-            .expect("a Portal address the chat cannot use started the assistant");
+            .expect_err("a Portal address the chat cannot use started the assistant");
         assert!(why.starts_with("the Portal address is not usable"), "{why}");
         assert!(held.is_empty(), "nothing was spawned");
         let env = pick(model_dir, ort);
