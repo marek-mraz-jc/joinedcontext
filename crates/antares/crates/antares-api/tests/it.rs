@@ -23,6 +23,7 @@ mod collation_4_23;
 mod contexts_5_13;
 mod contexts_fleet_5_13;
 mod core_member_iris_5_5_7;
+mod coverage_r8;
 mod cross_org_write_5_6;
 mod csf_forwarding_5_7;
 mod csource_concurrency_5_9_2;

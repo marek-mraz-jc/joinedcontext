@@ -643,7 +643,7 @@ mod tests {
     async fn outbox_flush_waits_for_pending_rows_and_only_when_asked() {
         use antares_sql::store::any::{AnyStore, PgBackend};
         use antares_sql::store::Kind;
-        let Some(url) = test_env::db() else { return };
+        let url = test_env::db();
         let (log, _guard) = Logged::start();
         // a nested fn, not a closure: connecting is awaited, and an async
         // closure is not a stable language feature

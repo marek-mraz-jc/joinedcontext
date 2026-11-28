@@ -520,6 +520,75 @@ async fn a_pass_without_rights_reports_every_step_it_skipped() {
     owner.close().await;
 }
 
+/// Both history index builds read the partition tree from pg_inherits: a role that may not read
+/// it defers each build with the database's reason, and the pass still reports a summary.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_pass_that_cannot_read_the_partition_tree_defers_both_index_builds() {
+    let url = require_db!();
+    let own = own_database(&url, "nocatalog", &[]).await;
+    let owner = pg::connect(&own, 2).await.expect("connect+migrate");
+    if maintenance::detect_temporal_backend(&owner).await != Ok(TemporalBackend::Partitioned) {
+        eprintln!("SKIP: new databases get timescaledb here (template1)");
+        return;
+    }
+    let role = "antares_pass_nocatalog";
+    for sql in [
+        format!(
+            "DO $$ BEGIN CREATE ROLE {role} NOLOGIN;
+             EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $$"
+        ),
+        format!("GRANT USAGE ON SCHEMA public TO {role}"),
+        format!("GRANT SELECT, INSERT, UPDATE ON maintenance_jobs TO {role}"),
+        format!("GRANT SELECT ON history_cutover TO {role}"),
+        // the two-index history of before 0017: the one-index step is pending
+        "CREATE INDEX i_attr_instances_lookup ON attr_instances \
+         (tenant_id, entity_id, attr_id, observed_at DESC)"
+            .to_owned(),
+        // catalog privileges are per database: only this one is affected
+        "REVOKE SELECT ON pg_catalog.pg_inherits FROM PUBLIC".to_owned(),
+    ] {
+        owner
+            .execute(sqlx::AssertSqlSafe(sql.clone()))
+            .await
+            .expect(&sql);
+    }
+    let session = format!("SET ROLE {role}");
+    let limited = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(3)
+        .after_connect(move |conn, _| {
+            let session = session.clone();
+            Box::pin(async move {
+                conn.execute(sqlx::AssertSqlSafe(session)).await?;
+                Ok(())
+            })
+        })
+        .connect(&own)
+        .await
+        .expect("role pool");
+
+    let summary = temporal_maintenance(
+        &limited,
+        TemporalBackend::Partitioned,
+        None,
+        Duration::ZERO,
+    )
+    .await
+    .expect("a refused step is a line, never the pass's error");
+    let got = lines(&summary);
+    for want in [
+        "history index build deferred (",
+        "expiry index build deferred (",
+    ] {
+        assert!(
+            got.iter()
+                .any(|l| l.starts_with(want) && l.contains("permission denied")),
+            "{want:?} in {summary}"
+        );
+    }
+    limited.close().await;
+    owner.close().await;
+}
+
 /// What a pass reports beside its partitions: a DEFAULT partition grown past incidental, the
 /// claim-check rows it reaped, nothing of a reap another process holds, and a leaf whose reap
 /// the database refused, by name.

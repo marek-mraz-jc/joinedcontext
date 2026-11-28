@@ -59,6 +59,12 @@ pub struct Double {
     /// Asked before each read and each read-modify-write of a document
     /// ([`Double::faulting_docs`]).
     doc_hook: Option<DocHook>,
+    /// What `remapped_id` answers: the old id and the id a remint gave it
+    /// ([`Double::remapping`]).
+    remap: Option<(String, String)>,
+    /// `batch_delete` deletes its first id alone first, as a concurrent
+    /// delete between the read and the delete would ([`Double::vanishing`]).
+    vanish_first: bool,
 }
 
 /// The parts of a query a lesser driver cannot apply.
@@ -130,6 +136,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -164,6 +172,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -198,6 +208,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -234,6 +246,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -282,6 +296,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -316,6 +332,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -350,6 +368,8 @@ impl Double {
             unpaging: false,
             lesser: Lesser::None,
             doc_hook: None,
+            remap: None,
+            vanish_first: false,
         }
     }
 
@@ -360,6 +380,24 @@ impl Double {
     pub fn faulting_docs(inner: Arc<dyn CurrentStateDriver>, hook: DocHook) -> Self {
         Self {
             doc_hook: Some(hook),
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; `remapped_id` answers `to` for `from`, as after
+    /// a remint (T-6770), whether or not an Entity `to` exists.
+    pub fn remapping(inner: Arc<dyn CurrentStateDriver>, from: &str, to: &str) -> Self {
+        Self {
+            remap: Some((from.to_owned(), to.to_owned())),
+            ..Self::passthrough(inner)
+        }
+    }
+
+    /// Delegates everything; `batch_delete` finds its first id already
+    /// deleted by another writer, so that id answers `false`.
+    pub fn vanishing(inner: Arc<dyn CurrentStateDriver>) -> Self {
+        Self {
+            vanish_first: true,
             ..Self::passthrough(inner)
         }
     }
@@ -542,6 +580,12 @@ impl Double {
 
 #[async_trait::async_trait]
 impl CurrentStateDriver for Double {
+    async fn remapped_id(&self, tenant: &TenantId, id: &str) -> Result<Option<String>, NgsiError> {
+        match &self.remap {
+            Some((from, to)) if from == id => Ok(Some(to.clone())),
+            _ => self.inner.remapped_id(tenant, id).await,
+        }
+    }
     async fn list(&self, tenant: &TenantId, kind: Kind) -> Result<Vec<Value>, NgsiError> {
         self.pool_wall()?;
         if self
@@ -616,6 +660,9 @@ impl CurrentStateDriver for Double {
         tenant: &TenantId,
         ids: &[String],
     ) -> Result<Vec<bool>, NgsiError> {
+        if self.vanish_first {
+            self.inner.batch_delete(tenant, &ids[..ids.len().min(1)]).await?;
+        }
         self.inner.batch_delete(tenant, ids).await
     }
     async fn batch_upsert(
