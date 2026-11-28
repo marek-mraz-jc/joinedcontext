@@ -211,7 +211,7 @@ fn rank(kind: &str) -> usize {
 
 /// A literal secret anywhere in the manifest (MF-24): a credential goes through `secretRef`.
 fn literal_secret(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
-    let value = serde_json::to_value(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let value = serde_json::to_value(envelope).map_err(ApiError::internal)?;
     match mutate::find_literal_secret(&value) {
         Some(key) => Err(ApiError::BadRequest(format!(
             "literal secret in field {key} is forbidden; use secretRef instead (MF-24)"
@@ -236,7 +236,7 @@ pub(crate) fn kind(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Resu
 /// outputs, which name the member a form shows the finding beside (EP-159).
 pub(crate) fn spec(_: &Ground<'_>, _: &str, envelope: &ResourceEnvelope) -> Result<(), ApiError> {
     let kind = &envelope.kind;
-    let yaml = serde_json::to_string(envelope).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let yaml = serde_json::to_string(envelope).map_err(ApiError::internal)?;
     match jc_core::registry::validate_yaml(kind, &yaml) {
         Some(Err(e)) => Err(ApiError::BadRequest(format!(
             "spec is not a valid {kind}: {e}"

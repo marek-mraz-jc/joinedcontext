@@ -1434,8 +1434,7 @@ async fn propose_drafts(
                     .map(|(file, content)| (format!("{folder}/{file}"), content)),
             );
         }
-        let yaml_text =
-            serde_norway::to_string(&committed).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let yaml_text = serde_norway::to_string(&committed).map_err(ApiError::internal)?;
         bundle_files.push((path, yaml_text));
         created.push(d.name.clone());
     }

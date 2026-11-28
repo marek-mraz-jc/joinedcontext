@@ -258,8 +258,7 @@ pub async fn put_preferences(
     let subject = &user.0.identity.subject;
     // Old connectors still in the row move first, so this whole-document save cannot drop them.
     crate::personal_connectors::move_one(&state, &user.0.identity).await?;
-    let mut value = serde_json::to_value(&preferences)
-        .map_err(|e| ApiError::Internal(format!("preferences did not serialize: {e}")))?;
+    let mut value = serde_json::to_value(&preferences).map_err(ApiError::internal)?;
     let mut tx = person_write_tx(&state).await?;
     // What the move left (a list it could not read, connectors it kept aside) is carried over.
     let stored = db::load_preferences(&mut tx, subject)
@@ -341,8 +340,7 @@ pub async fn add_recent(
         .and_then(|value| serde_json::from_value::<Preferences>(value).ok())
         .unwrap_or_default();
     preferences.recent = merged_recent(opened.places, std::mem::take(&mut preferences.recent));
-    let value = serde_json::to_value(&preferences)
-        .map_err(|e| ApiError::Internal(format!("preferences did not serialize: {e}")))?;
+    let value = serde_json::to_value(&preferences).map_err(ApiError::internal)?;
     db::save_preferences(&mut tx, subject, &value)
         .await
         .map_err(db_error)?;

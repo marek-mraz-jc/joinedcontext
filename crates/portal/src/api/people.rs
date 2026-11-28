@@ -534,8 +534,7 @@ async fn holds_what_they_hold(
         .map(|group| group.metadata.name)
         .collect();
     for (binding, _) in bindings_reaching(state, &who, &groups) {
-        let manifest =
-            serde_json::to_value(&binding).map_err(|e| ApiError::Internal(e.to_string()))?;
+        let manifest = serde_json::to_value(&binding).map_err(ApiError::internal)?;
         crate::permissions::within_own_rights(
             state,
             identity,
@@ -1863,7 +1862,7 @@ async fn remove(
         .iter()
         .map(serde_json::to_value)
         .collect::<Result<_, _>>()
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(ApiError::internal)?;
     let changes: Vec<_> = manifests
         .iter()
         .map(crate::permissions::AccessChange::Write)
@@ -1898,8 +1897,7 @@ async fn remove(
     };
     let mut uploads = Vec::new();
     for envelope in &removal.edited {
-        let yaml = serde_norway::to_string(envelope)
-            .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+        let yaml = serde_norway::to_string(envelope).map_err(ApiError::internal)?;
         uploads.push((path_of(envelope)?, yaml));
     }
     let mut deletes = Vec::new();

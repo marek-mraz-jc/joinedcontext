@@ -451,8 +451,7 @@ async fn propose(
                 .as_deref()
                 .unwrap_or(ORG_NAMESPACE),
         )?;
-        let yaml = serde_norway::to_string(envelope)
-            .map_err(|e| ApiError::Internal(format!("serialize manifest to yaml: {e}")))?;
+        let yaml = serde_norway::to_string(envelope).map_err(ApiError::internal)?;
         uploads.push((path, yaml));
     }
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, namespace);

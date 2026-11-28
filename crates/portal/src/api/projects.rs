@@ -790,8 +790,7 @@ pub(crate) fn open_project_files(
     });
 
     let yaml = |value: &Value| -> Result<String, ApiError> {
-        serde_norway::to_string(value)
-            .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))
+        serde_norway::to_string(value).map_err(ApiError::internal)
     };
     Ok(vec![
         (format!("projects/{name}/project.yaml"), yaml(&project)?),
@@ -825,8 +824,7 @@ pub(crate) fn into_registry_entry(
     if let Some(parameters) = parameters.filter(|p| !p.is_empty()) {
         entry["spec"]["parameters"] = Value::Object(parameters.clone());
     }
-    let entry = serde_norway::to_string(&entry)
-        .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+    let entry = serde_norway::to_string(&entry).map_err(ApiError::internal)?;
     files.insert(position, (format!("projects/{name}.yaml"), entry));
     Ok(project)
 }
@@ -852,8 +850,7 @@ async fn seed_project_repository(
     let mut project = into_registry_entry(files, name, &repository.repo, None)?;
     project["spec"]["version"] = json!("0.1.0");
     let yaml = |value: &Value| -> Result<String, ApiError> {
-        serde_norway::to_string(value)
-            .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))
+        serde_norway::to_string(value).map_err(ApiError::internal)
     };
 
     if !repository
@@ -1225,7 +1222,7 @@ async fn project_file_at(
 }
 
 fn json_of<T: Serialize>(value: &T) -> Result<Value, ApiError> {
-    serde_json::to_value(value).map_err(|e| ApiError::Internal(e.to_string()))
+    serde_json::to_value(value).map_err(ApiError::internal)
 }
 
 /// `GET /api/v1/projects/{project}/registry`: what the registry entry says this deployment
@@ -1385,8 +1382,7 @@ pub async fn repoint_project(
             pending.name
         )));
     }
-    let content = serde_norway::to_string(&manifest)
-        .map_err(|e| ApiError::Internal(format!("manifest did not serialise: {e}")))?;
+    let content = serde_norway::to_string(&manifest).map_err(ApiError::internal)?;
     let branch = crate::api::mutate::create_or_reuse_branch(&shako, &held, &base).await?;
     let (author_name, author_email) = crate::api::mutate::author_credentials(identity, &project);
     shako
@@ -1629,8 +1625,7 @@ pub(crate) async fn deletion_plan(
         .into_iter()
         .map(|env| env.metadata.name)
         .collect();
-    let info = resource::by_kind("RoleBinding")
-        .ok_or_else(|| ApiError::Internal("RoleBinding is not a kind of this Portal".into()))?;
+    let info = crate::api::mutate::catalogued("RoleBinding")?;
     for env in state
         .mirror
         .list(
@@ -1818,7 +1813,7 @@ pub async fn delete_project_for(
         .mirror
         .get(crate::permissions::ORG_NAMESPACE, "Project", project)
         .ok_or_else(missing)?;
-    let target = serde_json::to_value(&manifest).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let target = serde_json::to_value(&manifest).map_err(ApiError::internal)?;
     effective.check("Project", jc_core::kinds::Verb::Delete, Some(&target))?;
 
     let referenced = live_references(state, project);

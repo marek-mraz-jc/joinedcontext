@@ -10409,10 +10409,7 @@ routes:
         }
         let swept = status_of_in(&fresh, "Pipeline", "swept");
         assert!(
-            swept
-                .conditions
-                .iter()
-                .all(|condition| condition.r#type != "ExpirySweep"),
+            !format!("{:?}", swept.conditions).contains("ExpirySweep"),
             "{:?}",
             swept.conditions
         );

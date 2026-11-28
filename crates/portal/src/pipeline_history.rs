@@ -377,6 +377,37 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// An output that names its type counts only for that type; one that names none, for every
+    /// type of the space it writes.
+    #[test]
+    fn an_output_of_another_type_writes_no_space_for_this_one() {
+        use crate::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+        let mirror = Mirror::default();
+        for (name, space) in [("ep-vehicles", "vehicles"), ("ep-stops", "stops")] {
+            mirror.upsert(ResourceEnvelope {
+                api_version: API_VERSION.to_owned(),
+                kind: "Endpoint".to_owned(),
+                metadata: ObjectMeta::new(name, "helsinki"),
+                spec: json!({ "contextSpaceRef": space }),
+                status: None,
+            });
+        }
+        let spec: PipelineSpec = serde_json::from_value(json!({
+            "class": "resident",
+            "sources": [{ "dataSourceRef": { "kind": "DataSource", "name": "feed" } }],
+            "outputs": [
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep-vehicles", "type": "Vehicle" },
+                { "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:helsinki:ep-stops" },
+            ],
+        }))
+        .expect("a pipeline");
+        assert_eq!(
+            spaces_of(&mirror, "helsinki", &spec, "Vehicle"),
+            ["stops", "vehicles"]
+        );
+        assert_eq!(spaces_of(&mirror, "helsinki", &spec, "Stop"), ["stops"]);
+    }
+
     fn rules(value: Value) -> Vec<RetentionRule> {
         serde_json::from_value(value).expect("rules parse")
     }

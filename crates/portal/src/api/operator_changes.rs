@@ -1323,8 +1323,7 @@ pub async fn propose(
     let (kind, payload, target, secret) = payload(body)?;
     let pool = database(&state)?;
     holds(&state, pool, kind, &payload, &identity.subject, false).await?;
-    let stored = serde_json::to_value(&payload)
-        .map_err(|e| ApiError::Internal(format!("operator change: {e}")))?;
+    let stored = serde_json::to_value(&payload).map_err(ApiError::internal)?;
     let sealed = secret
         .map(|secret| {
             crate::org_backup::seal(&state, &crate::org_backup::smtp_context(&target), &secret)
@@ -2843,7 +2842,7 @@ mod tests {
             .expect("a plan")
             .expect("a live project");
         assert!(
-            plan.waits.iter().all(|wait| !wait.contains("open Changes")),
+            !plan.waits.join("\n").contains("open Changes"),
             "{:?}",
             plan.waits
         );
@@ -2929,11 +2928,11 @@ mod tests {
             .await
             .expect_err("unproven");
         // A host without a resolver configuration cannot ask at all, and says so.
-        assert!(
-            first_error(&refused).starts_with("organizationId: ")
-                || matches!(&refused, ApiError::Unavailable(m) if m.contains("DNS cannot be asked")),
-            "{refused:?}"
-        );
+        // `|`, not `||`: both readings are taken, whichever the host gives.
+        let unproven = first_error(&refused).starts_with("organizationId: ");
+        let unasked = format!("{refused:?}").contains("DNS cannot be asked");
+        assert!(unproven | unasked, "{refused:?}");
+        assert_eq!(first_error(&ApiError::NotFound("no such id".into())), "");
         scratch.remove().await;
     }
 

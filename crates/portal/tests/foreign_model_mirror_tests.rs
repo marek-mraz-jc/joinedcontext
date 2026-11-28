@@ -94,6 +94,8 @@ struct Forge {
     branches: Mutex<Vec<String>>,
     writes: Mutex<Vec<(String, String)>>,
     pulls: Mutex<Vec<(String, String)>>,
+    /// Each written path's last content, base64 as the commit carried it.
+    bodies: Mutex<HashMap<String, String>>,
 }
 
 /// A forge serving one revision of a repository and recording what is written to it.
@@ -183,6 +185,10 @@ async fn forge_named(repo: &str, files: &[(&str, String)]) -> (MockServer, Arc<F
             let branch = body["Branch"].as_str().unwrap_or_default().to_owned();
             let mut log = writes.writes.lock().expect("the write log");
             for file in body["Files"].as_array().into_iter().flatten() {
+                writes.bodies.lock().expect("the body log").insert(
+                    file["path"].as_str().unwrap_or_default().to_owned(),
+                    file["content"].as_str().unwrap_or_default().to_owned(),
+                );
                 log.push((
                     file["path"].as_str().unwrap_or_default().to_owned(),
                     branch.clone(),
@@ -349,6 +355,47 @@ async fn a_peer_that_publishes_a_model_reaches_a_merge_request() {
         paths.contains(&"projects/bb/spaces/partner/datamodels/peer-air/context.jsonld"),
         "the @context beside it: {paths:?}"
     );
+}
+
+/// A pass whose merge request's branch already carries the same models (fetch time aside)
+/// opens nothing again: one open proposal per reference however many days it waits (T-3158).
+#[tokio::test]
+async fn a_pass_whose_branch_already_carries_the_models_opens_nothing() {
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    let peer = Arc::new(FakePeer::new());
+    let shako = client(&server);
+    let first = pass(&shako, &files, &peer, &LastFetch::default(), 1_757_000_000).await;
+    assert_eq!(first.proposed.len(), 1, "flags: {:?}", first.flags);
+    let bodies = recorded.bodies.lock().expect("the body log").clone();
+    assert!(!bodies.is_empty(), "the first pass wrote its models");
+    let asked = |request: &Request| {
+        request
+            .url
+            .query_pairs()
+            .find(|(key, _)| key == "@p")
+            .map(|(_, value)| value.trim_matches('\'').to_owned())
+            .unwrap_or_default()
+    };
+    let held = bodies.clone();
+    Mock::given(method("GET"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.File(Path=@p,Ref=@r)",
+        ))
+        .and(move |request: &Request| held.contains_key(&asked(request)))
+        .respond_with(move |request: &Request| {
+            ResponseTemplate::new(200).set_body_json(json!({
+                "Sha": "blob-sha",
+                "Content": bodies.get(&asked(request)).cloned().unwrap_or_default()
+            }))
+        })
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let opened = recorded.pulls.lock().expect("the pull log").len();
+    let second = pass(&shako, &files, &peer, &LastFetch::default(), 1_757_000_600).await;
+    assert!(second.proposed.is_empty(), "{:?}", second.proposed);
+    assert_eq!(recorded.pulls.lock().expect("the pull log").len(), opened);
 }
 
 #[tokio::test]

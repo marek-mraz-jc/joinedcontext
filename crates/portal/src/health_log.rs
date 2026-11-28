@@ -944,6 +944,32 @@ mod tests {
         }
     }
 
+    /// A condition without a message says its reason; a failing one comes before one that holds.
+    #[test]
+    fn a_condition_without_a_message_says_its_reason() {
+        let mut failing = envelope("Pipeline", "p", Some(Phase::Error), "unused");
+        failing.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "phase": Phase::Error,
+                "conditions": [
+                    {"type": "Synced", "status": "True", "message": "in step"},
+                    {"type": "Ready", "status": "False", "reason": "NoBroker"},
+                ],
+            }))
+            .expect("a status"),
+        );
+        assert_eq!(said(&failing), "NoBroker");
+        let mut silent = failing.clone();
+        silent.status = Some(
+            serde_json::from_value(serde_json::json!({
+                "phase": Phase::Error,
+                "conditions": [{"type": "Ready", "status": "False"}],
+            }))
+            .expect("a status"),
+        );
+        assert_eq!(said(&silent), "");
+    }
+
     fn mirror(items: Vec<ResourceEnvelope>) -> Mirror {
         let mirror = Mirror::default();
         for item in items {

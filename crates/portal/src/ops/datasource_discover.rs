@@ -176,7 +176,7 @@ pub(crate) fn one_read(capture: &str, processors: Value) -> Result<Value, ApiErr
         "class": "auto",
         "targetEndpoint": "urn:ngsi-ld:Endpoint:probe.local:probe:probe"
     }))
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+    .map_err(ApiError::internal)?;
     let sample = Sample {
         text: Some(String::new()),
         url: None,
@@ -184,8 +184,7 @@ pub(crate) fn one_read(capture: &str, processors: Value) -> Result<Value, ApiErr
         records: None,
         sheet: None,
     };
-    let mut config =
-        harness(&probe, &sample, capture).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let mut config = harness(&probe, &sample, capture).map_err(ApiError::internal)?;
     config["input"] =
         json!({ "generate": { "count": 1, "interval": "", "mapping": "root = \"\"" } });
     config["pipeline"] = json!({ "processors": processors });

@@ -430,8 +430,7 @@ pub(crate) async fn read_bento(
     project: &str,
     pipeline: &crate::resource::ResourceEnvelope,
 ) -> Result<String, ApiError> {
-    let info = crate::resource::by_kind("Pipeline")
-        .ok_or_else(|| ApiError::Internal("kind Pipeline is not registered".into()))?;
+    let info = crate::api::mutate::catalogued("Pipeline")?;
     let manifest = crate::api::mutate::resolve_repo_path(pipeline, info, project)?;
     let path = match manifest.rsplit_once('/') {
         Some((folder, _)) => format!("{folder}/bento.yaml"),
