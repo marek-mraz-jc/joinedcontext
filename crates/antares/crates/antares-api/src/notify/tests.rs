@@ -1478,6 +1478,52 @@ mod pipeline_edges {
         assert!(!view_project(&st, &TenantId::default(), &sub, &view, &mut body, &ctx).await);
     }
 
+    /// ADR-0023 rule 9 at the wire: a view Subscription whose notified
+    /// Entity the view no longer shows when the notification leaves (gone
+    /// from the store since the match) sends nothing, where the same
+    /// notification without the view is delivered.
+    #[cfg(feature = "views")]
+    #[tokio::test]
+    async fn a_view_subscription_sends_nothing_for_an_entity_its_view_no_longer_shows() {
+        let plain = json!({"id": "urn:ngsi-ld:Subscription:vgone", "type": "Subscription",
+            "entities": [{"type": "Vehicle"}], "notification": {"endpoint": {"uri": "x-rec:a"}}});
+        let (st, bodies) = recording("view-moved-out", &plain);
+        let view = crate::views::CompiledView::new(
+            &["Vehicle".to_owned()],
+            None,
+            None,
+            None,
+            vec![crate::policy::Rule {
+                types: vec!["Vehicle".to_owned()],
+                ..crate::policy::Rule::default()
+            }],
+        )
+        .expect("view")
+        .named("vgone");
+        let entry = crate::views::ViewEntry::Loaded {
+            view: Arc::new(view),
+            tenant: TenantId::default().as_str().to_owned(),
+            operations: vec!["create_subscription".to_owned()],
+            notes: Vec::new(),
+            mapping: None,
+            context: None,
+            representations: None,
+        };
+        st.views.replace([("vgone".to_owned(), entry)].into(), 1);
+        let mut through_view = plain.clone();
+        through_view[crate::views::VIEW_MEMBER] = json!("vgone");
+        let data = || vec![json!({"id": "urn:ngsi-ld:Vehicle:left", "type": "Vehicle"})];
+        let ctx = antares_jsonld::Loader::new().core();
+        let t = TenantId::default();
+        deliver(&st, &t, &through_view, data(), &ctx).await;
+        deliver(&st, &t, &plain, data(), &ctx).await;
+        let got = delivered(&bodies, 1).await;
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let got_after = bodies.lock().expect("bodies").len();
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got_after, 1, "the view's notification left after all");
+    }
+
     /// A row without an `id` cannot be keyed, so the seed leaves it out.
     #[tokio::test]
     async fn a_seed_skips_a_row_without_an_id() {

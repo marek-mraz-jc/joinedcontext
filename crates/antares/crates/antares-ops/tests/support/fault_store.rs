@@ -20,11 +20,19 @@ pub type Rule = Box<dyn Fn(&str, Option<&str>, Option<Kind>) -> bool + Send + Sy
 
 /// The driver: the real store behind a rule.
 pub struct FaultStore {
-    inner: Arc<dyn CurrentStateDriver>,
-    rule: Mutex<Option<Rule>>,
+    /// The real store every call that passes reaches.
+    pub inner: Arc<dyn CurrentStateDriver>,
+    /// What fails now; [`FaultStore::fail`] sets it.
+    pub rule: Mutex<Option<Rule>>,
     /// The one method that answers as a store that does not offer it.
     pub unsupported: Mutex<Option<&'static str>>,
+    /// What another caller does, once, before the named method reaches the store: the
+    /// interleaving a test needs, fixed in order rather than raced.
+    pub before: Mutex<Option<(&'static str, Step)>>,
 }
+
+/// One awaited step of [`FaultStore::before`].
+pub type Step = std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
 impl FaultStore {
     /// A broker state over the memory store behind a `FaultStore` with no
@@ -36,6 +44,7 @@ impl FaultStore {
             inner: store.clone(),
             rule: Mutex::new(None),
             unsupported: Mutex::new(None),
+            before: Mutex::new(None),
         });
         let state =
             antares_api::AppState::with_drivers(host.into(), fault.clone(), store, "memory");
@@ -410,6 +419,19 @@ impl CurrentStateDriver for FaultStore {
         accept: bool,
     ) -> Result<Option<confirmations::Confirmation>, NgsiError> {
         self.trip("confirmation_decide", Some(tenant.as_str()), None)?;
+        let step = {
+            let mut before = self.before.lock().unwrap_or_else(PoisonError::into_inner);
+            match before.take() {
+                Some(("confirmation_decide", step)) => Some(step),
+                other => {
+                    *before = other;
+                    None
+                }
+            }
+        };
+        if let Some(step) = step {
+            step.await;
+        }
         self.inner.confirmation_decide(tenant, id, accept).await
     }
 

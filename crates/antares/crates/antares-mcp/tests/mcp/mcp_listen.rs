@@ -355,6 +355,36 @@ async fn a_stream_ends_once_its_caller_may_no_longer_read() -> Result<(), String
     until_subscriptions(&f.app, "city", 0).await
 }
 
+/// A caller who may still read passes the minute's recheck: the stream stays open and the
+/// next change to a watched Entity still arrives.
+#[tokio::test(start_paused = true)]
+async fn a_stream_whose_caller_still_reads_outlives_the_recheck() -> Result<(), String> {
+    let _city = CITY.lock().await;
+    let engine = Arc::new(Revocable::default());
+    let f = fixture_with(Some(engine.clone())).await?;
+    let car = "ngsi-ld://watch/entities/urn:ngsi-ld:Car:1";
+    let mut stream = listen(&f.app, "watch", &[car]).await;
+    assert!(
+        stream.next(Duration::from_secs(5)).await.is_some(),
+        "no acknowledgment"
+    );
+    until_subscriptions(&f.app, "city", 1).await?;
+    tokio::time::advance(Duration::from_secs(61)).await;
+    // the body is polled here, so the due recheck runs before the change is read
+    assert_eq!(stream.next(Duration::from_millis(100)).await, None);
+    let speed = json!({"speed": prop(&json!(17))});
+    assert_eq!(
+        patch(&f.app, "city", "urn:ngsi-ld:Car:1", &speed).await,
+        StatusCode::NO_CONTENT
+    );
+    let event = stream
+        .next(Duration::from_secs(5))
+        .await
+        .unwrap_or_default();
+    assert_eq!(shape(&event), updated(car), "{event}");
+    Ok(())
+}
+
 /// The read is asked again once a minute, so a caller who lost it ends a stream whose
 /// Entities never change.
 #[tokio::test(start_paused = true)]

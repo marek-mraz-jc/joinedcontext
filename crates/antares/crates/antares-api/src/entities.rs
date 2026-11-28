@@ -3817,6 +3817,58 @@ mod tests {
     use super::{merge_instance, merge_into, merge_with};
     use serde_json::json;
 
+    /// A narrowing's own `pick` keeps a q's Attribute alike only when it names it: a picked
+    /// Attribute pushes the q down, one the pick leaves out does not, and neither does a
+    /// system member or an omitted one.
+    #[test]
+    fn a_narrowing_pick_keeps_a_q_attribute_alike_only_when_it_names_it() {
+        let rules = crate::policy::Filter {
+            rules: vec![crate::policy::Rule {
+                types: vec!["T".to_owned()],
+                every_attribute: true,
+                ..crate::policy::Rule::default()
+            }],
+            ..crate::policy::Filter::default()
+        };
+        let groups = vec![vec!["T".to_owned()]];
+        let node = |iri: &str| crate::repr::ProjNode {
+            raw: iri.to_owned(),
+            iri: iri.to_owned(),
+            children: None,
+        };
+        let narrowing = |pick: &[&str], omit: &[&str]| crate::repr::Repr {
+            policy_pick: Some(pick.iter().map(|a| node(a)).collect()),
+            policy_omit: Some(omit.iter().map(|a| node(a)).collect()),
+            ..crate::repr::Repr::default()
+        };
+        let expand = |n: &str| n.to_owned();
+        let alike = |names: &[&str], narrow: &crate::repr::Repr| {
+            super::shows_alike(
+                names.iter().copied(),
+                &rules,
+                &groups,
+                Some(narrow),
+                &expand,
+            )
+        };
+        assert!(alike(&["speed"], &narrowing(&["speed"], &[])));
+        assert!(!alike(&["speed"], &narrowing(&["colour"], &[])));
+        assert!(!alike(&["speed"], &narrowing(&["speed"], &["speed"])));
+        assert!(!alike(&["id"], &narrowing(&["id"], &[])));
+        assert!(
+            alike(&["speed"], &crate::repr::Repr::default()),
+            "no pick keeps every name"
+        );
+        let unselected = vec![vec!["U".to_owned()]];
+        assert!(!super::shows_alike(
+            ["speed"],
+            &rules,
+            &unselected,
+            Some(&narrowing(&["speed"], &[])),
+            &expand
+        ));
+    }
+
     /// 5.5.12 EXAMPLE 1 + the datasetId/type bullets: a merge updates the
     /// named sub-attributes and leaves the others untouched; a fragment
     /// instance with an unknown datasetId is ADDED (not replacing the

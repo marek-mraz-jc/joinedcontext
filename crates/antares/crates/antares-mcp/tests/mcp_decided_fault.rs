@@ -189,6 +189,46 @@ async fn a_failing_confirmation_store_answers_500_and_writes_nothing() -> Result
     Ok(())
 }
 
+/// The asker's retry takes an accepted question between the page's read of it and the write of
+/// a changed decision: the write finds no open question, so the page answers the 404 an unknown
+/// one gets, and the write the retry made is the one the person accepted.
+#[tokio::test]
+async fn a_question_taken_between_the_read_and_the_decision_is_not_open() -> Result<(), String> {
+    let (_broker, app, fault) = writes().await?;
+    let car = json!({"id": "urn:ngsi-ld:Car:f9", "type": "Car",
+        "speed": {"type": "Property", "value": 9}});
+    let (id, state) = question(&create(&app, "alice", &car, &json!({})).await);
+    assert_ne!(id, "", "a question was opened");
+    assert_eq!(decide(&app, &id, "accept", "alice").await.0, StatusCode::OK);
+    let (retry, retried) = (app.clone(), car.clone());
+    *fault
+        .before
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((
+        "confirmation_decide",
+        Box::pin(async move {
+            let written = create(&retry, "alice", &retried, &json!({"requestState": state})).await;
+            assert_eq!(refusal(&written), "", "{written}");
+        }),
+    ));
+    let (status, body) = decide(&app, &id, "decline", "alice").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+    assert!(
+        fault.before.lock().is_ok_and(|b| b.is_none()),
+        "the retry ran"
+    );
+    let (status, stored) = send(
+        &app,
+        "GET",
+        "/ngsi-ld/v1/entities/urn:ngsi-ld:Car:f9",
+        &[("NGSILD-Tenant", "w")],
+        &Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{stored}");
+    Ok(())
+}
+
 /// `area_overview` over a store that cannot read: the first read of a type
 /// fails, and the tool answers an error whole rather than a part of one.
 #[tokio::test]
