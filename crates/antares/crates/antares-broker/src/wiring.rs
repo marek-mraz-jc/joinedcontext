@@ -1564,6 +1564,36 @@ mod tests {
         );
     }
 
+    /// A store that cannot list the Tenants holding subscriptions leaves both
+    /// mirrors uninstalled, so federation and matching read the store; an
+    /// outbox it cannot peek is retried after a pause. Wiring still succeeds.
+    #[tokio::test]
+    async fn a_store_that_cannot_seed_leaves_the_mirrors_uninstalled() {
+        let Some(url) = test_env::nats() else { return };
+        let (log, _guard) = Logged::start();
+        let (mut state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        fault.fail(|m, _, _| matches!(m, "subscription_tenants" | "outbox_peek"));
+        let roles = Roles::parse("all").expect("roles");
+        wire_nats(&mut state, &url, roles).await.expect("wired");
+        assert!(
+            state.reg_mirror.is_none(),
+            "a half mirror is never installed"
+        );
+        assert!(
+            state.sub_mirror.is_none(),
+            "a half mirror is never installed"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(1300)).await;
+        let text = log.text();
+        for line in [
+            "registration mirror hydrate failed",
+            "subscription mirror hydrate failed",
+            "outbox peek failed",
+        ] {
+            assert!(text.contains(line), "{line}: {text}");
+        }
+    }
+
     /// The outbox-drain switch is a config value like any other: the two
     /// documented spellings decide, anything else is fatal instead of
     /// silently leaving the drain on (a typo'd `ANTARES_OUTBOX_DRAIN=of`

@@ -5632,6 +5632,100 @@ mod handler_edges {
             .expect("seeded");
     }
 
+    /// Clause 5.6.1, step 4: an inclusive registration for the type whose Attributes the
+    /// new Entity does not carry gets no fragment; the create is local only.
+    #[tokio::test]
+    async fn a_create_outside_a_registrations_attributes_is_not_forwarded() {
+        let st = AppState::new(ALIAS.into());
+        let reg = json!({
+            "id": "urn:ngsi-ld:ContextSourceRegistration:attrs",
+            "type": "ContextSourceRegistration",
+            "mode": "inclusive",
+            "operations": ["createEntity"],
+            "information": [{"entities": [{"type": "V"}], "propertyNames": ["humidity"]}],
+            "endpoint": "http://127.0.0.1:1",
+        });
+        let (s, _, b) = send(
+            &st,
+            "POST",
+            "/ngsi-ld/v1/csourceRegistrations",
+            &[],
+            Some(reg),
+        )
+        .await;
+        assert_eq!(s, StatusCode::CREATED, "{b}");
+        let id = "urn:ngsi-ld:V:outside";
+        create(
+            &st,
+            json!({"id": id, "type": "V", "speed": {"type": "Property", "value": 4}}),
+        )
+        .await;
+        let (s, _, now) = send(
+            &st,
+            "GET",
+            &format!("/ngsi-ld/v1/entities/{id}?local=true"),
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{now}");
+        assert_eq!(now["speed"]["value"], 4, "{now}");
+        // an Entity with no Attribute at all is not forwarded either
+        create(&st, json!({"id": "urn:ngsi-ld:V:bare", "type": "V"})).await;
+    }
+
+    /// Clause 4.5.23, flat join: a Linked Entity that is on the page already is
+    /// listed once, where the page has it.
+    #[tokio::test]
+    async fn a_flat_join_lists_a_linked_entity_on_the_page_once() {
+        let st = AppState::new(ALIAS.into());
+        create(
+            &st,
+            json!({"id": "urn:ngsi-ld:V:a", "type": "V",
+                   "next": {"type": "Relationship", "object": "urn:ngsi-ld:V:b"}}),
+        )
+        .await;
+        create(
+            &st,
+            json!({"id": "urn:ngsi-ld:V:b", "type": "V", "speed": {"type": "Property", "value": 1}}),
+        )
+        .await;
+        create(
+            &st,
+            json!({"id": "urn:ngsi-ld:W:c", "type": "W", "speed": {"type": "Property", "value": 2}}),
+        )
+        .await;
+        create(
+            &st,
+            json!({"id": "urn:ngsi-ld:V:d", "type": "V",
+                   "next": {"type": "Relationship", "object": "urn:ngsi-ld:W:c"}}),
+        )
+        .await;
+        let (s, _, b) = send(
+            &st,
+            "GET",
+            "/ngsi-ld/v1/entities?type=V&join=flat&joinLevel=1",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(s, StatusCode::OK, "{b}");
+        let ids: Vec<&str> = b
+            .as_array()
+            .map(|a| a.iter().filter_map(|d| d["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            ids.iter().filter(|i| **i == "urn:ngsi-ld:V:b").count(),
+            1,
+            "{b}"
+        );
+        assert!(
+            ids.contains(&"urn:ngsi-ld:W:c"),
+            "the off-page one is added: {b}"
+        );
+        assert_eq!(ids.len(), 4, "{b}");
+    }
+
     /// 5.6.18 with a matching inclusive registration: a local Entity the
     /// ?type selector does not select answers its part as not found locally
     /// and is not replaced; one the selector does select is replaced, and a
