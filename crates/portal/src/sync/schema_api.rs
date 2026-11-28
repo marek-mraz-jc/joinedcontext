@@ -300,7 +300,8 @@ mod tests {
             let (mut socket, _) = plain.accept().await.expect("accept");
             let mut request = [0u8; 4096];
             let _ = socket.read(&mut request).await;
-            let head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"cut\":";
+            let head =
+                "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"cut\":";
             socket.write_all(head.as_bytes()).await
         });
         let (base, api) = peer(at, TIMEOUT).await;
