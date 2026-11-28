@@ -449,6 +449,39 @@ fn a_secret_key_that_is_not_32_bytes_stops_the_boot() {
     assert!(!log.contains("not-a-key"), "the key echoed: {log}");
 }
 
+/// With ANTARES_SECRET_KEY set the boot seals every stored plaintext credential before it
+/// serves; a database that refuses the seal's bookkeeping stops the boot with the key's name and
+/// the database's reason, and never with the key.
+#[test]
+fn a_boot_whose_credential_sealing_fails_stops() {
+    let Some(db) = Db::new("sealfail") else {
+        return;
+    };
+    rt().block_on(async {
+        let pool = sqlx::PgPool::connect(&db.owner).await.expect("owner pool");
+        for sql in [
+            "CREATE FUNCTION refuse_seal() RETURNS trigger LANGUAGE plpgsql AS $$
+             BEGIN RAISE EXCEPTION 'seal walk refused by the test'; END $$",
+            "CREATE TRIGGER refuse_seal BEFORE INSERT ON maintenance_jobs FOR EACH ROW
+             WHEN (NEW.name = 'plaintext_seal_walk') EXECUTE FUNCTION refuse_seal()",
+        ] {
+            sqlx::query(sql).execute(&pool).await.expect(sql);
+        }
+        pool.close().await;
+    });
+    const KEY: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
+    let log = refused(&[
+        ("ANTARES_DATABASE_URL", &db.owner),
+        ("ANTARES_SECRET_KEY", KEY),
+    ]);
+    assert!(
+        log.contains("ANTARES_SECRET_KEY: sealing stored credentials failed")
+            && log.contains("seal walk refused by the test"),
+        "{log}"
+    );
+    assert!(!log.contains(KEY), "the key echoed: {log}");
+}
+
 /// A retention horizon of zero or below would reap all history, current and
 /// future: the boot refuses it, as it refuses one that is not a number.
 #[test]

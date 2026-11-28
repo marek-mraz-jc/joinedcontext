@@ -230,23 +230,21 @@ async fn retrieve_entity_outer(
     params: &HashMap<String, String>,
     headers: &HeaderMap,
 ) -> ApiResult<Response> {
-    let found = retrieve_entity_mapped(st, id, params, headers).await;
-    let absent = match &found {
+    // a not-found reads as the error or as an answered 404
+    let absent = |got: &ApiResult<Response>| match got {
         Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_))) => true,
         Ok(r) => r.status() == StatusCode::NOT_FOUND,
         Err(_) => false,
     };
+    let found = retrieve_entity_mapped(st, id, params, headers).await;
     // T-6770: an id a remint renamed to its owner prefix reads, for twelve
     // months, as the Entity under its new id, through the same gate; the
     // old id's own 404 stands when the new one is not readable either
-    if absent {
+    if absent(&found) {
         let tenant = tenant_from(headers)?;
         if let Some(new_id) = st.store.remapped_id(&tenant, id).await? {
             let renamed = retrieve_entity_mapped(st, &new_id, params, headers).await;
-            if !matches!(
-                &renamed,
-                Err(ApiError::Ngsi(NgsiError::ResourceNotFound(_)))
-            ) {
+            if !absent(&renamed) {
                 return renamed;
             }
         }
@@ -5008,17 +5006,12 @@ mod clause_5_6_1_and_5_6_21 {
     /// idPattern spread across the match set, every chunk arrives narrowed —
     /// and the purge still has to delete "all Entities that can be found
     /// locally using retrieved list of Entity ids", not just the first chunk's
-    /// share. Skips without ANTARES_TEST_DATABASE_URL.
+    /// share. Needs ANTARES_TEST_DATABASE_URL (ci.yml antares-test sets it).
     #[cfg(feature = "postgres")]
     #[tokio::test(flavor = "multi_thread")]
     async fn purge_over_a_paging_store_deletes_every_id_pattern_match() {
-        let url = match std::env::var("ANTARES_TEST_DATABASE_URL") {
-            Ok(u) => u,
-            Err(_) => {
-                eprintln!("SKIP: ANTARES_TEST_DATABASE_URL not set");
-                return;
-            }
-        };
+        let url = std::env::var("ANTARES_TEST_DATABASE_URL")
+            .expect("ANTARES_TEST_DATABASE_URL: the Postgres ci.yml antares-test runs");
         let pool = antares_sql::store::pg::connect(&url, 5)
             .await
             .expect("connect");

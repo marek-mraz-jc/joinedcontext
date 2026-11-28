@@ -2242,12 +2242,15 @@ async fn wait_drain(rx: &mut tokio::sync::watch::Receiver<bool>) {
 #[path = "../../antares-ops/tests/support/fault_store.rs"]
 mod fault_store;
 
-/// The live services a test reads from the harness namespace; unset, the test
-/// skips loudly (each caller returns on `None`).
+/// The live services a test reads from the harness namespace. ci.yml antares-test and
+/// coverage.yml always set the database, so a missing one fails the test; NATS is set only
+/// by coverage.yml, so a NATS test skips loudly without it (each caller returns on `None`).
 #[cfg(test)]
 pub(crate) mod test_env {
-    pub fn db() -> Option<String> {
-        var("ANTARES_TEST_DATABASE_URL")
+    pub fn db() -> String {
+        std::env::var("ANTARES_TEST_DATABASE_URL").expect(
+            "ANTARES_TEST_DATABASE_URL: the antares:antares Postgres ci.yml antares-test runs",
+        )
     }
 
     pub fn nats() -> Option<String> {
@@ -2549,6 +2552,72 @@ mod accept_loop_tests {
         }
     }
 
+    /// A full descriptor table (EMFILE, the `nofile` ceiling) fails each
+    /// accept: the loop backs off and retries, and the waiting connection is
+    /// served once a descriptor is free again. The table is filled in a child
+    /// run of this same test, so no other test of the binary meets EMFILE.
+    #[test]
+    fn accept_rides_out_a_full_descriptor_table() {
+        const CHILD: &str = "ANTARES_TEST_ACCEPT_EMFILE_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+                .args([
+                    "--exact",
+                    "accept_loop_tests::accept_rides_out_a_full_descriptor_table",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .expect("child run");
+            let log = String::from_utf8_lossy(&out.stdout);
+            assert!(out.status.success(), "child: {log}");
+            assert!(log.contains("1 passed"), "the child ran the test: {log}");
+            return;
+        }
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                .await
+                .expect("bind");
+            let client = std::net::TcpStream::connect(listener.local_addr().expect("addr"))
+                .expect("a connection waits in the backlog");
+            let highest = std::fs::read_dir("/proc/self/fd")
+                .expect("fd table")
+                .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
+                .max()
+                .expect("open descriptors");
+            let limited = std::process::Command::new("prlimit")
+                .arg(format!("--pid={}", std::process::id()))
+                .arg(format!("--nofile={}:", highest.saturating_add(4)))
+                .status()
+                .expect("prlimit");
+            assert!(limited.success(), "prlimit lowered the soft nofile limit");
+            let mut held = Vec::new();
+            while let Ok(f) = std::fs::File::open("/dev/null") {
+                held.push(f);
+                assert!(held.len() < 64, "the soft limit holds");
+            }
+            let waited =
+                tokio::time::timeout(std::time::Duration::from_millis(350), accept(&listener))
+                    .await;
+            assert!(
+                waited.is_err(),
+                "no descriptor, no connection: accept retries"
+            );
+            drop(held);
+            let served = tokio::time::timeout(std::time::Duration::from_secs(5), accept(&listener))
+                .await
+                .expect("a free descriptor serves the waiting connection");
+            assert_eq!(
+                served.peer_addr().expect("peer").port(),
+                client.local_addr().expect("local").port()
+            );
+        });
+    }
+
     /// T-6614 (R1-030): a connection over the cap reads a 503 with
     /// Retry-After before the close, not a bare reset.
     #[tokio::test]
@@ -2700,9 +2769,7 @@ mod driver_registry_tests {
     /// instead of the environment; a size of 0 still opens one connection.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_host_given_url_and_pool_build_the_postgres_store() {
-        let Some(url) = crate::test_env::db() else {
-            return;
-        };
+        let url = crate::test_env::db();
         let pg = super::PgSettings {
             url: Some(super::Secret::new(url)),
             pool: Some(0),

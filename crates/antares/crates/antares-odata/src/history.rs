@@ -486,18 +486,21 @@ async fn charged(
         .map_err(|_| refused(StatusCode::SERVICE_UNAVAILABLE, version))
 }
 
+/// A writer that keeps only the count of the bytes written to it.
+struct Bytes(usize);
+
+impl std::io::Write for Bytes {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 = self.0.saturating_add(buf.len());
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// A row's bytes: its members' names and JSON, and its id twice (the member and the key).
 fn size_of_row(row: &EntityValue) -> usize {
-    struct Bytes(usize);
-    impl std::io::Write for Bytes {
-        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-            self.0 = self.0.saturating_add(buf.len());
-            Ok(buf.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     let mut bytes = Bytes(row.id.len().saturating_mul(2));
     for (name, value) in &row.properties {
         bytes.0 = bytes
@@ -1196,6 +1199,16 @@ fn value(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The row-size counter counts every byte it is handed, and has nothing to flush.
+    #[test]
+    fn the_byte_counter_counts_writes_and_flushes_nothing() {
+        use std::io::Write as _;
+        let mut b = Bytes(3);
+        b.write_all(b"abcd").expect("a count cannot fail");
+        b.flush().expect("nothing to flush");
+        assert_eq!(b.0, 7);
+    }
 
     fn raw(value: &Value) -> Box<RawValue> {
         serde_json::value::to_raw_value(value).unwrap_or_default()

@@ -987,6 +987,7 @@ mod tests {
             Settled::Failed(e) => e.to_string(),
             Settled::Delivered | Settled::Retry => String::new(),
         };
+        assert!(failed(Settled::Delivered).is_empty() && failed(Settled::Retry).is_empty());
         assert!(failed(settle(Ok(Ok(())), false, true, &ep)).contains("connection lost"));
         assert!(
             failed(settle(Ok(Err("boom".into())), true, true, &ep)).contains("mqtt publish: boom")

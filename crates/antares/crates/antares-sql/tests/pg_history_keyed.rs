@@ -614,6 +614,9 @@ async fn a_dictionary_purged_by_another_pod_does_not_fail_the_next_write() {
     let _ = keyed.delete(&t, id).await;
     assert!(keyed.create(&t, id, &doc(id)).await.expect("create"));
     assert!(keyed.delete(&t, id).await.expect("delete"));
+    // a second write finds the IRIs stored: only now does this process know them
+    assert!(keyed.create(&t, id, &doc(id)).await.expect("create again"));
+    assert!(keyed.delete(&t, id).await.expect("delete again"));
     let mut tx = pool.begin().await.expect("tx");
     pg::set_tenant(&mut tx, &t).await.expect("tenant");
     sqlx::query("DELETE FROM iri_ids WHERE tenant_id = $1")
@@ -622,13 +625,13 @@ async fn a_dictionary_purged_by_another_pod_does_not_fail_the_next_write() {
         .await
         .expect("another pod's purge");
     tx.commit().await.expect("commit");
-    // the store still counts the IRIs as present: this write may fail, once
+    // the store still counts the IRIs as present: this write fails, once, and forgets them
     let first = keyed.create(&t, id, &doc(id)).await;
-    if first.is_err() {
-        let _ = keyed.delete(&t, id).await;
-    } else {
-        assert!(keyed.delete(&t, id).await.expect("delete"));
-    }
+    assert!(
+        first.is_err(),
+        "a write over a purged dictionary fails: {first:?}"
+    );
+    let _ = keyed.delete(&t, id).await;
     assert!(keyed
         .create(&t, id, &doc(id))
         .await

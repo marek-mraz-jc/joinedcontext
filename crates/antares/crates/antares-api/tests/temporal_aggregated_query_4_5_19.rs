@@ -220,6 +220,51 @@ async fn clause_5_7_4_4_attrs_narrows_the_aggregated_answer() {
     assert_eq!(e["type"], "Vehicle", "{e}");
 }
 
+/// An Entity the type selects but whose instances all lie outside the window has nothing to
+/// aggregate: the answer leaves it out rather than listing it with no Attribute.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entity_with_nothing_in_the_window_is_left_out_of_the_aggregated_answer() {
+    let Some((st, tenant)) = pg_state().await else {
+        return;
+    };
+    seed(&st, &tenant, "urn:ngsi-ld:V:agg-inside", [1, 2, 3]).await;
+    let old = json!({
+        "id": "urn:ngsi-ld:V:agg-before",
+        "type": "Vehicle",
+        "speed": [{"type": "Property", "value": 9, "observedAt": "2020-03-01T10:00:00Z"}]})
+    .to_string();
+    let (status, body, _) = send(
+        &st,
+        Request::builder()
+            .method("POST")
+            .uri("/ngsi-ld/v1/temporal/entities")
+            .header("Content-Type", "application/json")
+            .header("NGSILD-Tenant", &tenant)
+            .header("Content-Length", old.len())
+            .body(Body::from(old))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body, _) = query(
+        &st,
+        &tenant,
+        &format!(
+            "type=Vehicle&attrs=speed&options=aggregatedValues\
+             &aggrMethods=max&aggrPeriodDuration=PT0S&limit=10&{WINDOW}"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let ids: Vec<&str> = body
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["urn:ngsi-ld:V:agg-inside"], "{body}");
+}
+
 /// 5.5.9 on the aggregated answer: `limit` pages the Entities, not the
 /// periods, and the count is the whole match set rather than the page.
 #[tokio::test(flavor = "multi_thread")]

@@ -1414,11 +1414,11 @@ mod tests {
     /// matcher with the before-image the write actually replaced. Resolving
     /// the reference against the store's current row instead hands back the
     /// after-image twice, `diff` finds nothing and the change notifies
-    /// nobody. Skips without ANTARES_TEST_DATABASE_URL — the outbox is a
+    /// nobody. Needs ANTARES_TEST_DATABASE_URL (ci.yml antares-test sets it) — the outbox is a
     /// Postgres table, and the memory arm has none.
     #[tokio::test(flavor = "multi_thread")]
     async fn a_retained_row_gives_the_matcher_the_before_image_the_write_replaced() {
-        let Some(url) = test_env::db() else { return };
+        let url = test_env::db();
         let pool = antares_sql::store::pg::connect(&url, 5)
             .await
             .expect("connect");

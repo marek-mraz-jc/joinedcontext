@@ -702,6 +702,21 @@ mod tests {
 
     /// A column longer than one read of 8192 records is read to its end.
     #[test]
+    fn a_type_without_a_repetition_reads_as_required() {
+        // the schema root carries no repetition; a field always does
+        let root = parquet::schema::types::Type::group_type_builder("schema")
+            .build()
+            .expect("root");
+        assert_eq!(repetition(&root), Repetition::REQUIRED);
+        let field =
+            parquet::schema::types::Type::primitive_type_builder("n", parquet::basic::Type::INT32)
+                .with_repetition(Repetition::OPTIONAL)
+                .build()
+                .expect("field");
+        assert_eq!(repetition(&field), Repetition::OPTIONAL);
+    }
+
+    #[test]
     fn columns_past_one_read_are_read_whole() {
         let n = 10_000;
         let even: Vec<i32> = (0..n).step_by(2).collect();
