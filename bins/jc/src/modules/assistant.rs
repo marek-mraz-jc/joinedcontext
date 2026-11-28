@@ -1305,21 +1305,20 @@ mod tests {
     /// The assistant's test inputs (the same as the assistant crate's tests): the embedding model,
     /// ONNX Runtime and a PostgreSQL with pgvector whose user may create roles and databases.
     #[allow(clippy::disallowed_methods)] // The test's own inputs, not jc's configuration.
-    fn test_inputs() -> Option<(String, String, String)> {
-        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
-        Some((
-            var("JC_ASSISTANT_TEST_MODEL_DIR")?,
-            var("ORT_DYLIB_PATH")?,
-            var("JC_ASSISTANT_TEST_DATABASE_URL")?,
-        ))
+    fn test_inputs() -> (String, String, String) {
+        let var = |k: &str| std::env::var(k).expect("ci.yml root-test sets the assistant's inputs");
+        (
+            var("JC_ASSISTANT_TEST_MODEL_DIR"),
+            var("ORT_DYLIB_PATH"),
+            var("JC_ASSISTANT_TEST_DATABASE_URL"),
+        )
     }
 
     /// A PostgreSQL with pgvector whose user may create roles and databases, for the store tests.
     #[allow(clippy::disallowed_methods)] // The test's own input, not jc's configuration.
-    fn test_database_url() -> Option<String> {
+    fn test_database_url() -> String {
         std::env::var("JC_ASSISTANT_TEST_DATABASE_URL")
-            .ok()
-            .filter(|v| !v.is_empty())
+            .expect("JC_ASSISTANT_TEST_DATABASE_URL is set by ci.yml root-test")
     }
 
     /// T-7488: the assistant migrates as the owner and serves as a login that owns nothing: that
@@ -1327,10 +1326,7 @@ mod tests {
     /// security off and cannot touch the migration history; the owner as request login is refused.
     #[tokio::test]
     async fn the_request_login_owns_nothing_and_reads_only_its_project() {
-        let Some(admin_url) = test_database_url() else {
-            eprintln!("SKIP: set JC_ASSISTANT_TEST_DATABASE_URL");
-            return;
-        };
+        let admin_url = test_database_url();
         let id = std::process::id();
         let (owner, app, db) = (
             format!("jc_asst_owner_{id}"),
@@ -1487,14 +1483,29 @@ mod tests {
         }
     }
 
+    /// A file at ORT_DYLIB_PATH that is no ONNX Runtime library is named before any model loads.
+    #[tokio::test]
+    async fn an_onnx_runtime_that_does_not_load_is_named() {
+        let dir = tempfile::tempdir().expect("a scratch dir");
+        let fake = dir.path().join("libonnxruntime.so");
+        std::fs::write(&fake, b"not a shared library").expect("the fake runtime");
+        let (model, runtime) = (dir.path().display().to_string(), fake.display().to_string());
+        let lookup = move |k: &str| match k {
+            "JC_ASSISTANT_MODEL_DIR" => Some(model.clone()),
+            "ORT_DYLIB_PATH" => Some(runtime.clone()),
+            _ => None,
+        };
+        let why = embedder(&lookup)
+            .await
+            .err()
+            .expect("a text file loaded as ONNX Runtime");
+        assert!(why.starts_with("ONNX Runtime "), "{why}");
+        assert!(why.contains("is not usable"), "{why}");
+    }
+
     #[tokio::test]
     async fn with_its_model_key_and_database_the_module_is_on() {
-        let Some((model_dir, ort, admin_url)) = test_inputs() else {
-            eprintln!(
-                "SKIP: set JC_ASSISTANT_TEST_MODEL_DIR, ORT_DYLIB_PATH and JC_ASSISTANT_TEST_DATABASE_URL"
-            );
-            return;
-        };
+        let (model_dir, ort, admin_url) = test_inputs();
         let (mut cfg, mut siblings, setup, dir) = fixture();
         // A database of the test's own, owned by a login role as the cluster's `assistant` is,
         // with pgvector made by the administrator (CloudNativePG does it on the cluster).
@@ -1581,6 +1592,28 @@ mod tests {
             .expect_err("a Portal address the chat cannot use started the assistant");
         assert!(why.starts_with("the Portal address is not usable"), "{why}");
         assert!(held.is_empty(), "nothing was spawned");
+        // An operator's own model proxy: the assistant starts and jc runs no proxy beside it.
+        let model = pick(model_dir.clone(), ort.clone());
+        let operators_proxy = move |k: &str| match k {
+            "JC_ASSISTANT_PROXY_URL" => Some("http://127.0.0.1:9".to_owned()),
+            other => model(other),
+        };
+        let (stop, held) = (CancellationToken::new(), TaskTracker::new());
+        let (_, _, _, proxy_at) = try_start(
+            &cfg,
+            &setup,
+            &siblings,
+            &secrets,
+            &operators_proxy,
+            &stop,
+            &held,
+        )
+        .await
+        .expect("an operator's proxy starts the assistant");
+        assert_eq!(proxy_at, None, "no proxy of jc's own");
+        stop.cancel();
+        held.close();
+        held.wait().await;
         let env = pick(model_dir, ort);
 
         let logs = Captured::default();

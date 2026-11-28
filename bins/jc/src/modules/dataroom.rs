@@ -1248,12 +1248,8 @@ mod tests {
     async fn each_failing_step_of_a_postgres_start_refuses_it() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
-        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
-            println!(
-                "SKIP each_failing_step_of_a_postgres_start: DATAROOM_TEST_DATABASE_URL is unset"
-            );
-            return;
-        };
+        let admin_url = std::env::var("DATAROOM_TEST_DATABASE_URL")
+            .expect("DATAROOM_TEST_DATABASE_URL is set by ci.yml root-test");
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)
@@ -1370,10 +1366,8 @@ mod tests {
     async fn each_refused_store_write_of_a_postgres_start_refuses_it() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
-        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
-            println!("SKIP each_refused_store_write: DATAROOM_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let admin_url = std::env::var("DATAROOM_TEST_DATABASE_URL")
+            .expect("DATAROOM_TEST_DATABASE_URL is set by ci.yml root-test");
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
         let server = PgPoolOptions::new()
             .max_connections(1)
@@ -1568,12 +1562,8 @@ mod tests {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
         use tower::ServiceExt;
-        let Ok(admin_url) = std::env::var("DATAROOM_TEST_DATABASE_URL") else {
-            println!(
-                "SKIP every_dataset_url_answers_after_the_org_split: DATAROOM_TEST_DATABASE_URL is unset"
-            );
-            return;
-        };
+        let admin_url = std::env::var("DATAROOM_TEST_DATABASE_URL")
+            .expect("DATAROOM_TEST_DATABASE_URL is set by ci.yml root-test");
         let (log, _guard) = super::super::capture_log();
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
         let admin = PgPoolOptions::new()

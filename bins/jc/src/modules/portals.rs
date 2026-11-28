@@ -1614,6 +1614,51 @@ mod desk_tests {
         assert!(!sync_sources(&w, &orgs, None, &wide).await);
     }
 
+    /// A default portal whose sources cannot leave stays served for the next round, and a
+    /// further portal whose catalogue the store cannot write is not served.
+    #[tokio::test]
+    async fn a_default_whose_sources_cannot_leave_and_an_unwritable_catalogue_wait() {
+        use crate::modules::faulty_dataroom::FaultyDataroom;
+        let dir = tempfile::tempdir().unwrap();
+        let faults = Arc::new(FaultyDataroom::new(Arc::new(MemoryStore::new())));
+        let w = writer(faults.clone(), dir.path());
+        let orgs = city();
+        let mut stranger = portal("default", serde_json::json!([]));
+        stranger.organization_ref = "town".into();
+        let mut done = served(&[("d", stranger.clone())]);
+        apply(&w, &orgs, &mut done, BTreeMap::new()).await;
+        assert_eq!(done.get("d"), Some(&stranger), "kept for the next round");
+        faults.fail("get_catalogue");
+        let mut none = BTreeMap::new();
+        let mobility = portal("mobility", serde_json::json!([]));
+        apply(&w, &orgs, &mut none, served(&[("m", mobility)])).await;
+        assert!(none.is_empty(), "an unwritten catalogue is not served");
+    }
+
+    /// Every harvested source type of a Portal manifest has its dataroom kind: the
+    /// conversion in `harvest_sources_of` cannot fail for a manifest that parsed.
+    #[test]
+    fn every_harvested_source_type_has_a_dataroom_kind() {
+        for kind in [
+            PortalSourceType::DcatAp,
+            PortalSourceType::CkanAction,
+            PortalSourceType::NkodSparql,
+            PortalSourceType::ArcgisHub,
+            PortalSourceType::ArcgisRest,
+            PortalSourceType::OgcRecords,
+        ] {
+            let value = serde_json::to_value(kind).expect("a source type serializes");
+            let converted: dataroom_core::HarvestSourceKind =
+                serde_json::from_value(value).expect("each harvested type has a dataroom kind");
+            assert_eq!(
+                serde_json::to_value(converted).expect("a kind serializes"),
+                serde_json::to_value(kind).expect("a source type serializes")
+            );
+        }
+        let endpoints = serde_json::to_value(PortalSourceType::Endpoints).expect("serializes");
+        assert!(serde_json::from_value::<dataroom_core::HarvestSourceKind>(endpoints).is_err());
+    }
+
     #[tokio::test]
     async fn the_default_portal_keeps_its_catalogue_and_drops_only_its_sources() {
         let dir = tempfile::tempdir().unwrap();

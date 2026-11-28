@@ -3440,10 +3440,8 @@ mod tests {
     async fn k16_postgres_store_runs_the_boot_rls_check_and_persists() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
-        let Ok(url) = std::env::var("KAISATSU_TEST_DATABASE_URL") else {
-            println!("SKIP k16 postgres path: KAISATSU_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let url = std::env::var("KAISATSU_TEST_DATABASE_URL")
+            .expect("KAISATSU_TEST_DATABASE_URL is set by ci.yml root-test");
         let base = PgConnectOptions::from_str(&url).unwrap();
         let admin = PgPoolOptions::new()
             .max_connections(1)

@@ -1331,6 +1331,39 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
         assert!(out.contains("Organization praha"), "{out}");
     }
 
+    /// Asked directly, an Organization with neither `host` nor `hosts` has only the shared
+    /// sign-in host, which needs no record of its own.
+    #[test]
+    fn origins_of_an_organization_without_hosts_are_the_shared_sign_in_alone() {
+        let layout = Layout {
+            base: "city.example".into(),
+            apps: "apps.city.example".into(),
+            login: "login.city.example".into(),
+            explicit_login: false,
+        };
+        let org = Org {
+            name: "praha".into(),
+            host: None,
+            hosts: None,
+            same_site_apps: false,
+        };
+        let (out, merged) = origins(&layout, &org);
+        let rows: Vec<_> = out
+            .iter()
+            .map(|o| (o.role, o.host.as_str(), o.record))
+            .collect();
+        assert_eq!(
+            rows[0],
+            ("sign-in", "login.city.example", false),
+            "{rows:?}"
+        );
+        assert!(rows.iter().all(|r| !r.2), "no record to add: {rows:?}");
+        assert!(
+            merged.iter().all(|m| !m.contains("working host")),
+            "{merged:?}"
+        );
+    }
+
     #[test]
     fn a_merged_configuration_says_what_it_loses() {
         let r = report_for(FIVE, &[], None, &Stub::pointed(ALL));
@@ -1963,10 +1996,8 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
     /// names a superuser connection (as tests/restart_pg.rs).
     #[test]
     fn the_registry_rows_come_from_the_portals_organization_hosts() {
-        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
-            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let admin = crate::config::portal_env("JC_PG_TEST_DATABASE_URL")
+            .expect("JC_PG_TEST_DATABASE_URL is set by ci.yml root-test");
         let db = format!("doctor{}", std::process::id());
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
