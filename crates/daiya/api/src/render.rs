@@ -560,11 +560,16 @@ pub(crate) async fn execute_targets_with_authorizer(
         let ds_meta = state.store.get_datasource(req_ctx.org_id, &ds_uid).await?;
         let registered = state.get_datasource_driver(req_ctx.org_id, &ds_uid);
 
-        if ds_meta.is_none() && registered.is_none() {
-            return Err(CrError::NotFound(format!(
-                "Data source '{ds_uid}' not found"
-            )));
-        }
+        // A registered driver, else the stored record a driver is built from.
+        let source = match (registered, &ds_meta) {
+            (Some(driver), _) => Ok(driver),
+            (None, Some(record)) => Err(record.clone()),
+            (None, None) => {
+                return Err(CrError::NotFound(format!(
+                    "Data source '{ds_uid}' not found"
+                )));
+            }
+        };
 
         let decision = authorizer.check(
             req_ctx,
@@ -579,7 +584,7 @@ pub(crate) async fn execute_targets_with_authorizer(
         // holds a credential or a driver of the host's. Judged on the record the driver is built
         // from, before the cache.
         if req_ctx.subject.is_public_dashboard()
-            && (registered.is_some()
+            && (source.is_ok()
                 || !ds_meta
                     .as_ref()
                     .is_some_and(|record| state.reads_endpoint(record)))
@@ -611,14 +616,9 @@ pub(crate) async fn execute_targets_with_authorizer(
         }
 
         // Built only after the read decision: building resolves the datasource's host.
-        let drv = match (registered, &ds_meta) {
-            (Some(driver), _) => driver,
-            (None, Some(record)) => state.driver_for_record(record).await?,
-            (None, None) => {
-                return Err(CrError::NotFound(format!(
-                    "Data source '{ds_uid}' not found"
-                )));
-            }
+        let drv = match source {
+            Ok(driver) => driver,
+            Err(record) => state.driver_for_record(&record).await?,
         };
 
         let sets = drv.query(&q_ctx, &[query]).await?;
