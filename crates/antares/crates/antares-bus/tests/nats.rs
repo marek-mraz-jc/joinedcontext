@@ -118,8 +118,11 @@ async fn balanced_splits_and_broadcast_duplicates() {
                 let Some(Ok(m)) = s.next().await else {
                     continue;
                 };
-                let v: serde_json::Value = serde_json::from_slice(&m.payload).expect("json");
                 m.ack().await.expect("ack");
+                // a parallel test publishes "not json" on registry.> on purpose
+                let Ok(v) = serde_json::from_slice::<serde_json::Value>(&m.payload) else {
+                    continue;
+                };
                 if v["tenant"] == tenant.as_str() {
                     return v;
                 }
