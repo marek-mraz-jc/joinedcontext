@@ -283,6 +283,41 @@ fn serves_from_a_config_file_and_stops_on_sigterm() {
     assert!(rest.iter().any(|l| l.contains("shutting down")), "{rest:?}");
 }
 
+/// A gateway alone reads the broker the operator names (`JC_GATEWAY_BROKER_URL`), with no hop
+/// of jc's own: it is built before jc listens, and stops on SIGTERM.
+#[test]
+fn a_gateway_alone_takes_the_operators_broker_and_stops_on_sigterm() {
+    let dir = tempfile::tempdir().expect("a scratch dir");
+    let config = dir.path().join("jc.toml");
+    // jc wires nothing: the operator names every gateway key in the environment.
+    std::fs::write(&config, "portal_siblings = false\n").expect("jc.toml");
+    let mut child = jc()
+        .args([
+            "--role",
+            "gateway",
+            "--listen",
+            "127.0.0.1:0",
+            "--log-format",
+            "text",
+        ])
+        .env("JCBIN_CONFIG", &config)
+        .env("JCBIN_BASE_HOST", "city.test")
+        .env("JC_GATEWAY_BROKER_URL", "http://127.0.0.1:9")
+        .env("JC_GATEWAY_ORG_DOMAIN", "city.test")
+        .env("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL", "http://127.0.0.1:9")
+        .env("RUST_LOG", "info")
+        .stderr(Stdio::piped())
+        .stdout(Stdio::null())
+        .spawn()
+        .expect("spawn jc");
+    let mut lines = BufReader::new(child.stderr.take().expect("stderr")).lines();
+    let addr = listening_addr(&mut lines);
+    assert!(addr.starts_with("127.0.0.1:"), "{addr}");
+    sigterm_and_wait(&mut child);
+    let rest: Vec<String> = lines.map_while(Result::ok).collect();
+    assert!(rest.iter().any(|l| l.contains("shutting down")), "{rest:?}");
+}
+
 /// A Portal whose realm does not answer (discovery refused) delays the Portal, never stops jc:
 /// the siblings serve, the Portal's mount answers 503 while jc retries, and jc stays up.
 #[test]

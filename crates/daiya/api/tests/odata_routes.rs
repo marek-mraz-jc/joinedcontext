@@ -1720,8 +1720,11 @@ async fn paging_keys_cache_stats_and_refused_exports() {
         }
     }
 
-    // A skiptoken this service did not write is refused at every door.
+    // A skiptoken this service did not write is refused at every door. Its `=` spelled `%3D`
+    // passes the token split as an ordinary option, and the parser still reads it as one.
     for uri in [
+        "/odata/v4/Folders?$skiptoken%3Dgarbage",
+        "/odata/v4/Folders?$orderby=title&%24skiptoken%3D",
         "/odata/v4/Folders?$skiptoken=garbage",
         "/odata/v4/Folders/$count?$skiptoken=garbage",
         "/odata/v4/Folders/$export?$skiptoken=garbage",
@@ -1729,6 +1732,18 @@ async fn paging_keys_cache_stats_and_refused_exports() {
         let (st, _) = w.call("GET", uri, Some("admin"), None).await;
         assert_eq!(st, StatusCode::BAD_REQUEST, "{uri}");
     }
+    let (_, refused) = w
+        .call(
+            "GET",
+            "/odata/v4/Folders?$skiptoken%3Dgarbage",
+            Some("admin"),
+            None,
+        )
+        .await;
+    assert!(
+        refused.to_string().contains("not one this service wrote"),
+        "{refused}"
+    );
     let batch = w
         .ok(
             "POST",

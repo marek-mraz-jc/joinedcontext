@@ -1697,6 +1697,37 @@ mod tests {
         }
     }
 
+    /// A NUMERIC in Postgres' text form (the simple query protocol answers every column so) reads
+    /// as its float; NaN and the infinities have no JSON number and, like a null, read as none.
+    #[tokio::test]
+    #[allow(clippy::disallowed_methods)] // The test reads its database URL.
+    async fn a_numeric_in_text_form_reads_as_its_float_and_nan_as_none() {
+        let url = std::env::var("DAIYA_TEST_DATABASE_URL")
+            .expect("DAIYA_TEST_DATABASE_URL is set by ci.yml root-test");
+        let pool = PgPool::connect(&url).await.expect("connect");
+        let row = sqlx::raw_sql(
+            "SELECT 1.5::numeric, 'NaN'::numeric, 'Infinity'::numeric, '-2e3'::numeric, \
+             NULL::numeric, 1e-3::numeric",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("one row");
+        let read = |i: usize| {
+            let raw = row.try_get_raw(i).expect("a column");
+            assert!(
+                raw.format() == PgValueFormat::Text,
+                "column {i} in text form"
+            );
+            numeric_to_f64(&raw)
+        };
+        let got: Vec<Option<f64>> = (0..6).map(read).collect();
+        assert_eq!(
+            got,
+            [Some(1.5), None, None, Some(-2000.0), None, Some(0.001)]
+        );
+        pool.close().await;
+    }
+
     /// Grafana's epoch guess keeps milliseconds and divides nanoseconds; a null time stays null,
     /// a long result whose time is no number is refused, and only a `metric` label renames.
     #[test]

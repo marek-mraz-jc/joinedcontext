@@ -568,12 +568,13 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::disallowed_methods)] // Reads whether the environment already names a bus.
     async fn a_shared_database_on_the_local_bus_is_refused() {
-        if std::env::vars().any(|(k, _)| {
+        let named = std::env::vars().any(|(k, _)| {
             k == "ANTARES_BUS" || k == "ANTARES_STORE" || k == "ANTARES_ALLOW_SHARED_LOCAL"
-        }) {
-            println!("SKIP: the environment names Antares' bus or store");
-            return;
-        }
+        });
+        assert!(
+            !named,
+            "the test runs without ANTARES_BUS, _STORE and _ALLOW_SHARED_LOCAL"
+        );
         let dir = tempfile::tempdir().unwrap();
         let none = std::collections::BTreeMap::new();
         let setup = crate::setup::Setup::prepare(dir.path(), &[Module::Antares], &none).unwrap();

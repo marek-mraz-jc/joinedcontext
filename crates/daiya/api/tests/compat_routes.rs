@@ -1183,6 +1183,16 @@ async fn the_dashboard_page_draws_every_panel_and_refuses_what_it_cannot_read() 
         unnamed.as_str().unwrap().contains("<h2>Nested</h2>"),
         "{unnamed}"
     );
+    // A caller of another organization the directory does not hold reads that organization
+    // alone: this dashboard is not in it.
+    w.store.find_nothing("find_org");
+    let (st, foreign) = page(Some("outsider"), "/d/page").await;
+    w.store.heal();
+    assert_eq!(st, StatusCode::NOT_FOUND, "{foreign}");
+    assert!(
+        foreign.as_str().unwrap().contains("Dashboard not found"),
+        "{foreign}"
+    );
 
     // A dashboard whose stored JSON no longer reads draws no panel and no error text.
     let mut broken = w

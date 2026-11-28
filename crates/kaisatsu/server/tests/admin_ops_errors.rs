@@ -562,6 +562,27 @@ async fn admin_routes_answer_a_row_lost_between_two_reads() {
     assert!(raw.contains("no SMTP server"), "{raw}");
 }
 
+/// A realm whose signing keys cannot be read verifies no admin token, its own or the master
+/// realm's: the caller is refused as unauthenticated, on the native and the compatible routes.
+#[tokio::test]
+async fn an_unreadable_key_list_verifies_no_admin_token() {
+    let (api, faults) = Api::with_faults().await;
+    let admin = api.admin().await;
+    faults.fail_always("list_signing_keys");
+    let people = format!("{BASE}/People");
+    for uri in ["/admin/realms/dev/users", people.as_str()] {
+        let (st, _, raw) = api.call(Method::GET, uri, &admin, None).await;
+        assert_eq!(st, StatusCode::UNAUTHORIZED, "{uri}: {raw}");
+        assert!(raw.contains("invalid admin bearer token"), "{uri}: {raw}");
+    }
+    // The keys read again: the same token is let in.
+    faults.clear();
+    let (st, _, raw) = api
+        .call(Method::GET, "/admin/realms/dev/users", &admin, None)
+        .await;
+    assert_eq!(st, StatusCode::OK, "{raw}");
+}
+
 /// A group the realm file holds, gone when its person joins it, stops the apply with 404.
 #[tokio::test]
 async fn a_realm_file_whose_group_is_gone_when_its_person_joins_it_is_refused() {

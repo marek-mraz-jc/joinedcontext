@@ -371,12 +371,8 @@ mod tests {
     async fn a_postgres_forge_migrates_as_the_owner_and_serves_as_a_login_that_owns_nothing() {
         use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
         use std::str::FromStr;
-        let Ok(admin_url) = std::env::var("SHAKO_TEST_DATABASE_URL") else {
-            println!(
-                "SKIP a_postgres_forge_migrates_as_the_owner: SHAKO_TEST_DATABASE_URL is unset"
-            );
-            return;
-        };
+        let admin_url = std::env::var("SHAKO_TEST_DATABASE_URL")
+            .expect("SHAKO_TEST_DATABASE_URL is set by ci.yml root-test");
         let base = PgConnectOptions::from_str(&admin_url).unwrap();
         let server = PgPoolOptions::new()
             .max_connections(1)

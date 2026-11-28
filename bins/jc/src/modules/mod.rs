@@ -191,3 +191,50 @@ pub async fn build(
         )),
     }
 }
+
+#[cfg(test)]
+mod build_tests {
+    use super::*;
+    use crate::config::{Cli, Config as JcConfig};
+    use std::collections::BTreeMap;
+    use std::path::Path;
+
+    /// Antares is built by `app::build_router` itself: asked here, it is refused by name.
+    #[tokio::test]
+    async fn a_module_app_builds_itself_is_refused_here() {
+        let cfg = JcConfig::merge(
+            Cli {
+                role: Some("antares".into()),
+                base_host: Some("city.example".into()),
+                ..Cli::default()
+            },
+            JcConfig::parse_file(Path::new("jc.toml"), "").expect("an empty jc.toml parses"),
+        )
+        .expect("the configuration merges");
+        let plans = crate::app::plan_mounts(&cfg).expect("antares mounts");
+        let mount = plans[0].mount.clone();
+        let siblings = Siblings::new(&plans, "127.0.0.1:9".parse().expect("an address"));
+        let dir = tempfile::tempdir().expect("a scratch dir");
+        let setup = Setup::prepare(dir.path(), &cfg.roles, &BTreeMap::new()).expect("setup");
+        let secrets = crate::config::Secrets::default();
+        let ctx = BuildCtx {
+            setup: &setup,
+            siblings: &siblings,
+            secrets: &secrets,
+            door: None,
+            portal_internal: None,
+        };
+        let e = build(
+            Module::Antares,
+            &cfg,
+            ctx,
+            mount,
+            &CancellationToken::new(),
+            &TaskTracker::new(),
+        )
+        .await
+        .expect_err("antares is not built here")
+        .to_string();
+        assert!(e.contains("not compiled into this jc binary"), "{e}");
+    }
+}

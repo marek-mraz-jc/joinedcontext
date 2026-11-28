@@ -1671,7 +1671,12 @@ mod tests {
             [[hosts]]\nhost = \"data.bbsk.sk\"\norganization = \"bbsk\"\n";
         let file = crate::config::Config::parse_file(std::path::Path::new("jc.toml"), text)
             .expect("parses");
-        let cfg = crate::config::Config::merge(crate::config::Cli::default(), file).expect("cfg");
+        let mut cfg =
+            crate::config::Config::merge(crate::config::Cli::default(), file).expect("cfg");
+        // A row naming a host already seeded, in other case and with a port: still once.
+        let mut again = cfg.hosts[0].clone();
+        again.host = "DATA.bbsk.sk:443".into();
+        cfg.hosts.push(again);
         let rows = registry_seed(&cfg);
         let seed: Vec<(&str, &str, Option<&str>, &str)> = rows
             .iter()
@@ -1886,10 +1891,8 @@ mod tests {
     /// watcher's pass included.
     #[tokio::test]
     async fn the_registry_rebuild_places_projects_and_names_each_unreadable_registry() {
-        let Some(admin) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
-            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let admin = crate::config::portal_env("JC_PG_TEST_DATABASE_URL")
+            .expect("JC_PG_TEST_DATABASE_URL is set by ci.yml root-test");
         let db = format!("portalrebuild{}", std::process::id());
         let server = sqlx::PgPool::connect(&admin).await.unwrap();
         for q in [

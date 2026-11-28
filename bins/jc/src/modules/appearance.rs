@@ -269,6 +269,11 @@ mod tests {
     /// Without a Portal in this process every Organization's look is jc's config: `follow`
     /// hands it over once at the first look, and a later round that finds it unchanged calls
     /// nothing; no names start no follower at all.
+    /// An apply that does nothing, for a follower that must never call it.
+    fn ignore(_: String, _: u8, _: Option<OrganizationAppearance>) -> std::future::Ready<()> {
+        std::future::ready(())
+    }
+
     #[tokio::test(start_paused = true)]
     async fn a_look_is_handed_over_once_and_an_unchanged_round_calls_nothing() {
         use std::sync::{Arc, Mutex};
@@ -290,13 +295,9 @@ mod tests {
         assert_eq!(*seen.lock().unwrap(), [("bbsk".to_owned(), 7, false)]);
         assert_eq!(installation(), None, "no Portal runs in this process");
         let idle = TaskTracker::new();
-        follow(
-            BTreeMap::<String, u8>::new(),
-            &shutdown,
-            &idle,
-            |_, _, _| async {},
-        );
+        follow(BTreeMap::<String, u8>::new(), &shutdown, &idle, ignore);
         assert!(idle.is_empty(), "no names, no follower");
+        ignore(String::new(), 0, None).await;
         shutdown.cancel();
         tasks.close();
         tasks.wait().await;

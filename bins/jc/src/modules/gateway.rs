@@ -3056,6 +3056,55 @@ mod tests {
         );
     }
 
+    /// A request that names no Endpoint by a same-origin cookie passes the remote session layer
+    /// untouched: no call to the Portal, no Authorization added.
+    #[tokio::test]
+    async fn a_request_without_a_session_slug_passes_the_remote_layer_untouched() {
+        use tower::ServiceExt;
+        let vars: BTreeMap<String, String> = [
+            ("JC_GATEWAY_BROKER_URL", "http://127.0.0.1:9"),
+            ("JC_GATEWAY_ORG_DOMAIN", "city.test"),
+            ("JC_GATEWAY_DOMAIN_VERIFICATIONS_URL", "http://127.0.0.1:9"),
+            ("JC_OIDC_ISSUER", "https://login.city.test/realms/jc"),
+            (
+                "JC_OIDC_JWKS_URL",
+                "https://login.city.test/realms/jc/protocol/openid-connect/certs",
+            ),
+            (
+                "JC_GATEWAY_REVOCATIONS_URL",
+                "http://127.0.0.1:9/internal/revocations",
+            ),
+            ("JC_OIDC_CLIENT_ID", "context-gateway"),
+            ("JC_OIDC_CLIENT_SECRET", "gateway-secret-not-real"),
+        ]
+        .iter()
+        .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+        .collect();
+        let config = Config::from_vars(|key| vars.get(key).cloned()).expect("a gateway config");
+        let remote = RemoteSessions::new("http://127.0.0.1:9", &config)
+            .expect("a client")
+            .expect("a client of its own");
+        let app = Router::new()
+            .fallback(|req: Request| async move {
+                req.headers()
+                    .contains_key(axum::http::header::AUTHORIZATION)
+                    .to_string()
+            })
+            .layer(axum::middleware::from_fn(
+                move |req: Request, next: Next| remote_session_reads(remote.clone(), req, next),
+            ));
+        let req = Request::builder()
+            .uri("/api/endpoint/parking/ngsi-ld/v1/entities")
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let resp = app.oneshot(req).await.expect("an answer");
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(resp.into_body(), 1024)
+            .await
+            .expect("a body");
+        assert_eq!(&body[..], b"false", "no cookie, no token asked for");
+    }
+
     #[test]
     fn an_archive_reaching_outside_holding_a_symlink_or_past_its_caps_is_refused() {
         use std::io::Write as _;

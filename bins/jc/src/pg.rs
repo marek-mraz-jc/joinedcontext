@@ -287,6 +287,26 @@ mod tests {
         }
     }
 
+    /// A role needs a host: `postgres://role@/db` is no URL, so every URL that names its role
+    /// takes the password (the `set_password` refusal cannot arise); the password is never in
+    /// an error.
+    #[test]
+    fn a_url_without_a_host_is_refused_and_one_with_a_host_takes_the_password() {
+        let dir = tempfile::tempdir().expect("a scratch dir");
+        let file = dir.path().join("pw");
+        std::fs::write(&file, "s3cret-pw\n").expect("the password file");
+        let e = url_with_password("url", "postgres://shako@/jc", &file).expect_err("no host");
+        assert_eq!(e, "url is not a URL");
+        let ok = url_with_password("url", "postgres://shako@db/jc", &file).expect("a host");
+        assert!(ok.expose().contains(":s3cret-pw@db"));
+        let missing = url_with_password("url", "postgres://shako@db/jc", &dir.path().join("none"))
+            .expect_err("no file");
+        assert!(
+            missing.starts_with("cannot read password file"),
+            "{missing}"
+        );
+    }
+
     #[test]
     fn a_url_with_a_password_or_without_a_role_is_refused() {
         assert!(section("postgres://shako@db:5432/jc").validate().is_ok());
@@ -437,10 +457,8 @@ mod tests {
     /// `JC_PG_TEST_DATABASE_URL` names a superuser connection (as tests/restart_pg.rs).
     #[tokio::test]
     async fn every_unsafe_request_login_is_refused_with_its_reason() {
-        let Some(admin_url) = crate::config::portal_env("JC_PG_TEST_DATABASE_URL") else {
-            println!("SKIP: JC_PG_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let admin_url = crate::config::portal_env("JC_PG_TEST_DATABASE_URL")
+            .expect("JC_PG_TEST_DATABASE_URL is set by ci.yml root-test");
         let admin = connect(PgConnectOptions::from_str(&admin_url).unwrap(), 1)
             .await
             .unwrap();
