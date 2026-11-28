@@ -1289,6 +1289,15 @@ async fn the_owner_of_a_projects_ids_is_judged_on_every_change() {
             && stray[0].contains("declares no domain"),
         "{stray:?}"
     );
+    // A pin judged against an Organization that declares no domain says that domain is not
+    // known, rather than an empty pair of brackets.
+    let pin = json!({ "organizationRef": "bare", "urnOwner": "other.example" });
+    let unknown = placed(&state, "air", &pin, ApiError::Conflict).await;
+    assert!(
+        matches!(&unknown, Err(ApiError::Conflict(line))
+            if line.contains("other.example is neither") && line.contains("(not known)")),
+        "{unknown:?}"
+    );
 
     m.upsert(envelope(
         "Pipeline",

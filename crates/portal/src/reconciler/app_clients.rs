@@ -1447,6 +1447,12 @@ mod tests {
         )
         .expect("a realm URL");
         assert!(dead.token().await.is_err());
+        // A realm that stops answering after the token: every admin call is the transport's
+        // error, not an answer the reconciler reads.
+        let sent = dead.send("t", reqwest::Method::GET, "/clients", None).await;
+        assert!(sent.is_err_and(|said| !said.is_empty()));
+        assert!(dead.post_for("t", "/clients/x/client-secret").await.is_err());
+        assert!(dead.exists("t", "/clients/x").await.is_err());
 
         let server = wiremock::MockServer::start().await;
         wiremock::Mock::given(wiremock::matchers::method("POST"))

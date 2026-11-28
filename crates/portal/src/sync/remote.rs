@@ -316,10 +316,7 @@ fn unpack(
         if entry.size() > MAX_ENTRY {
             return Err(RemoteError::Refused(format!(
                 "{} is larger than the {MAX_ENTRY} bytes one file of a source may have",
-                // zip 9: a name that is not UTF-8 is an error, not a reason to say nothing
-                entry
-                    .name()
-                    .unwrap_or_else(|_| "(a name that is not text)".into())
+                String::from_utf8_lossy(entry.name_raw())
             )));
         }
         // `enclosed_path` is the zip-slip guard: `None` for a path that is absolute or climbs out
@@ -327,10 +324,7 @@ fn unpack(
         let Some(name) = crate::api::import::enclosed_path(&entry) else {
             return Err(RemoteError::Refused(format!(
                 "the archive carries `{}`, which does not stay inside the checkout",
-                // zip 9: a name that is not UTF-8 is an error, not a reason to say nothing
-                entry
-                    .name()
-                    .unwrap_or_else(|_| "(a name that is not text)".into())
+                String::from_utf8_lossy(entry.name_raw())
             )));
         };
         // A symbolic link read as a file becomes a manifest whose body is the path it named
@@ -856,6 +850,14 @@ mod tests {
         let archive = zipped(&[("models", "x"), ("models/air.yaml", "kind: DataModel\n")]);
         unpack(&archive, &into, Some("/models/"), false).expect("the subtree");
         assert!(into.join("air.yaml").exists());
+        // An entry whose local header no longer reads is refused by its index.
+        let mut broken = zipped(&[("models/air.yaml", "kind: DataModel\n")]);
+        broken[..4].copy_from_slice(b"XXXX");
+        let answer = unpack(&broken, &into, None, false);
+        assert!(
+            matches!(&answer, Err(RemoteError::Refused(why)) if why.starts_with("archive entry 0: ")),
+            "{answer:?}"
+        );
         let _ = std::fs::remove_dir_all(&into);
     }
 

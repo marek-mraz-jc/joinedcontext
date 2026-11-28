@@ -288,6 +288,30 @@ mod tests {
         );
     }
 
+    /// A peer that closes before the length it declared is read is unavailable, naming the URL.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_body_cut_short_of_its_declared_length_is_unavailable() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let plain = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let at = plain.local_addr().expect("address");
+        tokio::spawn(async move {
+            let (mut socket, _) = plain.accept().await.expect("accept");
+            let mut request = [0u8; 4096];
+            let _ = socket.read(&mut request).await;
+            let head = "HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{\"cut\":";
+            socket.write_all(head.as_bytes()).await
+        });
+        let (base, api) = peer(at, TIMEOUT).await;
+        let cut = get(&api, format!("{base}/cut.json")).await;
+        let named = format!("{base}/cut.json: ");
+        assert!(
+            matches!(&cut, Err(FetchError::Unavailable(m)) if m.starts_with(&named)),
+            "{cut:?}"
+        );
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     async fn a_peer_that_is_closed_or_silent_is_named_so() {
         let closed = crate::sync::tls_test::closed();

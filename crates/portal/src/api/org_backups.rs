@@ -1991,6 +1991,19 @@ mod target_tests {
 
     /// T-7918: an entry whose stored bytes fail their checksum is not a readable bundle: refused
     /// as such, never unpacked half way.
+    /// An entry whose local header the central directory points past is not a bundle either.
+    #[test]
+    fn an_entry_whose_local_header_is_broken_is_not_a_configuration_bundle() {
+        let mut bytes = zip_of(&[("projects/p/index.yaml", b"kind: Project")]);
+        // The first local file header starts the archive: its signature no longer reads.
+        bytes[..4].copy_from_slice(b"XXXX");
+        let err = unpack(&bytes).expect_err("a broken local header");
+        assert!(
+            matches!(&err, ApiError::Unprocessable { detail, .. } if detail.contains("not a configuration bundle")),
+            "{err:?}"
+        );
+    }
+
     #[test]
     fn an_entry_that_fails_its_checksum_is_not_a_configuration_bundle() {
         let payload = b"the bundle's index, as it was written";
