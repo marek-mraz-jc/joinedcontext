@@ -671,9 +671,37 @@ async fn an_unsent_or_failed_ack_leaves_the_message_redelivered() {
     let _ = conn.close(200, "test done".into()).await;
 }
 
+/// The ready messages of `queue` once they reach `want`, read with a passive declare; the
+/// broker requeues an unacknowledged message only after it saw the consumer's connection go,
+/// so a fixed sleep races it on a loaded host.
+async fn wait_ready(ch: &lapin::Channel, queue: &str, want: u32) -> u32 {
+    let mut seen = u32::MAX;
+    for _ in 0..300 {
+        seen = ch
+            .queue_declare(
+                queue.into(),
+                QueueDeclareOptions {
+                    passive: true,
+                    ..QueueDeclareOptions::default()
+                },
+                FieldTable::default(),
+            )
+            .await
+            .expect("passive declare")
+            .message_count();
+        if seen == want {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    seen
+}
+
 /// An ack given as the stream stops goes out while the connection closes: the client refuses
 /// it (the channel is closing), the input logs it, and the broker keeps the message for the
-/// next consumer, marked redelivered.
+/// next consumer, marked redelivered. The close is polled once before the ack, so the
+/// connection is Closing and the close is queued ahead of the ack: the ack can never reach the
+/// broker first (it did under the coverage build when it was spawned before the close).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_ack_racing_the_close_fails_and_leaves_the_message_queued() {
     use lapin::options::BasicPublishOptions;
@@ -707,9 +735,18 @@ async fn an_ack_racing_the_close_fails_and_leaves_the_message_queued() {
     .expect("confirm");
     let (b, ack) = read_one(&mut input, &c).await;
     assert_eq!(b[0].meta_get_str("amqp_redelivered"), "false");
+    let mut closing = std::pin::pin!(input.close());
+    assert!(
+        futures::poll!(&mut closing).is_pending(),
+        "the close waits for the broker's close-ok"
+    );
     ack.ack();
-    input.close().await.expect("close");
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    closing.await.expect("close");
+    assert_eq!(
+        wait_ready(&ch, &queue, 1).await,
+        1,
+        "the refused ack left the message queued"
+    );
 
     let mut input = AmqpInput::from_config(&conf(config)).expect("builds");
     let (b, ack) = read_one(&mut input, &c).await;
