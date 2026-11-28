@@ -727,3 +727,64 @@ async fn the_timer_mirrors_the_tree_the_last_sync_accepted() {
     assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
     assert!(recorded.writes.lock().expect("the write log").is_empty());
 }
+
+/// EP-15: once the mirror holds an Endpoint of another project whose audience admits `bb`, the
+/// accepted tree admits the reference that names it by slug; one that admits only other projects
+/// admits nothing.
+#[tokio::test]
+async fn the_accepted_tree_admits_a_reference_whose_endpoint_shares_with_its_project() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use joinedcontext_portal::store::Mirror;
+    let files = [reference()];
+    let (server, _recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let syncer = Arc::new(Syncer::new(Arc::clone(&shako), Arc::clone(&mirror)));
+    syncer.sync_once().await.expect("the repository loads");
+    let endpoint = |audience: serde_json::Value| ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Endpoint".to_owned(),
+        metadata: ObjectMeta::new("air", "ovzdusie"),
+        spec: json!({ "slug": SLUG, "audience": audience }),
+        status: None,
+    };
+    mirror.upsert(endpoint(json!("project-list")));
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert!(tree.admitted.is_empty(), "{:?}", tree.admitted);
+    mirror.upsert(endpoint(json!("public")));
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert_eq!(
+        tree.admitted,
+        BTreeSet::from([("bb".to_owned(), "peer".to_owned())])
+    );
+}
+
+/// DM-48: a forge that refuses the mirror's branch is that reference's flag, never a failed pass,
+/// and nothing is proposed.
+#[tokio::test]
+async fn a_forge_that_refuses_the_mirror_branch_flags_the_reference() {
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let peer = Arc::new(FakePeer::new());
+    let run = pass(
+        &client(&server),
+        &files,
+        &peer,
+        &LastFetch::default(),
+        1_757_000_000,
+    )
+    .await;
+    assert!(run.proposed.is_empty(), "{:?}", run.proposed);
+    assert_eq!(run.flags.len(), 1, "{:?}", run.flags);
+    assert!(run.flags[0].starts_with("bb/peer: "), "{:?}", run.flags);
+    assert!(recorded.pulls.lock().expect("the pull log").is_empty());
+}

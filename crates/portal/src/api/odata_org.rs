@@ -1301,9 +1301,25 @@ impl Read<'_> {
         options: &QueryOptions,
         rows: Vec<Value>,
     ) -> Result<(Answer, Value), Refused> {
+        self.collection_of(set, context, path, options, rows, options)
+            .await
+    }
+
+    /// [`Self::collection`] read with `options` for the request `asked`: the `$skiptoken` is
+    /// signed over `asked` and the nextLink carries it, so a page read without the request's
+    /// `$expand` (which the Portal answers itself) or `$select` still pages that request.
+    async fn collection_of(
+        &self,
+        set: &str,
+        context: &str,
+        path: &[Segment],
+        options: &QueryOptions,
+        rows: Vec<Value>,
+        asked: &QueryOptions,
+    ) -> Result<(Answer, Value), Refused> {
         let tags = etags(&rows);
         let table = self.table(set, rows, options)?;
-        let query_text = canonical(path, options);
+        let query_text = canonical(path, asked);
         let mut options = options.clone();
         if let Some(token) = options.skiptoken.take() {
             let inner = verify(
@@ -1337,7 +1353,7 @@ impl Read<'_> {
             body.insert("@odata.count".into(), json!(count));
         }
         if let Some(next) = answer.next.as_ref() {
-            let mut next_options = options.clone();
+            let mut next_options = asked.clone();
             next_options.skiptoken = Some(sign(
                 &self.org,
                 &self.caller.identity.subject,
@@ -1610,7 +1626,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 };
             }
             let (answer, mut body) = match read
-                .collection(PROJECTS, PROJECTS, &path, &plain, rows.clone())
+                .collection_of(PROJECTS, PROJECTS, &path, &plain, rows.clone(), &options)
                 .await
             {
                 Ok(done) => done,
@@ -1622,7 +1638,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 let mut named = plain.clone();
                 named.select = None;
                 let names = match read
-                    .collection(PROJECTS, PROJECTS, &path, &named, rows)
+                    .collection_of(PROJECTS, PROJECTS, &path, &named, rows, &options)
                     .await
                 {
                     Ok((a, _)) => a.rows,

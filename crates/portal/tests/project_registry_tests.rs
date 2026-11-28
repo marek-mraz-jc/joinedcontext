@@ -241,7 +241,7 @@ async fn a_registry_entry_whose_spec_is_a_list_is_refused_by_its_path() {
             "Sha": "blob-listed",
             "Content": encode(listed)
         })))
-        .with_priority(0)
+        .with_priority(1)
         .mount(&server)
         .await;
     let answer = repoint(&state, "vlasta", json!({ "ref": "v0.2.0" })).await;

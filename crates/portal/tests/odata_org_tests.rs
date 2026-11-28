@@ -414,6 +414,57 @@ async fn each_query_option_answers_on_an_organization_wide_set() {
     );
 }
 
+/// A paged read of projects with `$select` and `$expand` pages on as asked: the nextLink keeps
+/// both, and its page carries each project's expansion (T-7962: the link dropped `$expand`, and a
+/// page read with it back was refused as another read).
+#[tokio::test]
+async fn a_paged_expansion_keeps_its_select_and_expand_on_the_next_page() {
+    let state = state();
+    state.mirror.upsert(envelope(
+        "Project",
+        "espoo",
+        ORG_NAMESPACE,
+        json!({ "organizationRef": "hel" }),
+    ));
+    state
+        .mirror
+        .upsert(envelope("ContextSpace", "bikes", "espoo", json!({})));
+    let mode = Mode::Host("hel");
+    let ari = cookies(&state.config, person("hel-only", &[]), "hel").await;
+    let paged = [("prefer", "odata.maxpagesize=1")];
+    let first = send(
+        &state,
+        mode,
+        &ari,
+        "/api/v1/projects?$select=name&$expand=spaces&$orderby=name",
+        &paged,
+    )
+    .await;
+    assert_eq!(first.status, StatusCode::OK, "{}", first.text);
+    let body = first.json();
+    assert_eq!(names(&body, "name"), ["espoo"], "{body}");
+    assert_eq!(
+        body["value"][0]["spaces"].as_array().map(Vec::len),
+        Some(1),
+        "{body}"
+    );
+    let next = body["@odata.nextLink"].as_str().expect("nextLink");
+    assert!(next.contains("$expand=spaces"), "{next}");
+    let path = next
+        .strip_prefix("https://portal.hel.example")
+        .expect("the registry's host")
+        .to_owned();
+    let second = send(&state, mode, &ari, &path, &paged).await;
+    assert_eq!(second.status, StatusCode::OK, "{}", second.text);
+    let body = second.json();
+    assert_eq!(names(&body, "name"), ["helsinki"], "{body}");
+    assert_eq!(
+        body["value"][0]["spaces"].as_array().map(Vec::len),
+        Some(3),
+        "{body}"
+    );
+}
+
 /// Server-driven paging: the nextLink's `$skiptoken` answers the next page for its caller only,
 /// and a token changed by a byte or carried to another caller or read is refused.
 #[tokio::test]

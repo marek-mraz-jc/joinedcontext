@@ -2444,10 +2444,8 @@ mod sandbox_tests {
             .is_some_and(|r| r.contains("no tests")));
     }
 
-    /// SDK-38: the run says the tests are running at once, and the result follows as its own
-    /// event of the same version, without the ticket in it.
-    #[tokio::test]
-    async fn the_result_follows_the_running_event_and_never_carries_the_ticket() {
+    /// A cluster whose test Job fails with one failure that prints the ticket.
+    async fn failing_job() -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(404))
@@ -2484,14 +2482,25 @@ mod sandbox_tests {
             .mount(&server)
             .await;
 
+        server
+    }
+
+    fn sandboxed(state: AppState, server: &MockServer) -> AppState {
         let settings = SandboxSettings {
             namespace: "jc-app-tests".into(),
             image: format!("builder@sha256:{}", "a".repeat(64)),
             rust_image: None,
         };
         let kube = KubeClient::with_token(&server.uri(), "t").expect("a client");
-        let state = AppState::new(crate::config::Config::for_tests(), None)
-            .with_app_tests(Arc::new(Sandbox::new(kube, settings)));
+        state.with_app_tests(Arc::new(Sandbox::new(kube, settings)))
+    }
+
+    /// SDK-38: the run says the tests are running at once, and the result follows as its own
+    /// event of the same version, without the ticket in it.
+    #[tokio::test]
+    async fn the_result_follows_the_running_event_and_never_carries_the_ticket() {
+        let server = failing_job().await;
+        let state = sandboxed(AppState::new(crate::config::Config::for_tests(), None), &server);
         let mut driver = Driver::for_tests(state.clone(), "helsinki");
         driver.bearer = "run.s3cr3t-ticket".into();
         driver.start_tests(&tested(), 4).await.expect("started");
@@ -2513,6 +2522,50 @@ mod sandbox_tests {
             "{}",
             events[1]
         );
+    }
+
+    /// A result the store refuses to record is only logged: the version keeps its running
+    /// event and the run goes on.
+    #[tokio::test]
+    async fn a_result_the_store_refuses_is_logged_and_the_running_event_stays() {
+        let server = failing_job().await;
+        let scratch = crate::test_db::scratch().await;
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_db(scratch.pool.clone());
+        for env in scratch.placed("helsinki").await.matching(|_| true) {
+            state.mirror.upsert(env);
+        }
+        let state = sandboxed(state, &server);
+        let run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        state.agents.create_run(&run).await.expect("a run");
+        // Only a finished result is refused; the running event goes in.
+        for statement in [
+            "CREATE FUNCTION jc_refuse_result() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+            "CREATE TRIGGER jc_refuse_result BEFORE INSERT ON agent_run_events FOR EACH ROW \
+             WHEN (NEW.kind = 'tests' AND NEW.payload->>'outcome' <> 'running') \
+             EXECUTE FUNCTION jc_refuse_result()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("the trigger");
+        }
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.start_tests(&tested(), 5).await.expect("started");
+        let requests = || async { server.received_requests().await.unwrap_or_default().len() };
+        for _ in 0..100 {
+            if requests().await >= 5 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            tests_events(&state).await,
+            vec![json!({ "version": 5, "outcome": "running" })]
+        );
+        scratch.remove().await;
     }
 }
 

@@ -3142,6 +3142,71 @@ mod unparsed_tests {
         assert!(prose.contains("Endpoint 'counters'"), "{prose}");
     }
 
+    /// A change the draft store cannot keep opens nothing and says to try again, never the
+    /// database's own words.
+    #[tokio::test]
+    async fn a_change_the_draft_store_cannot_keep_opens_nothing() {
+        let (mut driver, _state) = steward();
+        crate::agents::oneshot::placed(&driver.state);
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(crate::test_db::dead_pool()),
+            driver.state.mirror.clone(),
+        );
+        let prose = call(&driver, source(with_http(json!({}))), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("Nothing was opened: the draft of DataSource 'counters-api'"),
+            "{prose}"
+        );
+        assert!(!prose.contains("127.0.0.1"), "{prose}");
+    }
+
+    /// A change whose draft is kept but whose verdict the store refuses still opens its form:
+    /// the draft carries no verdict, so the strict gate asks for a check before a proposal.
+    #[tokio::test]
+    async fn a_change_whose_verdict_is_not_kept_still_opens_without_one() {
+        let (mut driver, _state) = steward();
+        driver.state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "Endpoint".into(),
+            metadata: ObjectMeta {
+                name: "counters".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec: json!({ "contextSpaceRef": "air", "slug": "abcdefghijklmnopqrstuvwxyz", "audience": "public" }),
+            status: None,
+        });
+        let scratch = crate::test_db::scratch().await;
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("helsinki").await,
+        );
+        scratch.refuse_column("drafts", "verdict").await;
+        let change = ChangeResource {
+            kind: "Endpoint".into(),
+            name: "counters".into(),
+            patch: Some(json!({ "spec": { "audience": "organization" } })),
+            ..Default::default()
+        };
+        let prose = call(&driver, change, true).await.done().expect("ends");
+        assert!(
+            prose.starts_with("Opened 'counters' with the change"),
+            "{prose}"
+        );
+        let draft = driver
+            .state
+            .drafts
+            .get("helsinki", "Endpoint", "counters")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert!(draft.verdict.is_none(), "{:?}", draft.verdict);
+        scratch.remove().await;
+    }
+
     #[tokio::test]
     async fn a_hidden_attribute_reaches_the_change_after_a_guess() {
         let (driver, state) = steward();

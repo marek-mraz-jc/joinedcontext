@@ -506,14 +506,18 @@ async fn a_project_repository_that_does_not_stage_is_unavailable() {
 #[tokio::test]
 async fn a_project_branch_without_its_project_file_does_not_assemble() {
     let (server, state) = layout_two(true).await;
+    // The branch's own files, all but project.yaml.
+    let mut tree = vec![json!({ "Path": ".jc/layout", "Type": "blob", "Sha": "layout" })];
+    tree.extend(files()[2..].iter().map(|(p, _)| {
+        json!({ "Path": p.trim_start_matches("projects/ovzdusie/"), "Type": "blob", "Sha": p })
+    }));
     Mock::given(method("GET"))
         .and(path(format!(
             "{PROJECT_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
         )))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "Truncated": false,
-            "Tree": [{ "Path": ".jc/layout", "Type": "blob", "Sha": "only-layout" }]
-        })))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({ "Truncated": false, "Tree": tree })),
+        )
         .with_priority(1)
         .mount(&server)
         .await;
