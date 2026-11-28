@@ -927,13 +927,7 @@ impl TokenVerifier {
             .map_err(|_| ShakoError::Unauthorized("JWT verification failed".into()))?;
         let claims = token_data.claims;
 
-        // Explicitly require `aud` claim presence (SECURITY-THINK B)
-        let Some(aud) = &claims.aud else {
-            return Err(ShakoError::Unauthorized("JWT missing aud claim".into()));
-        };
-        if !aud.contains(expected_audience) {
-            return Err(ShakoError::Unauthorized("JWT audience mismatch".into()));
-        }
+        audience_check(&claims, expected_audience)?;
 
         if claims.sub.is_empty() {
             return Err(ShakoError::Unauthorized("JWT names no subject".into()));
@@ -1003,6 +997,18 @@ impl TokenVerifier {
             .cloned()
             .ok_or_else(|| ShakoError::Unauthorized("unknown signing key kid".into()))
     }
+}
+
+/// Explicitly requires the `aud` claim and the expected audience in it (SECURITY-THINK B),
+/// a second check after the library's own.
+fn audience_check(claims: &JwtClaims, expected_audience: &str) -> ShakoResult<()> {
+    let Some(aud) = &claims.aud else {
+        return Err(ShakoError::Unauthorized("JWT missing aud claim".into()));
+    };
+    if !aud.contains(expected_audience) {
+        return Err(ShakoError::Unauthorized("JWT audience mismatch".into()));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1593,6 +1599,36 @@ mod tests {
             matches!(&err, ShakoError::Internal(m) if m.starts_with("registry JWT sign failed")),
             "{err:?}"
         );
+    }
+
+    /// The explicit audience check after the library's: no `aud`, another audience alone or
+    /// among others, and an empty list are each refused; the expected one passes.
+    #[test]
+    fn the_explicit_audience_check_refuses_every_other_audience() {
+        let claims = |aud: Value| -> JwtClaims {
+            serde_json::from_value(json!({"sub": "u", "aud": aud, "exp": 1})).expect("claims")
+        };
+        let mismatch = ShakoError::Unauthorized("JWT audience mismatch".into());
+        for aud in [
+            json!("account"),
+            json!(["account", "portal"]),
+            json!([]),
+            json!("Shako"),
+        ] {
+            let err = audience_check(&claims(aud.clone()), "shako").expect_err("refused");
+            assert_eq!(err, mismatch, "{aud}");
+        }
+        let err = audience_check(&claims(json!("shako")), "container_registry")
+            .expect_err("a shako token is no registry token");
+        assert_eq!(err, mismatch);
+        let none: JwtClaims =
+            serde_json::from_value(json!({"sub": "u", "exp": 1})).expect("claims");
+        assert_eq!(
+            audience_check(&none, "shako").expect_err("no aud"),
+            ShakoError::Unauthorized("JWT missing aud claim".into())
+        );
+        audience_check(&claims(json!("shako")), "shako").expect("one audience");
+        audience_check(&claims(json!(["account", "shako"])), "shako").expect("among others");
     }
 
     #[test]
