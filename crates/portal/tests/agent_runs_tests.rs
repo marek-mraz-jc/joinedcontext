@@ -4433,7 +4433,7 @@ async fn an_unattended_run_publishes_over_its_app_and_keeps_waiting() {
     )
     .await;
     assert!(status.is_success(), "{status} {proposed}");
-    assert_eq!(proposed["kind"], "Change", "{proposed}");
+    assert_eq!(proposed["change"]["kind"], "Change", "{proposed}");
     std::mem::forget(server);
 }
 

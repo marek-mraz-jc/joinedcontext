@@ -969,7 +969,7 @@ async fn a_nameless_inline_pipeline_is_tried_and_tested_and_kept_nowhere() {
             &try_mapping,
             Some(json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] })),
         ),
-        tokio::time::timeout(std::time::Duration::from_secs(8), play_runner(&runner, &state, 0, &captured)),
+        async { let _ = tokio::time::timeout(Duration::from_secs(3), play_runner(&runner, &state, 0, &captured)).await; },
     );
     assert_eq!(tried.status, StatusCode::OK, "{}", tried.text);
     let test = op("nameless", "jc_pipeline_test");

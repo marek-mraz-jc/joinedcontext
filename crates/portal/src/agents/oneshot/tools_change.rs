@@ -3203,49 +3203,24 @@ mod unparsed_tests {
     #[tokio::test]
     async fn a_change_whose_verdict_is_not_kept_still_opens_without_one() {
         let (mut driver, _state) = steward();
-        driver.state.mirror.upsert(ResourceEnvelope {
-            api_version: API_VERSION.into(),
-            kind: "Endpoint".into(),
-            metadata: ObjectMeta {
-                name: "counters".into(),
-                namespace: Some("helsinki".into()),
-                ..Default::default()
-            },
-            spec: json!({ "contextSpaceRef": "air", "slug": "abcdefghijklmnopqrstuvwxyz", "audience": "public" }),
-            status: None,
-        });
-        driver.state.mirror.upsert(ResourceEnvelope {
-            api_version: API_VERSION.into(),
-            kind: "ContextSpace".into(),
-            metadata: ObjectMeta {
-                name: "air".into(),
-                namespace: Some("helsinki".into()),
-                ..Default::default()
-            },
-            spec: json!({}),
-            status: None,
-        });
         let scratch = crate::test_db::scratch().await;
         driver.state.drafts = crate::ops::drafts::DraftStore::new(
             Some(scratch.pool.clone()),
             scratch.placed("helsinki").await,
         );
         scratch.refuse_column("drafts", "verdict").await;
-        let change = ChangeResource {
-            kind: "Endpoint".into(),
-            name: "counters".into(),
-            patch: Some(json!({ "spec": { "audience": "organization" } })),
-            ..Default::default()
-        };
-        let prose = call(&driver, change, true).await.done().expect("ends");
+        let prose = call(&driver, source(with_http(json!({}))), true)
+            .await
+            .done()
+            .expect("ends");
         assert!(
-            prose.starts_with("Opened 'counters' with the change"),
+            prose.starts_with("Opened 'counters-api' with the change"),
             "{prose}"
         );
         let draft = driver
             .state
             .drafts
-            .get("helsinki", "Endpoint", "counters")
+            .get("helsinki", "DataSource", "counters-api")
             .await
             .expect("read")
             .expect("kept");

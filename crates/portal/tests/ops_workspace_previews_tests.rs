@@ -392,6 +392,11 @@ async fn mount_tree(server: &MockServer, repo: &str, head: &str, files: &[(&str,
 /// Jana's workspace `air-v2` of a project with a repository of its own: the organization at
 /// its main head, the project's branch in the project repository.
 async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
+    layout_two_with(project_tree, true).await
+}
+
+/// [`layout_two`] whose project branch holds `project.yaml` only when `project_file`.
+async fn layout_two_with(project_tree: bool, project_file: bool) -> (MockServer, AppState) {
     let server = forge().await;
     common::mount_repository(&server, PROJECT_REPO).await;
     Mock::given(method("GET"))
@@ -418,8 +423,10 @@ async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
         ("projects/ovzdusie.yaml", entry),
     ];
     mount_tree(&server, REPO, "main1", &organization).await;
-    let mut inside: Vec<(&str, String)> =
-        vec![(".jc/layout", layout), ("project.yaml", all[1].1.clone())];
+    let mut inside: Vec<(&str, String)> = vec![(".jc/layout", layout)];
+    if project_file {
+        inside.push(("project.yaml", all[1].1.clone()));
+    }
     inside.extend(
         all[2..]
             .iter()
@@ -505,22 +512,7 @@ async fn a_project_repository_that_does_not_stage_is_unavailable() {
 /// the organization: a 503 saying so.
 #[tokio::test]
 async fn a_project_branch_without_its_project_file_does_not_assemble() {
-    let (server, state) = layout_two(true).await;
-    // The branch's own files, all but project.yaml.
-    let mut tree = vec![json!({ "Path": ".jc/layout", "Type": "blob", "Sha": "layout" })];
-    tree.extend(files()[2..].iter().map(|(p, _)| {
-        json!({ "Path": p.trim_start_matches("projects/ovzdusie/"), "Type": "blob", "Sha": p })
-    }));
-    Mock::given(method("GET"))
-        .and(path(format!(
-            "{PROJECT_REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
-        )))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(json!({ "Truncated": false, "Tree": tree })),
-        )
-        .with_priority(1)
-        .mount(&server)
-        .await;
+    let (_server, state) = layout_two_with(true, false).await;
     let started = doors::call(
         "jc_workspace_preview_start",
         &session(steward()),

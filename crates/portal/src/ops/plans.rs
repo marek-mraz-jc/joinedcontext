@@ -2710,7 +2710,7 @@ mod tests {
         state.mirror.upsert(org(
             "Role",
             "admin-role",
-            json!({ "rules": [{ "kinds": ["DataModel"], "verbs": ["read", "propose", "approve"] }] }),
+            json!({ "rules": [{ "kinds": ["DataModel"], "verbs": ["read", "propose", "approve", "delete"] }] }),
         ));
         state.mirror.upsert(org(
             "RoleBinding",
