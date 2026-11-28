@@ -528,15 +528,12 @@ mod tests {
         assert!(!e.contains("pw-"), "{e}");
     }
 
-    /// T-7488 on real Postgres (`ANTARES_TEST_DATABASE_URL`, a superuser that only prepares): a
+    /// T-7488 on real Postgres (`JC_PG_TEST_DATABASE_URL`, a superuser that only prepares): a
     /// superuser request login is refused, a plain login that owns nothing serves.
     #[tokio::test]
-    #[allow(clippy::disallowed_methods)] // The test database URL.
     async fn a_superuser_request_login_is_refused_and_a_plain_one_serves() {
-        let Ok(admin) = std::env::var("ANTARES_TEST_DATABASE_URL") else {
-            println!("SKIP: ANTARES_TEST_DATABASE_URL is unset");
-            return;
-        };
+        let admin = crate::config::portal_env("JC_PG_TEST_DATABASE_URL")
+            .expect("JC_PG_TEST_DATABASE_URL is set by ci.yml root-test and coverage.yml");
         let pool = crate::pg::connect(admin.parse().unwrap(), 1).await.unwrap();
         sqlx::raw_sql(
             "DO $$ BEGIN CREATE ROLE jc_t7637_antares_app LOGIN PASSWORD 'app-pw'; \
