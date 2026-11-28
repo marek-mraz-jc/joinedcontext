@@ -1456,18 +1456,11 @@ async fn whole_page_written(
         write,
     )
     .await?;
-    // a read of documents (a walk in store pages) is written here
-    let docs = whole.docs.iter().filter_map(|d| {
-        let id = d.get("id")?.as_str()?.to_owned();
-        Some(Written {
-            id,
-            frame: write(d),
-        })
-    });
+    // the by-id read carries no page, so filter_rows never walks candidates (enough and
+    // counting need a client page): every row comes back written
     let mut found: HashMap<String, Written> = whole
         .written
         .into_iter()
-        .chain(docs)
         .map(|w| (w.id.clone(), w))
         .collect();
     Ok(ids.iter().filter_map(|id| found.remove(id)).collect())

@@ -372,6 +372,46 @@ mod tests {
         assert_eq!(builds.load(Ordering::SeqCst), 3);
     }
 
+    /// Requests racing to a due sweep: one sweeps each due minute, a request that lost the
+    /// race goes on without sweeping, and a held view stays held through all of them.
+    #[test]
+    fn racing_due_sweeps_sweep_once_each_and_the_rest_go_on() {
+        let c = ViewCache::default();
+        let builds = AtomicUsize::new(0);
+        get(&c, "cars", 1, c.base, &builds);
+        let every = u64::try_from(SWEEP_EVERY.as_nanos()).expect("a minute fits");
+        let (threads, rounds) = (8usize, 2_000usize);
+        let start = Barrier::new(threads);
+        let swept = AtomicUsize::new(0);
+        let minute = std::sync::atomic::AtomicU64::new(1);
+        std::thread::scope(|s| {
+            for _ in 0..threads {
+                s.spawn(|| {
+                    start.wait();
+                    for _ in 0..rounds {
+                        // every racer of a round asks at the same due minute
+                        let at = minute.load(Ordering::SeqCst).saturating_mul(every);
+                        let gone = c.sweep_due(
+                            &|_| {
+                                swept.fetch_add(1, Ordering::SeqCst);
+                                true
+                            },
+                            at,
+                            HOUR.saturating_mul(1_000_000),
+                        );
+                        assert!(gone.is_empty(), "a loaded, recent view stays");
+                        minute.fetch_add(1, Ordering::SeqCst);
+                    }
+                });
+            }
+        });
+        let asked = threads.saturating_mul(rounds);
+        let swept = swept.load(Ordering::SeqCst);
+        assert!((1..=asked).contains(&swept), "{swept} sweeps of {asked}");
+        assert_eq!(c.len(), 1);
+        assert_eq!(builds.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn a_hit_sweeps_idle_views_once_a_minute() {
         let c = ViewCache::default();

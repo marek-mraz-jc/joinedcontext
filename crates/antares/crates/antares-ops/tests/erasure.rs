@@ -348,6 +348,50 @@ async fn a_bad_request_is_refused_and_a_broken_record_is_skipped() {
     assert_eq!(log.as_array().map(Vec::len), Some(2), "{log}");
 }
 
+/// A logged erasure the boot cannot apply again (its time does not parse) is logged and
+/// passed over: the pod still serves, the Entity stays, and the record stays in the log.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_logged_erasure_that_cannot_be_applied_again_does_not_stop_the_boot() {
+    let store = Arc::new(AnyStore::Mem(antares_sql::store::Store::default()));
+    let (_b, app) = broker(&store, "memory").await;
+    let tenant = format!("er{}", run_id());
+    let doc = json!({"id": A, "type": TRIP, RIDER: prop("r-17", T1)});
+    let (s, b) = send(
+        &app,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        Some(&tenant),
+        Some(doc),
+    )
+    .await;
+    assert_eq!(s, StatusCode::CREATED, "{b}");
+    let id = format!("erasure:{tenant}:unparsed");
+    store
+        .upsert(
+            &TenantId::new_internal(antares_api::views::VIEW_TENANT).expect("view tenant"),
+            Kind::View,
+            &id,
+            json!({"id": id, "operation": "erase", "tenant": tenant, "entities": [A],
+                   "at": "yesterday"}),
+        )
+        .await
+        .expect("record");
+    let (_again, app) = broker(&store, "memory").await;
+    let (s, log) = send(
+        &app,
+        Method::GET,
+        &format!("/q/erasures/{tenant}"),
+        None,
+        None,
+    )
+    .await;
+    assert_eq!(s, StatusCode::OK, "{log}");
+    assert_eq!(log.as_array().map(Vec::len), Some(1), "{log}");
+    let tid = TenantId::new(&tenant).expect("tenant");
+    let kept = store.get(&tid, Kind::Entity, A).await.expect("read");
+    assert!(kept.is_some(), "nothing was erased");
+}
+
 /// A re-applied erasure whose own time does not parse erases nothing: read
 /// as no cut, it would take what was written after the erasure.
 #[tokio::test(flavor = "multi_thread")]

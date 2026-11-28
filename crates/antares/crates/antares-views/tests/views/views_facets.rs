@@ -50,6 +50,36 @@ async fn fixture(engine: Option<Filter>) -> Result<(TestBroker, Router), String>
     if let Some(f) = engine {
         broker = broker.with_policy(Arc::new(Narrowing(Arc::new(f))));
     }
+    seeded(broker).await
+}
+
+/// Allows the first Query Entities decision once armed and denies every later one: the
+/// engine's answer changed between the facet's visibility check and its scan.
+struct Revoking {
+    armed: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+}
+
+impl PolicyEngine for Revoking {
+    fn name(&self) -> &'static str {
+        "revoking"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, op: &'a Operation<'a>) -> DecisionFuture<'a> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let read = op.clause == "5.7.2" && self.armed.load(SeqCst);
+        let later = read && self.reads.fetch_add(1, SeqCst) > 0;
+        Box::pin(std::future::ready(if later {
+            Decision::Deny("revoked".into())
+        } else {
+            Decision::Allow
+        }))
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+async fn seeded(broker: TestBroker) -> Result<(TestBroker, Router), String> {
     let app = broker.serve(antares_views::Views)?;
     for e in [
         event("zv1", "Zvolen", &["music", "film"]),
@@ -140,6 +170,26 @@ async fn each_count_equals_the_query_entities_count_of_that_value() -> Result<()
     let q = antares_ops::percent::encode("address[addressLocality]==\"Zvolen\"");
     let a = get(&app, &format!("{FACETS}?attr=category&q={q}")).await;
     assert_eq!(counts(&a.json), pairs(&[("music", 2), ("film", 1)]));
+    Ok(())
+}
+
+/// A read the engine allowed for the visibility check and refuses at the scan is the
+/// engine's refusal, never a count of nothing.
+#[tokio::test]
+async fn a_scan_the_engine_refuses_after_the_visibility_check_is_its_refusal() -> Result<(), String>
+{
+    let engine = Arc::new(Revoking {
+        armed: std::sync::atomic::AtomicBool::new(false),
+        reads: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let (_broker, app) = seeded(TestBroker::new().await?.with_policy(engine.clone())).await?;
+    engine
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let a = get(&app, &format!("{FACETS}?attr=category")).await;
+    assert_eq!(a.status, StatusCode::FORBIDDEN, "{}", a.text);
+    assert!(counts(&a.json).is_empty(), "{}", a.text);
+    assert!(engine.reads.load(std::sync::atomic::Ordering::SeqCst) >= 2);
     Ok(())
 }
 
