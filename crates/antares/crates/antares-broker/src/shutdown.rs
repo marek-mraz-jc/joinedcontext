@@ -188,6 +188,17 @@ mod tests {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// antares_api::background_tasks() counts the whole process: a test that
+    /// spawns a counted task or calls drain() holds this, or a parallel drain
+    /// sees the other test's task (mutants-diff baseline red, T-7967).
+    static COUNTED: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn counted() -> std::sync::MutexGuard<'static, ()> {
+        COUNTED
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
     /// A temporal driver that only records whether it was closed; every
     /// operation answers "no temporal store", the same shape as `NoTemporal`.
     struct CountsCloses(Arc<AtomicUsize>);
@@ -514,6 +525,7 @@ mod tests {
     /// drain waits for it like it waits for the request itself.
     #[test]
     fn drain_waits_for_request_born_tasks() {
+        let _counted = counted();
         rt().block_on(async {
             let inflight = Arc::new(AtomicUsize::new(0));
             let done = Arc::new(AtomicBool::new(false));
@@ -545,6 +557,7 @@ mod tests {
     /// outbox (memory/file).
     #[test]
     fn drain_returns_at_once_when_nothing_is_in_flight() {
+        let _counted = counted();
         let inflight = Arc::new(AtomicUsize::new(0));
         let store = mem_store();
         let started = Instant::now();
@@ -567,6 +580,7 @@ mod tests {
     /// finishes must not hold the process open forever.
     #[test]
     fn drain_gives_up_at_the_deadline_with_a_stuck_connection() {
+        let _counted = counted();
         let (log, _guard) = Logged::start();
         let inflight = Arc::new(AtomicUsize::new(1)); // never released
         let store = mem_store();
@@ -600,6 +614,7 @@ mod tests {
     /// up at once, says why, and the pools still close.
     #[test]
     fn an_unreadable_outbox_ends_the_flush_and_still_closes() {
+        let _counted = counted();
         let (log, _guard) = Logged::start();
         let started = Instant::now();
         rt().block_on(async {
