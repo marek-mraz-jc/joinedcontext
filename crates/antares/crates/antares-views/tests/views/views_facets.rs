@@ -193,6 +193,17 @@ async fn a_scan_the_engine_refuses_after_the_visibility_check_is_its_refusal() -
     Ok(())
 }
 
+/// A scan whose answer passes the broker's answer bound is the scan's own refusal (413),
+/// never a partial count.
+#[tokio::test]
+async fn a_scan_past_the_answer_bound_is_its_refusal() -> Result<(), String> {
+    let (_broker, app) = seeded(TestBroker::with_max_answer_bytes(64).await?).await?;
+    let a = get(&app, &format!("{FACETS}?attr=category")).await;
+    assert_eq!(a.status, StatusCode::PAYLOAD_TOO_LARGE, "{}", a.text);
+    assert!(counts(&a.json).is_empty(), "{}", a.text);
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_row_the_policy_hides_changes_the_counts() -> Result<(), String> {
     let hidden = q_filter("address[addressLocality]!=\"Zvolen\"")?;
