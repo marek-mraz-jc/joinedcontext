@@ -190,6 +190,7 @@ tikv-jemalloc-ctl = { workspace = true }
 async-trait = { workspace = true }
 # the wiring tests build a state over the built-in store
 antares-api = { workspace = true, features = ["test-kit"] }
+antares-bus = { workspace = true, features = ["test-kit"] }
 # mqtt e2e: sync rumqttc client against a live mosquitto
 rumqttc = { workspace = true }
 serde_json = { workspace = true }

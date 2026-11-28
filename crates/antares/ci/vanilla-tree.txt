@@ -3246,6 +3246,9 @@ antares-broker v0.3.0
 ├── serde_json feature "default" (*)
 ├── rumqttc feature "use-rustls-no-provider" (*)
 ├── async-trait feature "default" (*)
+├── antares-bus feature "default" (*)
+├── antares-bus feature "test-kit"
+│   └── antares-bus v0.3.0 (*)
 ├── parquet feature "zstd"
 │   └── parquet v60.2.0
 │       ├── num-bigint v0.5.1

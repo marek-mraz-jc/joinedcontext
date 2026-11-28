@@ -20,6 +20,8 @@
 use crate::{subjects, ChangeEvent};
 use async_nats::jetstream::{self, consumer, stream};
 
+/// The pull consumer the balanced and broadcast calls hand back.
+pub use async_nats::jetstream::consumer::PullConsumer;
 /// The subscription bucket's handle, watch and watch error, so a caller of
 /// [`NatsBus::subs_kv`] can name them without its own async-nats dependency.
 pub use async_nats::jetstream::kv::{
@@ -70,6 +72,10 @@ pub struct NatsBus {
     /// `Event::Connected` occurrences (the initial connect included; the
     /// getter subtracts it — surfaced on /q/health as `reconnects`).
     reconnects: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    /// `(stream, consumer)` of every pull consumer this bus opened, for a test
+    /// that drops exactly its own one on a NATS other tests share.
+    #[cfg(feature = "test-kit")]
+    opened: std::sync::Mutex<Vec<(&'static str, String)>>,
 }
 
 impl NatsBus {
@@ -112,6 +118,8 @@ impl NatsBus {
             js,
             client,
             reconnects,
+            #[cfg(feature = "test-kit")]
+            opened: std::sync::Mutex::default(),
         };
         bus.ensure_streams().await?;
         Ok(bus)
@@ -304,17 +312,21 @@ impl NatsBus {
         durable: &str,
     ) -> Result<consumer::PullConsumer, BusError> {
         let s = self.js.get_stream(CHANGES_STREAM).await.map_err(err)?;
-        s.get_or_create_consumer(
-            durable,
-            consumer::pull::Config {
-                durable_name: Some(durable.into()),
-                // A pull consumer's default ack policy is Explicit.
-                max_ack_pending: MAX_ACK_PENDING,
-                ..Default::default()
-            },
-        )
-        .await
-        .map_err(err)
+        let consumer = s
+            .get_or_create_consumer(
+                durable,
+                consumer::pull::Config {
+                    durable_name: Some(durable.into()),
+                    // A pull consumer's default ack policy is Explicit.
+                    max_ack_pending: MAX_ACK_PENDING,
+                    ..Default::default()
+                },
+            )
+            .await
+            .map_err(err)?;
+        #[cfg(feature = "test-kit")]
+        self.opened(CHANGES_STREAM, durable);
+        Ok(consumer)
     }
 
     /// BROADCAST consumption (per-instance registry mirror): an ephemeral
@@ -322,15 +334,19 @@ impl NatsBus {
     /// with the instance.
     pub async fn consume_registry_broadcast(&self) -> Result<consumer::PullConsumer, BusError> {
         let s = self.js.get_stream(REGISTRY_STREAM).await.map_err(err)?;
-        s.create_consumer(consumer::pull::Config {
-            // no durable name (the default) = ephemeral = broadcast
-            deliver_policy: consumer::DeliverPolicy::New,
-            // A pull consumer's default ack policy is Explicit.
-            max_ack_pending: MAX_ACK_PENDING,
-            ..Default::default()
-        })
-        .await
-        .map_err(err)
+        let consumer = s
+            .create_consumer(consumer::pull::Config {
+                // no durable name (the default) = ephemeral = broadcast
+                deliver_policy: consumer::DeliverPolicy::New,
+                // A pull consumer's default ack policy is Explicit.
+                max_ack_pending: MAX_ACK_PENDING,
+                ..Default::default()
+            })
+            .await
+            .map_err(err)?;
+        #[cfg(feature = "test-kit")]
+        self.opened(REGISTRY_STREAM, &consumer.cached_info().name);
+        Ok(consumer)
     }
 
     /// Drop a consumer of the registry stream, the way a server restart or an
@@ -389,6 +405,39 @@ impl NatsBus {
         let durables = balanced_durables;
         tracing::info!(?durables, "bus topology asserted on {CHANGES_STREAM}");
         Ok(())
+    }
+}
+
+/// Test builds only (`test-kit`): what a wiring test needs to break this bus's
+/// own consumers on a NATS the parallel tests share.
+#[cfg(feature = "test-kit")]
+impl NatsBus {
+    fn opened(&self, stream: &'static str, name: &str) {
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push((stream, name.to_owned()));
+    }
+
+    /// `(stream, consumer)` of every pull consumer this bus opened, oldest first.
+    pub fn opened_consumers(&self) -> Vec<(&'static str, String)> {
+        self.opened
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Delete one consumer by name, as an operator or a server restart would.
+    pub async fn delete_consumer(&self, stream: &str, name: &str) -> Result<(), BusError> {
+        let s = self.js.get_stream(stream).await.map_err(err)?;
+        s.delete_consumer(name).await.map_err(err)?;
+        Ok(())
+    }
+
+    /// Drain and close the connection: every stream of this bus ends and
+    /// every later call fails, the state a dead client leaves behind.
+    pub async fn close(&self) -> Result<(), BusError> {
+        self.client.drain().await.map_err(err)
     }
 }
 
