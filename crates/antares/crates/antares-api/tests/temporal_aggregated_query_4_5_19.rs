@@ -227,19 +227,57 @@ async fn an_entity_with_nothing_in_the_window_is_left_out_of_the_aggregated_answ
     let Some((st, tenant)) = pg_state().await else {
         return;
     };
-    seed(&st, &tenant, "urn:ngsi-ld:V:agg-inside", [1, 2, 3]).await;
+    nothing_in_the_window_is_left_out(&st, &tenant).await;
+}
+
+/// The same over the in-memory store, which answers the type's Entities whole and leaves
+/// the window to the aggregation.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_entity_with_nothing_in_the_window_is_left_out_in_memory() {
+    let st = AppState::new("me".into());
+    nothing_in_the_window_is_left_out(&st, "aggmem").await;
+    // an Entity holding no Attribute at all has nothing to aggregate either
+    let bare = json!({"id": "urn:ngsi-ld:V:agg-bare", "type": "Vehicle"}).to_string();
+    let (status, body, _) = send(
+        &st,
+        Request::builder()
+            .method("POST")
+            .uri("/ngsi-ld/v1/entities")
+            .header("Content-Type", "application/json")
+            .header("NGSILD-Tenant", "aggmem")
+            .header("Content-Length", bare.len())
+            .body(Body::from(bare))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body, _) = query(
+        &st,
+        "aggmem",
+        &format!(
+            "type=Vehicle&options=aggregatedValues\
+             &aggrMethods=max&aggrPeriodDuration=PT0S&limit=10&{WINDOW}"
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(!body.to_string().contains("agg-bare"), "{body}");
+}
+
+async fn nothing_in_the_window_is_left_out(st: &AppState, tenant: &str) {
+    seed(st, tenant, "urn:ngsi-ld:V:agg-inside", [1, 2, 3]).await;
     let old = json!({
         "id": "urn:ngsi-ld:V:agg-before",
         "type": "Vehicle",
         "speed": [{"type": "Property", "value": 9, "observedAt": "2020-03-01T10:00:00Z"}]})
     .to_string();
     let (status, body, _) = send(
-        &st,
+        st,
         Request::builder()
             .method("POST")
             .uri("/ngsi-ld/v1/temporal/entities")
             .header("Content-Type", "application/json")
-            .header("NGSILD-Tenant", &tenant)
+            .header("NGSILD-Tenant", tenant)
             .header("Content-Length", old.len())
             .body(Body::from(old))
             .expect("request"),
@@ -247,8 +285,8 @@ async fn an_entity_with_nothing_in_the_window_is_left_out_of_the_aggregated_answ
     .await;
     assert_eq!(status, StatusCode::CREATED, "{body}");
     let (status, body, _) = query(
-        &st,
-        &tenant,
+        st,
+        tenant,
         &format!(
             "type=Vehicle&attrs=speed&options=aggregatedValues\
              &aggrMethods=max&aggrPeriodDuration=PT0S&limit=10&{WINDOW}"
