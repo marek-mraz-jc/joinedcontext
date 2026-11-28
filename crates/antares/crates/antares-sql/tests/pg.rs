@@ -1875,18 +1875,32 @@ async fn a_write_passes_an_in_flight_history_append_and_a_delete_waits() {
 /// T-6085: one tenant's history count and size in one bounded pass, each
 /// tenant's own rows only, and the statistics' guess a read takes when that
 /// pass runs out of time lands near the exact numbers.
+/// The history tables are a database of the test's own (T-7965): ANALYZE of
+/// the tables every other test writes lists the big tenants as most common
+/// and gives tenant a the average share of the rest (108 of 300 beside 620
+/// other tenants), and ANALYZE there also waited on their locks (55P03).
 #[tokio::test(flavor = "multi_thread")]
 async fn history_usage_is_per_tenant_and_its_estimate_is_near_it() {
     use antares_store::TemporalDriver;
     let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect+migrate");
-    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
-        pool.clone(),
-    ));
+    let admin = pg::connect(&url, 2).await.expect("connect+migrate");
     let run = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("clock")
         .as_millis();
+    let name = format!("antares_usage_{run}");
+    let create = format!("CREATE DATABASE {name}");
+    sqlx::query(sqlx::AssertSqlSafe(create))
+        .execute(&admin)
+        .await
+        .expect("own database");
+    let (base, _) = url.rsplit_once('/').expect("a database URL");
+    let pool = pg::connect(&format!("{base}/{name}"), 5)
+        .await
+        .expect("connect+migrate the own database");
+    let store = antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(
+        pool.clone(),
+    ));
     let a = TenantId::new(&format!("pgusea{run}")).expect("tenant");
     let b = TenantId::new(&format!("pguseb{run}")).expect("tenant");
     let shell = serde_json::json!({
@@ -1965,6 +1979,12 @@ async fn history_usage_is_per_tenant_and_its_estimate_is_near_it() {
             .await
             .expect("purge");
     }
+    pool.close().await;
+    let drop = format!("DROP DATABASE {name}");
+    sqlx::query(sqlx::AssertSqlSafe(drop))
+        .execute(&admin)
+        .await
+        .expect("drop the own database");
 }
 
 #[tokio::test(flavor = "multi_thread")]
