@@ -67,6 +67,32 @@ async fn pg_boot_check_and_migrations_refuse_a_dead_or_unprivileged_pool() {
     db.drop_db().await;
 }
 
+/// A boot check whose catalogue read the database refuses (pg_class revoked in this database
+/// only) names the check, and the request role's own check still ran first.
+#[tokio::test]
+async fn pg_boot_check_names_a_refused_catalogue_query() {
+    let Some(db) = common::test_db("pg_boot_check_refused_catalogue").await else {
+        return;
+    };
+    let su = db.superuser_pool().await;
+    sqlx::raw_sql("REVOKE SELECT ON pg_catalog.pg_class FROM PUBLIC")
+        .execute(&su)
+        .await
+        .expect("revoke pg_class in the test database");
+    let app = db.app_pool().await;
+    let err = verify_boot_rls(&app)
+        .await
+        .expect_err("a refused catalogue read fails the boot check");
+    assert!(
+        err.to_string()
+            .contains("boot check ownership query failed"),
+        "{err}"
+    );
+    app.close().await;
+    su.close().await;
+    db.drop_db().await;
+}
+
 /// Each write that revokes refresh-token families with it answers a storage error when that
 /// revoke fails (its table gone), and rolls back: the deleted session is still there.
 #[tokio::test]

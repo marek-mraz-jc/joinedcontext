@@ -88,6 +88,7 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
         "People?$filter=username%20ne%20'anna@hel.fi'%20or%20enabled%20eq%20false&$count=true",
         "People?$filter=lastName%20gt%20null&$count=true",
         "People?$filter=contains(firstName,'%5C')&$count=true",
+        "People?$filter=endswith(username,'hel.fi')&$count=true",
         "People?$filter=false&$count=true",
         "ProtocolMappers?$count=true&$orderby=id",
         "ProtocolMappers?$filter=name%20ne%20'locale'&$orderby=id%20desc",
@@ -131,6 +132,20 @@ async fn pg_scoped_table_matches_memory_table_and_binds_filter_values() {
     }
 
     let _ = (MemoryTable::new, query::<MemoryTable>);
+    // A read the database refuses (its table gone) answers the table error, no rows.
+    sqlx::raw_sql("DROP TABLE kaisatsu.people CASCADE")
+        .execute(&db.migrate_pool)
+        .await
+        .expect("drop people");
+    let parsed = odata_url::parse("People?$count=true", &edm, &odata_url::Limits::strict())
+        .expect("People parses");
+    let odata_url::ODataUri::Resource { options, .. } = parsed else {
+        panic!("not a resource");
+    };
+    let refused = pg
+        .query_entity_set(&admin_ctx, &authorizer, "People", &options, 100)
+        .await;
+    assert!(refused.is_err(), "{refused:?}");
     db.drop_db().await;
 }
 
@@ -248,6 +263,139 @@ async fn pg_scoped_table_reads_under_the_callers_organization_rls() {
 
 /// K9: a dispatcher skips outbox rows another transaction holds (`FOR UPDATE SKIP LOCKED`)
 /// instead of waiting for it.
+/// Writes that find their target half done: a sub-group carrying its own Organization, a
+/// mapping granted twice (person document already holding the role), an identity provider
+/// with its id given, a client role whose client row is gone, a person without an e-mail
+/// written with an outbox row.
+#[tokio::test]
+async fn pg_store_writes_over_half_done_state() {
+    const R: &str = "half";
+    let Some(db) = common::test_db("pg_store_half_done_state").await else {
+        return;
+    };
+    let store = db.store(Kek::generate_for_tests()).await;
+    store
+        .upsert_realm(RealmConfig {
+            id: R.into(),
+            realm: R.into(),
+            ..Default::default()
+        })
+        .await
+        .expect("realm");
+    let parent = store
+        .upsert_group(GroupRepresentation {
+            realm_id: R.into(),
+            name: "parent".into(),
+            sub_groups: vec![GroupRepresentation {
+                realm_id: R.into(),
+                name: "child".into(),
+                org_id: Some("espoo".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .await
+        .expect("group tree");
+    let child = store
+        .get_group_by_path(R, None, "/parent/child")
+        .await
+        .expect("read child")
+        .expect("child stored");
+    assert_eq!(child.org_id.as_deref(), Some("espoo"));
+    assert_eq!(child.parent_id.as_deref(), Some(parent.id.as_str()));
+
+    let person = store
+        .create_user(UserRepresentation {
+            realm_id: R.into(),
+            username: "nomail".into(),
+            email: None,
+            enabled: true,
+            ..Default::default()
+        })
+        .await
+        .expect("person");
+    let client = store
+        .upsert_client(ClientRepresentation {
+            realm_id: R.into(),
+            client_id: "app".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("client");
+    for client_uuid in [None, Some(client.id.clone())] {
+        for _ in 0..2 {
+            store
+                .add_role_mapping(RoleMappingRecord {
+                    realm_id: R.into(),
+                    principal_kind: "user".into(),
+                    principal_id: person.id.clone(),
+                    role_id: "r-1".into(),
+                    role_name: "viewer".into(),
+                    client_uuid: client_uuid.clone(),
+                    id: String::new(),
+                    org_id: None,
+                })
+                .await
+                .expect("mapping granted again");
+        }
+    }
+    let held = store
+        .get_user_by_id(R, None, &person.id)
+        .await
+        .expect("read person")
+        .expect("person stored");
+    assert_eq!(held.realm_roles, vec!["viewer".to_owned()]);
+    assert_eq!(
+        held.client_roles.get("app"),
+        Some(&vec!["viewer".to_owned()])
+    );
+
+    store
+        .upsert_idp(IdentityProviderRepresentation {
+            internal_id: "idp-fixed".into(),
+            realm_id: R.into(),
+            alias: "city".into(),
+            provider_id: "oidc".into(),
+            ..Default::default()
+        })
+        .await
+        .expect("idp");
+    let idp = store
+        .get_idp(R, "city")
+        .await
+        .expect("read idp")
+        .expect("idp");
+    assert_eq!(idp.internal_id, "idp-fixed");
+
+    store
+        .upsert_role(RoleRepresentation {
+            realm_id: R.into(),
+            name: "orphan".into(),
+            client_role: true,
+            container_id: Some("no-such-client".into()),
+            ..Default::default()
+        })
+        .await
+        .expect("client role of a gone client");
+    assert!(
+        store
+            .delete_role(R, Some("no-such-client"), "orphan")
+            .await
+            .expect("delete orphan role")
+    );
+
+    let mut outbox = outbox_record();
+    outbox.id = String::new();
+    outbox.realm_id = R.into();
+    outbox.action_jti = "jti-nomail".into();
+    let written = store
+        .update_user_with_outbox(held, outbox)
+        .await
+        .expect("person without e-mail written with its outbox row");
+    assert_eq!(written.email, None);
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn pg_outbox_claim_skips_rows_another_dispatcher_holds() {
     let Some(db) = common::test_db("pg_outbox_claim_skips_rows_another_dispatcher_holds").await
