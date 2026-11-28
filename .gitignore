@@ -1,2 +1,5 @@
 /target
 __pycache__/
+
+# llvm-cov raw profiles (T-7941 committed four)
+*.profraw
