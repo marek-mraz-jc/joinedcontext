@@ -1358,10 +1358,7 @@ hosts = { portal = "smartcity.nitra.sk", portals = ["mesto.nitra.sk"] }
             "{rows:?}"
         );
         assert!(rows.iter().all(|r| !r.2), "no record to add: {rows:?}");
-        assert!(
-            merged.iter().all(|m| !m.contains("working host")),
-            "{merged:?}"
-        );
+        assert!(merged.is_empty(), "{merged:?}");
     }
 
     #[test]
