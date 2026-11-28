@@ -80,6 +80,9 @@ pub enum Lesser {
     Undecided,
     /// Keeps no type list: `entity_type_names` answers `None`.
     NoTypeNames,
+    /// Keeps the inner driver's attribute catalogue (`entity_attr_pairs`) but no type
+    /// list: `entity_type_names` answers `None`. Every other variant keeps no catalogue.
+    CatalogueNoTypeNames,
     /// Applies no id selection either: answers every Entity of the Tenant,
     /// `decided: false`, as a driver that cannot narrow on ids.
     NoIds,
@@ -728,6 +731,13 @@ impl CurrentStateDriver for Double {
     ) -> Result<Vec<Value>, NgsiError> {
         self.registration_reads.fetch_add(1, Ordering::SeqCst);
         self.pool_wall()?;
+        // a read naming types (a join's target) is told apart from one by id alone
+        let method = if types.is_some() {
+            "matching_registrations_typed"
+        } else {
+            "matching_registrations"
+        };
+        self.faulted(method, Some(tenant))?;
         if self.refuse_registrations {
             return Err(NgsiError::InternalError("registrations unreadable".into()));
         }
@@ -798,10 +808,23 @@ impl CurrentStateDriver for Double {
     }
     async fn entity_type_names(&self, tenant: &TenantId) -> Result<Option<Vec<String>>, NgsiError> {
         self.pool_wall()?;
-        if self.lesser == Lesser::NoTypeNames {
+        if matches!(
+            self.lesser,
+            Lesser::NoTypeNames | Lesser::CatalogueNoTypeNames
+        ) {
             return Ok(None);
         }
         self.inner.entity_type_names(tenant).await
+    }
+    async fn entity_attr_pairs(
+        &self,
+        tenant: &TenantId,
+    ) -> Result<Option<Vec<(String, String)>>, NgsiError> {
+        self.pool_wall()?;
+        if self.lesser != Lesser::CatalogueNoTypeNames {
+            return Ok(None);
+        }
+        self.inner.entity_attr_pairs(tenant).await
     }
     async fn entity_types_beside(
         &self,

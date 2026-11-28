@@ -1799,6 +1799,19 @@ pub async fn history_expiry_index(
     pool: &PgPool,
     backend: TemporalBackend,
 ) -> Result<Option<String>, sqlx::Error> {
+    history_expiry_index_within(pool, backend, EXPIRY_INDEX_BUDGET).await
+}
+
+/// [`history_expiry_index`] that starts no build after `budget`: a pass spent
+/// before a leaf leaves it to the next pass.
+///
+/// # Errors
+/// As [`history_expiry_index`].
+pub async fn history_expiry_index_within(
+    pool: &PgPool,
+    backend: TemporalBackend,
+    budget: std::time::Duration,
+) -> Result<Option<String>, sqlx::Error> {
     let mut missing = expiry_leaves(&mut *pool.acquire().await?, backend).await?;
     missing.retain(|leaf| leaf.indexed != Some(true));
     if missing.is_empty() {
@@ -1812,7 +1825,9 @@ pub async fn history_expiry_index(
             .fetch_one(&mut conn)
             .await?;
     let line = if held {
-        expiry_index_step(&mut conn, backend).await.map(Some)
+        expiry_index_step(&mut conn, backend, budget)
+            .await
+            .map(Some)
     } else {
         Ok(None)
     };
@@ -1823,6 +1838,7 @@ pub async fn history_expiry_index(
 async fn expiry_index_step(
     conn: &mut sqlx::PgConnection,
     backend: TemporalBackend,
+    budget: std::time::Duration,
 ) -> Result<String, sqlx::Error> {
     use sqlx::Executor;
     // Read again under the lock: another pod may have built some meanwhile.
@@ -1836,7 +1852,7 @@ async fn expiry_index_step(
     let started = std::time::Instant::now();
     let (mut built, mut first_error) = (0usize, None);
     for leaf in &missing {
-        if started.elapsed() >= EXPIRY_INDEX_BUDGET {
+        if started.elapsed() >= budget {
             break;
         }
         match expiry_index_build(&mut *conn, leaf).await {

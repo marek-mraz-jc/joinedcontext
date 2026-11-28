@@ -443,6 +443,49 @@ mod tests {
         })
     }
 
+    /// A narrowing can grow a schema: a child whose visible parent shows a slot the child does
+    /// not loses its `is_a` and lists every inherited slot itself, so 200 children of a
+    /// 100-slot parent pass the element bound the source kept. The surface then has no schema.
+    #[test]
+    fn a_narrowing_past_the_element_bound_renders_no_schema() {
+        let slots: Vec<String> = (0..100).map(|i| format!("s{i}")).collect();
+        let mut parent = slots.clone();
+        parent.push("x".into());
+        let children: serde_json::Map<String, serde_json::Value> = (0..200)
+            .map(|i| (format!("C{i}"), serde_json::json!({"is_a": "P"})))
+            .collect();
+        let mut classes = children.clone();
+        classes.insert("P".into(), serde_json::json!({"slots": parent}));
+        let all: serde_json::Map<String, serde_json::Value> = parent
+            .iter()
+            .map(|n| (n.clone(), serde_json::json!({})))
+            .collect();
+        let doc = serde_json::json!({"id": "https://e.org/s", "name": "s",
+            "classes": classes, "slots": all});
+        let bytes: Arc<[u8]> = Arc::from(doc.to_string().into_bytes());
+        let iri = |n: &str| format!("https://e.org/s/{n}");
+        let mut rules = vec![Rule {
+            types: vec![iri("P")],
+            attributes: parent.iter().map(|n| iri(n)).collect(),
+            ..Rule::default()
+        }];
+        rules.extend(children.keys().map(|c| Rule {
+            types: vec![iri(c)],
+            attributes: slots.iter().map(|n| iri(n)).collect(),
+            ..Rule::default()
+        }));
+        let visible = Visible::from_filter(&Filter {
+            rules,
+            ..Filter::default()
+        });
+        let cache = Cache::default();
+        assert!(
+            Cache::source("v", rev(&bytes), &bytes).is_some(),
+            "the source schema loads"
+        );
+        assert!(cache.get("v", rev(&bytes), &bytes, &visible).is_none());
+    }
+
     #[test]
     fn the_major_is_the_leading_number_or_1() {
         assert_eq!(major(Some("3.0.1")), "3");

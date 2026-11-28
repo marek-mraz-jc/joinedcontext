@@ -388,6 +388,13 @@ async fn an_invalid_expiry_index_is_rebuilt_once_its_leaf_lets_the_drop_through(
             .starts_with("expiry index built on 0 of 1 leaves; attr_instances_default deferred ("),
         "{deferred}"
     );
+    // a pass whose budget is spent before the leaf builds nothing and leaves it missing
+    let spent =
+        maintenance::history_expiry_index_within(&db.owner, db.backend, std::time::Duration::ZERO)
+            .await
+            .expect("step")
+            .expect("a leaf to build");
+    assert_eq!(spent, "expiry index built on 0 of 1 leaves");
     let built = maintenance::history_expiry_index(&db.owner, db.backend)
         .await
         .expect("step")

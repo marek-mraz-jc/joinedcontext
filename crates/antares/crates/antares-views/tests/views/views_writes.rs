@@ -5,7 +5,9 @@
 //! at an Entity the view shows, and a refused write leaves the store as it
 //! was.
 
-use crate::common::{fixture, fixture_with, prop, rel, send, stored, Answer, FLEET};
+use crate::common::{
+    fixture, fixture_with, fleet_view, prop, put_view, rel, send, stored, Answer, FLEET,
+};
 use antares_ops::policy::{
     Decision, DecisionFuture, Filter, NotifyDecision, Operation, PolicyEngine, Subject,
 };
@@ -278,6 +280,47 @@ async fn shown_writes(app: &axum::Router) -> Result<(), String> {
     assert_eq!(
         stored(app, "urn:ngsi-ld:Car:3").await.status,
         StatusCode::OK
+    );
+    Ok(())
+}
+
+/// A view that selects by scope: deleting the Entity's scope through it would move the Entity
+/// out of the view, so the post-image check refuses it and the scope stays.
+#[tokio::test(flavor = "multi_thread")]
+async fn deleting_the_scope_a_view_selects_by_is_refused() -> Result<(), String> {
+    let f = fixture().await?;
+    let mut view = fleet_view();
+    if let Some(o) = view.as_object_mut() {
+        o.insert("id".into(), json!("roads"));
+        o.insert(
+            "rules".into(),
+            json!([{"types": ["Car"], "scopeQ": "/road/#", "attributes": ["speed"]}]),
+        );
+    }
+    put_view(&f.app, &view).await?;
+    let car = json!({"id": "urn:ngsi-ld:Car:road", "type": "Car", "scope": "/road/a1",
+                     "speed": prop(&json!(5))});
+    let a = send(
+        &f.app,
+        Method::POST,
+        "/ngsi-ld/v1/entities",
+        &[("NGSILD-Tenant", "city")],
+        Some(&car),
+    )
+    .await;
+    assert_eq!(a.status, StatusCode::CREATED, "{}", a.text);
+    let a = send(
+        &f.app,
+        Method::DELETE,
+        "/x/views/roads/ngsi-ld/v1/entities/urn:ngsi-ld:Car:road/attrs/scope",
+        &[],
+        None,
+    )
+    .await;
+    refused(&a, MOVES_OUT)?;
+    assert_eq!(
+        at(&stored(&f.app, "urn:ngsi-ld:Car:road").await.json, "/scope"),
+        &json!("/road/a1")
     );
     Ok(())
 }

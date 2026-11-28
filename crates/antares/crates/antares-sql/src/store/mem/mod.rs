@@ -2128,6 +2128,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A marker-less file whose tables exist but hold nothing is a fresh one: it opens and
+    /// gets the format marker stamped.
+    #[test]
+    fn file_mode_stamps_a_marker_less_file_whose_tables_are_empty() {
+        let dir = tempdir("emptytables");
+        {
+            let db = Database::create(dir.join("antares.redb")).expect("db");
+            let tx = db.begin_write().expect("tx");
+            drop(tx.open_table(T_ENTITIES).expect("entities"));
+            tx.commit().expect("commit");
+        }
+        drop(Store::open_file(&dir).expect("an empty file opens"));
+        let db = Database::create(dir.join("antares.redb")).expect("reopen");
+        let rt = db.begin_read().expect("read tx");
+        assert!(rt.open_table(T_META).is_ok(), "the marker was stamped");
+        drop(rt);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// A file that HOLDS rows but carries no format marker was written by a
     /// binary whose key/value shape this one cannot vouch for. Refusing is
     /// the whole point of the marker — serving it would answer requests from

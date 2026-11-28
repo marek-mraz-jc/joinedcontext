@@ -276,8 +276,10 @@ pub(super) mod tests {
         let mut failed = std::collections::BTreeSet::new();
         let mut committed = false;
         for reads in 0..300 {
-            let Ok(db) =
-                Database::builder().create_with_backend(Fault::new(file.clone(), reads, i64::MAX))
+            // no page cache: every page the commit opens or walks is a read of the disk
+            let Ok(db) = Database::builder()
+                .set_cache_size(0)
+                .create_with_backend(Fault::new(file.clone(), reads, i64::MAX))
             else {
                 continue;
             };
@@ -294,6 +296,7 @@ pub(super) mod tests {
             }
         }
         assert!(committed, "a disk with room commits");
+        assert!(!failed.is_empty(), "a refused read fails the write");
         assert!(failed.len() < 300, "the faults are errors, not panics");
     }
 }

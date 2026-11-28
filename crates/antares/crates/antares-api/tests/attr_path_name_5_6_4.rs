@@ -177,6 +177,32 @@ async fn clause_5_6_4_path_attribute_mapped_onto_type_is_bad_request() {
     assert_eq!(e["type"], "Vehicle", "the Entity type was edited: {e}");
 }
 
+/// 5.6.4.4: a fragment naming a datasetId the Attribute holds no instance of targets nothing:
+/// ResourceNotFound, and the stored instance keeps its value.
+#[tokio::test(flavor = "multi_thread")]
+async fn clause_5_6_4_a_dataset_the_attribute_does_not_hold_is_not_found() {
+    let st = seeded().await;
+    let body = json!({"type": "Property", "value": 99, "datasetId": "urn:ngsi-ld:Dataset:none"})
+        .to_string();
+    let (status, b) = send(
+        &st,
+        Request::builder()
+            .method("PATCH")
+            .uri(format!("/ngsi-ld/v1/entities/{ID}/attrs/speed"))
+            .header("Content-Type", "application/json")
+            .header("Content-Length", body.len())
+            .body(Body::from(body))
+            .expect("request"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{b}");
+    let e = entity(&st).await;
+    assert_eq!(
+        e["speed"]["value"], 10,
+        "the default instance is untouched: {e}"
+    );
+}
+
 /// The same term against 5.6.5 Delete Attribute. The Entity type is a
 /// mandatory member (5.2.4); deleting it through an Attribute endpoint
 /// leaves a document no type-scoped query or subscription can ever match.

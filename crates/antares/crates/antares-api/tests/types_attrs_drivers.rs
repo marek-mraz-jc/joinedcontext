@@ -341,6 +341,34 @@ async fn a_probe_past_its_first_page_finds_the_type_on_lesser_drivers() {
     }
 }
 
+/// 5.7.5 and 5.7.8 on a driver with an attribute catalogue but no type list: the
+/// catalogue cannot be walked by type, so each answer is the fold of the Entities, with
+/// every type and Attribute they hold.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalogue_without_a_type_list_answers_the_fold() {
+    let inner = Arc::new(AnyStore::Mem(Default::default()));
+    let st = AppState::with_drivers(
+        "me".into(),
+        Arc::new(Double::lesser(inner.clone(), Lesser::CatalogueNoTypeNames)),
+        inner.clone(),
+        "memory",
+    );
+    for (n, ty, attr) in [("a", "Car", "speed"), ("b", "Bike", "colour")] {
+        let e = json!({"id": format!("urn:ngsi-ld:{ty}:{n}"), "type": ty,
+                       attr: {"type": "Property", "value": 1}});
+        let (code, body) = send(&st, "POST", "/ngsi-ld/v1/entities", Some(e)).await;
+        assert_eq!(code, StatusCode::CREATED, "{body}");
+    }
+    let (code, body) = send(&st, "GET", "/ngsi-ld/v1/attributes", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let text = body.to_string();
+    assert!(text.contains("speed") && text.contains("colour"), "{body}");
+    let (code, body) = send(&st, "GET", "/ngsi-ld/v1/types?details=true", None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    let text = body.to_string();
+    assert!(text.contains("Car") && text.contains("Bike"), "{body}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn every_lesser_driver_answers_discovery_as_the_full_store() {
     let inner = Arc::new(AnyStore::Mem(Default::default()));
