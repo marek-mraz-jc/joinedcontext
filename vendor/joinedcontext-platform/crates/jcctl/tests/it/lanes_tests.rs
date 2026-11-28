@@ -442,3 +442,42 @@ fn public_apps_servers_assistants_and_grant_kinds_are_red_as_in_the_portal() {
         assert_eq!(verdict.lane, Lane::Yellow, "{body}: {}", verdict.reason);
     }
 }
+
+/// T-5699, CC-63: an update that moves an App's visibility or egress, an McpServer's audience or
+/// an assistant's channel is red in either direction, read from the diff's path and not the
+/// declared value; an update touching any other member of those kinds stays yellow.
+#[test]
+fn moving_the_exposure_of_an_app_server_or_assistant_is_red_in_both_directions() {
+    let manifest = |kind: &str, spec: &str| {
+        format!(
+            "apiVersion: joinedcontext.com/v1alpha1\nkind: {kind}\nmetadata:\n  name: x\n  namespace: ovzdusie\nspec:\n{spec}"
+        )
+    };
+    let moved = |kind: &str, spec: &str, path: &str| {
+        let mut update = change(Action::Update, &manifest(kind, spec));
+        update.diff = vec![jcctl::FieldDiff {
+            path: path.to_owned(),
+            declared: Some(json!("project")),
+            live: Some(json!("public")),
+        }];
+        update
+    };
+    for (kind, spec, path) in [
+        ("App", "  visibility: project\n", "spec.visibility"),
+        ("App", "  visibility: project\n", "spec.egress"),
+        ("App", "  visibility: project\n", "spec.egress.0.host"),
+        ("McpServer", "  audience: organization\n", "spec.audience"),
+        ("AssistantDeployment", "  channel: internal\n", "spec.channel"),
+    ] {
+        let verdict = lane_of(&moved(kind, spec, path));
+        assert_eq!(verdict.lane, Lane::Red, "{kind} {path}: {}", verdict.reason);
+    }
+    for (kind, spec, path) in [
+        ("App", "  visibility: project\n", "spec.title"),
+        ("McpServer", "  audience: organization\n", "spec.members"),
+        ("AssistantDeployment", "  channel: internal\n", "spec.model"),
+    ] {
+        let verdict = lane_of(&moved(kind, spec, path));
+        assert_eq!(verdict.lane, Lane::Yellow, "{kind} {path}: {}", verdict.reason);
+    }
+}

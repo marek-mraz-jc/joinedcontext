@@ -556,6 +556,47 @@ fn no_identity_or_a_url_with_credentials_is_refused_before_any_request() {
     assert!(seen(&stub).is_empty());
 }
 
+/// Without --token-file, JC_TOKEN_FILE or XDG_CONFIG_HOME the client verbs read the token
+/// `jcctl login` left under `$HOME/.config/jcctl/token`, and send it to the Portal.
+#[test]
+fn without_xdg_config_home_the_token_comes_from_home_dot_config() {
+    let (server, stub) = portal(&[
+        endpoint("public-air", "organization"),
+        endpoint("fresh-air", "organization"),
+    ]);
+    let home = common::temp_dir("portal-client-home");
+    let dir = home.join(".config").join("jcctl");
+    std::fs::create_dir_all(&dir).expect("the config dir");
+    std::fs::write(dir.join("token"), format!("{TOKEN}\n")).expect("the token file");
+    let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["get", "endpoints", "--project", "helsinki", "--server", &server])
+        .env_remove("JC_TOKEN_FILE")
+        .env_remove("JC_SERVER")
+        .env_remove("XDG_CONFIG_HOME")
+        .env("HOME", &home)
+        .output()
+        .expect("jcctl runs");
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{said}");
+    assert!(stdout(&out).contains("public-air"), "{said}");
+    assert!(!said.contains(TOKEN) && !stdout(&out).contains(TOKEN));
+    let asked = seen(&stub);
+    assert!(!asked.is_empty(), "{said}");
+    assert!(asked.iter().all(|s| s.authorization == format!("Bearer {TOKEN}")));
+    // An empty XDG_CONFIG_HOME counts as unset; a missing file under HOME is no identity.
+    let empty = common::temp_dir("portal-client-home-empty");
+    let missing = Command::new(env!("CARGO_BIN_EXE_jcctl"))
+        .args(["get", "endpoints", "--project", "helsinki", "--server", &server])
+        .env_remove("JC_TOKEN_FILE")
+        .env("XDG_CONFIG_HOME", "")
+        .env("HOME", &empty)
+        .output()
+        .expect("jcctl runs");
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no identity"));
+    assert_eq!(seen(&stub).len(), asked.len(), "no request without a token");
+}
+
 #[test]
 fn the_usage_lists_the_client_verbs_and_a_verb_with_a_wrong_shape_prints_it() {
     let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))

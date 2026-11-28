@@ -627,6 +627,18 @@ describe("the editor on screen", () => {
       /Required target slots nothing fills/,
     );
   });
+
+  it("sends nothing when the model's space has an empty name", async () => {
+    const user = userEvent.setup();
+    const sent = vi.fn(async () => new Response("{}", { status: 202, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", sent);
+    const onProposed = vi.fn();
+    render(<Harness project="banskabystrica" spaceOf={() => ""} onProposed={onProposed} />);
+    await user.selectOptions(screen.getByLabelText("Source slot for quality"), "band");
+    await user.click(screen.getByRole("button", { name: en.mappings.propose }));
+    expect(sent).not.toHaveBeenCalled();
+    expect(onProposed).not.toHaveBeenCalled();
+  });
 });
 
 /**
