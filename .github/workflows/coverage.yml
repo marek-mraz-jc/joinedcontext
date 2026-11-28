@@ -49,7 +49,14 @@ jobs:
         include:
           # root and antares under nextest, as ci.yml runs them (a process per test)
           - { ws: root, dir: ".", args: "nextest --profile ci --workspace" }
-          - { ws: antares, dir: crates/antares, args: "nextest --profile ci --workspace" }
+          - ws: antares
+            dir: crates/antares
+            args: "nextest --profile ci --workspace"
+            # the timescale temporal mode, as Antares' workspace.yml runs it: the store combos and
+            # the maintenance pass again over a timescaledb server (started below), so the
+            # hypertable arms are measured, not skipped (T-7957)
+            then: "nextest --profile ci --workspace -E 'binary_id(antares-broker::store_combos) | binary_id(antares-sql::pg_maintenance_pass)'"
+            thenenv: "env ANTARES_TEST_DATABASE_URL=postgresql://antares:antares@127.0.0.1:5434/antares"
           # watched.sh (as ci.yml portal-test): the build and tests in a memory cgroup with a sampler
           # in the log, so an overrun kills rustc and names it instead of losing the runner (T-7787)
           - { ws: portal, dir: crates/portal, args: "--workspace -j 2", watch: "sh ../../.github/scripts/watched.sh" }
@@ -112,6 +119,18 @@ jobs:
         run: |
           docker run -d --name nats -p 4222:4222 nats@sha256:4b83414183aa5fb87cd164962c47eaffd214e84668dc4fa4f1d4c44a3e765ee8 -js
           echo "ANTARES_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
+      # timescaledb (with PostGIS) for the `then` pass: timescale/timescaledb-ha pg17.12-ts2.31.2 of
+      # 2026-11-20, the image Antares' workspace.yml tests the timescale mode on; its init creates
+      # the extension in template1, so every database the tests create there is a timescale one.
+      - if: matrix.ws == 'antares'
+        run: |
+          docker run -d --name timescale -p 5434:5432 --shm-size=1g \
+            -e POSTGRES_USER=antares -e POSTGRES_PASSWORD=antares -e POSTGRES_DB=antares \
+            timescale/timescaledb-ha@sha256:4ff871d64a236f9e23efb5cb4bc725b2234e830dac5b3d630d52cb51f84cf36a
+          for _ in $(seq 60); do docker exec timescale pg_isready -q -U antares 2>/dev/null && break; sleep 2; done
+          docker exec timescale pg_isready -U antares || { docker logs timescale; exit 1; }
+          PGPASSWORD=antares psql -h 127.0.0.1 -p 5434 -U antares -d antares -v ON_ERROR_STOP=1 \
+            -c "CREATE EXTENSION IF NOT EXISTS timescaledb"
       # The Portal's instrumented lib test binary outgrows the runner's memory without swap (ci.yml portal-test).
       # Its ~160 instrumented test binaries with debuginfo filled the 77 GB free disk while linking
       # (run 45393241179: 1.1 GB left, `linking with cc failed`; a full disk lost the runner and its
@@ -159,7 +178,7 @@ jobs:
           }
           if [ -n "${{ matrix.then }}" ]; then
             # shellcheck disable=SC2086
-            cargo llvm-cov ${{ matrix.then }} --locked --no-report --no-fail-fast || {
+            ${{ matrix.thenenv }} cargo llvm-cov ${{ matrix.then }} --locked --no-report --no-fail-fast || {
               out=tests-failed
               echo "::warning::tests failed in ${{ matrix.ws }} (${{ matrix.then }}): its crates are not judged by the ratchet tonight"
             }
