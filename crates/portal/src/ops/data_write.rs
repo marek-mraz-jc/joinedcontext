@@ -712,6 +712,16 @@ mod tests {
             matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("nothing is known written")),
             "{err:?}"
         );
+        // A merge carries no JC-Reason, and the silent gateway is the same 503 for it.
+        let merge = input(json!({ "endpoint": "counters", "action": "merge",
+                                  "entities": [{ "id": "urn:ngsi-ld:T:1", "type": "T" }] }));
+        let err = run(&caller, &silent, "doprava", merge)
+            .await
+            .expect_err("nobody answers a merge");
+        assert!(
+            matches!(&err, OpError::Api(ApiError::Unavailable(why)) if why.contains("nothing is known written")),
+            "{err:?}"
+        );
     }
 
     /// A public Endpoint of another project is read, never written, and one the caller may only

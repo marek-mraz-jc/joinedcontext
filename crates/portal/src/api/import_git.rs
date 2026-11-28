@@ -84,10 +84,7 @@ pub fn unpack(bytes: &[u8]) -> Result<BTreeMap<String, Vec<u8>>, ApiError> {
         let Some(path) = enclosed_path(&entry).map(|p| p.to_string_lossy().into_owned()) else {
             return Err(ApiError::BadRequest(format!(
                 "the archive entry '{}' leaves the archive",
-                // zip 9: a name that is not UTF-8 is an error, not a reason to say nothing
-                entry
-                    .name()
-                    .unwrap_or_else(|_| "(a name that is not text)".into())
+                String::from_utf8_lossy(entry.name_raw())
             )));
         };
         let mut content = Vec::new();

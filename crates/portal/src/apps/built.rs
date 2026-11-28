@@ -509,6 +509,19 @@ mod tests {
         assert_eq!(image.blobs[1].1, b"a gzip layer");
     }
 
+    /// A layout cut inside a file's body is refused with that file's name, never read short.
+    #[test]
+    fn a_layout_cut_inside_a_file_names_the_file() {
+        let (tar, digest) = layout(|_| {});
+        // The first file's header (512 bytes) and a few bytes of its body.
+        let said = image_of(&tar[..520], &digest).expect_err("a cut layout");
+        assert!(
+            said.starts_with("oci-layout of the layout is not readable: ")
+                || said.starts_with("the layout is not a tar: "),
+            "{said}"
+        );
+    }
+
     /// AP-107: each way a layout can be something other than the proposed image is refused,
     /// with the reason: another digest, a changed blob, a missing blob, a changed manifest, a
     /// digest that is a path, and bytes that are no tar at all.
