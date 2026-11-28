@@ -4505,8 +4505,9 @@ mod purge_prune {
             .await
             .expect("read")
             .expect("kept");
-        assert!(stored.to_string().contains("20"), "{stored}");
-        assert!(!stored.to_string().contains("99"), "{stored}");
+        // match the value field: a createdAt like 22.799Z also holds "99"
+        assert!(stored.to_string().contains(r#""value":20"#), "{stored}");
+        assert!(!stored.to_string().contains(r#""value":99"#), "{stored}");
         assert_eq!(
             send(
                 &st,
