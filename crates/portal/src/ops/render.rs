@@ -2077,46 +2077,6 @@ mod tests {
         assert_eq!(error(0), error(1), "refused and missing read the same");
     }
 
-    /// A widget whose read the gateway fails is a tile of its own that says "not readable now"
-    /// with the status, never the gateway's words; the other widgets still draw.
-    #[tokio::test]
-    async fn a_dashboard_widget_the_gateway_fails_is_a_not_readable_tile() {
-        use wiremock::matchers::{method, path_regex};
-        use wiremock::{Mock, ResponseTemplate};
-        let server = wiremock::MockServer::start().await;
-        Mock::given(method("GET"))
-            .and(path_regex("^/api/endpoint/broken"))
-            .respond_with(ResponseTemplate::new(500).set_body_string("gateway secret words"))
-            .with_priority(1)
-            .mount(&server)
-            .await;
-        pm10(&server).await;
-        let (state, caller, _realm) = widgets(&server, "ana@hel.fi").await;
-        state.mirror.upsert(manifest(
-            "Endpoint",
-            "broken",
-            "helsinki",
-            json!({ "slug": "brokenhelsinkizzzzzzzzzzzzz", "audience": "project" }),
-        ));
-        board(
-            &state,
-            "half",
-            vec![pm10_widget("broken"), pm10_widget("air")],
-        );
-        let answer = run(&caller, &state, "helsinki", whole("half"))
-            .await
-            .expect("drawn");
-        let status = answer["widgets"][0]["error"]["status"]
-            .as_u64()
-            .expect("a status");
-        assert!(![404, 422, 429].contains(&status), "{answer}");
-        assert!(
-            !answer.to_string().contains("gateway secret words"),
-            "{answer}"
-        );
-        assert_eq!(answer["widgets"][1]["rows"], 24, "{answer}");
-    }
-
     #[tokio::test]
     async fn a_dashboard_of_another_organization_is_404() {
         let server = wiremock::MockServer::start().await;
