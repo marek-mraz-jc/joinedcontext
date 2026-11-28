@@ -443,3 +443,30 @@ async fn a_day_that_does_not_read_fails_the_summary() {
     );
     db::drop_database(admin, pool, &name).await;
 }
+
+/// A stage row whose stage does not read as text (the stage and kind columns turned to bytes
+/// under the store) fails the summary as a database error, never a stage without a name.
+#[tokio::test]
+async fn a_stage_that_does_not_read_fails_the_summary() {
+    let (admin, pool, name) = db::database("usage_bad_stage").await;
+    fixture(&pool).await;
+    as_owner(
+        &pool,
+        "DO $$ DECLARE c text; BEGIN \
+           FOR c IN SELECT conname FROM pg_constraint \
+             WHERE conrelid = 'turn_steps'::regclass AND contype = 'c' LOOP \
+             EXECUTE format('ALTER TABLE turn_steps DROP CONSTRAINT %I', c); \
+           END LOOP; END $$; \
+         ALTER TABLE turn_steps ALTER COLUMN stage TYPE bytea USING convert_to(stage, 'UTF8'), \
+         ALTER COLUMN kind TYPE bytea USING convert_to(kind, 'UTF8')",
+    )
+    .await;
+    let refused = usage::summary(&pool, PROJECT, &Range::default())
+        .await
+        .expect_err("a stage that is not text is refused");
+    assert!(
+        matches!(&refused, assistant::Error::Database(sqlx::Error::ColumnDecode { index, .. }) if index == "0"),
+        "{refused:?}"
+    );
+    db::drop_database(admin, pool, &name).await;
+}
