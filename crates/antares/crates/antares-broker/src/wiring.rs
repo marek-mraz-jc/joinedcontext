@@ -2088,6 +2088,45 @@ mod tests {
         }
     }
 
+    /// A deleted subscription's `present:false` entry leaves the bucket once the grace is
+    /// over, so the bucket holds live subscriptions only (T-7449).
+    #[tokio::test]
+    async fn a_deleted_subscription_entry_is_retired_after_the_grace() {
+        let Some(url) = test_env::nats() else { return };
+        let (mut state, _fault) = crate::fault_store::FaultStore::state("wiring.test");
+        let topology = Topology {
+            tombstone_grace: std::time::Duration::from_millis(200),
+            ..Topology::default()
+        };
+        let roles = Roles::parse("api").expect("roles");
+        let bus = wire_nats_on(&mut state, &url, roles, &topology)
+            .await
+            .expect("wired");
+        let name = format!("t7966e{}", nonce());
+        let tenant = TenantId::new(&name).expect("tenant");
+        let id = "urn:ngsi-ld:Subscription:retired";
+        let key = kv_key(&name, Kind::Subscription, id);
+        let kv = bus.subs_kv().await.expect("kv bucket");
+        let sync = state
+            .sub_sync
+            .clone()
+            .expect("the api role mirrors subscriptions");
+        sync(&tenant, Kind::Subscription, id, None);
+        // the put rides the ordered mirror queue: present first, then gone after the grace
+        let mut held = Vec::new();
+        for _ in 0..50 {
+            held.push(kv.get(&key).await.expect("kv get").is_some());
+            if held.ends_with(&[true, false]) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        assert!(
+            held.ends_with(&[true, false]),
+            "the entry never reached the bucket or outlived the grace: {held:?}"
+        );
+    }
+
     /// This pod's registry broadcast consumer is deleted under a live wiring: the loop makes
     /// a new one, and a store that cannot reseed the mirror then is logged at error level,
     /// since the mirror keeps serving what it held before the gap.
