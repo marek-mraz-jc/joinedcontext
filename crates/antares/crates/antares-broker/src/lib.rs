@@ -2264,6 +2264,29 @@ pub(crate) mod test_env {
 }
 
 #[cfg(test)]
+mod mount_point_tests {
+    use super::{shares_device_with_parent, warn_if_not_mount_point};
+
+    /// A directory on its parent's device is no mount point; `/proc` is one
+    /// on every Linux host, so it is not warned about.
+    #[test]
+    fn a_mount_point_is_told_from_a_plain_directory() {
+        let plain = std::env::temp_dir().join(format!("antares-mount-{}", std::process::id()));
+        warn_if_not_mount_point(&plain);
+        assert!(shares_device_with_parent(&plain), "{}", plain.display());
+        let proc = std::path::Path::new("/proc");
+        warn_if_not_mount_point(proc);
+        assert!(!shares_device_with_parent(proc));
+        assert!(
+            !shares_device_with_parent(std::path::Path::new("/")),
+            "the root has no parent device"
+        );
+        assert!(!shares_device_with_parent(&plain.join("missing")));
+        let _ = std::fs::remove_dir(&plain);
+    }
+}
+
+#[cfg(test)]
 mod config_key_tests {
     use super::unknown_config_key;
 

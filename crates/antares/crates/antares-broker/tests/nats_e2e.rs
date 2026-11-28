@@ -475,6 +475,7 @@ fn sigkill_between_commit_and_publish_republishes_from_outbox() {
     let pool = rt
         .block_on(antares_sql::store::pg::connect(&db, 5))
         .expect("connect");
+    let raw = pool.clone();
     let store =
         antares_sql::store::any::AnyStore::Pg(antares_sql::store::any::PgBackend::new(pool));
 
@@ -543,6 +544,16 @@ fn sigkill_between_commit_and_publish_republishes_from_outbox() {
         "expected every acked write unpublished at death, found {pending}"
     );
     eprintln!("caught {pending} unpublished rows at death");
+    // a row no release can read (a newer writer's, or a torn one) would wedge
+    // the drain: it is skipped and acknowledged with the rest
+    rt.block_on(
+        antares_sql::sqlx::query(
+            "INSERT INTO outbox (tenant_id, event) VALUES ($1, '{\"undecodable\": true}'::jsonb)",
+        )
+        .bind(&tenant)
+        .execute(&raw),
+    )
+    .expect("an undecodable outbox row");
 
     // a fresh api pod restarts the drain: every acked write must notify
     let api_port = free_port();
@@ -554,6 +565,20 @@ fn sigkill_between_commit_and_publish_republishes_from_outbox() {
     });
     // and this run's rows drain away — nothing wedged
     wait_for("outbox drained", 30, || mine() == 0);
+    // a pod whose drain is off serves and leaves the rows to the others
+    let off_port = free_port();
+    let off = start_env(
+        off_port,
+        "api",
+        &db,
+        &nats,
+        &[
+            ("ANTARES_OUTBOX_DRAIN", "off"),
+            ("ANTARES_MIGRATE", "false"),
+        ],
+    );
+    wait_healthy(off_port);
+    drop(off);
 }
 
 /// Decode an HTTP response body (Content-Length or chunked) from a raw

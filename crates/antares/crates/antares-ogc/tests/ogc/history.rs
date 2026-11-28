@@ -246,6 +246,38 @@ async fn datetime_bbox_and_filter_select_the_states_valid_then() -> Result<(), S
     Ok(())
 }
 
+/// A filter past the evaluator's bounds (a polygon past its vertex bound) is a 400 on the
+/// history, and one it cannot evaluate (a LIKE pattern that is no literal) a 501.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_filter_past_the_residual_bounds_is_refused() -> Result<(), String> {
+    let f = past(fresh().await?).await?;
+    let mut ring: Vec<String> = (0..1100)
+        .map(|i| format!("{}%20{}", i % 2, (i / 2) % 2))
+        .collect();
+    ring.push("0%200".to_owned());
+    let filter = format!("S_INTERSECTS(location,POLYGON(({})))", ring.join(","));
+    let answer = get(&f.app, &format!("{ITEMS}?filter={filter}")).await;
+    assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.body);
+    // a LIKE whose pattern is no string literal: the evaluator has no pattern to build
+    let answer = get(&f.app, &format!("{ITEMS}?filter=colour%20LIKE%20colour")).await;
+    assert_eq!(
+        answer.status,
+        StatusCode::NOT_IMPLEMENTED,
+        "{}",
+        answer.body
+    );
+    assert!(
+        answer
+            .body
+            .get("detail")
+            .and_then(Value::as_str)
+            .is_some_and(|d| d.contains("LIKE pattern")),
+        "{}",
+        answer.body
+    );
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_history_pages_by_next_and_takes_no_write() -> Result<(), String> {
     let f = past(fresh().await?).await?;

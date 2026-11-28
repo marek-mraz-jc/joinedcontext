@@ -608,6 +608,87 @@ fn slow_header_connection_is_closed_at_the_timeout() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `t` as a 4.6.3 DateTime, UTC, whole seconds (days to civil date: H. Hinnant's algorithm).
+fn stamp(t: std::time::SystemTime) -> String {
+    let secs = t
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    let (days, rem) = (secs / 86_400, secs % 86_400);
+    let z = days + 719_468;
+    let (era, doe) = (z / 146_097, z % 146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + u64::from(m <= 2);
+    let (h, mi, sec) = (rem / 3600, rem % 3600 / 60, rem % 60);
+    format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{sec:02}Z")
+}
+
+fn post(port: u16, path: &str, body: &str) -> String {
+    http(
+        port,
+        &format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        ),
+    )
+}
+
+/// 4.22 on the memory arm: with a one-second sweep period the broker reaps an
+/// Entity and a Context Source Registration past their expiresAt on its own; both read as
+/// gone.
+#[test]
+fn the_sweeps_reap_what_expired() {
+    let dir = tempdir("sweeps");
+    let port = free_port();
+    let _broker = Broker(
+        Command::new(env!("CARGO_BIN_EXE_antares"))
+            .env("ANTARES_HTTP_PORT", port.to_string())
+            .env("ANTARES_STORE", "memory")
+            .env("ANTARES_DATA_DIR", &dir)
+            .env("ANTARES_SWEEP_SECS", "1")
+            .spawn()
+            .expect("spawn antares"),
+    );
+    wait_healthy(port);
+    let soon = stamp(std::time::SystemTime::now() + Duration::from_secs(2));
+    let entity = format!(
+        r#"{{"id":"urn:ngsi-ld:Probe:sweep","type":"Probe","expiresAt":"{soon}",
+            "speed":{{"type":"Property","value":1}}}}"#
+    );
+    let r = post(port, "/ngsi-ld/v1/entities", &entity);
+    assert!(r.starts_with("HTTP/1.1 201"), "entity: {r}");
+    let reg = format!(
+        r#"{{"id":"urn:ngsi-ld:ContextSourceRegistration:sweep","type":"ContextSourceRegistration",
+            "information":[{{"entities":[{{"type":"Probe"}}]}}],"expiresAt":"{soon}",
+            "endpoint":"http://127.0.0.1:9"}}"#
+    );
+    let r = post(port, "/ngsi-ld/v1/csourceRegistrations", &reg);
+    assert!(r.starts_with("HTTP/1.1 201"), "registration: {r}");
+    let get = |path: &str| {
+        http(
+            port,
+            &format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"),
+        )
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let e = get("/ngsi-ld/v1/entities/urn:ngsi-ld:Probe:sweep");
+        let s = get("/ngsi-ld/v1/csourceRegistrations/urn:ngsi-ld:ContextSourceRegistration:sweep");
+        if e.starts_with("HTTP/1.1 404") && s.starts_with("HTTP/1.1 404") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "not reaped: {e}\n{s}");
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // a sweep period's worth more, so the reaping passes ran past the reads
+    std::thread::sleep(Duration::from_secs(2));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Connections above ANTARES_MAX_CONNECTIONS are dropped at accept —
 /// refusing cheaply beats queueing work the box cannot serve — while the
 /// connections already inside the cap keep working.
@@ -679,6 +760,14 @@ fn connections_beyond_the_cap_are_dropped() {
             other => panic!("an over-cap connection must be closed at accept, got {other:?}"),
         }
     }
+
+    // a burst of silent over-cap connections, more than the refusals the
+    // broker answers at once (256): those past it are dropped unanswered,
+    // and the in-cap connection is not starved by them
+    let burst: Vec<TcpStream> = (0..300)
+        .filter_map(|_| TcpStream::connect(("127.0.0.1", port)).ok())
+        .collect();
+    assert!(burst.len() > 256, "the burst opened {}", burst.len());
 
     // the in-cap connection still serves
     first
