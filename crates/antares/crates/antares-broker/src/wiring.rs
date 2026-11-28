@@ -1986,14 +1986,17 @@ mod tests {
             fault.fail(move |m, tenant, kind| {
                 if let (true, Some(Kind::Entity), Some(t)) = (m == "get", kind, tenant) {
                     seen.lock().expect("reads").push(t.to_owned());
-                    // blocks this worker thread only; the NATS client runs on the other
+                    // holds the matcher task only: block_in_place hands this worker's other
+                    // tasks (the NATS clients among them) to another thread
                     let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                    while t == first
-                        && held.load(std::sync::atomic::Ordering::SeqCst)
-                        && std::time::Instant::now() < until
-                    {
-                        std::thread::sleep(std::time::Duration::from_millis(10));
-                    }
+                    tokio::task::block_in_place(|| {
+                        while t == first
+                            && held.load(std::sync::atomic::Ordering::SeqCst)
+                            && std::time::Instant::now() < until
+                        {
+                            std::thread::sleep(std::time::Duration::from_millis(10));
+                        }
+                    });
                 }
                 false
             });
