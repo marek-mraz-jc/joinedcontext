@@ -136,10 +136,17 @@ describe("the preview of what the assistant will read (AG-121)", () => {
   it("asks for the preview again on Retry when the Portal was away", async () => {
     const { previews } = await openForm(null, 503);
     const preview = await screen.findByRole("region", { name: "What the assistant will know" });
-    await within(preview).findByRole("alert");
+    // The form fills its defaults after the first render and the preview follows 400 ms later
+    // under a new key: wait for that preview and its answer, or the click lands on the first
+    // failure's button as it is replaced and the debounced request passes for the retry (T-7965).
+    await waitFor(() =>
+      expect(previews.some(({ body }) => (body as { spec: Record<string, unknown> }).spec.channel !== undefined)).toBe(true),
+    );
+    await waitFor(() => expect(preview.querySelector("[aria-live]")).toHaveAttribute("aria-busy", "false"));
     const before = previews.length;
     await userEvent.click(within(preview).getByRole("button", { name: en.app.error.retry }));
-    await waitFor(() => expect(previews.length).toBeGreaterThan(before));
+    await waitFor(() => expect(previews.length).toBe(before + 1));
+    expect(previews[before].body).toEqual(previews[before - 1].body);
     expect(await within(preview).findByRole("alert")).toHaveTextContent("spec: unknown field");
   });
 
