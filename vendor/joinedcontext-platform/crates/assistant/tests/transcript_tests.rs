@@ -626,3 +626,50 @@ async fn a_turn_is_kept_verbatim_with_every_step_and_the_same_question_is_found(
 
     db::drop_database(admin, pool, &name).await;
 }
+
+/// Runs `sql` as the database's owner (the login the app pool sets its role from), for a test
+/// that bends the schema under the reads.
+async fn as_owner(pool: &sqlx::PgPool, sql: &str) {
+    use sqlx::{Connection, Executor};
+    let mut owner = sqlx::PgConnection::connect_with(&pool.connect_options())
+        .await
+        .expect("connect as the owner");
+    owner.execute(sqlx::AssertSqlSafe(sql)).await.expect(sql);
+    owner.close().await.expect("close the owner's connection");
+}
+
+/// A conversation row that does not read fails the list, and a turn id that does not read fails
+/// the detail, each as a database error and never a row with a field made up.
+#[tokio::test]
+async fn a_row_that_does_not_read_fails_the_list_and_the_detail() {
+    let (admin, pool, name) = db::database("transcript_bad_rows").await;
+    let said = seen(&[Event::Answer("Otvorené do 15:00.".into())]);
+    let steps = [model("answer", Some(100))];
+    transcript::store(&pool, &record(RAG, "Kedy máte otvorené?", &said, &steps))
+        .await
+        .expect("the turn is stored");
+
+    as_owner(
+        &pool,
+        "ALTER TABLE turns ALTER COLUMN at DROP NOT NULL; UPDATE turns SET at = NULL",
+    )
+    .await;
+    let refused = transcript::list(&pool, PROJECT, &Filter::default())
+        .await
+        .expect_err("a conversation without a start is refused");
+    assert!(
+        matches!(&refused, assistant::Error::Database(sqlx::Error::ColumnDecode { index, .. }) if index == "3"),
+        "{refused:?}"
+    );
+
+    // An id of another width than the reader's i64 (the schema changed under the service).
+    as_owner(&pool, "ALTER TABLE turns ALTER COLUMN id TYPE integer").await;
+    let refused = transcript::detail(&pool, PROJECT, RAG)
+        .await
+        .expect_err("a turn whose id does not read is refused");
+    assert!(
+        matches!(&refused, assistant::Error::Database(sqlx::Error::ColumnDecode { index, .. }) if index == "\"id\""),
+        "{refused:?}"
+    );
+    db::drop_database(admin, pool, &name).await;
+}

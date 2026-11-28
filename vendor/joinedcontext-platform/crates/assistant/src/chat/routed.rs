@@ -2831,10 +2831,9 @@ async fn table_with(
     let (columns, rows, units, fields, words) = table_of(text, READ_ROWS, asked, model.as_deref())?;
     let mut enums = enums_of(model.as_deref(), kind, &columns);
     if words.is_some() {
+        // table_of always writes the label column ("name" or "id") first.
         enums.resize(columns.len(), None);
-        if let Some(label) = enums.first_mut() {
-            *label = words;
-        }
+        enums[0] = words;
     }
     let slug = connector.surface.slug.as_str();
     let began = Instant::now();
@@ -4450,6 +4449,17 @@ async fn search_rounds(
     true
 }
 
+/// A passage as the answer call reads it: its number, address and text, and the dates known of it
+/// beside them.
+#[derive(serde::Serialize)]
+struct Passage<'a> {
+    n: usize,
+    url: &'a str,
+    text: String,
+    #[serde(flatten)]
+    dates: &'a crate::Dates,
+}
+
 /// The best passages, then the tables, numbered from 1 in that order: their citations, and the
 /// passages and tables as the answer call reads them (at most [`MODEL_ROWS`] rows each).
 fn evidence(
@@ -4482,13 +4492,12 @@ fn evidence(
         } else {
             hit.text.clone()
         };
-        let mut passage = json!({"n": n, "url": hit.url, "text": text});
-        if let (Value::Object(passage), Ok(Value::Object(dates))) =
-            (&mut passage, serde_json::to_value(&hit.dates))
-        {
-            passage.extend(dates);
-        }
-        passages.push(passage);
+        passages.push(json!(Passage {
+            n,
+            url: &hit.url,
+            text,
+            dates: &hit.dates,
+        }));
     }
     let mut data = Vec::new();
     for table in tables {

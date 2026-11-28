@@ -411,3 +411,35 @@ async fn a_list_row_carries_tokens_times_and_models_and_sorts_by_them() {
     );
     db::drop_database(admin, pool, &name).await;
 }
+
+/// Runs `sql` as the database's owner (the login the app pool sets its role from), for a test
+/// that bends the schema under the reads.
+async fn as_owner(pool: &sqlx::PgPool, sql: &str) {
+    use sqlx::{Connection, Executor};
+    let mut owner = sqlx::PgConnection::connect_with(&pool.connect_options())
+        .await
+        .expect("connect as the owner");
+    owner.execute(sqlx::AssertSqlSafe(sql)).await.expect(sql);
+    owner.close().await.expect("close the owner's connection");
+}
+
+/// A day row whose day does not read (a turn without a time, the NOT NULL dropped under the
+/// store) fails the summary as a database error, never a day without a date.
+#[tokio::test]
+async fn a_day_that_does_not_read_fails_the_summary() {
+    let (admin, pool, name) = db::database("usage_bad_day").await;
+    fixture(&pool).await;
+    as_owner(
+        &pool,
+        "ALTER TABLE turns ALTER COLUMN at DROP NOT NULL; UPDATE turns SET at = NULL",
+    )
+    .await;
+    let refused = usage::summary(&pool, PROJECT, &Range::default())
+        .await
+        .expect_err("a day without a date is refused");
+    assert!(
+        matches!(&refused, assistant::Error::Database(sqlx::Error::ColumnDecode { index, .. }) if index == "0"),
+        "{refused:?}"
+    );
+    db::drop_database(admin, pool, &name).await;
+}
