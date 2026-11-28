@@ -233,7 +233,8 @@ async fn a_tag_is_pinned_by_one_red_lane_organization_change() {
 }
 
 /// A registry entry whose spec is a YAML list still loads as a ProjectSpec (serde reads a struct
-/// from a sequence), but has no fields to repoint: the answer names the file and nothing is written.
+/// from a sequence), but has no members to repoint: a 500 that names nothing inside, and nothing
+/// is written.
 #[tokio::test]
 async fn a_registry_entry_whose_spec_is_a_list_is_refused_by_its_path() {
     let listed = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: \
@@ -243,7 +244,7 @@ async fn a_registry_entry_whose_spec_is_a_list_is_refused_by_its_path() {
     refused(
         &answer,
         StatusCode::INTERNAL_SERVER_ERROR,
-        "projects/ovzdusie.yaml has no spec",
+        "Unexpected internal error",
     );
     assert!(written_entries(&server).await.is_empty());
 }

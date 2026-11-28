@@ -2658,8 +2658,8 @@ mod tests {
             crate::resource::API_VERSION
         );
         let info = crate::resource::by_kind("DataModel").expect("a served kind");
-        let file = crate::resource::repository_path(info, "doprava", None, "datamodel-x")
-            .expect("a path");
+        let file =
+            crate::resource::repository_path(info, "doprava", None, "datamodel-x").expect("a path");
         Mock::given(method("GET"))
             .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
             .respond_with(ok(json!({

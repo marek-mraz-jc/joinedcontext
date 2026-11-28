@@ -2292,9 +2292,13 @@ mod repository_tests {
             .await;
         let scratch = crate::test_db::scratch().await;
         let (state, mut driver) = driver(&forge);
-        let state = state.with_db(scratch.pool.clone()).with_github_mirror(Arc::new(
-            crate::forge::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
-        ));
+        let state = state
+            .with_db(scratch.pool.clone())
+            .with_github_mirror(Arc::new(crate::forge::github_mirror::GithubMirror::at(
+                &github.uri(),
+                "hel-apps",
+                "ghp_secret",
+            )));
         for env in scratch.placed("helsinki").await.matching(|_| true) {
             state.mirror.upsert(env);
         }
@@ -2567,7 +2571,10 @@ mod sandbox_tests {
     #[tokio::test]
     async fn the_result_follows_the_running_event_and_never_carries_the_ticket() {
         let server = failing_job().await;
-        let state = sandboxed(AppState::new(crate::config::Config::for_tests(), None), &server);
+        let state = sandboxed(
+            AppState::new(crate::config::Config::for_tests(), None),
+            &server,
+        );
         let mut driver = Driver::for_tests(state.clone(), "helsinki");
         driver.bearer = "run.s3cr3t-ticket".into();
         driver.start_tests(&tested(), 4).await.expect("started");
@@ -2597,8 +2604,8 @@ mod sandbox_tests {
     async fn a_result_the_store_refuses_is_logged_and_the_running_event_stays() {
         let server = failing_job().await;
         let scratch = crate::test_db::scratch().await;
-        let state = AppState::new(crate::config::Config::for_tests(), None)
-            .with_db(scratch.pool.clone());
+        let state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(scratch.pool.clone());
         for env in scratch.placed("helsinki").await.matching(|_| true) {
             state.mirror.upsert(env);
         }

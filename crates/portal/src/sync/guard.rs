@@ -180,10 +180,7 @@ mod tests {
         assert_eq!(stopped.status(), 302);
         // The followed hop goes to an address nothing answers on: the send fails there instead
         // of answering the origin's 302, as the stopped hop above did.
-        let followed = client
-            .get(format!("{}/public", origin.uri()))
-            .send()
-            .await;
+        let followed = client.get(format!("{}/public", origin.uri())).send().await;
         assert!(followed.is_err(), "{followed:?}");
     }
 }

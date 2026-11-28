@@ -941,10 +941,10 @@ async fn another_projects_source_is_not_listened_to_and_listening_is_rate_limite
     );
 }
 
-/// A pipeline sent inline without a name is tried and tested all the same; with no draft to name,
-/// no verdict and no record check is kept anywhere.
+/// A pipeline sent inline without a name is refused at its metadata before the runner is asked,
+/// by both the try and the test.
 #[tokio::test]
-async fn a_nameless_inline_pipeline_is_tried_and_tested_and_kept_nowhere() {
+async fn a_nameless_inline_pipeline_is_refused_before_the_runner() {
     let runner = runner().await;
     let state = state("nameless", Some(&runner));
     let pipeline = json!({
@@ -958,37 +958,32 @@ async fn a_nameless_inline_pipeline_is_tried_and_tested_and_kept_nowhere() {
             "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:bikes:bikes-write"
         }
     });
-    let captured =
-        [json!({ "input": "{\"VP\":{\"veh\":1}}", "output": { "id": "1" }, "error": null })];
-    let try_mapping = op("nameless", "jc_pipeline_try_mapping");
-    let (tried, _) = tokio::join!(
-        send(
-            &state,
-            person("dev"),
-            "POST",
-            &try_mapping,
-            Some(json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] })),
+    for (operation, body) in [
+        (
+            "jc_pipeline_try_mapping",
+            json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] }),
         ),
-        async { let _ = tokio::time::timeout(Duration::from_secs(3), play_runner(&runner, &state, 0, &captured)).await; },
-    );
-    assert_eq!(tried.status, StatusCode::OK, "{}", tried.text);
-    let test = op("nameless", "jc_pipeline_test");
-    let (tested, _) = tokio::join!(
-        send(
-            &state,
-            person("dev"),
-            "POST",
-            &test,
-            Some(json!({ "pipeline": pipeline, "sample": { "text": "{}", "format": "json" } })),
+        (
+            "jc_pipeline_test",
+            json!({ "pipeline": pipeline, "sample": { "text": "{}", "format": "json" } }),
         ),
-        play_runner(&runner, &state, 1, &captured),
-    );
-    assert_eq!(tested.status, StatusCode::OK, "{}", tested.text);
-    assert!(
-        json_of(&tested.text)["verdict"].is_object(),
-        "{}",
-        tested.text
-    );
+    ] {
+        let uri = op("nameless", operation);
+        let answer = send(&state, person("dev"), "POST", &uri, Some(body)).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+        assert!(
+            answer.text.contains("missing field `name`"),
+            "{operation}: {}",
+            answer.text
+        );
+    }
+    let asked: Vec<String> = common::stream_requests(&runner)
+        .await
+        .iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(asked.is_empty(), "{asked:?}");
 }
 
 #[tokio::test]
