@@ -1225,10 +1225,11 @@ pub fn sql_time_series(mut fields: Vec<FieldColumn>) -> Result<Vec<FieldColumn>,
             series.push((key, first));
             first
         };
+        // Every column holds a value per time, this row's time included.
         for (n, &v) in values.iter().enumerate() {
-            if let Some(slot) = wide[first + n].values.last_mut() {
-                *slot = fields[v].values[row].clone();
-            }
+            let slot = wide[first + n].values.last_mut();
+            slot.into_iter()
+                .for_each(|slot| *slot = fields[v].values[row].clone());
         }
     }
     if fields.len() == 3 {
