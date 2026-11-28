@@ -187,6 +187,15 @@ mod paging_store {
     /// a shared tenant would have each of them seeding and cleaning the other's
     /// rows.
     async fn pg_state(chunk: usize, tenant_name: &str) -> Option<(AppState, TenantId)> {
+        pg_state_with(chunk, tenant_name, None).await
+    }
+
+    /// [`pg_state`] with a notification binding registered before the state is wired.
+    async fn pg_state_with(
+        chunk: usize,
+        tenant_name: &str,
+        sink: Option<Box<dyn antares_notifier::NotificationSink>>,
+    ) -> Option<(AppState, TenantId)> {
         let url = match std::env::var("ANTARES_TEST_DATABASE_URL") {
             Ok(u) => u,
             Err(_) => {
@@ -208,6 +217,9 @@ mod paging_store {
             )),
             "postgres",
         );
+        if let Some(sink) = sink {
+            st = st.with_sink(sink);
+        }
         antares_api::wire(&mut st).await;
         clear(&st, &tenant).await;
         st.max_limit = chunk;
@@ -629,6 +641,90 @@ mod paging_store {
                     .expect("clean");
             }
         }
+    }
+
+    /// A binding, opening no socket, that counts what it delivers.
+    struct Counting(Arc<std::sync::atomic::AtomicUsize>);
+
+    impl antares_notifier::NotificationSink for Counting {
+        fn schemes(&self) -> &'static [&'static str] {
+            &["x-count"]
+        }
+        fn network(&self) -> bool {
+            false
+        }
+        fn parse_endpoint(
+            &self,
+            _uri: &str,
+            _notifier_info: &[(&str, &str)],
+        ) -> Result<(), antares_model::NgsiError> {
+            Ok(())
+        }
+        fn deliver<'a>(
+            &'a self,
+            _uri: &'a str,
+            _out: &'a antares_notifier::Outbound,
+            _timeout: std::time::Duration,
+        ) -> antares_notifier::DeliveryFuture<'a> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(std::future::ready(Ok(())))
+        }
+    }
+
+    /// F-R2ANT1-010 over Postgres, which pages the match set: past the pages in flight the
+    /// sweep waits for a delivered page to leave before it reads the next, and every page
+    /// is delivered once, as its own Notification.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_paged_periodic_sweep_delivers_every_page_past_the_pages_in_flight() {
+        let sent = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let sink = Box::new(Counting(Arc::clone(&sent)));
+        let Some((st, tenant)) = pg_state_with(1, "periodicpages", Some(sink)).await else {
+            return;
+        };
+        let pages = 8;
+        for i in 0..pages {
+            let e = json!({"id": format!("urn:ngsi-ld:Vehicle:p{i}"), "type": "Vehicle"});
+            let (status, _, body) = send_t(
+                &st,
+                &tenant,
+                "POST",
+                "/ngsi-ld/v1/entities",
+                Some(e.to_string()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+        }
+        let id = "urn:ngsi-ld:Subscription:periodic-pages";
+        let created = jc_time::TimestampTz::now() - jiff::SignedDuration::from_secs(10);
+        let sub = json!({"id": id, "type": "Subscription", "timeInterval": 1,
+            "createdAt": created.to_rfc3339(),
+            "entities": [{"type": "https://uri.etsi.org/ngsi-ld/default-context/Vehicle"}],
+            "notification": {"endpoint": {"uri": "x-count:sink"}}});
+        st.store
+            .create(&tenant, Kind::Subscription, id, sub.clone())
+            .await
+            .expect("subscription row");
+        if let Some(m) = &st.sub_mirror {
+            m.apply(tenant.as_str(), id, Some(sub));
+        }
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            antares_api::notify::interval_tick(&st),
+        )
+        .await
+        .expect("the sweep returns");
+
+        assert_eq!(
+            sent.load(std::sync::atomic::Ordering::SeqCst),
+            pages,
+            "one Notification per page"
+        );
+        clear(&st, &tenant).await;
+        st.store
+            .delete(&tenant, Kind::Subscription, id)
+            .await
+            .expect("clean");
     }
 
     /// 5.8.6 over Postgres: a periodic Subscription's `q` is decided by the store, which
