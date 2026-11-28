@@ -482,6 +482,62 @@ async fn odata_batch_members_naming_the_model_twice_share_it() {
     assert_eq!(statuses(&answer), [200, 200, 200], "{answer}");
 }
 
+/// Allows, and the one decision armed first deletes Tenant `city`'s schema before it answers:
+/// a reload landing between the outer request's model and a member's narrowed one.
+#[derive(Default)]
+struct Unschema {
+    app: std::sync::OnceLock<Router>,
+    armed: std::sync::atomic::AtomicBool,
+}
+
+impl PolicyEngine for Unschema {
+    fn name(&self) -> &'static str {
+        "unschema"
+    }
+    fn decide<'a>(&'a self, _: &'a Subject, _: &'a Operation<'a>) -> DecisionFuture<'a> {
+        if !self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            return Box::pin(std::future::ready(Decision::Allow));
+        }
+        let app = self.app.get().cloned();
+        Box::pin(async move {
+            if let Some(app) = app {
+                let (status, answer) =
+                    writes::send(&app, Method::DELETE, "/q/schemas/city", None).await;
+                assert_eq!(status, StatusCode::NO_CONTENT, "{answer}");
+            }
+            Decision::Allow
+        })
+    }
+    fn pre_notify(&self, _: &Subject, _: &Value, _: &mut Value) -> NotifyDecision {
+        NotifyDecision::Deliver
+    }
+}
+
+/// A member naming the model whose Tenant schema is deleted while its narrowing is decided
+/// answers 404, the view has no model; the batch itself answers.
+#[tokio::test(flavor = "multi_thread")]
+async fn odata_batch_member_whose_schema_goes_during_its_decision_is_404() {
+    std::env::set_var(antares_ops::views::SCHEMA_MAX_ENV, "65536");
+    let engine = Arc::new(Unschema::default());
+    let b = TestBroker::new()
+        .await
+        .expect("broker")
+        .with_policy(engine.clone());
+    let (_b, app) = city_on(b).await.expect("city");
+    assert!(engine.app.set(app.clone()).is_ok());
+    engine
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let members = json!([{"id": "1", "method": "get", "url": "$metadata"}]);
+    let (status, _, answer) = json_batch(&app, &members, &[]).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(statuses(&answer), [404], "{answer}");
+    assert!(
+        answer.to_string().contains("the view has no model"),
+        "{answer}"
+    );
+}
+
 /// T-3773: a member whose answer is past the broker's buffer bound answers
 /// 413 inside the batch; the members under it still answer.
 #[tokio::test(flavor = "multi_thread")]

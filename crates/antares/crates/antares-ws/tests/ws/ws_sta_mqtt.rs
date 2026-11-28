@@ -555,3 +555,183 @@ async fn drained(ws: &mut Socket) -> usize {
     }
     n
 }
+
+/// `count` changed Datastreams of Car `car` in view `view`, each read answering `body`.
+fn datastreams(view: &str, car: &str, count: usize, body: &Value) {
+    let link = |id: &str| format!("http://h/x/views/{view}/sta/v1.1/Datastreams('{id}')");
+    let members: Vec<Value> = (0..count)
+        .map(|i| {
+            let id = format!("{car}-d{i}");
+            sta(&format!("{view}/Datastreams('{id}')"), 200, body);
+            json!({"@iot.id": id, "@iot.selfLink": link(&id)})
+        })
+        .collect();
+    sta(
+        &format!("{view}/Things('urn:ngsi-ld:Car:{car}')/Datastreams?$top=100"),
+        200,
+        &json!({ "value": members }),
+    );
+}
+
+/// A socket on `view` subscribed to its whole Datastreams set.
+async fn on_datastreams(b: &Broker, view: &str, ws: &mut Socket) -> Result<(), String> {
+    sta(
+        &format!("{view}/Datastreams?$top=1"),
+        200,
+        &json!({"value": []}),
+    );
+    send(ws, subscribe(1, &["v1.1/Datastreams"])).await?;
+    let ack = next(ws, WAIT).await?;
+    (ack == Some(vec![0x90, 3, 0, 1, 0]))
+        .then_some(())
+        .ok_or(format!("SUBACK {ack:?} on {}", b.addr))
+}
+
+/// F-R2ANT4-005 across Entities: one notification of two changed Cars spends its 100 reads on
+/// the first one's page and members; the second Car is read by the next notification.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_one_notification_of_two_entities_stops_at_the_read_bound() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    view(&b, "q1", &READS).await?;
+    car(&b, "urn:ngsi-ld:Car:2", 1).await?;
+    car(&b, "urn:ngsi-ld:Car:3", 1).await?;
+    datastreams("q1", "2", 100, &json!({"name": "two"}));
+    datastreams("q1", "3", 100, &json!({"name": "three"}));
+    let mut ws = connected(&b, "q1", 0).await?;
+    on_datastreams(&b, "q1", &mut ws).await?;
+    let both = json!([
+        {"id": "urn:ngsi-ld:Car:2", "type": "Car", "speed": {"type": "Property", "value": 2}},
+        {"id": "urn:ngsi-ld:Car:3", "type": "Car", "speed": {"type": "Property", "value": 2}}
+    ]);
+    let (code, answer) = b
+        .http
+        .call(
+            "POST",
+            "/ngsi-ld/v1/entityOperations/upsert?options=update",
+            &[("NGSILD-Tenant", "city")],
+            Some(&both),
+        )
+        .await?;
+    assert!(code == 201 || code == 204, "{code} {answer}");
+    assert_eq!(drained(&mut ws).await, 99, "one Car's page and 99 members");
+    Ok(())
+}
+
+/// A view removed between CONNECT and SUBSCRIBE takes no topic: the SUBACK refuses it.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_a_topic_of_a_view_removed_meanwhile_is_refused() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    view(&b, "q2", &READS).await?;
+    car(&b, "urn:ngsi-ld:Car:1", 1).await?;
+    sta("q2/Things('urn:ngsi-ld:Car:1')", 200, &json!({}));
+    let mut ws = connected(&b, "q2", 0).await?;
+    let (code, answer) = b.http.call("DELETE", "/q/views/q2", &[], None).await?;
+    assert_eq!(code, 204, "{answer}");
+    send(&mut ws, subscribe(7, &["v1.1/Things('urn:ngsi-ld:Car:1')"])).await?;
+    assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 7, 0x80]));
+    Ok(())
+}
+
+/// A connected, subscribed socket on `view` whose receive buffer is 16 KiB, fixed before the
+/// connect, so a client that stops reading stalls the server's writes.
+async fn connected_small(b: &Broker, view: &str) -> Result<Socket, String> {
+    let socket = tokio::net::TcpSocket::new_v4().map_err(|e| e.to_string())?;
+    socket
+        .set_recv_buffer_size(16 * 1024)
+        .map_err(|e| e.to_string())?;
+    let stream = socket.connect(b.addr).await.map_err(|e| e.to_string())?;
+    let mut req = format!("ws://{}/x/views/{view}/sta/mqtt", b.addr)
+        .into_client_request()
+        .map_err(|e| e.to_string())?;
+    req.headers_mut()
+        .insert("sec-websocket-protocol", HeaderValue::from_static("mqtt"));
+    let (mut ws, _) = tokio_tungstenite::client_async(req, MaybeTlsStream::Plain(stream))
+        .await
+        .map_err(|e| e.to_string())?;
+    send(&mut ws, connect(4, 0x02, 0)).await?;
+    let ack = next(&mut ws, WAIT).await?;
+    (ack == Some(vec![0x20, 2, 0, 0]))
+        .then_some(ws)
+        .ok_or(format!("CONNACK {ack:?}"))
+}
+
+/// A client that stops reading while one notification publishes 30 resources of 600 KiB: a
+/// write stays stuck for `pong_within`, the client is gone, and its connection and
+/// Subscriptions go with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_a_client_that_stops_reading_is_dropped() -> Result<(), String> {
+    let b = crate::common::broker_alone(Limits {
+        pong_within: Duration::from_secs(1),
+        ..Limits::default()
+    })
+    .await?;
+    view(&b, "q3", &READS).await?;
+    car(&b, "urn:ngsi-ld:Car:4", 1).await?;
+    datastreams("q3", "4", 30, &json!({"name": "s".repeat(600 * 1024)}));
+    let mut ws = connected_small(&b, "q3").await?;
+    on_datastreams(&b, "q3", &mut ws).await?;
+    assert_eq!(b.hub.connections(), 1);
+    speed(&b, "urn:ngsi-ld:Car:4", 2).await?;
+    until(&b.hub, |h| h.connections() == 0).await?;
+    let tenant = [("NGSILD-Tenant", "city")];
+    let (code, subs) = b
+        .http
+        .call("GET", "/ngsi-ld/v1/subscriptions", &tenant, None)
+        .await?;
+    assert_eq!(code, 200, "{subs}");
+    assert_eq!(subs, json!([]), "the gone client's Subscription is left");
+    drop(ws);
+    Ok(())
+}
+
+/// A queue of one that a burst of notifications overflows before the socket drains it closes
+/// the connection: an MQTT connection never resumes, so nothing waits for the lost ones.
+#[tokio::test(flavor = "multi_thread")]
+async fn sta_mqtt_a_queue_overflow_closes_the_connection() -> Result<(), String> {
+    use antares_ops::NotificationSink as _;
+    let b = broker(Limits {
+        queue: 1,
+        ..Limits::default()
+    })
+    .await?;
+    view(&b, "q4", &READS).await?;
+    car(&b, "urn:ngsi-ld:Car:5", 1).await?;
+    sta(
+        "q4/Things('urn:ngsi-ld:Car:5')",
+        200,
+        &json!({"name": "five"}),
+    );
+    let mut ws = connected(&b, "q4", 0).await?;
+    send(&mut ws, subscribe(1, &["v1.1/Things('urn:ngsi-ld:Car:5')"])).await?;
+    assert_eq!(next(&mut ws, WAIT).await?, Some(vec![0x90, 3, 0, 1, 0]));
+    let tenant = [("NGSILD-Tenant", "city")];
+    let (code, subs) = b
+        .http
+        .call("GET", "/ngsi-ld/v1/subscriptions", &tenant, None)
+        .await?;
+    assert_eq!(code, 200, "{subs}");
+    let sub = subs
+        .pointer("/0/id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    let endpoint = subs
+        .pointer("/0/notification/endpoint/uri")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    assert!(endpoint.starts_with(antares_ws::ENDPOINT_PREFIX), "{subs}");
+    let mut out = crate::common::outbound(Some(&sub), Some("city"));
+    // two Entities, so no offer replaces a queued one
+    out.body = crate::common::with(
+        out.body,
+        &["data"],
+        json!([{"id": "urn:ngsi-ld:Car:5", "type": "Car"}, {"id": "urn:ngsi-ld:Car:6", "type": "Car"}]),
+    );
+    let sink = antares_ws::Sink::new(b.hub.clone());
+    for _ in 0..5 {
+        let _offered = sink.deliver(&endpoint, &out, WAIT).await;
+    }
+    while next(&mut ws, WAIT).await?.is_some() {}
+    until(&b.hub, |h| h.connections() == 0).await
+}

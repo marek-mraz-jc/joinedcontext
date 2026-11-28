@@ -341,6 +341,51 @@ async fn a_probe_past_its_first_page_finds_the_type_on_lesser_drivers() {
     }
 }
 
+/// 5.7.6 under a narrowing that hides the one Car holding `colour`, on a driver
+/// that keeps the catalogue but decides no query: the catalogue names `colour`,
+/// so its own probe runs and judges every row here, and finds no visible Car
+/// with it. The answer is the deciding store's, without `colour`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_catalogued_attribute_only_a_hidden_entity_holds_is_not_listed_on_an_undecided_driver() {
+    let inner = Arc::new(AnyStore::Mem(Default::default()));
+    let full = AppState::with_store("me".into(), inner.clone(), "memory");
+    for (n, extra) in [("0001", None), ("0002", Some("colour"))] {
+        let mut car = json!({"id": format!("urn:ngsi-ld:Car:{n}"), "type": "Car",
+                             "speed": {"type": "Property", "value": 1}});
+        if let Some(a) = extra {
+            car[a] = json!({"type": "Property", "value": "red"});
+        }
+        let (code, body) = send(&full, "POST", "/ngsi-ld/v1/entities", Some(car)).await;
+        assert_eq!(code, StatusCode::CREATED, "{body}");
+    }
+    let view = antares_api::policy::Filter {
+        rules: vec![antares_api::policy::Rule {
+            types: vec!["https://uri.etsi.org/ngsi-ld/default-context/Car".to_owned()],
+            id_patterns: vec!["^.*:0001$".to_owned()],
+            every_attribute: true,
+            ..antares_api::policy::Rule::default()
+        }],
+        ..antares_api::policy::Filter::default()
+    };
+    let deciding = AppState::with_store("me".into(), inner.clone(), "memory")
+        .with_policy(Arc::new(Narrowing(view.clone())));
+    let st = AppState::with_drivers(
+        "me".into(),
+        Arc::new(Double::lesser(inner.clone(), Lesser::CatalogueUndecided)),
+        inner.clone(),
+        "memory",
+    )
+    .with_policy(Arc::new(Narrowing(view)));
+    let uri = "/ngsi-ld/v1/types/Car";
+    let (code, want) = send(&deciding, "GET", uri, None).await;
+    assert_eq!(code, StatusCode::OK, "{want}");
+    let (code, body) = send(&st, "GET", uri, None).await;
+    assert_eq!(code, StatusCode::OK, "{body}");
+    assert_eq!(comparable(body.clone()), comparable(want), "{body}");
+    let text = body.to_string();
+    assert!(text.contains("speed") && !text.contains("colour"), "{body}");
+}
+
 /// 5.7.5 and 5.7.8 on a driver with an attribute catalogue but no type list: the
 /// catalogue cannot be walked by type, so each answer is the fold of the Entities, with
 /// every type and Attribute they hold.

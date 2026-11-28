@@ -4,7 +4,7 @@
 //! peer, a view that refuses or goes away, refused upgrades, the end of
 //! the grace period and a takeover of an attached connection.
 
-use crate::common::{broker, cars, connect, open, status, text, until, with, Broker, Client};
+use crate::common::{broker, cars, connect, open, status, text, until, with, Broker, Client, WAIT};
 use antares_ws::{Limits, ENDPOINT_PREFIX};
 use futures_util::SinkExt;
 use serde_json::{json, Value};
@@ -229,6 +229,123 @@ async fn raw_upgrade(b: &Broker, path: &str, headers: &[u8]) -> Result<String, S
         .nth(1)
         .unwrap_or_default()
         .to_owned())
+}
+
+/// The server's end of a Unix socket pair, whose writes fail once the server wrote the head
+/// of its answer (`after_head`) or from the first one: the write that fails is the one a test
+/// names, whatever the scheduler does.
+struct Cut {
+    io: tokio::net::UnixStream,
+    after_head: bool,
+    head: Vec<u8>,
+}
+
+impl Cut {
+    fn open(&self) -> bool {
+        self.after_head && !self.head.windows(4).any(|w| w == b"\r\n\r\n")
+    }
+}
+
+impl tokio::io::AsyncRead for Cut {
+    fn poll_read(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_read(cx, buf)
+    }
+}
+
+impl tokio::io::AsyncWrite for Cut {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        if !self.open() {
+            return std::task::Poll::Ready(Err(std::io::ErrorKind::BrokenPipe.into()));
+        }
+        let this = &mut *self;
+        let polled = std::pin::Pin::new(&mut this.io).poll_write(cx, buf);
+        if let std::task::Poll::Ready(Ok(n)) = &polled {
+            this.head
+                .extend_from_slice(buf.get(..*n).unwrap_or_default());
+        }
+        polled
+    }
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut self.io).poll_shutdown(cx)
+    }
+}
+
+/// Serve `b`'s router, upgrades allowed, on a [`Cut`] end of a Unix socket pair, and hand back
+/// the client's end with an upgrade request of the root written on it.
+async fn upgrade_on_a_pair(b: &Broker, after_head: bool) -> Result<tokio::net::UnixStream, String> {
+    let (server, mut client) = tokio::net::UnixStream::pair().map_err(|e| e.to_string())?;
+    let server = Cut {
+        io: server,
+        after_head,
+        head: Vec::new(),
+    };
+    let app = b.app.clone();
+    tokio::spawn(async move {
+        let service =
+            hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                tower::ServiceExt::oneshot(app.clone(), req.map(axum::body::Body::new))
+            });
+        let _served = hyper::server::conn::http1::Builder::new()
+            .serve_connection(hyper_util::rt::TokioIo::new(server), service)
+            .with_upgrades()
+            .await;
+    });
+    let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+    let req = format!(
+        "GET {ROOT} HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    client
+        .write_all(req.as_bytes())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(client)
+}
+
+/// The `101` cannot be written: the upgrade fails after the connection was admitted, and the
+/// admitted connection goes with it.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_an_upgrade_whose_answer_cannot_be_written_keeps_no_connection() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let mut client = upgrade_on_a_pair(&b, false).await?;
+    let mut answer = Vec::new();
+    let _read = tokio::time::timeout(WAIT, client.read_to_end(&mut answer)).await;
+    assert!(answer.is_empty(), "{}", String::from_utf8_lossy(&answer));
+    until(&b.hub, |h| h.connections() == 0 && h.attached() == 0).await
+}
+
+/// The `101` is written and the welcome after it is not: the socket ends as gone, and the
+/// connection, holding no Subscription, goes at once.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_welcome_that_cannot_be_written_keeps_no_connection() -> Result<(), String> {
+    let b = broker(Limits::default()).await?;
+    let mut client = upgrade_on_a_pair(&b, true).await?;
+    let mut answer = Vec::new();
+    let _read = tokio::time::timeout(WAIT, client.read_to_end(&mut answer)).await;
+    let answer = String::from_utf8_lossy(&answer).into_owned();
+    assert!(answer.starts_with("HTTP/1.1 101"), "{answer}");
+    assert!(
+        answer.ends_with("\r\n\r\n"),
+        "a frame followed the head: {answer}"
+    );
+    until(&b.hub, |h| h.connections() == 0 && h.attached() == 0).await
 }
 
 #[tokio::test(flavor = "multi_thread")]

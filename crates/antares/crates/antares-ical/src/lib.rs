@@ -566,16 +566,12 @@ async fn previewed(
     let (mut valid, mut outside) = (0usize, 0usize);
     let mut skipped: BTreeMap<&str, usize> = BTreeMap::new();
     let mut events = Vec::new();
-    for entity in &entities {
-        let ty = local(
-            entity
-                .get("type")
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        );
-        let Some(plan) = plans.iter().find(|p| p.entity_type() == ty) else {
-            continue;
-        };
+    // `page` keeps the Entities of the plans' types alone
+    let planned = entities.iter().filter_map(|e| {
+        let ty = local(e.get("type").and_then(Value::as_str).unwrap_or_default());
+        plans.iter().find(|p| p.entity_type() == ty).map(|p| (p, e))
+    });
+    for (plan, entity) in planned {
         match plan.vevent(entity, &window, now) {
             Outcome::Event(text) => {
                 valid = valid.saturating_add(1);

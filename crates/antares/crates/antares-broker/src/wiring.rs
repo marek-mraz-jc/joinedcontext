@@ -1594,6 +1594,160 @@ mod tests {
         }
     }
 
+    /// The outbox drain over a Postgres store that refuses to keep or delete what it
+    /// published: the event over the bus ceiling it cannot retain and the rows it cannot ack
+    /// are each logged and left in the outbox, to be published again, and the drain goes on.
+    /// Needs ANTARES_TEST_DATABASE_URL (ci.yml antares-test) and a live NATS.
+    #[tokio::test]
+    async fn an_outbox_the_store_cannot_retain_or_ack_is_logged_and_kept() {
+        let Some(url) = test_env::nats() else { return };
+        let pool = antares_sql::store::pg::connect(&test_env::db(), 5)
+            .await
+            .expect("connect");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let tenant = TenantId::new(&format!("outboxfault{nonce}")).expect("tenant");
+        antares_sql::store::pg::ensure_tenant(&pool, &tenant)
+            .await
+            .expect("tenant row");
+        let event = |id: &str, note: usize| {
+            let doc = json!({"id": id, "type": ["T"],
+                "https://uri.etsi.org/ngsi-ld/default-context/note":
+                    [{"type": "Property", "value": "x".repeat(note)}]});
+            ChangeEvent {
+                tenant: tenant.clone(),
+                entity_id: EntityId::new(id).expect("id"),
+                types: vec!["T".into()],
+                op: ChangeOp::Create,
+                changed_attrs: vec![],
+                payload: Some(doc),
+                prev_payload: None,
+                version: 1,
+                incarnation: String::new(),
+                seq: 0,
+                payload_ref: None,
+                prev_payload_ref: None,
+            }
+        };
+        let mut seqs = Vec::new();
+        for (id, note) in [
+            ("urn:ngsi-ld:T:small", 8),
+            ("urn:ngsi-ld:T:wide", 600 * 1024),
+        ] {
+            let mut tx = pool.begin().await.expect("tx");
+            antares_sql::store::pg::set_tenant(&mut tx, &tenant)
+                .await
+                .expect("set tenant");
+            let value = serde_json::to_value(event(id, note)).expect("event json");
+            seqs.push(
+                antares_sql::store::pg::outbox::enqueue(&mut tx, &tenant, &value)
+                    .await
+                    .expect("enqueue"),
+            );
+            tx.commit().await.expect("commit");
+        }
+        let (log, _guard) = Logged::start();
+        let store = Arc::new(antares_sql::store::any::AnyStore::Pg(
+            antares_sql::store::any::PgBackend::new(pool.clone()),
+        ));
+        let fault = Arc::new(crate::fault_store::FaultStore {
+            inner: store.clone(),
+            rule: std::sync::Mutex::new(None),
+            unsupported: std::sync::Mutex::new(None),
+            before: std::sync::Mutex::new(None),
+        });
+        fault.fail(|m, _, _| matches!(m, "outbox_retain" | "outbox_ack"));
+        let mut state =
+            AppState::with_drivers("wiring.test".into(), fault.clone(), store, "postgres");
+        wire_nats(&mut state, &url, Roles::parse("api").expect("roles"))
+            .await
+            .expect("wired");
+        let wide = seqs.last().copied().unwrap_or_default();
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(20))
+            .expect("deadline");
+        while !(log
+            .text()
+            .contains(&format!("outbox retain of seq {wide} failed"))
+            && log.text().contains("outbox ack"))
+            && std::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let text = log.text();
+        assert!(
+            text.contains(&format!("outbox retain of seq {wide} failed")),
+            "{text}"
+        );
+        assert!(
+            text.contains("outbox ack") && text.contains("failed"),
+            "{text}"
+        );
+        let kept = antares_sql::store::pg::outbox::event(
+            &pool,
+            seqs.first().copied().unwrap_or_default(),
+            &tenant,
+        )
+        .await
+        .expect("read");
+        assert!(kept.is_some(), "a row whose ack failed left the outbox");
+        let _ = antares_sql::store::pg::outbox::ack(&pool, &seqs).await;
+    }
+
+    /// A claim-checked change whose Entity the store cannot read now reaches the matcher, which
+    /// leaves it unacknowledged for the server to deliver again rather than match a change it
+    /// cannot see; the failed read is logged. Needs a live NATS.
+    #[tokio::test]
+    async fn a_claim_checked_change_the_store_cannot_read_is_left_for_redelivery() {
+        let Some(url) = test_env::nats() else { return };
+        let (log, _guard) = Logged::start();
+        let (mut state, fault) = crate::fault_store::FaultStore::state("wiring.test");
+        wire_nats(&mut state, &url, Roles::parse("matcher").expect("roles"))
+            .await
+            .expect("wired");
+        fault.fail(|m, _, kind| m == "get" && kind == Some(Kind::Entity));
+        let bus = NatsBus::connect(&url).await.expect("connect");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock")
+            .as_nanos();
+        let tenant = TenantId::new(&format!("claimfault{nonce}")).expect("tenant");
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(20))
+            .expect("deadline");
+        let mut n = 0u32;
+        while !log.text().contains("claim-check entity read failed")
+            && std::time::Instant::now() < deadline
+        {
+            n = n.saturating_add(1);
+            let id = format!("urn:ngsi-ld:T:far{n}");
+            let ev = ChangeEvent {
+                tenant: tenant.clone(),
+                entity_id: EntityId::new(&id).expect("id"),
+                types: vec!["T".into()],
+                op: ChangeOp::Update,
+                changed_attrs: vec![],
+                payload: None,
+                prev_payload: None,
+                version: 2,
+                incarnation: String::new(),
+                seq: 0,
+                payload_ref: Some(PayloadRef {
+                    entity_id: EntityId::new(&id).expect("id"),
+                    version: 2,
+                }),
+                prev_payload_ref: None,
+            };
+            bus.publish(&ev).await.expect("publish");
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        }
+        let text = log.text();
+        assert!(text.contains("claim-check entity read failed"), "{text}");
+        assert!(text.contains("redelivering"), "{text}");
+    }
+
     /// The outbox-drain switch is a config value like any other: the two
     /// documented spellings decide, anything else is fatal instead of
     /// silently leaving the drain on (a typo'd `ANTARES_OUTBOX_DRAIN=of`

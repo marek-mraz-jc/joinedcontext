@@ -2070,8 +2070,17 @@ fn runtime() -> std::io::Result<tokio::runtime::Runtime> {
 /// `ENFILE` (the fd ceiling — the connection cap defaults above many
 /// containers' `nofile`) or `ENOBUFS` must never take the broker down.
 async fn accept(listener: &tokio::net::TcpListener) -> tokio::net::TcpStream {
+    accept_from(|| listener.accept()).await
+}
+
+/// [`accept`] over the attempts `next` makes, the listener's own in the broker.
+async fn accept_from<F, A>(mut next: F) -> tokio::net::TcpStream
+where
+    F: FnMut() -> A,
+    A: std::future::Future<Output = std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)>>,
+{
     loop {
-        match listener.accept().await {
+        match next().await {
             Ok((stream, _)) => {
                 // Nagle held every multi-segment response for the peer's
                 // delayed ACK: a fixed ~40 ms on any body over one segment,
@@ -2504,7 +2513,52 @@ mod config_key_tests {
 
 #[cfg(test)]
 mod accept_loop_tests {
-    use super::{accept, accept_backoff, wait_drain};
+    use super::{accept, accept_backoff, accept_from, wait_drain};
+
+    /// A per-connection accept error (ECONNABORTED: a client that reset between SYN and
+    /// accept) is retried at once, and the next connection is served; a resource error
+    /// pauses first.
+    #[tokio::test]
+    async fn an_aborted_connection_is_skipped_at_once_and_a_resource_error_pauses() {
+        use std::io::ErrorKind::{ConnectionAborted, Other};
+        let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        for (kind, paused) in [(ConnectionAborted, false), (Other, true)] {
+            let client = tokio::net::TcpStream::connect(addr);
+            let mut failed = false;
+            let started = std::time::Instant::now();
+            let (served, client) = tokio::join!(
+                accept_from(|| {
+                    let first = !std::mem::replace(&mut failed, true);
+                    let listener = &listener;
+                    async move {
+                        if first {
+                            Err(std::io::Error::new(kind, "injected"))
+                        } else {
+                            listener.accept().await
+                        }
+                    }
+                }),
+                client
+            );
+            let client = client.expect("connect");
+            assert_eq!(
+                served.peer_addr().ok(),
+                client.local_addr().ok(),
+                "{kind:?}"
+            );
+            // the pause is a floor; how fast a skipped one retries is the host's, so only
+            // the resource error's wait is asserted here (accept_backoff's table holds both)
+            if paused {
+                assert!(
+                    started.elapsed() >= std::time::Duration::from_millis(100),
+                    "{kind:?} retried without its pause"
+                );
+            }
+        }
+    }
 
     /// The drain signal reaches a connection once it fires, and a dropped
     /// sender (the accept loop gone) never reads as a drain: the wait pends

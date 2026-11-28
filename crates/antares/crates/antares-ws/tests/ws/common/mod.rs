@@ -46,6 +46,8 @@ pub struct Broker {
     pub hub: Arc<Hub>,
     /// Where it listens.
     pub addr: SocketAddr,
+    /// The router it serves, for a test that serves it over a connection of its own.
+    pub app: axum::Router,
     /// An HTTP client for the NGSI-LD API beside the sockets.
     pub http: Http,
 }
@@ -100,14 +102,16 @@ async fn start(
         .await
         .map_err(|e| e.to_string())?;
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    let served = app.clone();
     tokio::spawn(async move {
-        let _served = axum::serve(listener, app).await;
+        let _served = axum::serve(listener, served).await;
     });
     Ok(Broker {
         _turn: turn,
         _kept: broker,
         hub,
         addr,
+        app,
         http: Http { addr },
     })
 }

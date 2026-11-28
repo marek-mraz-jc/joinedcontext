@@ -86,6 +86,9 @@ pub enum Lesser {
     /// Applies no id selection either: answers every Entity of the Tenant,
     /// `decided: false`, as a driver that cannot narrow on ids.
     NoIds,
+    /// Keeps the type list and the attribute catalogue but decides no query, as
+    /// [`Lesser::Undecided`] does.
+    CatalogueUndecided,
 }
 
 /// Which calls a [`Double::faulting`] refuses: the method's name and the
@@ -775,7 +778,10 @@ impl CurrentStateDriver for Double {
                 ..*f
             };
             self.inner.query_entities(tenant, &offset_only).await?
-        } else if matches!(self.lesser, Lesser::Undecided | Lesser::NoIds) {
+        } else if matches!(
+            self.lesser,
+            Lesser::Undecided | Lesser::NoIds | Lesser::CatalogueUndecided
+        ) {
             let no_ids = self.lesser == Lesser::NoIds;
             let every = antares_store::filter::EntityFilter {
                 ids: if no_ids { None } else { f.ids },
@@ -821,7 +827,10 @@ impl CurrentStateDriver for Double {
         tenant: &TenantId,
     ) -> Result<Option<Vec<(String, String)>>, NgsiError> {
         self.pool_wall()?;
-        if self.lesser != Lesser::CatalogueNoTypeNames {
+        if !matches!(
+            self.lesser,
+            Lesser::CatalogueNoTypeNames | Lesser::CatalogueUndecided
+        ) {
             return Ok(None);
         }
         self.inner.entity_attr_pairs(tenant).await

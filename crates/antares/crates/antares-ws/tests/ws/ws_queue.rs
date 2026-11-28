@@ -100,6 +100,92 @@ async fn ws_a_slow_consumer_is_disconnected_not_buffered() -> Result<(), String>
     Ok(())
 }
 
+/// A client reading nothing on a small receive buffer, subscribed to Cars, with twenty
+/// notifications of 900 KiB offered: its socket is stuck in a write the client never takes.
+async fn stuck(b: &crate::common::Broker) -> Result<Client, String> {
+    let mut c = connect_small(b.addr, 16 * 1024).await?;
+    let made = c.subscribe(cars()).await?;
+    assert_eq!(status(&made), 201, "{made}");
+    let mut out = outbound(Some(&text(&made, "/body/id")), None);
+    out.body = with(
+        out.body,
+        &["data"],
+        json!([{"id": "urn:ngsi-ld:Car:w1", "type": "Car", "blob": {"type": "Property", "value": "w".repeat(900 * 1024)}},
+               {"id": "urn:ngsi-ld:Car:w2", "type": "Car"}]),
+    );
+    let sink = Sink::new(b.hub.clone());
+    let endpoint = format!("{ENDPOINT_PREFIX}{}", c.connection);
+    for _ in 0..20 {
+        let _offered = sink.deliver(&endpoint, &out, WAIT).await;
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    Ok(c)
+}
+
+/// Read what `c` is sent for `d`, so its own socket never stalls.
+async fn read_for(c: &mut Client, d: Duration) {
+    let now = tokio::time::Instant::now();
+    let until = now.checked_add(d).unwrap_or(now);
+    while let Ok(Ok(_)) = tokio::time::timeout_at(until, c.next()).await {}
+}
+
+/// Rule 7: a socket stuck in a write when a resume takes its connection over ends as gone
+/// after `pong_within`. The connection is the resumed socket's by then, so the stuck one
+/// neither detaches it nor starts its grace: past the grace it still holds its Subscription.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_socket_stuck_writing_leaves_its_connection_to_the_resume() -> Result<(), String> {
+    let b = broker_alone(Limits {
+        pong_within: Duration::from_secs(2),
+        resume_grace: Duration::from_secs(1),
+        ..Limits::default()
+    })
+    .await?;
+    let first = stuck(&b).await?;
+    let mut again = connect(b.addr, ROOT, &[]).await?;
+    let r = again.resume(&first.connection, &first.token, 0).await?;
+    assert_eq!(status(&r), 200, "{r}");
+    // the stuck write times out at 2 s, the grace it must not start would end at 3 s
+    read_for(&mut again, Duration::from_secs(5)).await;
+    assert_eq!((b.hub.connections(), b.hub.attached()), (1, 1));
+    drop(first);
+    Ok(())
+}
+
+/// Rule 7: a socket whose connection was taken over while it was stuck in a write, and whose
+/// write then goes through, ends at its next heartbeat tick, the takeover's wake long taken by
+/// the resumed socket; the connection stays the resumed one's.
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_a_socket_taken_over_while_writing_ends_at_its_next_tick() -> Result<(), String> {
+    let b = broker_alone(Limits {
+        ping_every: Duration::from_secs(1),
+        ..Limits::default()
+    })
+    .await?;
+    let mut first = stuck(&b).await?;
+    let mut again = connect(b.addr, ROOT, &[]).await?;
+    let r = again.resume(&first.connection, &first.token, 0).await?;
+    assert_eq!(status(&r), 200, "{r}");
+    // past a ping period, the stuck client reads again: its socket ends, taken over
+    read_for(&mut again, Duration::from_millis(1500)).await;
+    let ended = tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            if let Err(why) = first.next().await {
+                break why;
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended
+            .as_ref()
+            .is_ok_and(|why| !why.starts_with("no message")),
+        "the taken-over socket stayed open: {ended:?}"
+    );
+    assert_eq!((b.hub.connections(), b.hub.attached()), (1, 1));
+    Ok(())
+}
+
 /// Five changes to one Car while its connection is detached reach the
 /// resumed socket as one notification carrying the last value.
 #[tokio::test(flavor = "multi_thread")]
