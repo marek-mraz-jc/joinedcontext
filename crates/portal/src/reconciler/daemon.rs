@@ -8633,7 +8633,7 @@ routes:
     }
 
     /// EP-96: an MCP server whose client, mappers and scopes already hold what the wave wants is
-    /// left as it is: nothing is written and nothing is said about it.
+    /// left as it is: nothing of it is written and nothing is said about it.
     #[tokio::test]
     async fn a_current_mcp_server_client_is_left_alone_and_unsaid() {
         use super::super::{app_clients, mcp_clients};
@@ -8685,13 +8685,15 @@ routes:
             status: None,
         });
         let (_, log) = crate::reconciler::logged(syncer.converge_mcp_clients(&mirror)).await;
-        assert!(!log.contains("MCP server client"), "{log}");
+        // The wave also declares the Organization's own `org/all`, whose create this realm
+        // refuses; only the current server is judged here.
+        assert!(!log.contains("t7923/air"), "{log}");
         let wrote: Vec<String> = realm
             .received_requests()
             .await
             .unwrap_or_default()
             .iter()
-            .filter(|r| r.method.as_str() != "GET" && !r.url.path().ends_with("/token"))
+            .filter(|r| r.method.as_str() != "GET" && r.url.path().contains("u-mcp-air"))
             .map(|r| format!("{} {}", r.method, r.url.path()))
             .collect();
         assert!(wrote.is_empty(), "{wrote:?}");
