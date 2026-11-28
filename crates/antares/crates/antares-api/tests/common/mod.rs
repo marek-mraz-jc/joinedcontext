@@ -80,6 +80,9 @@ pub enum Lesser {
     Undecided,
     /// Keeps no type list: `entity_type_names` answers `None`.
     NoTypeNames,
+    /// Applies no id selection either: answers every Entity of the Tenant,
+    /// `decided: false`, as a driver that cannot narrow on ids.
+    NoIds,
 }
 
 /// Which calls a [`Double::faulting`] refuses: the method's name and the
@@ -762,8 +765,10 @@ impl CurrentStateDriver for Double {
                 ..*f
             };
             self.inner.query_entities(tenant, &offset_only).await?
-        } else if self.lesser == Lesser::Undecided {
+        } else if matches!(self.lesser, Lesser::Undecided | Lesser::NoIds) {
+            let no_ids = self.lesser == Lesser::NoIds;
             let every = antares_store::filter::EntityFilter {
+                ids: if no_ids { None } else { f.ids },
                 types: None,
                 attrs: None,
                 page: None,

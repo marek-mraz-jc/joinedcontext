@@ -128,3 +128,54 @@ async fn a_federated_replace_keeps_an_entity_a_racing_write_retyped() {
         "the racing write's Entity stands: {now}"
     );
 }
+
+/// Query Entities by `id` (5.7.2) over a store that cannot narrow on ids: the broker decides
+/// each row itself, so an Entity outside the id list never reaches the answer.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_id_query_over_a_store_that_cannot_select_ids_keeps_only_the_named_ones() {
+    let mut st = AppState::new("cov-r8".into());
+    for n in 0..3 {
+        let entity = serde_json::json!({"id": format!("urn:ngsi-ld:Ids:n{n}"), "type": "Ids"});
+        let (status, body) = call(&st, "POST", "/ngsi-ld/v1/entities", Some(entity)).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
+    }
+    st.store = Arc::new(Double::lesser(
+        st.store.clone(),
+        crate::common::Lesser::NoIds,
+    ));
+    let (status, body) = get(
+        &st,
+        "/ngsi-ld/v1/entities?id=urn:ngsi-ld:Ids:n0,urn:ngsi-ld:Ids:n2&type=Ids",
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let mut ids: Vec<&str> = body
+        .as_array()
+        .expect("a list")
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["urn:ngsi-ld:Ids:n0", "urn:ngsi-ld:Ids:n2"], "{body}");
+}
+
+/// Retrieve Available Attributes (5.7.8) over a store with an attribute catalogue but no type
+/// list: the catalogue walk cannot start, and the answer still names the stored Attribute.
+#[tokio::test(flavor = "multi_thread")]
+async fn attributes_over_a_store_without_a_type_list_still_name_the_stored_ones() {
+    let mut st = AppState::new("cov-r8".into());
+    let entity = serde_json::json!({
+        "id": "urn:ngsi-ld:Shape:one",
+        "type": "Shape",
+        "corners": {"type": "Property", "value": 4}
+    });
+    let (status, body) = call(&st, "POST", "/ngsi-ld/v1/entities", Some(entity)).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    st.store = Arc::new(Double::lesser(
+        st.store.clone(),
+        crate::common::Lesser::NoTypeNames,
+    ));
+    let (status, body) = get(&st, "/ngsi-ld/v1/attributes").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(body.to_string().contains("corners"), "{body}");
+}
