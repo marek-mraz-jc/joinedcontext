@@ -5698,6 +5698,36 @@ async fn a_model_that_does_not_answer_ends_the_answer_at_the_outer_timeout() {
     db::drop_database(w.admin, w.pool, &w.name).await;
 }
 
+/// The outer timeout on an internal answer, which no visitor token holds for a resume: the 504
+/// event still reaches the reader.
+#[tokio::test]
+async fn an_internal_answer_without_a_held_turn_is_cut_at_the_outer_timeout() {
+    let w = world("chattimeoutloop", looped(50_000)).await;
+    edit_spec(&w, |spec| {
+        spec.answer = serde_json::from_value(json!({"maxDataSeconds": 1})).ok();
+    });
+    Mock::given(method("POST"))
+        .and(path("/v1/llm/chat/completions"))
+        .respond_with(plain("Neskoro.").set_delay(std::time::Duration::from_secs(45)))
+        .mount(&w.proxy)
+        .await;
+    let began = std::time::Instant::now();
+    let (status, events, _) =
+        answer_of(&w.app, ask_looped(json!({"message": "Kedy je zber?"}))).await;
+    assert_eq!(status, StatusCode::OK);
+    let took = began.elapsed();
+    assert!(
+        took < std::time::Duration::from_secs(44),
+        "{took:?} {events:?}"
+    );
+    let cut = events
+        .iter()
+        .find(|(name, data)| name == "error" && data["status"] == 504)
+        .expect("a 504 event");
+    assert_eq!(cut.1["title"], "Answer Took Too Long");
+    db::drop_database(w.admin, w.pool, &w.name).await;
+}
+
 /// A reader of an internal answer who leaves before it is done: nothing holds it for a resume,
 /// so the answer's loop is closed and the question's slot comes back.
 #[tokio::test]

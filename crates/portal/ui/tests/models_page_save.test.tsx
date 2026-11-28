@@ -154,6 +154,38 @@ describe("ModelsPage save and source loading (DM-56)", () => {
     });
   });
 
+  it("opens a handed source without a `name:` and names no consumers for it", async () => {
+    const spaceServing = {
+      apiVersion: "joinedcontext.com/v1alpha1",
+      kind: "ContextSpace",
+      metadata: { name: "air", namespace: "ovzdusie" },
+      spec: { dataModelRef: { name: "" } },
+    };
+    const fetchMock = vi.fn().mockImplementation((req: RequestInfo | URL) => {
+      const urlStr = typeof req === "string" ? req : req instanceof Request ? req.url : req.toString();
+      if (urlStr.includes("/spaces")) {
+        return Promise.resolve(new Response(JSON.stringify({ items: [spaceServing] }), { status: 200 }));
+      }
+      if (urlStr.includes("/endpoints") || urlStr.includes("/datamodels")) {
+        return Promise.resolve(new Response(JSON.stringify({ items: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    });
+    global.fetch = fetchMock;
+
+    // The assistant hands over a model it wrote without a `name:`; nothing is published yet.
+    rememberPrefill("/", { source: PUBLISHED_LINKML.replace("name: air-quality\n", "") });
+    renderWithClient(<ModelsPage project="ovzdusie" />);
+
+    await waitFor(() => {
+      expect(screen.getAllByText("AirQualityObserved").length).toBeGreaterThan(0);
+    });
+    // The source is handed over whole: nothing is read for it, and a space whose model
+    // reference is empty is no consumer of an unnamed model.
+    expect(requests(fetchMock).some(({ url }) => url.endsWith("/source"))).toBe(false);
+    expect(screen.queryByText(/ContextSpace\/air/)).toBeNull();
+  });
+
   it("opens when another page already cached the spaces and endpoints lists as the API answers them", async () => {
     const list = (items: unknown[]) => ({ apiVersion: "joinedcontext.com/v1alpha1", kind: "List", items });
     const space = {
