@@ -76,11 +76,7 @@ fn parse_scim_filter_with_depth(input: &str, depth: usize) -> Result<ScimExpr> {
     // Parse `<attr> <eq|co|sw> "<value>"`
     let mut parts = trimmed.splitn(3, char::is_whitespace);
     // `trimmed` is not empty and starts with a non-space, so the first part is the attribute.
-    let Some(attr) = parts.next() else {
-        return Err(KaisatsuError::BadRequest(
-            "missing SCIM filter attribute".into(),
-        ));
-    };
+    let attr = parts.next().unwrap_or_default();
     let op_str = parts
         .next()
         .map(str::trim)
