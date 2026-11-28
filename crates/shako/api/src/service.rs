@@ -689,14 +689,12 @@ pub async fn patch_branch_protection(
             "rule_name cannot change in a PATCH; create the new rule and delete this one".into(),
         ));
     }
-    // The stored rule is a struct, so its JSON is an object the patch's fields replace in.
-    let merged = serde_json::to_value(&stored.rule).map(|mut rule| {
-        let fields = rule.as_object_mut().into_iter().zip([patch]);
-        fields.for_each(|(fields, patch)| fields.extend(patch));
-        rule
-    });
-    let rule: BranchProtectionRule = merged
-        .and_then(serde_json::from_value)
+    let mut merged =
+        serde_json::to_value(&stored.rule).map_err(|e| ShakoError::Internal(e.to_string()))?;
+    if let Some(fields) = merged.as_object_mut() {
+        fields.extend(patch);
+    }
+    let rule: BranchProtectionRule = serde_json::from_value(merged)
         .map_err(|e| ShakoError::Unprocessable(format!("invalid branch rule: {e}")))?;
     protect_branch(state, ctx, owner, name, rule).await
 }

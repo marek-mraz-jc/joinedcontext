@@ -1610,11 +1610,9 @@ pub(crate) mod hidden {
         s: S,
     ) -> Result<S::Ok, S::Error> {
         let mut doc = serde_json::to_value(record).map_err(S::Error::custom)?;
-        // A record is a struct and its hidden fields an object literal: both are maps.
-        doc.as_object_mut()
-            .into_iter()
-            .zip(fields.as_object())
-            .for_each(|(doc, fields)| doc.extend(fields.clone()));
+        if let (Some(doc), Value::Object(fields)) = (doc.as_object_mut(), fields) {
+            doc.extend(fields);
+        }
         doc.serialize(s)
     }
 
