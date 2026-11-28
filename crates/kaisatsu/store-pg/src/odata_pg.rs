@@ -576,16 +576,10 @@ impl<'a> PgScopedTable<'a> {
             .map_err(source)?;
 
         let scope_cond = scope.cond();
+        // QueryBuilder numbers its own binds from $1: the subquery's `$1` becomes a bind of the
+        // realm id.
         let mut qb = QueryBuilder::<Postgres>::new("SELECT r.row_json FROM ");
-        qb.push(subquery).push(" r WHERE ");
-        // Bind $1 = realm_id for the subquery's WHERE clause.
-        let _ = &self.realm_id;
-        // Because QueryBuilder numbers its own binds starting at $1, we build the subquery
-        // using push_bind for the realm_id instead of raw `$1`.
-        drop(qb);
-
-        let mut qb = QueryBuilder::<Postgres>::new("SELECT r.row_json FROM ");
-        self.push_subquery(&mut qb)?;
+        self.push_subquery(&mut qb, subquery);
         qb.push(" r WHERE ");
         Self::push_cond(&self.info, &mut qb, &scope_cond)?;
         qb.push(" AND ");
@@ -611,7 +605,7 @@ impl<'a> PgScopedTable<'a> {
 
         let count = if plan.count {
             let mut cqb = QueryBuilder::<Postgres>::new("SELECT count(*) FROM ");
-            self.push_subquery(&mut cqb)?;
+            self.push_subquery(&mut cqb, subquery);
             cqb.push(" r WHERE ");
             Self::push_cond(&self.info, &mut cqb, &scope_cond)?;
             cqb.push(" AND ");
@@ -627,25 +621,20 @@ impl<'a> PgScopedTable<'a> {
         };
 
         jc_audit::commit(tx).await.map_err(source)?;
-        let _ = subquery;
         Ok(Fetched {
             rows: rows.into_iter().map(|Json(v)| v).collect(),
             count,
         })
     }
 
-    fn push_subquery(&self, qb: &mut QueryBuilder<Postgres>) -> Result<(), TableError> {
-        let Some(template) = Self::relation_subquery(&self.info.set) else {
-            return Err(TableError::Source("no pushdown subquery".into()));
-        };
-        let parts: Vec<&str> = template.split("$1").collect();
-        for (i, part) in parts.iter().enumerate() {
+    /// Pushes the set's `template` subquery with each `$1` bound to the realm id.
+    fn push_subquery(&self, qb: &mut QueryBuilder<Postgres>, template: &str) {
+        for (i, part) in template.split("$1").enumerate() {
             if i > 0 {
                 qb.push_bind(self.realm_id.clone());
             }
-            qb.push(*part);
+            qb.push(part);
         }
-        Ok(())
     }
 
     /// Keyset-paged fallback inside the RLS transaction for composite sets (`OrganizationDomains`,

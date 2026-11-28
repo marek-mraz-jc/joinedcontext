@@ -209,6 +209,31 @@ async fn the_fallback_scan_skips_a_document_it_cannot_read() {
     db.drop_db().await;
 }
 
+/// A table over a set the store has neither a pushdown subquery nor a keyset reader for answers
+/// no row, with a count of none, in a realm that holds rows of every other set.
+#[tokio::test]
+async fn a_set_without_a_reader_answers_no_row() {
+    let Some(db) = common::test_db("a_set_without_a_reader_answers_no_row").await else {
+        return;
+    };
+    let pg = db.store(Kek::generate_for_tests()).await;
+    let seeded: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed_store(&seeded).await;
+    let mut info = pg.table_info("People").expect("People");
+    info.set = "Unknown".into();
+    let table = PgScopedTable::new(&pg, info, "dev".into(), None);
+    let options = odata_table::QueryOptions {
+        count: Some(true),
+        ..odata_table::QueryOptions::default()
+    };
+    let answer = query(&table, &options, &odata_table::Scope::all(), 100)
+        .await
+        .expect("an empty answer");
+    assert!(answer.rows.is_empty(), "{:?}", answer.rows);
+    assert_eq!(answer.count, Some(0));
+    db.drop_db().await;
+}
+
 /// K15: the pushdown runs inside the RLS transaction with the caller's organizations, so even a
 /// scope without row restrictions shows an org-scoped caller only its organizations' people.
 #[tokio::test]

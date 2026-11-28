@@ -45,6 +45,79 @@ async fn pg_store_error_paths() {
     db.drop_db().await;
 }
 
+/// A stored document that is no JSON object (written behind the store's back) is refused as a
+/// record that does not decode by every reader that puts a column of its own into it: signing
+/// keys, SSO sessions and passkeys; the reads of a realm that holds none answer nothing.
+#[tokio::test]
+async fn pg_store_refuses_a_stored_document_that_is_no_object() {
+    let Some(db) = common::test_db("pg_store_refuses_a_stored_document_that_is_no_object").await
+    else {
+        return;
+    };
+    let store: Arc<dyn Store> = Arc::new(db.store(Kek::generate_for_tests()).await);
+    seed(&store).await;
+    let kek = Kek::generate_for_tests();
+    let key = kaisatsu_crypto::KeyManager::generate_es256(R, &kek, 100, "ACTIVE").expect("key");
+    store.upsert_signing_key(key).await.expect("signing key");
+    store
+        .upsert_sso_session(sso("s-doc", "ann", jiff::SignedDuration::from_hours(1)))
+        .await
+        .expect("session");
+    store
+        .insert_webauthn_credential(passkey("pk-doc", "ann", "helsinki"))
+        .await
+        .expect("passkey");
+    assert!(
+        store
+            .get_sso_session(R, "s-none")
+            .await
+            .expect("no session")
+            .is_none()
+    );
+    assert!(
+        store
+            .get_webauthn_by_credential_id(R, "cred-none")
+            .await
+            .expect("no passkey")
+            .is_none()
+    );
+
+    let su = db.superuser_pool().await;
+    for table in ["signing_keys", "sso_session", "webauthn_credential"] {
+        let changed = sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+            "UPDATE kaisatsu.{table} SET doc = '[]'::jsonb WHERE realm_id = '{R}'"
+        )))
+        .execute(&su)
+        .await
+        .expect(table);
+        assert!(changed.rows_affected() > 0, "{table} holds a row to break");
+    }
+    su.close().await;
+    let undecoded = |e: KaisatsuError| {
+        assert!(e.to_string().contains("cannot decode stored record"), "{e}");
+    };
+    undecoded(store.list_signing_keys(R).await.expect_err("signing keys"));
+    undecoded(
+        store
+            .get_sso_session(R, "s-doc")
+            .await
+            .expect_err("session"),
+    );
+    undecoded(
+        store
+            .list_webauthn_credentials(R, "ann")
+            .await
+            .expect_err("passkeys"),
+    );
+    undecoded(
+        store
+            .get_webauthn_by_credential_id(R, "cred-pk-doc")
+            .await
+            .expect_err("passkey"),
+    );
+    db.drop_db().await;
+}
+
 #[tokio::test]
 async fn pg_boot_check_and_migrations_refuse_a_dead_or_unprivileged_pool() {
     let Some(db) = common::test_db("pg_boot_check_dead_pool").await else {

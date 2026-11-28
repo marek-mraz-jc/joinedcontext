@@ -590,6 +590,58 @@ async fn postgres_commands_run_as_a_login_role_and_refuse_the_owner() {
     assert_eq!(run["state"], "failed", "{run}");
     assert!(run["error"].to_string().contains("127.0.0.1"), "{run}");
 
+    // A run removed while the command waits for it (here at once, by a trigger the owner sets on
+    // this one source) is named as not found, never waited for.
+    let vanish = json!({"name": "cli-pg-vanish", "kind": "dcat-ap", "url": "https://127.0.0.1/feed.ttl",
+                        "publisherId": "cli-pg-mesto", "allowedHosts": ["127.0.0.1"]});
+    run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_source.propose",
+        "--input",
+        &vanish.to_string(),
+    ]))
+    .await
+    .unwrap();
+    let owner = sqlx::PgPool::connect(&owner_url).await.unwrap();
+    sqlx::raw_sql(
+        "CREATE OR REPLACE FUNCTION dataroom.t7948_vanish_run() RETURNS trigger LANGUAGE plpgsql AS $$
+         BEGIN
+             IF NEW.source_id IN (SELECT id FROM dataroom.cat_harvest_source WHERE name = 'cli-pg-vanish') THEN
+                 DELETE FROM dataroom.cat_harvest_run
+                  WHERE org_id = NEW.org_id AND catalogue_id = NEW.catalogue_id AND id = NEW.id;
+             END IF;
+             RETURN NULL;
+         END $$;
+         DROP TRIGGER IF EXISTS t7948_vanish ON dataroom.cat_harvest_run;
+         CREATE TRIGGER t7948_vanish AFTER INSERT ON dataroom.cat_harvest_run
+             FOR EACH ROW EXECUTE FUNCTION dataroom.t7948_vanish_run();",
+    )
+    .execute(&owner)
+    .await
+    .unwrap();
+    let vanished = run_cli(pg(&[
+        "op",
+        "--name",
+        "harvest_run.start",
+        "--input",
+        r#"{"source": "cli-pg-vanish"}"#,
+    ]))
+    .await;
+    sqlx::raw_sql(
+        "DROP TRIGGER IF EXISTS t7948_vanish ON dataroom.cat_harvest_run;
+         DROP FUNCTION IF EXISTS dataroom.t7948_vanish_run();",
+    )
+    .execute(&owner)
+    .await
+    .unwrap();
+    owner.close().await;
+    let err = vanished.expect_err("a run that is gone");
+    assert!(
+        matches!(err, DataroomError::NotFound(ref m) if m.contains("harvest run")),
+        "{err:?}"
+    );
+
     let err = run_cli(pg(&["harvest", "--source", "cli-pg-none"]))
         .await
         .unwrap_err();
