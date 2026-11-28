@@ -2570,7 +2570,8 @@ mod accept_loop_tests {
                 .output()
                 .expect("child run");
             let log = String::from_utf8_lossy(&out.stdout);
-            assert!(out.status.success(), "child: {log}");
+            let said = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "child: {log}{said}");
             assert!(log.contains("1 passed"), "the child ran the test: {log}");
             return;
         }
@@ -2589,16 +2590,19 @@ mod accept_loop_tests {
                 .filter_map(|e| e.ok()?.file_name().to_str()?.parse::<u32>().ok())
                 .max()
                 .expect("open descriptors");
+            // the inherited table can have gaps below `highest` (a CI runner's does), which
+            // File::open fills first: the opens stop at the limit, not at a fixed count
+            let limit = highest.saturating_add(4);
             let limited = std::process::Command::new("prlimit")
                 .arg(format!("--pid={}", std::process::id()))
-                .arg(format!("--nofile={}:", highest.saturating_add(4)))
+                .arg(format!("--nofile={limit}:"))
                 .status()
                 .expect("prlimit");
             assert!(limited.success(), "prlimit lowered the soft nofile limit");
             let mut held = Vec::new();
             while let Ok(f) = std::fs::File::open("/dev/null") {
                 held.push(f);
-                assert!(held.len() < 64, "the soft limit holds");
+                assert!(held.len() <= limit as usize, "the soft limit holds");
             }
             let waited =
                 tokio::time::timeout(std::time::Duration::from_millis(350), accept(&listener))
