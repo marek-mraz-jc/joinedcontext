@@ -569,7 +569,14 @@ fn without_xdg_config_home_the_token_comes_from_home_dot_config() {
     std::fs::create_dir_all(&dir).expect("the config dir");
     std::fs::write(dir.join("token"), format!("{TOKEN}\n")).expect("the token file");
     let out = Command::new(env!("CARGO_BIN_EXE_jcctl"))
-        .args(["get", "endpoints", "--project", "helsinki", "--server", &server])
+        .args([
+            "get",
+            "endpoints",
+            "--project",
+            "helsinki",
+            "--server",
+            &server,
+        ])
         .env_remove("JC_TOKEN_FILE")
         .env_remove("JC_SERVER")
         .env_remove("XDG_CONFIG_HOME")
@@ -582,11 +589,20 @@ fn without_xdg_config_home_the_token_comes_from_home_dot_config() {
     assert!(!said.contains(TOKEN) && !stdout(&out).contains(TOKEN));
     let asked = seen(&stub);
     assert!(!asked.is_empty(), "{said}");
-    assert!(asked.iter().all(|s| s.authorization == format!("Bearer {TOKEN}")));
+    assert!(asked
+        .iter()
+        .all(|s| s.authorization == format!("Bearer {TOKEN}")));
     // An empty XDG_CONFIG_HOME counts as unset; a missing file under HOME is no identity.
     let empty = common::temp_dir("portal-client-home-empty");
     let missing = Command::new(env!("CARGO_BIN_EXE_jcctl"))
-        .args(["get", "endpoints", "--project", "helsinki", "--server", &server])
+        .args([
+            "get",
+            "endpoints",
+            "--project",
+            "helsinki",
+            "--server",
+            &server,
+        ])
         .env_remove("JC_TOKEN_FILE")
         .env("XDG_CONFIG_HOME", "")
         .env("HOME", &empty)

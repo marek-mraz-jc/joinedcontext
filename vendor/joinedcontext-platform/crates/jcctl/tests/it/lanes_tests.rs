@@ -467,7 +467,11 @@ fn moving_the_exposure_of_an_app_server_or_assistant_is_red_in_both_directions()
         ("App", "  visibility: project\n", "spec.egress"),
         ("App", "  visibility: project\n", "spec.egress.0.host"),
         ("McpServer", "  audience: organization\n", "spec.audience"),
-        ("AssistantDeployment", "  channel: internal\n", "spec.channel"),
+        (
+            "AssistantDeployment",
+            "  channel: internal\n",
+            "spec.channel",
+        ),
     ] {
         let verdict = lane_of(&moved(kind, spec, path));
         assert_eq!(verdict.lane, Lane::Red, "{kind} {path}: {}", verdict.reason);
@@ -478,6 +482,11 @@ fn moving_the_exposure_of_an_app_server_or_assistant_is_red_in_both_directions()
         ("AssistantDeployment", "  channel: internal\n", "spec.model"),
     ] {
         let verdict = lane_of(&moved(kind, spec, path));
-        assert_eq!(verdict.lane, Lane::Yellow, "{kind} {path}: {}", verdict.reason);
+        assert_eq!(
+            verdict.lane,
+            Lane::Yellow,
+            "{kind} {path}: {}",
+            verdict.reason
+        );
     }
 }
