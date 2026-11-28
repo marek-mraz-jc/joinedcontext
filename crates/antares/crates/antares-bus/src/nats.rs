@@ -74,7 +74,7 @@ pub struct NatsBus {
     reconnects: std::sync::Arc<std::sync::atomic::AtomicU64>,
     /// `(stream, consumer)` of every pull consumer this bus opened, for a test
     /// that drops exactly its own one on a NATS other tests share.
-    #[cfg(feature = "test-kit")]
+    #[cfg(any(test, feature = "test-kit"))]
     opened: std::sync::Mutex<Vec<(&'static str, String)>>,
 }
 
@@ -118,7 +118,7 @@ impl NatsBus {
             js,
             client,
             reconnects,
-            #[cfg(feature = "test-kit")]
+            #[cfg(any(test, feature = "test-kit"))]
             opened: std::sync::Mutex::default(),
         };
         bus.ensure_streams().await?;
@@ -324,7 +324,7 @@ impl NatsBus {
             )
             .await
             .map_err(err)?;
-        #[cfg(feature = "test-kit")]
+        #[cfg(any(test, feature = "test-kit"))]
         self.opened(CHANGES_STREAM, durable);
         Ok(consumer)
     }
@@ -344,7 +344,7 @@ impl NatsBus {
             })
             .await
             .map_err(err)?;
-        #[cfg(feature = "test-kit")]
+        #[cfg(any(test, feature = "test-kit"))]
         self.opened(REGISTRY_STREAM, &consumer.cached_info().name);
         Ok(consumer)
     }
@@ -408,9 +408,10 @@ impl NatsBus {
     }
 }
 
-/// Test builds only (`test-kit`): what a wiring test needs to break this bus's
-/// own consumers on a NATS the parallel tests share.
-#[cfg(feature = "test-kit")]
+/// Test builds only (`test-kit`, or this crate's own tests): what a wiring
+/// test needs to break this bus's own consumers on a NATS the parallel tests
+/// share.
+#[cfg(any(test, feature = "test-kit"))]
 impl NatsBus {
     fn opened(&self, stream: &'static str, name: &str) {
         self.opened
@@ -650,6 +651,79 @@ mod tests {
         assert!(
             connect.contains(r#""user":"jc""#) && connect.contains(r#""pass":"p@ss""#),
             "{connect}"
+        );
+    }
+
+    /// The test kit against a live NATS (skips without ANTARES_TEST_NATS_URL): it names
+    /// both consumers this bus opened, deletes exactly the one named (a second delete of
+    /// it is refused) and `close` leaves a bus whose publish fails.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_test_kit_names_deletes_and_closes_this_buss_own_consumers() {
+        let Ok(url) = std::env::var("ANTARES_TEST_NATS_URL") else {
+            eprintln!("SKIP: ANTARES_TEST_NATS_URL not set");
+            return;
+        };
+        let bus = NatsBus::connect(&url).await.expect("connect");
+        let durable = format!(
+            "kit-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        );
+        bus.consume_balanced(&durable).await.expect("balanced");
+        let registry = bus.consume_registry_broadcast().await.expect("registry");
+        let registry_name = registry.cached_info().name.clone();
+        assert!(!registry_name.is_empty());
+        assert_eq!(
+            bus.opened_consumers(),
+            vec![
+                (CHANGES_STREAM, durable.clone()),
+                (REGISTRY_STREAM, registry_name.clone())
+            ]
+        );
+
+        let changes = bus.js.get_stream(CHANGES_STREAM).await.expect("stream");
+        changes
+            .consumer_info(&durable)
+            .await
+            .expect("durable exists");
+        bus.delete_consumer(CHANGES_STREAM, &durable)
+            .await
+            .expect("delete");
+        assert!(
+            changes.consumer_info(&durable).await.is_err(),
+            "durable still listed"
+        );
+        assert!(
+            bus.delete_consumer(CHANGES_STREAM, &durable).await.is_err(),
+            "a second delete of a gone consumer must fail"
+        );
+        let reg_stream = bus.js.get_stream(REGISTRY_STREAM).await.expect("stream");
+        bus.delete_consumer(REGISTRY_STREAM, &registry_name)
+            .await
+            .expect("delete registry consumer");
+        assert!(reg_stream.consumer_info(&registry_name).await.is_err());
+
+        let tenant = TenantId::new("kitclose").expect("tenant");
+        bus.close().await.expect("close");
+        let ev = ChangeEvent {
+            tenant,
+            entity_id: EntityId::new("urn:kit:closed").expect("id"),
+            types: vec!["https://x/T".into()],
+            op: ChangeOp::Create,
+            changed_attrs: vec![],
+            payload: None,
+            prev_payload: None,
+            version: 1,
+            incarnation: "2026-11-28T00:00:00Z".into(),
+            seq: 1,
+            payload_ref: None,
+            prev_payload_ref: None,
+        };
+        assert!(
+            bus.publish(&ev).await.is_err(),
+            "publish after close must fail"
         );
     }
 
