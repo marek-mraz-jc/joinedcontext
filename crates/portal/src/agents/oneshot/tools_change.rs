@@ -2089,6 +2089,41 @@ mod new_dashboard_tests {
         );
     }
 
+    /// A dashboard whose verdict the store refuses is still drafted, its drafts without a verdict.
+    #[tokio::test]
+    async fn a_dashboard_whose_verdict_is_not_kept_is_drafted_without_one() {
+        let (mut driver, _forge) = world().await;
+        proposes_dashboards(&mut driver);
+        let scratch = crate::test_db::scratch().await;
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("helsinki").await,
+        );
+        scratch.refuse_column("drafts", "verdict").await;
+        let private = create(
+            "project",
+            &["staff"],
+            vec![layer("staff", "bikes-staff", json!({}))],
+        );
+        let prose = dashboard(&driver, &private, false)
+            .await
+            .done()
+            .expect("drafted");
+        assert!(
+            prose.starts_with("Drafted the dashboard 'stations'"),
+            "{prose}"
+        );
+        let kept = driver
+            .state
+            .drafts
+            .get("helsinki", "Layer", "staff")
+            .await
+            .expect("read")
+            .expect("the layer is kept");
+        assert!(kept.verdict.is_none(), "{:?}", kept.verdict);
+        scratch.remove().await;
+    }
+
     async fn model_change(
         driver: &Driver,
         name: &str,
@@ -3177,6 +3212,17 @@ mod unparsed_tests {
                 ..Default::default()
             },
             spec: json!({ "contextSpaceRef": "air", "slug": "abcdefghijklmnopqrstuvwxyz", "audience": "public" }),
+            status: None,
+        });
+        driver.state.mirror.upsert(ResourceEnvelope {
+            api_version: API_VERSION.into(),
+            kind: "ContextSpace".into(),
+            metadata: ObjectMeta {
+                name: "air".into(),
+                namespace: Some("helsinki".into()),
+                ..Default::default()
+            },
+            spec: json!({}),
             status: None,
         });
         let scratch = crate::test_db::scratch().await;

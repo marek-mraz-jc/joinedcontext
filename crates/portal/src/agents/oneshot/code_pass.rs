@@ -2266,6 +2266,73 @@ mod repository_tests {
         );
     }
 
+    /// A GitHub copy whose sentence the run's store refuses is still set up and the commit
+    /// stands: the refusal is logged, the commit event kept.
+    #[tokio::test]
+    async fn a_github_sentence_the_store_refuses_leaves_the_copy_and_the_commit() {
+        let forge = a_forge_for_a_later_pass().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&forge)
+            .await;
+        for action in ["Shako.AddPushMirror", "Shako.SyncPushMirrors"] {
+            Mock::given(method("POST"))
+                .and(path(format!("{REPO}/{action}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .expect(1)
+                .mount(&forge)
+                .await;
+        }
+        let github = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/hel-apps/helsinki_city-bikes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&github)
+            .await;
+        let scratch = crate::test_db::scratch().await;
+        let (state, mut driver) = driver(&forge);
+        let state = state.with_db(scratch.pool.clone()).with_github_mirror(Arc::new(
+            crate::forge::github_mirror::GithubMirror::at(&github.uri(), "hel-apps", "ghp_secret"),
+        ));
+        for env in scratch.placed("helsinki").await.matching(|_| true) {
+            state.mirror.upsert(env);
+        }
+        let run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        state.agents.create_run(&run).await.expect("a run");
+        for statement in [
+            "CREATE FUNCTION jc_refuse_thought() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+            "CREATE TRIGGER jc_refuse_thought BEFORE INSERT ON agent_run_events FOR EACH ROW \
+             WHEN (NEW.kind = 'thought') EXECUTE FUNCTION jc_refuse_thought()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("the trigger");
+        }
+        driver.state = state.clone();
+        let mut committed = files();
+        let mut next = files();
+        next.insert("src/App.tsx".into(), "export default 2".into());
+        driver
+            .commit_files(&next, &mut committed, "Second version")
+            .await
+            .expect("committed");
+        assert_eq!(committed, next, "the commit stands");
+        let kinds: Vec<String> = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .map(|event| event.kind)
+            .collect();
+        assert!(kinds.iter().any(|kind| kind == "commit"), "{kinds:?}");
+        assert!(kinds.iter().all(|kind| kind != "thought"), "{kinds:?}");
+        scratch.remove().await;
+    }
+
     /// A run with no branch has nowhere to commit: the forge is not asked (T-7912).
     #[tokio::test]
     async fn a_run_without_a_branch_commits_nothing() {

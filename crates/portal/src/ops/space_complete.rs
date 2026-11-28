@@ -2274,6 +2274,37 @@ mod tests {
         );
     }
 
+    /// A space with no drafts and no LinkML of its own proposes no Change: the empty bundle is
+    /// refused rather than opened.
+    #[tokio::test]
+    async fn a_space_with_nothing_drafted_and_no_model_text_opens_no_change() {
+        let state = crate::state::AppState::new(crate::config::Config::for_tests(), None);
+        let caller = crate::ops::Caller::new(
+            crate::auth::session::Identity {
+                client: None,
+                subject: "sub-jana".into(),
+                username: "jana".into(),
+                email: None,
+                name: None,
+                roles: vec![],
+                groups: vec![],
+                second_factor: false,
+            },
+            crate::ops::Via::Mcp,
+        );
+        let proposed = super::propose_drafts(
+            &caller,
+            &state,
+            "doprava",
+            "bikes",
+            &[],
+            None,
+            crate::change::Lane::Yellow,
+        )
+        .await;
+        assert!(proposed.is_err(), "{proposed:?}");
+    }
+
     /// EP-75 (T-6285): an Endpoint uploaded with a slug the caller typed is refused before its
     /// draft is kept, so the draft never vouches for that slug in a later plan or dry run.
     #[tokio::test]

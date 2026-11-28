@@ -2641,6 +2641,123 @@ mod tests {
         assert_eq!(opened, [json!({ "error": "refused" })]);
     }
 
+    /// Under a ceiling that lets it, an autonomous connector's change to a DataModel is approved
+    /// as its owner: the row carries the change's state and the connector, and nothing waits.
+    #[tokio::test]
+    async fn an_autonomous_apply_approves_its_owners_data_model() {
+        use base64::Engine;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        const PROPOSER: &str = "jana.kovacova@banskabystrica.sk";
+        let server = wiremock::MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+        let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
+        let yaml = format!(
+            "apiVersion: {}\nkind: DataModel\nmetadata:\n  name: datamodel-x\n  namespace: doprava\n\
+             spec: {{\"version\": \"1.0.0\", \"linkml\": \"models/air.linkml.yaml\", \"lifecycle\": \"draft\"}}\n",
+            crate::resource::API_VERSION
+        );
+        let info = crate::resource::by_kind("DataModel").expect("a served kind");
+        let file = crate::resource::repository_path(info, "doprava", None, "datamodel-x")
+            .expect("a path");
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(ok(json!({
+                "Sha": "blob-1",
+                "Content": base64::engine::general_purpose::STANDARD.encode(&yaml)
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(1)")))
+            .respond_with(ok(json!({
+                "Number": 1, "HtmlUrl": "https://shako.example.sk/pulls/1", "State": "open",
+                "Title": "create DataModel", "Head": "portal/create-datamodel-x-11111111",
+                "HeadSha": "head-1", "Base": "main", "CreatedAt": "2026-11-03T05:14:22Z",
+                "Author": "jana.kovacova", "AuthorName": "jana.kovacova",
+                "AuthorEmail": PROPOSER, "Mergeable": true, "Merged": false
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(1)/Files")))
+            .respond_with(ok(
+                json!({ "value": [{ "Filename": file, "Status": "added" }] }),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/PullRequests(1)/Shako.Merge")))
+            .respond_with(ok(json!({})))
+            .mount(&server)
+            .await;
+        let client = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let org = |kind: &str, name: &str, spec: Value| crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec,
+            status: None,
+        };
+        state.mirror.upsert(org(
+            "Role",
+            "admin-role",
+            json!({ "rules": [{ "kinds": ["DataModel"], "verbs": ["read", "propose", "approve"] }] }),
+        ));
+        state.mirror.upsert(org(
+            "RoleBinding",
+            "admin-binding",
+            json!({ "subjects": [{ "user": PROPOSER }], "role": "admin-role",
+                    "scope": { "organization": "bb" } }),
+        ));
+        state.mirror.upsert(org(
+            "Group",
+            "stewards",
+            json!({ "members": [{ "user": "jana.kovacova" }] }),
+        ));
+        state.mirror.upsert(org(
+            "DelegationPolicy",
+            "stewards",
+            json!({ "subjects": [{ "kind": "Group", "name": "stewards" }],
+                    "projects": ["doprava"], "segments": ["context"],
+                    "writes": true, "autonomous": true }),
+        ));
+        let connector: crate::connectors::Connector = state
+            .connectors
+            .create(
+                "sub-jana",
+                serde_json::from_value(json!({
+                    "name": "auto", "segments": ["context"], "writes": true, "autonomous": true,
+                    "scope": [{ "project": "doprava", "access": "write" }],
+                    "expiresAt": "2999-01-01T00:00:00Z",
+                }))
+                .expect("request"),
+                Default::default(),
+                "https://portal.test",
+            )
+            .await
+            .expect("kept");
+        let mut jana = caller(None);
+        jana.identity.client = Some("claude-code".into());
+        jana.identity.username = "jana.kovacova".into();
+        jana.identity.email = Some(PROPOSER.into());
+        jana.identity.name = Some("jana.kovacova".into());
+        let mut opened = vec![json!({ "id": "chg-00000001" })];
+        let waiting = approve_autonomously(&state, &jana, "doprava", &connector, &mut opened).await;
+        assert!(waiting.is_empty(), "{waiting:?}");
+        assert_eq!(opened[0]["approvedVia"], "auto", "{opened:?}");
+        assert!(opened[0]["state"].is_string(), "{opened:?}");
+        assert!(opened[0].get("waits").is_none(), "{opened:?}");
+    }
+
     /// T-5979: a notice the approvers' inbox cannot take is logged; the change stays opened and
     /// the apply goes on (T-7921).
     #[tokio::test]

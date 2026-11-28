@@ -3553,6 +3553,50 @@ mod loop_tests {
         assert_eq!(unpicked.current_path(), Some(Path::FindData));
     }
 
+    /// A continuation whose prior run the store cannot look up goes on without its transcript
+    /// and on no path: the registry refuses the key of a second project the lookup passes.
+    #[tokio::test]
+    async fn a_continuation_whose_prior_run_cannot_be_read_goes_on_without_it() {
+        let scratch = crate::test_db::scratch().await;
+        let mirror = scratch.placed("helsinki").await;
+        mirror.upsert(
+            serde_json::from_value(json!({
+                "apiVersion": "joinedcontext.com/v1alpha1",
+                "kind": "Project",
+                "metadata": { "name": "other", "namespace": crate::permissions::ORG_NAMESPACE },
+                "spec": { "organizationRef": "somewhere" },
+            }))
+            .expect("a project"),
+        );
+        sqlx::raw_sql(
+            "CREATE FUNCTION jc_refuse_other() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$; \
+             CREATE TRIGGER jc_refuse_other BEFORE INSERT ON project_ids FOR EACH ROW \
+             WHEN (NEW.name = 'other') EXECUTE FUNCTION jc_refuse_other()",
+        )
+        .execute(&scratch.pool)
+        .await
+        .expect("trigger");
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.agents = std::sync::Arc::new(crate::agents::store::AgentStore::new(
+            Some(scratch.pool.clone()),
+            mirror,
+        ));
+        conversing(&state).await;
+        assert!(
+            state.agents.events_since("prior", 0).await.is_err(),
+            "the prior run cannot be looked up"
+        );
+        let mut driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.continues = Some("prior".into());
+        driver
+            .drive_conversation(&mut closed_inbox(), deadline())
+            .await
+            .expect("a closed inbox ends the loop");
+        assert_eq!(driver.current_path(), None);
+        scratch.remove().await;
+    }
+
     /// T-7923: a router whose model call fails leaves the conversation on no path, and the
     /// turn after it says its own failure.
     #[tokio::test]

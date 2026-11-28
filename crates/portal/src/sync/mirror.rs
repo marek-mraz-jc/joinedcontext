@@ -209,20 +209,16 @@ pub fn spawn_periodic(
                 peers: &peers,
                 local: &local,
             };
-            match run_once(&shako, &tree, &public_url, &transports, &last_fetch, now).await {
-                Ok(run) => {
-                    for flag in &run.flags {
-                        tracing::warn!(flag = %flag, "foreign model mirror");
-                    }
-                    if !run.proposed.is_empty() {
-                        tracing::info!(
-                            proposed = run.proposed.len(),
-                            unchanged = run.unchanged,
-                            "foreign model mirror opened merge requests"
-                        );
-                    }
-                }
-                Err(err) => tracing::warn!(error = %err, "the foreign model mirror did not run"),
+            let run = run_once(&shako, &tree, &public_url, &transports, &last_fetch, now).await;
+            for flag in &run.flags {
+                tracing::warn!(flag = %flag, "foreign model mirror");
+            }
+            if !run.proposed.is_empty() {
+                tracing::info!(
+                    proposed = run.proposed.len(),
+                    unchanged = run.unchanged,
+                    "foreign model mirror opened merge requests"
+                );
             }
         }
     })
@@ -247,7 +243,7 @@ pub async fn run_once(
     transports: &Transports<'_>,
     last_fetch: &LastFetch,
     now: u64,
-) -> Result<Run, RunError> {
+) -> Run {
     let repository = &tree.repository;
     let mut run = Run::default();
     for (id, resource) in repository.iter() {
@@ -313,7 +309,7 @@ pub async fn run_once(
         }
         last_fetch.set(&key, now);
     }
-    Ok(run)
+    run
 }
 
 /// Where a reference's documents come from.
