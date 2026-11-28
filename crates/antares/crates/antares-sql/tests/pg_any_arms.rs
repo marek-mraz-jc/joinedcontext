@@ -45,6 +45,36 @@ async fn tenant(pool: &sqlx::PgPool, name: &str) -> TenantId {
     t
 }
 
+/// A database of the test's own, for a test that puts DDL on a shared table: `CREATE TRIGGER`
+/// takes SHARE ROW EXCLUSIVE on `entities`, so in the shared database it waits for every
+/// neighbour's open write and, queued, stalls every new one behind it (both 55P03, ci
+/// 46131795730). Dropped by [`drop_own_database`].
+async fn own_database(url: &str, prefix: &str) -> (sqlx::PgPool, sqlx::PgPool, String) {
+    let admin = pg::connect(url, 2).await.expect("connect+migrate");
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let name = format!("antares_{prefix}_{run}");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .expect("own database");
+    let (base, _) = url.rsplit_once('/').expect("a database URL");
+    let pool = pg::connect(&format!("{base}/{name}"), 5)
+        .await
+        .expect("connect+migrate the own database");
+    (admin, pool, name)
+}
+
+async fn drop_own_database(admin: &sqlx::PgPool, pool: sqlx::PgPool, name: &str) {
+    pool.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {name}")))
+        .execute(admin)
+        .await
+        .expect("drop own database");
+}
+
 fn internal(e: NgsiError) -> String {
     match e {
         NgsiError::InternalError(d) => d,
@@ -324,12 +354,12 @@ async fn a_text_query_strips_an_expired_attribute_instance() {
 
 /// An upsert whose create never takes its row (a row a concurrent delete keeps taking away)
 /// is refused after its rounds, never answered as stored; a purge that finds its Tenant gone
-/// by its last step reports it unknown.
+/// by its last step reports it unknown. Its triggers live in a database of its own.
 #[tokio::test(flavor = "multi_thread")]
 async fn an_upsert_that_never_lands_is_refused_and_a_purge_whose_tenant_went_says_so() {
     use sqlx::Executor;
     let url = require_db!();
-    let pool = pg::connect(&url, 5).await.expect("connect");
+    let (admin, pool, name) = own_database(&url, "anyraced").await;
     let store = AnyStore::Pg(PgBackend::new(pool.clone()));
     let t = tenant(&pool, "anyraced").await;
     let id = "urn:ngsi-ld:T:anyraced";
@@ -380,6 +410,8 @@ async fn an_upsert_that_never_lands_is_refused_and_a_purge_whose_tenant_went_say
         "the Tenant went before the last step"
     );
     let _ = store.purge_tenant(&t).await;
+    drop(store);
+    drop_own_database(&admin, pool, &name).await;
 }
 
 /// A database that stops answering (the pool closed under the drain) turns into the generic

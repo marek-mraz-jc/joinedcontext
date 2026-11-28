@@ -25,6 +25,30 @@ macro_rules! require_db {
     };
 }
 
+/// A database of the test's own. The second batch waits on the first one's row locks for the
+/// whole of its transaction, under the pool's 5 s lock_timeout. In the shared database that
+/// transaction ran beside antares-api's query_id_pattern_count_pg, which seeds 205 k rows into
+/// the same `entities` and `entity_values` and ANALYZEs them: every run that overlapped it took
+/// 2.5-6.9 s against 0.6-1.7 s alone, and two of them failed 55P03 "while locking tuple"
+/// (ci 46127454490, 46131795730).
+async fn own_database(url: &str) -> (sqlx::PgPool, sqlx::PgPool, String) {
+    let admin = pg::connect(url, 2).await.expect("connect+migrate");
+    let run = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let name = format!("antares_batchrace_{run}");
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .expect("own database");
+    let (base, _) = url.rsplit_once('/').expect("a database URL");
+    let pool = pg::connect(&format!("{base}/{name}"), 4)
+        .await
+        .expect("connect+migrate the own database");
+    (admin, pool, name)
+}
+
 fn docs(n: usize) -> Vec<(String, serde_json::Value)> {
     (0..n)
         .map(|i| {
@@ -46,21 +70,20 @@ fn docs(n: usize) -> Vec<(String, serde_json::Value)> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_concurrent_batches_over_overlapping_ids_both_succeed() {
     let url = require_db!();
-    let pool = pg::connect(&url, 4).await.expect("pool");
+    let (admin, pool, name) = own_database(&url).await;
     let t = TenantId::new("pgbatchrace").expect("tenant");
     pg::ensure_tenant(&pool, &t).await.expect("tenant row");
     let s = Arc::new(PgEntityStore::new(pool.clone()));
-    sqlx::query("DELETE FROM entities WHERE tenant_id = $1")
-        .bind(t.as_str())
-        .execute(&pool)
-        .await
-        .expect("clean");
-    let items = docs(1500);
+    // 300 Vehicles: the second batch waits for the first one's whole transaction, mostly its
+    // UPDATE and the entity_values trigger. At 1000 rows that UPDATE took up to 0.6 s beside a
+    // neighbour's 205 k-row seed on 4 local cores and passed 5 s on the ci runner; at 200 rows
+    // the wait stayed under 0.1 s on the same load.
+    let items = docs(300);
     s.batch_upsert_replace(&t, &items).await.expect("seed");
     let ids: Vec<String> = items.into_iter().map(|(id, _)| id).collect();
-    // ids 0..1000 and, in reverse, 500..1500: 500 Vehicles in both
-    let first: Vec<String> = ids.iter().take(1000).cloned().collect();
-    let second: Vec<String> = ids.iter().skip(500).rev().cloned().collect();
+    // ids 0..200 and, in reverse, 100..300: 100 Vehicles in both
+    let first: Vec<String> = ids.iter().take(200).cloned().collect();
+    let second: Vec<String> = ids.iter().skip(100).rev().cloned().collect();
 
     let run = |ids: Vec<String>, value: i64| {
         let s = Arc::clone(&s);
@@ -76,14 +99,20 @@ async fn two_concurrent_batches_over_overlapping_ids_both_succeed() {
     let (a, b) = tokio::join!(run(first, 1), run(second, 2));
     for res in [a, b] {
         let res = res.expect("task").expect("the batch commits");
-        assert_eq!(res.len(), 1000);
+        assert_eq!(res.len(), 200);
         assert!(res.iter().all(|r| matches!(r, Some(Ok(())))), "{res:?}");
     }
     let shared = s
-        .get(&t, "urn:ngsi-ld:Vehicle:race-700")
+        .get(&t, "urn:ngsi-ld:Vehicle:race-150")
         .await
         .expect("get")
         .expect("present");
     let speed = shared["speed"][0]["value"].as_i64();
     assert!(matches!(speed, Some(1 | 2)), "one batch's value: {speed:?}");
+    drop(s);
+    pool.close().await;
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {name}")))
+        .execute(&admin)
+        .await
+        .expect("drop own database");
 }
