@@ -252,6 +252,17 @@ async fn a_request_is_approved_in_the_owning_project_and_revoked_there() {
     )
     .await;
     assert!(inbox.text.contains(&id), "{}", inbox.text);
+    // A request still pending has nothing to revoke: 409 names its state.
+    let early = send(
+        &state,
+        "olli",
+        "POST",
+        &format!("/api/v1/projects/{HELSINKI}/access-requests/{id}/revoke"),
+        Some(json!({ "reason": "not granted yet" })),
+    )
+    .await;
+    assert_eq!(early.status, StatusCode::CONFLICT, "{}", early.text);
+    assert!(early.text.contains("not approved"), "{}", early.text);
     let approved = send(
         &state,
         "olli",

@@ -536,6 +536,69 @@ async fn the_project_door_handshake_names_the_server_after_the_projects_key() {
     );
 }
 
+/// A project the registry holds no key for answers the handshake with the plain server name: the
+/// door renames only what the registry places.
+#[tokio::test]
+async fn the_project_door_handshake_of_an_unkeyed_project_keeps_the_plain_name() {
+    let Some(url) = std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+    else {
+        eprintln!("skipped: JC_PORTAL_TEST_DATABASE_URL is not set");
+        return;
+    };
+    let pool = joinedcontext_portal::db::connect(&url)
+        .await
+        .expect("the test database answers and migrates");
+    let project = "mcp-unkeyed-door";
+    let unkeyed = ResourceEnvelope {
+        api_version: API_VERSION.to_string(),
+        kind: "Project".to_string(),
+        metadata: ObjectMeta::new(project, joinedcontext_portal::permissions::ORG_NAMESPACE),
+        spec: json!({ "title": "Unkeyed" }),
+        status: None,
+    };
+    let (mut state, issuer, signer, kid) = setup_state_with(vec![unkeyed]).await;
+    assert!(
+        joinedcontext_portal::project_ids::owned(&pool, project)
+            .await
+            .expect("the registry answers")
+            .is_none(),
+        "{project} must hold no registry key"
+    );
+    state.db = Some(pool);
+    let token = sign_token(
+        &signer,
+        &kid,
+        &issuer,
+        PORTAL_AUDIENCE,
+        "steward.user",
+        &[],
+        &["platform-admins"],
+    );
+    let init = json!({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                      "params": {"protocolVersion": "2026-07-28", "capabilities": {}}});
+    let resp = server::app(state)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/projects/{project}/mcp"))
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header(header::CONTENT_TYPE, "application/json")
+                .body(Body::from(init.to_string()))
+                .expect("a request"),
+        )
+        .await
+        .expect("an answer");
+    assert_eq!(resp.status(), StatusCode::OK);
+    let bytes = resp.into_body().collect().await.expect("a body").to_bytes();
+    let answer: Value = serde_json::from_slice(&bytes).expect("json");
+    let name = answer["result"]["serverInfo"]["name"]
+        .as_str()
+        .expect("a server name");
+    assert!(!name.ends_with(".manage"), "{answer}");
+}
+
 /// The project door's handshake answers a caller who may not read the project as it answers an
 /// unknown project (TEN-13): 404, nothing about the project.
 #[tokio::test]

@@ -3172,6 +3172,14 @@ mod tests {
         })
     }
 
+    /// A run recorded under a class name jc-core no longer parses keeps that name in the manifest
+    /// it publishes, where the App's own check names it, instead of a guessed class.
+    #[test]
+    fn a_run_of_an_unknown_class_publishes_the_class_it_recorded() {
+        let manifest = published_as("not-a-class", serde_json::json!([need(&[])]));
+        assert_eq!(manifest["spec"]["kind"], "not-a-class");
+    }
+
     /// T-3575, AP-148, AP-151: a generated `wasm` App publishes with both toolchains and its own
     /// schema from the template's migrations, and jc-core accepts it; a `ui` App gets neither.
     #[test]

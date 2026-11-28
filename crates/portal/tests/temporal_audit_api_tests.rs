@@ -235,3 +235,27 @@ async fn a_caller_without_read_on_the_space_is_refused_before_the_forge() {
         "the forge was asked for a mapping"
     );
 }
+
+/// A reader bound to one space reads the audit of that space: the project's other pipeline,
+/// which writes a space they may not read, is skipped, not a 404 of the whole audit.
+#[tokio::test]
+async fn a_space_scoped_reader_skips_the_pipelines_of_other_spaces() {
+    let (state, _gitea) = world(file_answer()).await;
+    state.mirror.upsert(envelope(
+        "RoleBinding",
+        "kari-transport-reader",
+        ORG_NAMESPACE,
+        json!({
+            "subjects": [{ "user": "kari@hel.fi" }],
+            "role": "space-reader",
+            "scope": { "project": "helsinki", "contextSpace": "transport" },
+        }),
+    ));
+    let answer = send(&state, person("kari"), "GET", AUDIT, None).await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body: Value = serde_json::from_str(&answer.text).expect("json");
+    let pipelines: Vec<String> = rows(&body).into_iter().map(|r| r.0).collect();
+    assert!(!pipelines.is_empty(), "{body}");
+    assert!(pipelines.iter().all(|p| p == "vehicles"), "{body}");
+    assert!(!answer.text.contains("linked-events"), "{body}");
+}

@@ -490,7 +490,7 @@ mod tests {
             .events_since(&driver.run_id, 0)
             .await
             .expect("events");
-        assert!(all.iter().all(|event| event.kind != "question"));
+        assert!(!format!("{all:?}").contains("\"question\""), "{all:?}");
     }
 
     /// T-7924: in a project with no space to pick, the address still leads on to the target

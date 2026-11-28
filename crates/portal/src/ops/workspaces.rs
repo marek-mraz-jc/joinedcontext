@@ -1444,8 +1444,7 @@ pub async fn update_from_main(
                     }) {
                         Ok(doc) => {
                             recheck(identity, state, project, path, &doc, Op::Update).await?;
-                            let text = serde_norway::to_string(&doc)
-                                .map_err(|e| ApiError::Internal(e.to_string()))?;
+                            let text = serde_norway::to_string(&doc).map_err(ApiError::internal)?;
                             uploads.push((path.clone(), text));
                             merged.push(path.clone());
                         }

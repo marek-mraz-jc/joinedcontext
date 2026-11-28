@@ -795,7 +795,6 @@ fn project_archive(files: &BTreeMap<String, Vec<u8>>, project: &str) -> Result<V
     let folder = format!("projects/{project}/");
     let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default();
-    let failed = |e: zip::result::ZipError| ApiError::Internal(format!("archive failed: {e}"));
     for (path, content) in files.iter().filter(|(p, _)| p.starts_with(&folder)) {
         let rest = &path[folder.len()..];
         let original = if rest == "bundle.yaml"
@@ -806,12 +805,12 @@ fn project_archive(files: &BTreeMap<String, Vec<u8>>, project: &str) -> Result<V
         } else {
             path.clone()
         };
-        writer.start_file(original, options).map_err(failed)?;
         writer
-            .write_all(content)
-            .map_err(|e| ApiError::Internal(format!("archive failed: {e}")))?;
+            .start_file(original, options)
+            .map_err(ApiError::internal)?;
+        writer.write_all(content).map_err(ApiError::internal)?;
     }
-    Ok(writer.finish().map_err(failed)?.into_inner())
+    Ok(writer.finish().map_err(ApiError::internal)?.into_inner())
 }
 
 /// The plan group of the people a bundle names; the slash keeps it apart from any project name.

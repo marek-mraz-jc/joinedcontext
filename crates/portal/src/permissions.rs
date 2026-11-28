@@ -2275,7 +2275,7 @@ fn replaces_only_own_settings(
     let Some(replaced) = state.mirror.get(ORG_NAMESPACE, kind, name) else {
         return Ok(());
     };
-    let replaced = serde_json::to_value(replaced).map_err(|e| ApiError::Internal(e.to_string()))?;
+    let replaced = serde_json::to_value(replaced).map_err(ApiError::internal)?;
     effective.check(kind, verb, Some(&replaced)).map_err(|_| {
         ApiError::Denied(format!(
             "{kind} {name} as it stands belongs to another Organization or to the installation; \

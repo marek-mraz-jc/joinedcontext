@@ -262,8 +262,7 @@ pub(crate) async fn detach_for(
     let shako: &crate::forge::ShakoClient = &shako;
     let (project, name) = named(state, project, name)?;
 
-    let info = resource::by_kind(KIND)
-        .ok_or_else(|| ApiError::Internal("the SyncSource kind is not in the catalogue".into()))?;
+    let info = crate::api::mutate::catalogued(KIND)?;
     let path =
         resource::repository_path(info, &project, None, &name).map_err(ApiError::BadRequest)?;
 

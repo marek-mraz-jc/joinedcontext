@@ -45,7 +45,7 @@ pub async fn get_quality(
     let reads_entities = effective.may_read_in("Entity", Some(&space));
     serde_json::to_value(for_caller(quality, reads_entities))
         .map(Json)
-        .map_err(|err| ApiError::Internal(err.to_string()))
+        .map_err(ApiError::internal)
 }
 
 /// The space's manifest spec when the caller may read the space, else the 404 every unreadable

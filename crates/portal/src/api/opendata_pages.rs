@@ -277,8 +277,7 @@ async fn propose(
     manifest: crate::resource::ResourceEnvelope,
     texts: Vec<Value>,
 ) -> Result<Response, ApiError> {
-    let mut manifest = serde_json::to_value(&manifest)
-        .map_err(|e| ApiError::Internal(format!("the Organization manifest: {e}")))?;
+    let mut manifest = serde_json::to_value(&manifest).map_err(ApiError::internal)?;
     if let Some(object) = manifest.as_object_mut() {
         object.remove("status");
     }

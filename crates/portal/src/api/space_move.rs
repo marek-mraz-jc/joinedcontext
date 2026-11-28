@@ -103,8 +103,7 @@ pub async fn start_move(
     let forge = state
         .forge_for(&project)
         .ok_or_else(|| unavailable("the Portal has no forge"))?;
-    let kind = crate::resource::by_kind("ContextSpace")
-        .ok_or_else(|| ApiError::Internal("ContextSpace is not in the catalogue".into()))?;
+    let kind = crate::api::mutate::catalogued("ContextSpace")?;
     let path = crate::api::mutate::resolve_repo_path(&envelope, kind, &project)?;
     let plan = Plan {
         tenant: crate::spaces::tenant(&state.mirror, &project, &space)
