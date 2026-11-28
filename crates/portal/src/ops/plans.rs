@@ -1974,19 +1974,7 @@ mod tests {
             base: "absent".into(),
             model,
         };
-        let model = ModelPlan {
-            source: "id: https://hel.fi/air\nname: air\n".into(),
-            checked: SourceDryRunResult {
-                severity: "patch".into(),
-                changes: Vec::new(),
-                version: "1.0.1".into(),
-                artifacts: Default::default(),
-            },
-            next_val: Value::Null,
-            imports: BTreeMap::new(),
-            creating: false,
-            base: "etag".into(),
-        };
+        let model = air_model();
         store.keep(
             "p1".into(),
             Plan {
@@ -2008,6 +1996,77 @@ mod tests {
         assert!(
             store.peek("p1", "eva", "helsinki", now).is_none(),
             "another person's plan"
+        );
+    }
+
+    fn air_model() -> ModelPlan {
+        ModelPlan {
+            source: "id: https://hel.fi/air\nname: air\n".into(),
+            checked: SourceDryRunResult {
+                severity: "patch".into(),
+                changes: Vec::new(),
+                version: "1.0.1".into(),
+                artifacts: Default::default(),
+            },
+            next_val: Value::Null,
+            imports: BTreeMap::new(),
+            creating: false,
+            base: "etag".into(),
+        }
+    }
+
+    /// JC2-11: the paired tab opens a planned model's editor on its LinkML source, not its
+    /// manifest; a kept plan that changes nothing opens nothing and says so.
+    #[test]
+    fn the_tab_opens_a_planned_model_on_its_source_and_an_empty_plan_on_nothing() {
+        let state = AppState::new(crate::config::Config::for_tests(), None);
+        let admin = crate::ops::testkit::admin(&state);
+        let now = TimestampTz::now();
+        let keep = |id: &str, items: Vec<Planned>| {
+            state.plans.keep(
+                id.into(),
+                Plan {
+                    owner: admin.identity.subject.clone(),
+                    connector: None,
+                    project: "helsinki".into(),
+                    workspace: None,
+                    items,
+                    expires_at: now + jiff::SignedDuration::from_mins(5),
+                },
+                now,
+            )
+        };
+        keep(
+            "p-model",
+            vec![Planned {
+                kind: "DataModel".into(),
+                plural: "datamodels",
+                home: "helsinki".into(),
+                name: "air".into(),
+                manifest: Some(json!({ "kind": "DataModel" })),
+                base: "absent".into(),
+                model: Some(air_model()),
+            }],
+        );
+        keep("p-empty", Vec::new());
+        let asker = crate::agents::oneshot::ui_actions::Asker {
+            state: &state,
+            identity: &admin.identity,
+            project: "helsinki",
+            connector: None,
+        };
+        let (frame, payload) = asker
+            .show_diff(&json!({ "planId": "p-model" }))
+            .expect("opened");
+        assert_eq!(frame, "navigate");
+        assert_eq!(
+            payload["prefill"],
+            json!({ "source": "id: https://hel.fi/air\nname: air\n" }),
+            "{payload}"
+        );
+        assert_eq!(
+            asker.show_diff(&json!({ "planId": "p-empty" })),
+            Err("plan 'p-empty' changes nothing".to_owned())
         );
     }
 
@@ -2580,6 +2639,123 @@ mod tests {
             approve_autonomously(&state, &caller(None), "doprava", &connector, &mut opened).await;
         assert!(waiting.is_empty(), "{waiting:?}");
         assert_eq!(opened, [json!({ "error": "refused" })]);
+    }
+
+    /// Under a ceiling that lets it, an autonomous connector's change to a DataModel is approved
+    /// as its owner: the row carries the change's state and the connector, and nothing waits.
+    #[tokio::test]
+    async fn an_autonomous_apply_approves_its_owners_data_model() {
+        use base64::Engine;
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, ResponseTemplate};
+        const PROPOSER: &str = "jana.kovacova@banskabystrica.sk";
+        let server = wiremock::MockServer::start().await;
+        let repo = "/odata/Repositories(Owner='test-owner',Name='test-repo')";
+        let ok = |body: Value| ResponseTemplate::new(200).set_body_json(body);
+        let yaml = format!(
+            "apiVersion: {}\nkind: DataModel\nmetadata:\n  name: datamodel-x\n  namespace: doprava\n\
+             spec: {{\"version\": \"1.0.0\", \"linkml\": \"models/air.linkml.yaml\", \"lifecycle\": \"draft\"}}\n",
+            crate::resource::API_VERSION
+        );
+        let info = crate::resource::by_kind("DataModel").expect("a served kind");
+        let file =
+            crate::resource::repository_path(info, "doprava", None, "datamodel-x").expect("a path");
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/Shako.File(Path=@p,Ref=@r)")))
+            .respond_with(ok(json!({
+                "Sha": "blob-1",
+                "Content": base64::engine::general_purpose::STANDARD.encode(&yaml)
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(1)")))
+            .respond_with(ok(json!({
+                "Number": 1, "HtmlUrl": "https://shako.example.sk/pulls/1", "State": "open",
+                "Title": "create DataModel", "Head": "portal/create-datamodel-x-11111111",
+                "HeadSha": "head-1", "Base": "main", "CreatedAt": "2026-11-03T05:14:22Z",
+                "Author": "jana.kovacova", "AuthorName": "jana.kovacova",
+                "AuthorEmail": PROPOSER, "Mergeable": true, "Merged": false
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path(format!("{repo}/PullRequests(1)/Files")))
+            .respond_with(ok(
+                json!({ "value": [{ "Filename": file, "Status": "added" }] }),
+            ))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(format!("{repo}/PullRequests(1)/Shako.Merge")))
+            .respond_with(ok(json!({})))
+            .mount(&server)
+            .await;
+        let client = crate::forge::ShakoClient::new(
+            server.uri().parse().expect("url"),
+            "test-owner",
+            "test-repo",
+            "token-xyz",
+        )
+        .expect("client");
+        let state = AppState::new(crate::config::Config::for_tests(), None)
+            .with_shako(std::sync::Arc::new(client));
+        let org = |kind: &str, name: &str, spec: Value| crate::resource::ResourceEnvelope {
+            api_version: crate::resource::API_VERSION.to_owned(),
+            kind: kind.to_owned(),
+            metadata: crate::resource::ObjectMeta::new(name, crate::permissions::ORG_NAMESPACE),
+            spec,
+            status: None,
+        };
+        state.mirror.upsert(org(
+            "Role",
+            "admin-role",
+            json!({ "rules": [{ "kinds": ["DataModel"], "verbs": ["read", "propose", "approve", "delete"] }] }),
+        ));
+        state.mirror.upsert(org(
+            "RoleBinding",
+            "admin-binding",
+            json!({ "subjects": [{ "user": PROPOSER }], "role": "admin-role",
+                    "scope": { "organization": "bb" } }),
+        ));
+        state.mirror.upsert(org(
+            "Group",
+            "stewards",
+            json!({ "members": [{ "user": "jana.kovacova" }] }),
+        ));
+        state.mirror.upsert(org(
+            "DelegationPolicy",
+            "stewards",
+            json!({ "subjects": [{ "kind": "Group", "name": "stewards" }],
+                    "projects": ["doprava"], "segments": ["context"],
+                    "writes": true, "autonomous": true }),
+        ));
+        let connector: crate::connectors::Connector = state
+            .connectors
+            .create(
+                "sub-jana",
+                serde_json::from_value(json!({
+                    "name": "auto", "segments": ["context"], "writes": true, "autonomous": true,
+                    "scope": [{ "project": "doprava", "access": "write" }],
+                    "expiresAt": "2999-01-01T00:00:00Z",
+                }))
+                .expect("request"),
+                Default::default(),
+                "https://portal.test",
+            )
+            .await
+            .expect("kept");
+        let mut jana = caller(None);
+        jana.identity.client = Some("claude-code".into());
+        jana.identity.username = "jana.kovacova".into();
+        jana.identity.email = Some(PROPOSER.into());
+        jana.identity.name = Some("jana.kovacova".into());
+        let mut opened = vec![json!({ "id": "chg-00000001" })];
+        let waiting = approve_autonomously(&state, &jana, "doprava", &connector, &mut opened).await;
+        assert!(waiting.is_empty(), "{waiting:?}");
+        assert_eq!(opened[0]["approvedVia"], "auto", "{opened:?}");
+        assert!(opened[0]["state"].is_string(), "{opened:?}");
+        assert!(opened[0].get("waits").is_none(), "{opened:?}");
     }
 
     /// T-5979: a notice the approvers' inbox cannot take is logged; the change stays opened and
@@ -3475,9 +3651,9 @@ mod tests {
         );
     }
 
-    /// A removal into a workspace commits on the workspace's branch and opens no Change (CC-76).
-    #[tokio::test]
-    async fn a_removal_into_a_workspace_commits_on_its_branch() {
+    /// A forge that takes a commit on workspace `w1`'s branch, with ContextSpace `parking` held
+    /// and the workspace opened.
+    async fn workspace_world() -> (wiremock::MockServer, AppState) {
         use base64::Engine as _;
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -3538,6 +3714,13 @@ mod tests {
             })
             .await
             .expect("a workspace");
+        (server, state)
+    }
+
+    /// A removal into a workspace commits on the workspace's branch and opens no Change (CC-76).
+    #[tokio::test]
+    async fn a_removal_into_a_workspace_commits_on_its_branch() {
+        let (_server, state) = workspace_world().await;
         let item = removal_of(
             "ContextSpace",
             "spaces",
@@ -3549,6 +3732,78 @@ mod tests {
             matches!(&opened, Ok(ProposeOutcome::Workspace(commit))
                 if commit.workspace == "w1" && commit.branch == "workspace/w1"),
             "{opened:?}"
+        );
+    }
+
+    /// An apply whose first change does not open answers that change's own error; one whose later
+    /// change does not open is a 409 naming the change and what was opened before it.
+    #[tokio::test]
+    async fn an_apply_that_stops_names_the_change_and_what_opened_before_it() {
+        let (_server, state) = workspace_world().await;
+        held(
+            &state,
+            "ContextSpace",
+            "blocked",
+            "doprava",
+            json!({ "isSandbox": true }),
+        );
+        held(
+            &state,
+            "Endpoint",
+            "counters",
+            "doprava",
+            json!({ "contextSpaceRef": { "kind": "ContextSpace", "name": "blocked" } }),
+        );
+        let removal = |name: &str| {
+            removal_of(
+                "ContextSpace",
+                "spaces",
+                name,
+                &etag(&state, "doprava", "ContextSpace", name),
+            )
+        };
+        let kept = |items: Vec<Planned>, workspace: Option<&str>| {
+            let id = new_id();
+            state.plans.keep(
+                id.clone(),
+                Plan {
+                    owner: "sub-jana".into(),
+                    connector: None,
+                    project: "doprava".into(),
+                    workspace: workspace.map(str::to_owned),
+                    items,
+                    expires_at: TimestampTz::now() + jiff::SignedDuration::from_mins(5),
+                },
+                TimestampTz::now(),
+            );
+            ApplyInput { plan_id: id }
+        };
+        let named = "1 dependent resource blocks deletion: Endpoint counters";
+        let first = apply(
+            &steward(),
+            &state,
+            "doprava",
+            kept(vec![removal("blocked")], None),
+        )
+        .await;
+        assert!(
+            matches!(&first, Err(OpError::Api(ApiError::Conflict(why))) if why.starts_with(named)),
+            "{first:?}"
+        );
+        let later = apply(
+            &steward(),
+            &state,
+            "doprava",
+            kept(vec![removal("parking"), removal("blocked")], Some("w1")),
+        )
+        .await;
+        assert!(
+            matches!(&later, Err(OpError::Api(ApiError::Conflict(why)))
+                if why.starts_with("ContextSpace blocked was not applied (")
+                    && why.contains(named)
+                    && why.contains("these were: [")
+                    && why.contains("workspace/w1")),
+            "{later:?}"
         );
     }
 

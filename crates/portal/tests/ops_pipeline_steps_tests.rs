@@ -941,6 +941,51 @@ async fn another_projects_source_is_not_listened_to_and_listening_is_rate_limite
     );
 }
 
+/// A pipeline sent inline without a name is refused at its metadata before the runner is asked,
+/// by both the try and the test.
+#[tokio::test]
+async fn a_nameless_inline_pipeline_is_refused_before_the_runner() {
+    let runner = runner().await;
+    let state = state("nameless", Some(&runner));
+    let pipeline = json!({
+        "apiVersion": "joinedcontext.com/v1alpha1",
+        "kind": "Pipeline",
+        "metadata": {},
+        "spec": {
+            "class": "resident",
+            "source": { "dataSourceRef": { "kind": "DataSource", "name": "broker" } },
+            "compute": { "kind": "bloblang", "bloblang": "root.id = this.VP.veh.string()" },
+            "targetEndpoint": "urn:ngsi-ld:Endpoint:hel.fi:bikes:bikes-write"
+        }
+    });
+    for (operation, body) in [
+        (
+            "jc_pipeline_try_mapping",
+            json!({ "pipeline": pipeline, "messages": [{ "VP": { "veh": 1 } }] }),
+        ),
+        (
+            "jc_pipeline_test",
+            json!({ "pipeline": pipeline, "sample": { "text": "{}", "format": "json" } }),
+        ),
+    ] {
+        let uri = op("nameless", operation);
+        let answer = send(&state, person("dev"), "POST", &uri, Some(body)).await;
+        assert_eq!(answer.status, StatusCode::BAD_REQUEST, "{}", answer.text);
+        assert!(
+            answer.text.contains("missing field `name`"),
+            "{operation}: {}",
+            answer.text
+        );
+    }
+    let asked: Vec<String> = common::stream_requests(&runner)
+        .await
+        .iter()
+        .filter(|r| r.method.as_str() == "POST")
+        .map(|r| r.url.path().to_owned())
+        .collect();
+    assert!(asked.is_empty(), "{asked:?}");
+}
+
 #[tokio::test]
 async fn streamed_messages_are_tried_one_each_and_bounded() {
     let runner = runner().await;

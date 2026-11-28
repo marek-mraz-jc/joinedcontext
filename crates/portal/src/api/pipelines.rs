@@ -1421,13 +1421,13 @@ pub async fn retry_rejected(
     let linkml = state.model_schemas.stage_linkml(&project, &space);
     crate::pipeline_validation::insert_stage(&mut config, &schema, linkml.as_deref(), &sink);
     // What the replay writes is a line of the pipeline's log like any run's (PL-62).
-    if let Some(output) = config.get_mut("output") {
-        let outcomes = format!(
-            "{}/internal/pipelines/{project}/{name}/outcomes",
-            internal.trim_end_matches('/')
-        );
-        *output = crate::pipeline_log::with_outcomes(output.take(), &outcomes);
-    }
+    // replay_stream's object always names its output.
+    let outcomes = format!(
+        "{}/internal/pipelines/{project}/{name}/outcomes",
+        internal.trim_end_matches('/')
+    );
+    let output = &mut config["output"];
+    *output = crate::pipeline_log::with_outcomes(output.take(), &outcomes);
     // The internal listener admits the project's own client only (T-3193, T-4038), or with
     // pipeline identity the pipeline's own, which the replay then presents everywhere (T-4044).
     crate::reconciler::streams::own_credential(&mut config, &project);

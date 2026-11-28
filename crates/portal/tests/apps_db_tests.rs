@@ -964,3 +964,43 @@ async fn a_keyed_projects_files_are_exported_from_both_prefixes() {
     assert!(listed.contains(&keyed), "{listed:?}");
     assert_eq!(schema_left(&w, &id).await, 0);
 }
+
+/// A project the registry holds no key for is retired from its old prefix alone.
+#[tokio::test]
+async fn an_unkeyed_projects_files_are_exported_from_the_old_prefix_alone() {
+    let portal = joinedcontext_portal::db::connect(
+        &std::env::var("JC_PORTAL_TEST_DATABASE_URL")
+            .expect("set JC_PORTAL_TEST_DATABASE_URL to the Portal's test database"),
+    )
+    .await
+    .expect("connect + migrate");
+    let w = world("unkeyed").await;
+    let project = w.project("p-unkeyed");
+    let (id, shard) = published(&w, &project, "notes").await;
+    let store = store_with_one_file(shard, &id, 200).await;
+    let mut wasm = wasm_apps(&w, &store);
+    wasm.keys = Some(portal);
+    wasm.retire(&project, "notes", "20261008T130000Z")
+        .await
+        .expect("retired");
+    let listed: Vec<String> = store
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| r.method.as_str() == "GET")
+        .flat_map(|r| {
+            r.url
+                .query_pairs()
+                .filter(|(key, _)| key == "prefix")
+                .map(|(_, value)| value.into_owned())
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert_eq!(
+        listed,
+        [joinedcontext_portal::apps::files::legacy_prefix(shard, &id)],
+        "only the old prefix"
+    );
+    assert_eq!(schema_left(&w, &id).await, 0);
+}

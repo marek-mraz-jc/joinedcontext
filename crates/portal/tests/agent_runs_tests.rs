@@ -4423,6 +4423,17 @@ async fn an_unattended_run_publishes_over_its_app_and_keeps_waiting() {
         .expect("run");
     assert_eq!(stored.status, "awaiting_approval");
     assert_eq!(stored.merge_request, None, "{change}");
+    // The operations door publishes the same run and answers the Change itself, not a response.
+    let (status, proposed) = call(
+        &app,
+        &cookie,
+        Method::POST,
+        &format!("/api/v1/projects/{PROJECT}/ops/jc_run_publish"),
+        Some(json!({ "id": run.id })),
+    )
+    .await;
+    assert!(status.is_success(), "{status} {proposed}");
+    assert_eq!(proposed["change"]["kind"], "Change", "{proposed}");
     std::mem::forget(server);
 }
 

@@ -57,8 +57,13 @@ async fn file(server: &MockServer, repo: &str, file: &str, git_ref: &str, body: 
 /// propose in the organization, `petra` in the project alone, `cyril` only read the project, and
 /// nobody else holds anything.
 async fn world() -> (MockServer, AppState) {
+    world_with(ENTRY_YAML).await
+}
+
+/// [`world`] whose registry entry on `main` is `entry`.
+async fn world_with(entry: &str) -> (MockServer, AppState) {
     let server = forge().await;
-    file(&server, REPO, ENTRY, "main", ENTRY_YAML).await;
+    file(&server, REPO, ENTRY, "main", entry).await;
     file(
         &server,
         PROJECT_REPO,
@@ -225,6 +230,23 @@ async fn a_tag_is_pinned_by_one_red_lane_organization_change() {
             .all(|w| !w.contains(PROJECT_REPO)),
         "the project repository is only read"
     );
+}
+
+/// A registry entry whose spec is a YAML list still loads as a ProjectSpec (serde reads a struct
+/// from a sequence), but has no members to repoint: a 500 that names nothing inside, and nothing
+/// is written.
+#[tokio::test]
+async fn a_registry_entry_whose_spec_is_a_list_is_refused_by_its_path() {
+    let listed = "apiVersion: joinedcontext.com/v1alpha1\nkind: Project\nmetadata:\n  name: \
+                  ovzdusie\n  namespace: org\nspec: [bb, null, null, null, null, {name: ovzdusie}, main]\n";
+    let (server, state) = world_with(listed).await;
+    let answer = repoint(&state, "vlasta", json!({ "ref": "v0.2.0" })).await;
+    refused(
+        &answer,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Unexpected internal error",
+    );
+    assert!(written_entries(&server).await.is_empty());
 }
 
 /// A ref the repository does not hold is refused by name before anything is written, and so is a

@@ -486,6 +486,30 @@ async fn an_operator_reads_every_organizations_addresses_with_its_sign_in() {
     assert!(items[1].get("organizationId").is_none(), "{}", read.text);
 }
 
+/// On an Organization's own host the operator reads that Organization's addresses alone.
+#[tokio::test]
+async fn on_an_organizations_own_host_only_its_addresses_are_read() {
+    let state = addresses_world();
+    let nitra = joinedcontext_portal::organization_host::OrganizationHost {
+        organization: "nitra".to_owned(),
+        base: "https://portal.nitra.sk".parse().expect("url"),
+    };
+    let read = joinedcontext_portal::organization_host::scope(
+        nitra,
+        send(&state, operator(&state.config), "GET", ADDRESSES, None),
+    )
+    .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+    let items = body(&read.text)["items"].clone();
+    let names: Vec<&str> = items
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter_map(|item| item["organization"].as_str())
+        .collect();
+    assert_eq!(names, ["nitra"], "{}", read.text);
+}
+
 #[tokio::test]
 async fn a_person_reads_only_the_addresses_of_their_own_organization() {
     let state = addresses_world();

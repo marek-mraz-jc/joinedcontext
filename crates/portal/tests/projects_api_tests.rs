@@ -675,6 +675,91 @@ async fn anyone_plus_lax_merges_the_project_at_once_and_the_message_says_who_did
     let _ = std::fs::remove_file(&branding);
 }
 
+/// A lax installation with a reconciler starts a sync after the merge, whose failure is only
+/// logged; one with no reconciler merges the same way, with no sync.
+#[tokio::test]
+async fn anyone_plus_lax_syncs_after_the_merge_and_merges_without_a_syncer() {
+    use joinedcontext_portal::forge::ShakoClient;
+
+    for with_syncer in [true, false] {
+        let shako = forge_with_no_open_projects().await;
+        Mock::given(http_method("GET"))
+            .and(url_path(format!("{REPO}/Branches('main')")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Name": "main", "HeadSha": "c0ffee" })),
+            )
+            .mount(&shako)
+            .await;
+        Mock::given(http_method("GET"))
+            .and(url_path(format!(
+                "{REPO}/Shako.Tree(Ref=@r,Recursive=true,Skip=@s,Top=@t)"
+            )))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({ "Sha": "tree", "Truncated": false, "Tree": [] })),
+            )
+            .with_priority(1)
+            .mount(&shako)
+            .await;
+        let branding = std::env::temp_dir().join(format!(
+            "jc-branding-{}-{with_syncer}.yaml",
+            std::process::id()
+        ));
+        std::fs::write(&branding, "instanceName: \"Test\"\nvalidation: lax\n")
+            .expect("branding file");
+        let mut config = Config::for_tests();
+        config.branding_file = Some(branding.to_string_lossy().into_owned());
+        let client = Arc::new(
+            ShakoClient::new(
+                shako.uri().parse().expect("mock url"),
+                "test-owner",
+                "test-repo",
+                "token-xyz",
+            )
+            .expect("client"),
+        );
+        let syncer = Arc::new(joinedcontext_portal::reconciler::Syncer::new(
+            Arc::clone(&client),
+            Arc::new(Mirror::new()),
+        ));
+        let mut state = AppState::new(config, None).with_shako(client);
+        if with_syncer {
+            state = state.with_syncer(Arc::clone(&syncer));
+        }
+        organization(&state, "anyone");
+
+        let (status, body) = open(&state, person("nobody"), json!({ "name": "doprava" })).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        let change: Value = serde_json::from_str(&body).expect("a change");
+        assert_eq!(change["status"]["phase"], "Merged", "{body}");
+        if with_syncer {
+            let mut synced = None;
+            for _ in 0..300 {
+                let status = syncer.status();
+                if status.last_sync.is_some() || status.last_error.is_some() {
+                    synced = Some(status);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let status = synced.expect("a sync ran after the merge");
+            // The forge's tree holds no manifest, so that sync fails; the opening stays merged.
+            assert_eq!(
+                status.last_error.as_deref(),
+                Some("no manifests found in repository")
+            );
+        } else {
+            assert_eq!(
+                syncer.status().last_sync,
+                None,
+                "nothing syncs without a reconciler"
+            );
+        }
+        let _ = std::fs::remove_file(&branding);
+    }
+}
+
 #[tokio::test]
 async fn anyone_on_a_strict_installation_waits_for_a_person() {
     let shako = forge_with_no_open_projects().await;

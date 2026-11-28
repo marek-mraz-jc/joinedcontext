@@ -1301,9 +1301,25 @@ impl Read<'_> {
         options: &QueryOptions,
         rows: Vec<Value>,
     ) -> Result<(Answer, Value), Refused> {
+        self.collection_of(set, context, path, options, rows, options)
+            .await
+    }
+
+    /// [`Self::collection`] read with `options` for the request `asked`: the `$skiptoken` is
+    /// signed over `asked` and the nextLink carries it, so a page read without the request's
+    /// `$expand` (which the Portal answers itself) or `$select` still pages that request.
+    async fn collection_of(
+        &self,
+        set: &str,
+        context: &str,
+        path: &[Segment],
+        options: &QueryOptions,
+        rows: Vec<Value>,
+        asked: &QueryOptions,
+    ) -> Result<(Answer, Value), Refused> {
         let tags = etags(&rows);
         let table = self.table(set, rows, options)?;
-        let query_text = canonical(path, options);
+        let query_text = canonical(path, asked);
         let mut options = options.clone();
         if let Some(token) = options.skiptoken.take() {
             let inner = verify(
@@ -1337,7 +1353,7 @@ impl Read<'_> {
             body.insert("@odata.count".into(), json!(count));
         }
         if let Some(next) = answer.next.as_ref() {
-            let mut next_options = options.clone();
+            let mut next_options = asked.clone();
             next_options.skiptoken = Some(sign(
                 &self.org,
                 &self.caller.identity.subject,
@@ -1610,7 +1626,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 };
             }
             let (answer, mut body) = match read
-                .collection(PROJECTS, PROJECTS, &path, &plain, rows.clone())
+                .collection_of(PROJECTS, PROJECTS, &path, &plain, rows.clone(), &options)
                 .await
             {
                 Ok(done) => done,
@@ -1622,7 +1638,7 @@ async fn resource(read: &Read<'_>, target: &str) -> Response {
                 let mut named = plain.clone();
                 named.select = None;
                 let names = match read
-                    .collection(PROJECTS, PROJECTS, &path, &named, rows)
+                    .collection_of(PROJECTS, PROJECTS, &path, &named, rows, &options)
                     .await
                 {
                     Ok((a, _)) => a.rows,
@@ -4214,6 +4230,33 @@ mod tests {
         assert_eq!(misbound.status(), StatusCode::NOT_FOUND);
         let text = text_of(misbound).await;
         assert!(text.contains("is bound to a project"), "{text}");
+    }
+
+    /// An `ifMatch` that is no header value (a line break in it) is refused 400 naming the door,
+    /// before the REST door is reached.
+    #[tokio::test]
+    async fn a_portal_door_refuses_an_if_match_that_is_no_header_value() {
+        let state = hel_state();
+        let headers = HeaderMap::new();
+        let answer = portal_door(
+            call_of(
+                &state,
+                Front::Portal,
+                &headers,
+                br#"{"plural":"endpoints","name":"air","ifMatch":"\"a\"\n\"b\"","body":"kind: Endpoint"}"#,
+            ),
+            "projects('helsinki')",
+            "portal_manifest_replace",
+            "",
+            false,
+        )
+        .await;
+        assert_eq!(answer.status(), StatusCode::BAD_REQUEST);
+        let text = text_of(answer).await;
+        assert!(
+            text.contains("portal_manifest_replace: a parameter is no valid address"),
+            "{text}"
+        );
     }
 
     /// T-7918: a read that would hold more than [`MAX_ROWS`] rows is refused 400 with the

@@ -320,7 +320,6 @@ async fn pass(
         now,
     )
     .await
-    .expect("the pass runs")
 }
 
 #[tokio::test]
@@ -607,8 +606,7 @@ async fn a_reference_the_endpoint_does_not_share_is_never_read() {
         &last_fetch,
         now,
     )
-    .await
-    .expect("the pass runs");
+    .await;
     assert_eq!(run.flags.len(), 1, "{:?}", run.flags);
     assert!(run.flags[0].contains("EP-15"), "{:?}", run.flags);
     assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing is read");
@@ -622,8 +620,7 @@ async fn a_reference_the_endpoint_does_not_share_is_never_read() {
         &last_fetch,
         now + 60,
     )
-    .await
-    .expect("the pass runs");
+    .await;
     assert!(
         next_tick.flags.is_empty(),
         "a minute later: {:?}",
@@ -637,8 +634,7 @@ async fn a_reference_the_endpoint_does_not_share_is_never_read() {
         &last_fetch,
         now + 3_600,
     )
-    .await
-    .expect("the pass runs");
+    .await;
     assert_eq!(an_hour.flags.len(), 1, "an hour later it is tried again");
 }
 
@@ -678,8 +674,7 @@ async fn a_shared_endpoint_is_read_in_process_and_proposed_in_the_project_reposi
         &LastFetch::default(),
         1_757_000_000,
     )
-    .await
-    .expect("the pass runs");
+    .await;
 
     assert_eq!(run.proposed.len(), 1, "flags: {:?}", run.flags);
     assert_eq!(
@@ -726,4 +721,205 @@ async fn the_timer_mirrors_the_tree_the_last_sync_accepted() {
     task.abort();
     assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
     assert!(recorded.writes.lock().expect("the write log").is_empty());
+}
+
+/// A manifest whose metadata carries a member the Portal's view does not know is held neither
+/// as served nor as refused: the sync goes on with the rest of the repository.
+#[tokio::test]
+async fn a_manifest_the_portal_view_cannot_hold_is_passed_by() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::store::Mirror;
+    let info = joinedcontext_portal::resource::by_kind("ContextSpace").expect("a served kind");
+    let odd_path = joinedcontext_portal::resource::repository_path(info, "bb", Some("odd"), "odd")
+        .expect("a path");
+    let odd = "apiVersion: joinedcontext.com/v1alpha1\n\
+               kind: ContextSpace\n\
+               metadata:\n  name: odd\n  namespace: bb\n  uid: 7f1c\n\
+               spec: {}\n"
+        .to_owned();
+    let files = [reference(), (odd_path.as_str(), odd)];
+    let (server, _recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let syncer = Syncer::new(Arc::clone(&shako), Arc::clone(&mirror));
+    syncer.sync_once().await.expect("the repository loads");
+    assert!(
+        mirror.get("bb", "SharedSpaceReference", "peer").is_some(),
+        "the rest is served"
+    );
+    assert!(mirror.get("bb", "ContextSpace", "odd").is_none());
+}
+
+/// CC-03: a replica that does not reconcile mirrors nothing on its timer, even a reference the
+/// accepted tree admits: the leader alone opens merge requests.
+#[tokio::test]
+async fn a_follower_s_timer_mirrors_nothing() {
+    use joinedcontext_portal::reconciler::{Leadership, Syncer};
+    use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use joinedcontext_portal::store::Mirror;
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let unreached = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+        .expect("a lazy pool");
+    let syncer = Arc::new(
+        Syncer::new(Arc::clone(&shako), Arc::clone(&mirror))
+            .with_leadership(Arc::new(Leadership::reconciler(unreached))),
+    );
+    syncer.sync_once().await.expect("the repository loads");
+    mirror.upsert(ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Endpoint".to_owned(),
+        metadata: ObjectMeta::new("air", "ovzdusie"),
+        spec: json!({ "slug": SLUG, "audience": "public" }),
+        status: None,
+    });
+    assert!(!syncer.is_leader(), "a claim never acquired leads nothing");
+    assert!(
+        !Tree::of(&syncer, &mirror)
+            .expect("the accepted tree")
+            .admitted
+            .is_empty(),
+        "the reference is admitted"
+    );
+    let peer = Arc::new(FakePeer::new());
+    let task = joinedcontext_portal::sync::mirror::spawn_periodic(
+        shako,
+        syncer,
+        mirror,
+        PUBLIC_URL.to_owned(),
+        peers(&peer),
+        peers(&peer),
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    task.abort();
+    assert_eq!(peer.fetches.load(Ordering::Relaxed), 0, "nothing was read");
+    assert!(recorded.writes.lock().expect("the write log").is_empty());
+}
+
+/// DM-48: of a peer's two models, the one whose pin is current is left out of the commit and
+/// the new one is proposed alone.
+#[tokio::test]
+async fn a_pass_commits_only_the_model_that_changed() {
+    const WATER: &str = "id: https://peer.example/water\nname: water\n";
+    let base = format!("{PUBLIC_URL}/api/endpoint/{SLUG}");
+    let mut peer = FakePeer::new();
+    peer.documents.insert(
+        format!("{base}/schema/index.json"),
+        json!({
+            "models": [
+                {
+                    "name": "air", "semver": "1.2.0", "version": 1,
+                    "types": ["AirQualityObserved"],
+                    "artifacts": {
+                        "model.linkml.yaml": { "sha256": digest(LINKML) },
+                        "context.jsonld": { "sha256": digest(CONTEXT) },
+                    },
+                },
+                {
+                    "name": "water", "semver": "2.0.0", "version": 2,
+                    "types": ["WaterQualityObserved"],
+                    "artifacts": {
+                        "model.linkml.yaml": { "sha256": digest(WATER) },
+                        "context.jsonld": { "sha256": digest(CONTEXT) },
+                    },
+                },
+            ]
+        })
+        .to_string()
+        .into_bytes(),
+    );
+    peer.documents.insert(
+        format!("{base}/schema/v2/model.linkml.yaml"),
+        WATER.as_bytes().to_vec(),
+    );
+    peer.documents.insert(
+        format!("{base}/schema/v2/context.jsonld"),
+        CONTEXT.as_bytes().to_vec(),
+    );
+    let peer = Arc::new(peer);
+    let files = [reference(), already_mirrored(&digest(LINKML))];
+    let (server, recorded) = forge(&files).await;
+    let run = pass(
+        &client(&server),
+        &files,
+        &peer,
+        &LastFetch::default(),
+        1_757_000_000,
+    )
+    .await;
+    assert_eq!(run.proposed.len(), 1, "flags: {:?}", run.flags);
+    let writes = recorded.writes.lock().expect("the write log").clone();
+    let paths: Vec<&str> = writes.iter().map(|(path, _)| path.as_str()).collect();
+    assert!(
+        paths.iter().any(|path| path.contains("peer-water")),
+        "{paths:?}"
+    );
+    assert!(
+        paths.iter().all(|path| !path.contains("peer-air")),
+        "the current pin is not rewritten: {paths:?}"
+    );
+}
+
+/// EP-15: once the mirror holds an Endpoint of another project whose audience admits `bb`, the
+/// accepted tree admits the reference that names it by slug; one that admits only other projects
+/// admits nothing.
+#[tokio::test]
+async fn the_accepted_tree_admits_a_reference_whose_endpoint_shares_with_its_project() {
+    use joinedcontext_portal::reconciler::Syncer;
+    use joinedcontext_portal::resource::{ObjectMeta, ResourceEnvelope, API_VERSION};
+    use joinedcontext_portal::store::Mirror;
+    let files = [reference()];
+    let (server, _recorded) = forge(&files).await;
+    let shako = Arc::new(client(&server));
+    let mirror = Arc::new(Mirror::new());
+    let syncer = Arc::new(Syncer::new(Arc::clone(&shako), Arc::clone(&mirror)));
+    syncer.sync_once().await.expect("the repository loads");
+    let endpoint = |audience: serde_json::Value| ResourceEnvelope {
+        api_version: API_VERSION.to_owned(),
+        kind: "Endpoint".to_owned(),
+        metadata: ObjectMeta::new("air", "ovzdusie"),
+        spec: json!({ "slug": SLUG, "audience": audience }),
+        status: None,
+    };
+    mirror.upsert(endpoint(json!("project-list")));
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert!(tree.admitted.is_empty(), "{:?}", tree.admitted);
+    mirror.upsert(endpoint(json!("public")));
+    let tree = Tree::of(&syncer, &mirror).expect("the accepted tree");
+    assert_eq!(
+        tree.admitted,
+        BTreeSet::from([("bb".to_owned(), "peer".to_owned())])
+    );
+}
+
+/// DM-48: a forge that refuses the mirror's branch is that reference's flag, never a failed pass,
+/// and nothing is proposed.
+#[tokio::test]
+async fn a_forge_that_refuses_the_mirror_branch_flags_the_reference() {
+    let files = [reference()];
+    let (server, recorded) = forge(&files).await;
+    Mock::given(method("POST"))
+        .and(path(
+            "/odata/Repositories(Owner='test-owner',Name='test-repo')/Shako.CreateBranch",
+        ))
+        .respond_with(ResponseTemplate::new(500))
+        .with_priority(1)
+        .mount(&server)
+        .await;
+    let peer = Arc::new(FakePeer::new());
+    let run = pass(
+        &client(&server),
+        &files,
+        &peer,
+        &LastFetch::default(),
+        1_757_000_000,
+    )
+    .await;
+    assert!(run.proposed.is_empty(), "{:?}", run.proposed);
+    assert_eq!(run.flags.len(), 1, "{:?}", run.flags);
+    assert!(run.flags[0].starts_with("bb/peer: "), "{:?}", run.flags);
+    assert!(recorded.pulls.lock().expect("the pull log").is_empty());
 }

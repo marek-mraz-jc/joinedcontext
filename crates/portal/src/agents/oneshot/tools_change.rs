@@ -2089,6 +2089,41 @@ mod new_dashboard_tests {
         );
     }
 
+    /// A dashboard whose verdict the store refuses is still drafted, its drafts without a verdict.
+    #[tokio::test]
+    async fn a_dashboard_whose_verdict_is_not_kept_is_drafted_without_one() {
+        let (mut driver, _forge) = world().await;
+        proposes_dashboards(&mut driver);
+        let scratch = crate::test_db::scratch().await;
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("helsinki").await,
+        );
+        scratch.refuse_column("drafts", "verdict").await;
+        let private = create(
+            "project",
+            &["staff"],
+            vec![layer("staff", "bikes-staff", json!({}))],
+        );
+        let prose = dashboard(&driver, &private, false)
+            .await
+            .done()
+            .expect("drafted");
+        assert!(
+            prose.starts_with("Drafted the dashboard 'stations'"),
+            "{prose}"
+        );
+        let kept = driver
+            .state
+            .drafts
+            .get("helsinki", "Layer", "staff")
+            .await
+            .expect("read")
+            .expect("the layer is kept");
+        assert!(kept.verdict.is_none(), "{:?}", kept.verdict);
+        scratch.remove().await;
+    }
+
     async fn model_change(
         driver: &Driver,
         name: &str,
@@ -3140,6 +3175,57 @@ mod unparsed_tests {
             "{prose}"
         );
         assert!(prose.contains("Endpoint 'counters'"), "{prose}");
+    }
+
+    /// A change the draft store cannot keep opens nothing and says to try again, never the
+    /// database's own words.
+    #[tokio::test]
+    async fn a_change_the_draft_store_cannot_keep_opens_nothing() {
+        let (mut driver, _state) = steward();
+        crate::agents::oneshot::placed(&driver.state);
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(crate::test_db::dead_pool()),
+            driver.state.mirror.clone(),
+        );
+        let prose = call(&driver, source(with_http(json!({}))), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("Nothing was opened: the draft of DataSource 'counters-api'"),
+            "{prose}"
+        );
+        assert!(!prose.contains("127.0.0.1"), "{prose}");
+    }
+
+    /// A change whose draft is kept but whose verdict the store refuses still opens its form:
+    /// the draft carries no verdict, so the strict gate asks for a check before a proposal.
+    #[tokio::test]
+    async fn a_change_whose_verdict_is_not_kept_still_opens_without_one() {
+        let (mut driver, _state) = steward();
+        let scratch = crate::test_db::scratch().await;
+        driver.state.drafts = crate::ops::drafts::DraftStore::new(
+            Some(scratch.pool.clone()),
+            scratch.placed("helsinki").await,
+        );
+        scratch.refuse_column("drafts", "verdict").await;
+        let prose = call(&driver, source(with_http(json!({}))), true)
+            .await
+            .done()
+            .expect("ends");
+        assert!(
+            prose.starts_with("Opened 'counters-api' with the change"),
+            "{prose}"
+        );
+        let draft = driver
+            .state
+            .drafts
+            .get("helsinki", "DataSource", "counters-api")
+            .await
+            .expect("read")
+            .expect("kept");
+        assert!(draft.verdict.is_none(), "{:?}", draft.verdict);
+        scratch.remove().await;
     }
 
     #[tokio::test]

@@ -2468,6 +2468,28 @@ mod tests {
         scratch.remove().await;
     }
 
+    /// A deleted person's invitation is forgotten from the database; forgetting one never
+    /// remembered is no error either.
+    #[tokio::test]
+    async fn a_deleted_persons_invitation_is_forgotten() {
+        let scratch = crate::test_db::scratch().await;
+        let mut state = AppState::new(crate::config::Config::for_tests(), None);
+        state.db = Some(scratch.pool.clone());
+        let expires = time::OffsetDateTime::now_utc() + time::Duration::days(3);
+        crate::db::set_person_invitation(&scratch.pool, "ola-id", expires, Some("air"))
+            .await
+            .expect("an invitation");
+        forget_invitation(&state, "ola-id").await;
+        forget_invitation(&state, "never-invited").await;
+        assert_eq!(
+            crate::db::person_invitation_project(&scratch.pool, "ola-id")
+                .await
+                .expect("a read"),
+            None
+        );
+        scratch.remove().await;
+    }
+
     /// Without a database to read, a person shows no pending removal, a list no expiry, and an
     /// invitation goes out all the same; a list of nobody waiting asks nothing.
     #[tokio::test]

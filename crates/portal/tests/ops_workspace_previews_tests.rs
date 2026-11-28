@@ -392,6 +392,12 @@ async fn mount_tree(server: &MockServer, repo: &str, head: &str, files: &[(&str,
 /// Jana's workspace `air-v2` of a project with a repository of its own: the organization at
 /// its main head, the project's branch in the project repository.
 async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
+    layout_two_with(project_tree, false).await
+}
+
+/// [`layout_two`] whose organization repository also holds a project folder when `stray`,
+/// which a layout 2 organization may not.
+async fn layout_two_with(project_tree: bool, stray: bool) -> (MockServer, AppState) {
     let server = forge().await;
     common::mount_repository(&server, PROJECT_REPO).await;
     Mock::given(method("GET"))
@@ -417,6 +423,10 @@ async fn layout_two(project_tree: bool) -> (MockServer, AppState) {
         (all[0].0, all[0].1.clone()),
         ("projects/ovzdusie.yaml", entry),
     ];
+    let mut organization = organization;
+    if stray {
+        organization.push(("projects/stray/project.yaml", all[1].1.clone()));
+    }
     mount_tree(&server, REPO, "main1", &organization).await;
     let mut inside: Vec<(&str, String)> =
         vec![(".jc/layout", layout), ("project.yaml", all[1].1.clone())];
@@ -496,6 +506,31 @@ async fn a_project_repository_that_does_not_stage_is_unavailable() {
     );
     assert!(
         started.text().contains("did not stage"),
+        "{}",
+        started.text()
+    );
+}
+
+/// A layout 2 organization repository that still holds a project folder stages but does not
+/// assemble with the project's branch: a 503 saying so.
+#[tokio::test]
+async fn an_organization_still_holding_a_project_folder_does_not_assemble() {
+    let (_server, state) = layout_two_with(true, true).await;
+    let started = doors::call(
+        "jc_workspace_preview_start",
+        &session(steward()),
+        &state,
+        named("air-v2"),
+    )
+    .await;
+    assert_eq!(
+        StatusCode::SERVICE_UNAVAILABLE,
+        started.status,
+        "{}",
+        started.text()
+    );
+    assert!(
+        started.text().contains("does not assemble"),
         "{}",
         started.text()
     );

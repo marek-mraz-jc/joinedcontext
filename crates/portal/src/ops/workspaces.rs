@@ -2198,7 +2198,8 @@ mod tests {
         );
     }
 
-    /// A YAML file of the branch or of the base that is no manifest leaves the mirror as it is.
+    /// A YAML file of the branch or of the base that is no manifest, or that the forge lists but
+    /// no longer serves, leaves the mirror as it is.
     #[tokio::test]
     async fn a_yaml_file_that_is_no_manifest_leaves_the_workspace_mirror_alone() {
         use wiremock::matchers::{method, path, query_param};
@@ -2220,7 +2221,8 @@ mod tests {
             "workspace/w1",
             json!([
                 { "Path": "projects/helsinki/a.yaml", "Type": "blob", "Sha": "s2" },
-                { "Path": "projects/helsinki/notes.txt", "Type": "blob", "Sha": "t1" }
+                { "Path": "projects/helsinki/notes.txt", "Type": "blob", "Sha": "t1" },
+                { "Path": "projects/helsinki/gone.yaml", "Type": "blob", "Sha": "g2" }
             ]),
         )
         .mount(&server)
@@ -2229,7 +2231,8 @@ mod tests {
             "base1",
             json!([
                 { "Path": "projects/helsinki/a.yaml", "Type": "blob", "Sha": "s1" },
-                { "Path": "projects/helsinki/b.yaml", "Type": "blob", "Sha": "b1" }
+                { "Path": "projects/helsinki/b.yaml", "Type": "blob", "Sha": "b1" },
+                { "Path": "projects/helsinki/lost.yaml", "Type": "blob", "Sha": "l1" }
             ]),
         )
         .mount(&server)
@@ -2272,7 +2275,10 @@ mod tests {
             .iter()
             .filter(|r| r.url.path().ends_with("Shako.File(Path=@p,Ref=@r)"))
             .count();
-        assert_eq!(files, 2, "the changed and the removed manifest were read");
+        assert_eq!(
+            files, 4,
+            "the changed and the removed manifests were read, the two unserved ones too"
+        );
     }
 
     /// A replica that does not lead reaps nothing: its reaper passes the tick.

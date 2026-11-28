@@ -2266,6 +2266,77 @@ mod repository_tests {
         );
     }
 
+    /// A GitHub copy whose sentence the run's store refuses is still set up and the commit
+    /// stands: the refusal is logged, the commit event kept.
+    #[tokio::test]
+    async fn a_github_sentence_the_store_refuses_leaves_the_copy_and_the_commit() {
+        let forge = a_forge_for_a_later_pass().await;
+        Mock::given(method("GET"))
+            .and(path(format!("{REPO}/PushMirrors")))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "value": [] })))
+            .mount(&forge)
+            .await;
+        for action in ["Shako.AddPushMirror", "Shako.SyncPushMirrors"] {
+            Mock::given(method("POST"))
+                .and(path(format!("{REPO}/{action}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+                .expect(1)
+                .mount(&forge)
+                .await;
+        }
+        let github = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/repos/hel-apps/helsinki_city-bikes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+            .mount(&github)
+            .await;
+        let scratch = crate::test_db::scratch().await;
+        let (state, mut driver) = driver(&forge);
+        let state = state
+            .with_db(scratch.pool.clone())
+            .with_github_mirror(Arc::new(crate::forge::github_mirror::GithubMirror::at(
+                &github.uri(),
+                "hel-apps",
+                "ghp_secret",
+            )));
+        for env in scratch.placed("helsinki").await.matching(|_| true) {
+            state.mirror.upsert(env);
+        }
+        let run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        state.agents.create_run(&run).await.expect("a run");
+        for statement in [
+            "CREATE FUNCTION jc_refuse_thought() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+            "CREATE TRIGGER jc_refuse_thought BEFORE INSERT ON agent_run_events FOR EACH ROW \
+             WHEN (NEW.kind = 'thought') EXECUTE FUNCTION jc_refuse_thought()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("the trigger");
+        }
+        driver.state = state.clone();
+        let mut committed = files();
+        let mut next = files();
+        next.insert("src/App.tsx".into(), "export default 2".into());
+        driver
+            .commit_files(&next, &mut committed, "Second version")
+            .await
+            .expect("committed");
+        assert_eq!(committed, next, "the commit stands");
+        let kinds: Vec<String> = state
+            .agents
+            .events_since("test-run", 0)
+            .await
+            .expect("events")
+            .into_iter()
+            .map(|event| event.kind)
+            .collect();
+        assert!(kinds.iter().any(|kind| kind == "commit"), "{kinds:?}");
+        assert!(kinds.iter().all(|kind| kind != "thought"), "{kinds:?}");
+        scratch.remove().await;
+    }
+
     /// A run with no branch has nowhere to commit: the forge is not asked (T-7912).
     #[tokio::test]
     async fn a_run_without_a_branch_commits_nothing() {
@@ -2444,10 +2515,8 @@ mod sandbox_tests {
             .is_some_and(|r| r.contains("no tests")));
     }
 
-    /// SDK-38: the run says the tests are running at once, and the result follows as its own
-    /// event of the same version, without the ticket in it.
-    #[tokio::test]
-    async fn the_result_follows_the_running_event_and_never_carries_the_ticket() {
+    /// A cluster whose test Job fails with one failure that prints the ticket.
+    async fn failing_job() -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("DELETE"))
             .respond_with(ResponseTemplate::new(404))
@@ -2484,14 +2553,28 @@ mod sandbox_tests {
             .mount(&server)
             .await;
 
+        server
+    }
+
+    fn sandboxed(state: AppState, server: &MockServer) -> AppState {
         let settings = SandboxSettings {
             namespace: "jc-app-tests".into(),
             image: format!("builder@sha256:{}", "a".repeat(64)),
             rust_image: None,
         };
         let kube = KubeClient::with_token(&server.uri(), "t").expect("a client");
-        let state = AppState::new(crate::config::Config::for_tests(), None)
-            .with_app_tests(Arc::new(Sandbox::new(kube, settings)));
+        state.with_app_tests(Arc::new(Sandbox::new(kube, settings)))
+    }
+
+    /// SDK-38: the run says the tests are running at once, and the result follows as its own
+    /// event of the same version, without the ticket in it.
+    #[tokio::test]
+    async fn the_result_follows_the_running_event_and_never_carries_the_ticket() {
+        let server = failing_job().await;
+        let state = sandboxed(
+            AppState::new(crate::config::Config::for_tests(), None),
+            &server,
+        );
         let mut driver = Driver::for_tests(state.clone(), "helsinki");
         driver.bearer = "run.s3cr3t-ticket".into();
         driver.start_tests(&tested(), 4).await.expect("started");
@@ -2513,6 +2596,50 @@ mod sandbox_tests {
             "{}",
             events[1]
         );
+    }
+
+    /// A result the store refuses to record is only logged: the version keeps its running
+    /// event and the run goes on.
+    #[tokio::test]
+    async fn a_result_the_store_refuses_is_logged_and_the_running_event_stays() {
+        let server = failing_job().await;
+        let scratch = crate::test_db::scratch().await;
+        let state =
+            AppState::new(crate::config::Config::for_tests(), None).with_db(scratch.pool.clone());
+        for env in scratch.placed("helsinki").await.matching(|_| true) {
+            state.mirror.upsert(env);
+        }
+        let state = sandboxed(state, &server);
+        let run = crate::agents::store::tests::run("test-run", "helsinki", "2026-09-12T10:00:00Z");
+        state.agents.create_run(&run).await.expect("a run");
+        // Only a finished result is refused; the running event goes in.
+        for statement in [
+            "CREATE FUNCTION jc_refuse_result() RETURNS trigger LANGUAGE plpgsql AS \
+             $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$",
+            "CREATE TRIGGER jc_refuse_result BEFORE INSERT ON agent_run_events FOR EACH ROW \
+             WHEN (NEW.kind = 'tests' AND NEW.payload->>'outcome' <> 'running') \
+             EXECUTE FUNCTION jc_refuse_result()",
+        ] {
+            sqlx::query(statement)
+                .execute(&scratch.pool)
+                .await
+                .expect("the trigger");
+        }
+        let driver = Driver::for_tests(state.clone(), "helsinki");
+        driver.start_tests(&tested(), 5).await.expect("started");
+        let requests = || async { server.received_requests().await.unwrap_or_default().len() };
+        for _ in 0..100 {
+            if requests().await >= 5 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            tests_events(&state).await,
+            vec![json!({ "version": 5, "outcome": "running" })]
+        );
+        scratch.remove().await;
     }
 }
 
@@ -3728,6 +3855,212 @@ mod drive_tests {
 
     /// An error the frame reports with no observation after it is checked on the errors alone,
     /// once the observation wait is over (`OBSERVATION_WAIT`).
+    /// The fix the model sends for an error the preview reported: built, it is the next version.
+    fn fixed() -> String {
+        answer(
+            "Fixed.",
+            &[(
+                "src/pages/Hello.tsx",
+                "  return <p>hello</p>;\n",
+                "  return <p>hello there</p>;",
+            )],
+        )
+    }
+
+    /// Waits until `ready` holds, at most ten seconds.
+    async fn until<F: std::future::Future<Output = bool>>(ready: impl Fn() -> F) {
+        for _ in 0..200 {
+            if ready().await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    /// An error the preview reported without an observation, whose fix builds: the fix is the
+    /// next version on screen.
+    #[tokio::test]
+    async fn a_fix_for_an_unobserved_error_that_builds_is_the_next_version() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some("Nothing to add.".into()),
+                Some(fixed()),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        let feed = async {
+            until(|| async { previews(&state).await > 0 }).await;
+            let error = json!({ "message": "x is undefined" });
+            driver
+                .state
+                .agents
+                .append_event("test-run", "preview_error", error.clone())
+                .await
+                .expect("stored");
+            tx.send(event("preview_error", error)).expect("sent");
+            tokio::time::sleep(OBSERVATION_WAIT + Duration::from_secs(1)).await;
+            until(|| async { previews(&state).await > 1 }).await;
+            tx.send(cancelled()).expect("sent");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
+        ended.expect("the loop ends");
+        assert_eq!(previews(&state).await, 2, "the fix is a second version");
+    }
+
+    /// An error reported on the stream that the run no longer holds checks as nothing found:
+    /// no model call and no sentence, the version stays.
+    #[tokio::test]
+    async fn an_error_the_run_does_not_hold_checks_as_nothing_found() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some("Nothing to add.".into()),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        let feed = async {
+            until(|| async { previews(&state).await > 0 }).await;
+            tx.send(event("preview_error", json!({ "message": "gone" })))
+                .expect("sent");
+            tokio::time::sleep(OBSERVATION_WAIT + Duration::from_secs(1)).await;
+            tx.send(cancelled()).expect("sent");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
+        ended.expect("the loop ends");
+        assert_eq!(asked(&server).await.len(), 2, "no check call");
+        assert!(
+            !thoughts(&state)
+                .await
+                .iter()
+                .any(|t| t.contains("Checking the preview")),
+            "{:?}",
+            thoughts(&state).await
+        );
+    }
+
+    /// The run's events become unreadable before the check on the errors alone: the loop ends
+    /// with the store's error.
+    #[tokio::test]
+    async fn an_unreadable_event_log_ends_the_check_on_the_errors_alone() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some("Nothing to add.".into()),
+            ],
+        )
+        .await;
+        let (scratch, state, driver) = stored_driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        let feed = async {
+            until(|| async {
+                thoughts(&state)
+                    .await
+                    .iter()
+                    .any(|t| t == "Nothing to add.")
+            })
+            .await;
+            scratch.drop_table("agent_run_events").await;
+            tx.send(event("preview_error", json!({ "message": "x" })))
+                .expect("sent");
+        };
+        let (ended, ()) = tokio::join!(driver.drive_code(&mut inbox, far()), feed);
+        assert!(ended.is_err(), "{ended:?}");
+        scratch.remove().await;
+    }
+
+    /// A failed test of the version on screen whose fix builds is the next version; a test result
+    /// before any version is on screen is passed by.
+    #[tokio::test]
+    async fn a_test_fix_that_builds_is_the_next_version_and_a_result_before_any_is_passed_by() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[
+                Some(answer("A greeting.", &[("src/pages/Hello.tsx", "", PAGE)])),
+                Some("Nothing to add.".into()),
+                Some(fixed()),
+            ],
+        )
+        .await;
+        let (state, fixer) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        let failed = json!({ "version": 1, "outcome": "failed", "passed": 0, "failed": 1,
+            "failures": [{ "file": "src/pages/Hello.test.tsx", "name": "Hello greets",
+                           "message": "expected hello there" }] });
+        let feed = async {
+            until(|| async { previews(&state).await > 0 }).await;
+            tx.send(event("tests", failed)).expect("sent");
+            until(|| async { previews(&state).await > 1 }).await;
+            tx.send(cancelled()).expect("sent");
+        };
+        let (ended, ()) = tokio::join!(fixer.drive_code(&mut inbox, far()), feed);
+        ended.expect("the loop ends");
+        assert_eq!(
+            previews(&state).await,
+            2,
+            "the test fix is a second version"
+        );
+
+        let server = MockServer::start().await;
+        // A first answer without a change, twice, builds nothing: no version is on screen.
+        script(
+            &server,
+            &[
+                Some("Nothing to change yet.".into()),
+                Some("Still nothing.".into()),
+            ],
+        )
+        .await;
+        let (state, driver) = driver(&server).await;
+        let (tx, mut inbox) = broadcast::channel(8);
+        tx.send(event("tests", json!({ "version": 1, "outcome": "failed" })))
+            .expect("sent");
+        tx.send(cancelled()).expect("sent");
+        driver
+            .drive_code(&mut inbox, far())
+            .await
+            .expect("the loop ends");
+        assert_eq!(previews(&state).await, 0);
+        assert_eq!(
+            asked(&server).await.len(),
+            2,
+            "no fix for a version never shown"
+        );
+    }
+
+    /// A first version whose files the store refuses ends the loop before anything is shown.
+    #[tokio::test]
+    async fn a_first_version_whose_files_the_store_refuses_ends_the_loop() {
+        let server = MockServer::start().await;
+        script(
+            &server,
+            &[Some(answer(
+                "A greeting.",
+                &[("src/pages/Hello.tsx", "", PAGE)],
+            ))],
+        )
+        .await;
+        let (scratch, state, driver) = stored_driver(&server).await;
+        scratch.refuse_column("agent_runs", "files").await;
+        let (tx, mut inbox) = broadcast::channel(4);
+        tx.send(cancelled()).expect("sent");
+        let ended = driver.drive_code(&mut inbox, far()).await;
+        assert!(ended.is_err(), "the files are not kept");
+        assert_eq!(previews(&state).await, 0);
+        scratch.remove().await;
+    }
+
     #[tokio::test]
     async fn an_error_without_an_observation_is_checked_on_its_own() {
         let server = MockServer::start().await;
